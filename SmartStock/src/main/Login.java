@@ -1,3 +1,5 @@
+package main;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -24,9 +26,11 @@ public class Login extends JFrame {
     public static String currentRole;
     public static Integer currentLocationId;
     public static String currentLocationName;
+    public static String currentAccessToken;
+    public static String currentRefreshToken;
 
-    private static final String SUPABASE_URL = "https://wbffhygkttoaaodjcvuh.supabase.co";
-    private static final String SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndiZmZoeWdrdHRvYWFvZGpjdnVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjQ5NTAsImV4cCI6MjA5MTI0MDk1MH0.i2RB7aPCgpH3LtMCcCofbhgkrAKfdYRjlhXVjxi_zSc";
+    private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
+    private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -201,6 +205,8 @@ public class Login extends JFrame {
                 currentRole = role;
                 currentLocationId = selectedLocation.locationId;
                 currentLocationName = selectedLocation.locationName;
+                currentAccessToken = authResult.accessToken;
+                currentRefreshToken = authResult.refreshToken;
 
                 JOptionPane.showMessageDialog(
                         this,
@@ -223,8 +229,8 @@ public class Login extends JFrame {
     }
 
     private SupabaseLoginResult authenticateWithSupabase(String email, String password) {
-        if (SUPABASE_ANON_KEY.contains("REPLACE_WITH")) {
-            return new SupabaseLoginResult(false, "Set the Supabase anon key in Login.java before using auth login.");
+        if (SUPABASE_PUBLISHABLE_KEY == null || SUPABASE_PUBLISHABLE_KEY.isBlank()) {
+            return new SupabaseLoginResult(false, "Set the Supabase publishable key before using auth login.", null, null);
         }
 
         try {
@@ -236,7 +242,7 @@ public class Login extends JFrame {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(SUPABASE_URL + "/auth/v1/token?grant_type=password"))
                     .timeout(Duration.ofSeconds(20))
-                    .header("apikey", SUPABASE_ANON_KEY)
+                    .header("apikey", SUPABASE_PUBLISHABLE_KEY)
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
@@ -245,7 +251,14 @@ public class Login extends JFrame {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                return new SupabaseLoginResult(true, null);
+                String accessToken = extractJsonString(response.body(), "access_token");
+                String refreshToken = extractJsonString(response.body(), "refresh_token");
+
+                if (accessToken == null || accessToken.isBlank()) {
+                    return new SupabaseLoginResult(false, "Supabase login succeeded but no access token was returned.", null, null);
+                }
+
+                return new SupabaseLoginResult(true, null, accessToken, refreshToken);
             }
 
             String errorMessage = extractJsonString(response.body(), "msg");
@@ -259,9 +272,9 @@ public class Login extends JFrame {
                 errorMessage = "Invalid username/email or password.";
             }
 
-            return new SupabaseLoginResult(false, errorMessage);
+            return new SupabaseLoginResult(false, errorMessage, null, null);
         } catch (Exception ex) {
-            return new SupabaseLoginResult(false, "Unable to reach Supabase Auth: " + ex.getMessage());
+            return new SupabaseLoginResult(false, "Unable to reach Supabase Auth: " + ex.getMessage(), null, null);
         }
     }
 
@@ -290,16 +303,22 @@ public class Login extends JFrame {
     private static class SupabaseLoginResult {
         private final boolean success;
         private final String message;
+        private final String accessToken;
+        private final String refreshToken;
 
-        private SupabaseLoginResult(boolean success, String message) {
+        private SupabaseLoginResult(boolean success, String message, String accessToken, String refreshToken) {
             this.success = success;
             this.message = message;
+            this.accessToken = accessToken;
+            this.refreshToken = refreshToken;
         }
     }
 
     private void clearFields() {
         usernameField.setText("");
         passwordField.setText("");
+        currentAccessToken = null;
+        currentRefreshToken = null;
         usernameField.requestFocusInWindow();
     }
 
@@ -316,5 +335,16 @@ public class Login extends JFrame {
         public String toString() {
             return locationName + " (ID: " + locationId + ")";
         }
+    }
+
+    private static String getConfig(String key, String fallback) {
+        String value = System.getenv(key);
+        if (value == null || value.isBlank()) {
+            value = System.getProperty(key);
+        }
+        if (value == null || value.isBlank()) {
+            value = fallback;
+        }
+        return value;
     }
 }

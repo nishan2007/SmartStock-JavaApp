@@ -1,3 +1,5 @@
+package main;
+
 import javax.swing.*;
 import java.awt.*;
 import java.sql.Connection;
@@ -6,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.Set;
+
 public class PermissionManager {
 
     private static String cachedRole;
@@ -74,7 +77,6 @@ public class PermissionManager {
         cachedPermissions = permissions;
     }
 
-
     public static boolean requirePermission(String permissionKey, java.awt.Component parent, String featureName) {
         if (hasPermission(permissionKey)) {
             return true;
@@ -108,6 +110,7 @@ public class PermissionManager {
             default -> true;
         };
     }
+
     public static void refreshOpenWindows() {
         SwingUtilities.invokeLater(() -> {
             reloadPermissionsFromDatabase(getCurrentRole());
