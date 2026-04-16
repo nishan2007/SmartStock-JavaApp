@@ -1,0 +1,2 @@
+# SmartStock-JavaApp
+Smartstock app
