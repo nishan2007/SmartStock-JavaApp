@@ -2,6 +2,7 @@ package managers;
 
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
+import ui.screens.CustomerAccounts;
 import ui.screens.EmployeeManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -31,6 +32,7 @@ public final class NavigationManager {
         EDIT_ITEM,
         VIEW_SALES,
         VIEW_INVENTORY,
+        CUSTOMER_ACCOUNTS,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION
     }
@@ -80,6 +82,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.VIEW_INVENTORY));
     }
 
+    public static void openCustomerAccounts(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
+    }
+
     public static void openEmployeeManagement(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.EMPLOYEE_MANAGEMENT));
     }
@@ -97,6 +103,7 @@ public final class NavigationManager {
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
+            case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
         };
@@ -115,6 +122,7 @@ public final class NavigationManager {
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
+            case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             default -> null;

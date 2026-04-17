@@ -99,6 +99,7 @@ public class PermissionManager {
             case "MainMenu" -> hasPermission("MAKE_SALE")
                     || hasPermission("VIEW_SALES")
                     || hasPermission("VIEW_INVENTORY")
+                    || hasPermission("CUSTOMER_ACCOUNTS")
                     || hasPermission("NEW_ITEM")
                     || hasPermission("ENTER_INVENTORY")
                     || hasPermission("EDIT_ITEM")
@@ -108,6 +109,7 @@ public class PermissionManager {
             case "EnterInventory" -> hasPermission("ENTER_INVENTORY");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
+            case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
             case "NewItem" -> hasPermission("NEW_ITEM");
             case "EditItem" -> hasPermission("EDIT_ITEM");
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");

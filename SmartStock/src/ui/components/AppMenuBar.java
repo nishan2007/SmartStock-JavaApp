@@ -5,6 +5,7 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
+import ui.screens.CustomerAccounts;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
@@ -41,6 +42,7 @@ public class AppMenuBar {
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
+        JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
 
@@ -50,11 +52,12 @@ public class AppMenuBar {
         boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
+        boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
 
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
-        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canViewSales || canViewInventory || canEmployeeMgmt || canRoleManagement;
+        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canRoleManagement;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -85,6 +88,9 @@ public class AppMenuBar {
         }
         if (!canViewInventory || "ViewInventory".equalsIgnoreCase(screenKey)) {
             viewInventoryItem.setEnabled(false);
+        }
+        if (!canCustomerAccounts || "CustomerAccounts".equalsIgnoreCase(screenKey)) {
+            customerAccountsItem.setEnabled(false);
         }
         if (!canEmployeeMgmt || "EmployeeManagement".equalsIgnoreCase(screenKey)) {
             employeeMgmtItem.setEnabled(false);
@@ -167,6 +173,18 @@ public class AppMenuBar {
             }
         });
 
+        customerAccountsItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("CUSTOMER_ACCOUNTS", parent, "Customer Accounts")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(CustomerAccounts.class)) {
+                    return;
+                }
+                NavigationManager.openCustomerAccounts(parent);
+            }
+        });
+
 
 
         employeeMgmtItem.addActionListener(new ActionListener() {
@@ -201,6 +219,7 @@ public class AppMenuBar {
         navigateMenu.add(editItemItem);
         navigateMenu.add(ViewSalesItem);
         navigateMenu.add(viewInventoryItem);
+        navigateMenu.add(customerAccountsItem);
 
         employeeMenu.add(employeeMgmtItem);
         employeeMenu.add(rolesPermissionItem);

@@ -55,6 +55,7 @@ public class Roles_Permission extends JFrame {
         addPermission("VIEW_SALES", "View Sales");
         addPermission("VIEW_INVENTORY", "View Inventory");
         addPermission("VIEW_ITEM_DETAILS", "View Item Details");
+        addPermission("CUSTOMER_ACCOUNTS", "Customer Accounts");
         ensurePermissionDefinitionsExist();
 
         JScrollPane permScroll = new JScrollPane(permissionPanel);

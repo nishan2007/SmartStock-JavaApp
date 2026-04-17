@@ -21,6 +21,7 @@ public class MainMenu extends JFrame {
     private final JButton makeSaleButton;
     private final JButton enterInventoryButton;
     private final JButton viewSalesButton;
+    private final JButton customerAccountsButton;
     private final JButton viewInventoryButton;
     private final JButton addItemButton;
     private final JButton editItemsButton;
@@ -62,6 +63,7 @@ public class MainMenu extends JFrame {
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
         enterInventoryButton = createMenuButton("Enter Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
+        customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
@@ -76,7 +78,8 @@ public class MainMenu extends JFrame {
                 "Point of Sale",
                 new Color(37, 99, 235),
                 makeSaleButton,
-                viewSalesButton
+                viewSalesButton,
+                customerAccountsButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -202,6 +205,7 @@ public class MainMenu extends JFrame {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
+        boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canAddItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
@@ -211,6 +215,7 @@ public class MainMenu extends JFrame {
         makeSaleButton.setEnabled(canMakeSale);
         enterInventoryButton.setEnabled(canEnterInventory);
         viewSalesButton.setEnabled(canViewSales);
+        customerAccountsButton.setEnabled(canCustomerAccounts);
         viewInventoryButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
         editItemsButton.setEnabled(canEditItem);
@@ -238,6 +243,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openViewSales(this);
+        });
+        customerAccountsButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("CUSTOMER_ACCOUNTS", this, "Customer Accounts")) {
+                return;
+            }
+            NavigationManager.openCustomerAccounts(this);
         });
         viewInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_INVENTORY", this, "View Inventory")) {
@@ -345,6 +356,10 @@ public class MainMenu extends JFrame {
 
     public JButton getViewSalesButton() {
         return viewSalesButton;
+    }
+
+    public JButton getCustomerAccountsButton() {
+        return customerAccountsButton;
     }
 
     public JButton getViewInventoryButton() {

@@ -32,6 +32,7 @@ public class MakeASale extends JFrame {
     private boolean updatingCart = false;
     private JLabel totalLabel;
     private JComboBox<String> paymentMethodBox;
+    private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton checkoutBtn;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
@@ -146,8 +147,12 @@ public class MakeASale extends JFrame {
        panel.add(cartScrollPane, BorderLayout.CENTER);
 
        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
+       bottomPanel.add(new JLabel("Customer:"));
+       customerAccountBox = new JComboBox<>();
+       customerAccountBox.setPreferredSize(new Dimension(260, 28));
+       bottomPanel.add(customerAccountBox);
        bottomPanel.add(new JLabel("Payment Method:"));
-       paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE"});
+       paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
        bottomPanel.add(paymentMethodBox);
 
        totalLabel = new JLabel("Overall Total: $0.00");
@@ -269,6 +274,7 @@ public class MakeASale extends JFrame {
                checkout();
            }
        });
+       paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
        addWindowFocusListener(new java.awt.event.WindowAdapter() {
            @Override
            public void windowGainedFocus(java.awt.event.WindowEvent e) {
@@ -277,6 +283,8 @@ public class MakeASale extends JFrame {
        });
        updateSelectedStoreLabel(); //displays the current store
        updateCurrentUserLabel(); //displays the current user
+       loadCustomerAccounts();
+       updateCustomerAccountEnabled();
        setVisible(true); //runs last for the main UI to show
    }
 
@@ -742,6 +750,49 @@ public class MakeASale extends JFrame {
         }
     }
 
+    private void loadCustomerAccounts() {
+        if (customerAccountBox == null) {
+            return;
+        }
+
+        customerAccountBox.removeAllItems();
+        customerAccountBox.addItem(null);
+
+        String sql = """
+                SELECT customer_id,
+                       account_number,
+                       name,
+                       credit_limit,
+                       current_balance,
+                       (credit_limit - current_balance) AS available_credit
+                FROM customer_accounts
+                WHERE is_active = TRUE
+                ORDER BY name
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                customerAccountBox.addItem(new CustomerAccountOption(
+                        rs.getInt("customer_id"),
+                        rs.getString("account_number"),
+                        rs.getString("name"),
+                        rs.getBigDecimal("credit_limit"),
+                        rs.getBigDecimal("current_balance"),
+                        rs.getBigDecimal("available_credit")
+                ));
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
+        }
+    }
+
+    private void updateCustomerAccountEnabled() {
+        customerAccountBox.setEnabled(true);
+    }
+
     private void checkout() {
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
@@ -749,6 +800,14 @@ public class MakeASale extends JFrame {
         }
 
         String paymentMethod = (String) paymentMethodBox.getSelectedItem();
+        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
+
+        boolean chargeCustomerAccount = "ACCOUNT".equals(paymentMethod);
+
+        if (chargeCustomerAccount && selectedCustomer == null) {
+            JOptionPane.showMessageDialog(this, "Select a customer account for account payment.");
+            return;
+        }
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -767,15 +826,25 @@ public class MakeASale extends JFrame {
             int locationId = SessionManager.getCurrentLocationId();
 
             try {
-                String insertSaleSql = "INSERT INTO sales (location_id, user_id, total_amount, status, payment_method) VALUES (?, ?, ?, ?, ?)";
+                BigDecimal saleTotal = BigDecimal.valueOf(getOverallTotal());
+                if (chargeCustomerAccount) {
+                    validateAndChargeCustomerAccount(conn, selectedCustomer.customerId, saleTotal);
+                }
+
+                String insertSaleSql = "INSERT INTO sales (location_id, user_id, customer_id, total_amount, status, payment_method) VALUES (?, ?, ?, ?, ?, ?)";
                 int saleId;
 
                 try (PreparedStatement saleStmt = conn.prepareStatement(insertSaleSql, Statement.RETURN_GENERATED_KEYS)) {
                     saleStmt.setInt(1, locationId);
                     saleStmt.setInt(2, SessionManager.getCurrentUserId());
-                    saleStmt.setBigDecimal(3, BigDecimal.valueOf(getOverallTotal()));
-                    saleStmt.setString(4, "COMPLETED");
-                    saleStmt.setString(5, paymentMethod);
+                    if (selectedCustomer == null) {
+                        saleStmt.setNull(3, java.sql.Types.INTEGER);
+                    } else {
+                        saleStmt.setInt(3, selectedCustomer.customerId);
+                    }
+                    saleStmt.setBigDecimal(4, saleTotal);
+                    saleStmt.setString(5, "COMPLETED");
+                    saleStmt.setString(6, paymentMethod);
                     saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -784,6 +853,19 @@ public class MakeASale extends JFrame {
                         }
                         saleId = generatedKeys.getInt(1);
                     }
+                }
+
+                if (selectedCustomer != null) {
+                    insertCustomerAccountTransaction(
+                            conn,
+                            selectedCustomer.customerId,
+                            saleId,
+                            chargeCustomerAccount ? saleTotal : BigDecimal.ZERO,
+                            chargeCustomerAccount ? "SALE_CREDIT" : "SALE_PAID",
+                            chargeCustomerAccount
+                                    ? "Charged to account. sale_id=" + saleId
+                                    : "Paid by " + paymentMethod + ". sale_id=" + saleId
+                    );
                 }
 
                 String insertItemSql = "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)";
@@ -835,6 +917,7 @@ public class MakeASale extends JFrame {
                 cartModel.setRowCount(0);
                 configureCartTableColumns();
                 searchField.setText("");
+                loadCustomerAccounts();
                 updateOverallTotal();
 
             } catch (Exception ex) {
@@ -846,6 +929,62 @@ public class MakeASale extends JFrame {
 
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Checkout failed: " + ex.getMessage());
+        }
+    }
+
+    private void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal saleTotal) throws SQLException {
+        String lockSql = """
+                SELECT current_balance, credit_limit, is_active
+                FROM customer_accounts
+                WHERE customer_id = ?
+                FOR UPDATE
+                """;
+
+        BigDecimal currentBalance;
+        BigDecimal creditLimit;
+        boolean active;
+
+        try (PreparedStatement ps = conn.prepareStatement(lockSql)) {
+            ps.setInt(1, customerId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Customer account was not found.");
+                }
+                currentBalance = rs.getBigDecimal("current_balance");
+                creditLimit = rs.getBigDecimal("credit_limit");
+                active = rs.getBoolean("is_active");
+            }
+        }
+
+        if (!active) {
+            throw new SQLException("Customer account is inactive.");
+        }
+
+        BigDecimal newBalance = currentBalance.add(saleTotal);
+        if (newBalance.compareTo(creditLimit) > 0) {
+            throw new SQLException("Account payment exceeds customer credit limit. Available credit: $" + creditLimit.subtract(currentBalance));
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
+            ps.setBigDecimal(1, newBalance);
+            ps.setInt(2, customerId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void insertCustomerAccountTransaction(Connection conn, int customerId, int saleId, BigDecimal amount, String type, String note) throws SQLException {
+        String sql = """
+                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, customerId);
+            ps.setInt(2, saleId);
+            ps.setBigDecimal(3, amount);
+            ps.setString(4, type);
+            ps.setString(5, note);
+            ps.executeUpdate();
         }
     }
 
@@ -865,6 +1004,28 @@ public class MakeASale extends JFrame {
         totalLabel.setText(String.format("Overall Total: $%.2f", total));
     }
 
+    private static class CustomerAccountOption {
+        private final int customerId;
+        private final String accountNumber;
+        private final String name;
+        private final BigDecimal creditLimit;
+        private final BigDecimal currentBalance;
+        private final BigDecimal availableCredit;
+
+        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit) {
+            this.customerId = customerId;
+            this.accountNumber = accountNumber == null ? "" : accountNumber;
+            this.name = name == null ? "" : name;
+            this.creditLimit = creditLimit == null ? BigDecimal.ZERO : creditLimit;
+            this.currentBalance = currentBalance == null ? BigDecimal.ZERO : currentBalance;
+            this.availableCredit = availableCredit == null ? BigDecimal.ZERO : availableCredit;
+        }
+
+        @Override
+        public String toString() {
+            String accountLabel = accountNumber.isBlank() ? "" : accountNumber + " - ";
+            return accountLabel + name + " (Available: $" + availableCredit + ")";
+        }
+    }
+
 }
-
-
