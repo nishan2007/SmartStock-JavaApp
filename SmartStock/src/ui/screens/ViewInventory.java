@@ -1,6 +1,7 @@
 package ui.screens;
 
 import ui.components.AppMenuBar;
+import managers.PermissionManager;
 import managers.SessionManager;
 import data.DB;
 
@@ -25,6 +26,7 @@ public class ViewInventory extends JFrame {
     private JLabel totalItemsLabel;
     private JLabel totalProductsLabel;
     private JLabel locationLabel;
+    private JButton viewDetailsButton;
 
     public ViewInventory() {
         setTitle("View Inventory");
@@ -116,6 +118,14 @@ public class ViewInventory extends JFrame {
         inventoryTable.getTableHeader().setReorderingAllowed(false);
         inventoryTable.setFillsViewportHeight(true);
         inventoryTable.setDefaultRenderer(Object.class, new InventoryStatusRenderer());
+        inventoryTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    showSelectedItemDetails();
+                }
+            }
+        });
 
         TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(tableModel);
         sorter.setComparator(0, Comparator.comparingInt(value -> Integer.parseInt(String.valueOf(value))));
@@ -149,9 +159,13 @@ public class ViewInventory extends JFrame {
 
         totalProductsLabel = new JLabel("Products: 0");
         totalItemsLabel = new JLabel("Units in Stock: 0");
+        viewDetailsButton = new JButton("View Details");
+        viewDetailsButton.setEnabled(PermissionManager.hasPermission("VIEW_ITEM_DETAILS"));
+        viewDetailsButton.addActionListener(e -> showSelectedItemDetails());
 
         footerPanel.add(totalProductsLabel);
         footerPanel.add(totalItemsLabel);
+        footerPanel.add(viewDetailsButton);
 
         return footerPanel;
     }
@@ -304,6 +318,26 @@ public class ViewInventory extends JFrame {
             return "Low Stock";
         }
         return "In Stock";
+    }
+
+    private void showSelectedItemDetails() {
+        if (!PermissionManager.requirePermission("VIEW_ITEM_DETAILS", this, "View Item Details")) {
+            if (viewDetailsButton != null) {
+                viewDetailsButton.setEnabled(false);
+            }
+            return;
+        }
+
+        int selectedRow = inventoryTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Please select an item first.");
+            return;
+        }
+
+        int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
+        int productId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, 0)));
+
+        new ViewInventoryDetails(this, productId).setVisible(true);
     }
 
     private Integer getCurrentLocationId() {

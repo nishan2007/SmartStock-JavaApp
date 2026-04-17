@@ -18,6 +18,7 @@ import java.sql.Connection;
 public class MainMenu extends JFrame {
 
     private final JButton makeSaleButton;
+    private final JButton enterInventoryButton;
     private final JButton viewSalesButton;
     private final JButton viewInventoryButton;
     private final JButton addItemButton;
@@ -61,6 +62,7 @@ public class MainMenu extends JFrame {
         gridPanel.setOpaque(false);
 
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
+        enterInventoryButton = createMenuButton("Enter Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
@@ -70,13 +72,13 @@ public class MainMenu extends JFrame {
         applyPermissions();
 
         gridPanel.add(makeSaleButton);
+        gridPanel.add(enterInventoryButton);
         gridPanel.add(viewSalesButton);
         gridPanel.add(viewInventoryButton);
         gridPanel.add(addItemButton);
         gridPanel.add(editItemsButton);
         gridPanel.add(employeeManagementButton);
         gridPanel.add(rolesPermissionsButton);
-        gridPanel.add(new JPanel());
 
         logoutButton = new JButton("Logout");
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
@@ -103,6 +105,7 @@ public class MainMenu extends JFrame {
 
     public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
+        boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canAddItem = PermissionManager.hasPermission("NEW_ITEM");
@@ -111,6 +114,7 @@ public class MainMenu extends JFrame {
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
 
         makeSaleButton.setEnabled(canMakeSale);
+        enterInventoryButton.setEnabled(canEnterInventory);
         viewSalesButton.setEnabled(canViewSales);
         viewInventoryButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
@@ -127,6 +131,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openMakeSale(this);
+        });
+        enterInventoryButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("ENTER_INVENTORY", this, "Enter Inventory")) {
+                return;
+            }
+            NavigationManager.openEnterInventory(this);
         });
         viewSalesButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_SALES", this, "View Sales")) {
@@ -226,6 +236,10 @@ public class MainMenu extends JFrame {
 
     public JButton getMakeSaleButton() {
         return makeSaleButton;
+    }
+
+    public JButton getEnterInventoryButton() {
+        return enterInventoryButton;
     }
 
     public JButton getViewSalesButton() {

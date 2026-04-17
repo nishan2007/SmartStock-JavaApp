@@ -6,6 +6,7 @@ import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.EditItem;
+import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -35,6 +36,7 @@ public class AppMenuBar {
 
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
+        JMenuItem enterInventoryItem = new JMenuItem("Enter Inventory");
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
@@ -45,6 +47,7 @@ public class AppMenuBar {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
+        boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
 
@@ -58,6 +61,9 @@ public class AppMenuBar {
         }
         if (!canMakeSale || "MakeASale".equalsIgnoreCase(screenKey)) {
             makeSaleItem.setEnabled(false);
+        }
+        if (!canEnterInventory || "EnterInventory".equalsIgnoreCase(screenKey)) {
+            enterInventoryItem.setEnabled(false);
         }
         mainMenuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -97,6 +103,18 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openMakeSale(parent);
+            }
+        });
+
+        enterInventoryItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("ENTER_INVENTORY", parent, "Enter Inventory")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(EnterInventory.class)) {
+                    return;
+                }
+                NavigationManager.openEnterInventory(parent);
             }
         });
 
@@ -178,6 +196,7 @@ public class AppMenuBar {
         navigateMenu.add(mainMenuItem);
         navigateMenu.addSeparator();
         navigateMenu.add(makeSaleItem);
+        navigateMenu.add(enterInventoryItem);
         navigateMenu.add(newItemItem);
         navigateMenu.add(editItemItem);
         navigateMenu.add(ViewSalesItem);

@@ -9,8 +9,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class Roles_Permission extends JFrame {
 
@@ -42,6 +46,7 @@ public class Roles_Permission extends JFrame {
 
         addPermission("MAKE_SALE", "Make Sale");
         addPermission("NEW_ITEM", "Add Item");
+        addPermission("ENTER_INVENTORY", "Enter Inventory");
         addPermission("EDIT_ITEM", "Edit Item");
         addPermission("EMPLOYEE_MANAGEMENT", "Employee Management");
         addPermission("ROLE_MANAGEMENT", "Roles & Permission");
@@ -49,6 +54,8 @@ public class Roles_Permission extends JFrame {
         addPermission("VIEW_REPORTS", "View Reports");
         addPermission("VIEW_SALES", "View Sales");
         addPermission("VIEW_INVENTORY", "View Inventory");
+        addPermission("VIEW_ITEM_DETAILS", "View Item Details");
+        ensurePermissionDefinitionsExist();
 
         JScrollPane permScroll = new JScrollPane(permissionPanel);
 
@@ -89,6 +96,86 @@ public class Roles_Permission extends JFrame {
     private void addPermission(String key, String label) {
         JCheckBox cb = new JCheckBox(label);
         permissionCheckboxes.put(key, cb);
+    }
+
+    private void ensurePermissionDefinitionsExist() {
+        try (Connection conn = DB.getConnection()) {
+            Set<String> permissionColumns = getPermissionTableColumns(conn);
+            if (!permissionColumns.contains("permission_key")) {
+                throw new SQLException("The permissions table does not have a permission_key column.");
+            }
+
+            List<String> optionalColumns = new ArrayList<>();
+            if (permissionColumns.contains("permission_name")) {
+                optionalColumns.add("permission_name");
+            }
+            if (permissionColumns.contains("permission_label")) {
+                optionalColumns.add("permission_label");
+            }
+            if (permissionColumns.contains("name")) {
+                optionalColumns.add("name");
+            }
+            if (permissionColumns.contains("label")) {
+                optionalColumns.add("label");
+            }
+            if (permissionColumns.contains("description")) {
+                optionalColumns.add("description");
+            }
+
+            String columnsSql = "permission_key";
+            String selectSql = "?";
+            for (String column : optionalColumns) {
+                columnsSql += ", " + column;
+                selectSql += ", ?";
+            }
+
+            String insertSql = "INSERT INTO permissions (" + columnsSql + ") " +
+                    "SELECT " + selectSql + " " +
+                    "WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE UPPER(permission_key) = UPPER(?))";
+
+            try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
+                for (Map.Entry<String, JCheckBox> entry : permissionCheckboxes.entrySet()) {
+                    String key = entry.getKey();
+                    String label = entry.getValue().getText();
+
+                    int parameterIndex = 1;
+                    ps.setString(parameterIndex++, key);
+                    for (int i = 0; i < optionalColumns.size(); i++) {
+                        ps.setString(parameterIndex++, label);
+                    }
+                    ps.setString(parameterIndex, key);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to verify permission definitions.\n\n" + ex.getMessage(),
+                    "Permission Setup Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            ex.printStackTrace();
+        }
+    }
+
+    private Set<String> getPermissionTableColumns(Connection conn) throws SQLException {
+        Set<String> columns = new HashSet<>();
+        String sql = """
+                SELECT LOWER(column_name) AS column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'permissions'
+                """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                columns.add(rs.getString("column_name"));
+            }
+        }
+
+        return columns;
     }
 
     private void loadRoles() {
@@ -135,7 +222,7 @@ public class Roles_Permission extends JFrame {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String key = rs.getString("permission_key");
+                    String key = rs.getString("permission_key").toUpperCase();
                     if (permissionCheckboxes.containsKey(key)) {
                         permissionCheckboxes.get(key).setSelected(true);
                     }
@@ -154,6 +241,7 @@ public class Roles_Permission extends JFrame {
         try (Connection conn = DB.getConnection()) {
 
             conn.setAutoCommit(false);
+            ensureSelectedPermissionsExist(conn);
 
             // DELETE OLD
             try (PreparedStatement delete = conn.prepareStatement(
@@ -165,7 +253,7 @@ public class Roles_Permission extends JFrame {
             // INSERT NEW
             String insertSql = """
                     INSERT INTO role_permissions (role_id, permission_id)
-                    SELECT ?, permission_id FROM permissions WHERE permission_key = ?
+                    SELECT ?, permission_id FROM permissions WHERE UPPER(permission_key) = UPPER(?)
                     """;
 
             try (PreparedStatement insert = conn.prepareStatement(insertSql)) {
@@ -191,6 +279,25 @@ public class Roles_Permission extends JFrame {
 
         } catch (SQLException ex) {
             ex.printStackTrace();
+        }
+    }
+
+    private void ensureSelectedPermissionsExist(Connection conn) throws SQLException {
+        String sql = "SELECT permission_id FROM permissions WHERE UPPER(permission_key) = UPPER(?)";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Map.Entry<String, JCheckBox> entry : permissionCheckboxes.entrySet()) {
+                if (!entry.getValue().isSelected()) {
+                    continue;
+                }
+
+                ps.setString(1, entry.getKey());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Missing permission definition: " + entry.getKey());
+                    }
+                }
+            }
         }
     }
 

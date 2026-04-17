@@ -1,6 +1,7 @@
 package managers;
 
 import ui.screens.EditItem;
+import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -25,6 +26,7 @@ public final class NavigationManager {
     public enum ScreenType {
         MAIN_MENU,
         MAKE_SALE,
+        ENTER_INVENTORY,
         NEW_ITEM,
         EDIT_ITEM,
         VIEW_SALES,
@@ -58,6 +60,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.MAKE_SALE));
     }
 
+    public static void openEnterInventory(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.ENTER_INVENTORY));
+    }
+
     public static void openNewItem(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.NEW_ITEM));
     }
@@ -86,6 +92,7 @@ public final class NavigationManager {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
             case MAKE_SALE -> new MakeASale();
+            case ENTER_INVENTORY -> new EnterInventory();
             case NEW_ITEM -> new NewItem();
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
@@ -103,6 +110,7 @@ public final class NavigationManager {
         return switch (currentScreenName) {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
+            case "EnterInventory" -> ScreenType.ENTER_INVENTORY;
             case "NewItem" -> ScreenType.NEW_ITEM;
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;

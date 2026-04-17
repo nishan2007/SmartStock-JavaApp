@@ -100,10 +100,12 @@ public class PermissionManager {
                     || hasPermission("VIEW_SALES")
                     || hasPermission("VIEW_INVENTORY")
                     || hasPermission("NEW_ITEM")
+                    || hasPermission("ENTER_INVENTORY")
                     || hasPermission("EDIT_ITEM")
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT");
             case "MakeASale" -> hasPermission("MAKE_SALE");
+            case "EnterInventory" -> hasPermission("ENTER_INVENTORY");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "NewItem" -> hasPermission("NEW_ITEM");
