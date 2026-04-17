@@ -4,6 +4,7 @@ import managers.SessionManager;
 import data.DB;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
+import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -34,6 +35,7 @@ public class EditItem extends JFrame {
     private JTextField quantityField;
     private JTextField reorderLevelField;
     private JTextField categoryIdField;
+    private ProductImageHelper.ImageSelector imageSelector;
 
     private JButton saveButton;
     private JButton clearButton;
@@ -43,7 +45,7 @@ public class EditItem extends JFrame {
 
     public EditItem() {
         setTitle("Edit Item");
-        setSize(840, 470);
+        setSize(980, 620);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "EditItem"));
@@ -98,6 +100,7 @@ public class EditItem extends JFrame {
         quantityField = new JTextField();
         reorderLevelField = new JTextField();
         categoryIdField = new JTextField();
+        imageSelector = ProductImageHelper.createImageSelector(this);
 
         JScrollPane descriptionScrollPane = new JScrollPane(descriptionArea);
         descriptionScrollPane.setPreferredSize(new Dimension(240, 120));
@@ -214,6 +217,18 @@ public class EditItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 5;
         rightGbc.weightx = 0;
+        rightGbc.anchor = GridBagConstraints.NORTHWEST;
+        rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
+
+        rightGbc.gridx = 1;
+        rightGbc.weightx = 1;
+        rightGbc.weighty = 0;
+        rightGbc.fill = GridBagConstraints.HORIZONTAL;
+        rightColumn.add(imageSelector, rightGbc);
+
+        rightGbc.gridx = 0;
+        rightGbc.gridy = 6;
+        rightGbc.weightx = 0;
         rightGbc.weighty = 1;
         rightColumn.add(Box.createVerticalGlue(), rightGbc);
 
@@ -316,7 +331,8 @@ public class EditItem extends JFrame {
                        COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
                        COALESCE(i.reorder_level, 0) AS reorder_level,
                        p.category_id,
-                       c.name AS category_name
+                       c.name AS category_name,
+                       p.image_url
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.category_id
                 LEFT JOIN inventory i ON p.product_id = i.product_id AND i.location_id = ?
@@ -347,7 +363,8 @@ public class EditItem extends JFrame {
                         rs.getInt("quantity_on_hand"),
                         rs.getInt("reorder_level"),
                         rs.getObject("category_id") != null ? rs.getInt("category_id") : "",
-                        rs.getString("category_name") != null ? rs.getString("category_name") : ""
+                        rs.getString("category_name") != null ? rs.getString("category_name") : "",
+                        rs.getString("image_url") != null ? rs.getString("image_url") : ""
                 });
             }
 
@@ -356,7 +373,7 @@ public class EditItem extends JFrame {
                 return;
             }
 
-            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Category ID", "Category"};
+            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Category ID", "Category", "Image URL"};
             DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -367,6 +384,9 @@ public class EditItem extends JFrame {
             JTable table = new JTable(model);
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             table.setRowSelectionInterval(0, 0);
+            table.getColumnModel().getColumn(11).setMinWidth(0);
+            table.getColumnModel().getColumn(11).setMaxWidth(0);
+            table.getColumnModel().getColumn(11).setPreferredWidth(0);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(550, 200));
 
@@ -400,6 +420,7 @@ public class EditItem extends JFrame {
                 Object reorderLevel = table.getValueAt(selectedRow, 8);
                 Object categoryId = table.getValueAt(selectedRow, 9);
                 Object categoryName = table.getValueAt(selectedRow, 10);
+                Object imageUrl = table.getValueAt(selectedRow, 11);
 
                 nameField.setText(name);
                 skuField.setText(sku);
@@ -412,6 +433,7 @@ public class EditItem extends JFrame {
                 categoryIdField.setText(categoryId != null ? categoryId.toString() : "");
                 categoryIdField.setToolTipText(categoryName != null && !categoryName.toString().isBlank() ? "Category: " + categoryName : null);
                 barcodesArea.setText(loadAdditionalBarcodes(selectedProductId));
+                imageSelector.setImageUrl(imageUrl != null ? imageUrl.toString() : "");
 
                 setFormEnabled(true);
             }
@@ -500,6 +522,14 @@ public class EditItem extends JFrame {
         String quantityText = quantityField.getText().trim();
         String reorderLevelText = reorderLevelField.getText().trim();
         String categoryIdText = categoryIdField.getText().trim();
+        String imageUrl;
+        try {
+            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
+            imageSelector.setImageUrl(imageUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage());
+            return;
+        }
 
         List<String> extraBarcodes = new ArrayList<>();
         Set<String> uniqueBarcodes = new LinkedHashSet<>();
@@ -582,7 +612,7 @@ public class EditItem extends JFrame {
             }
         }
 
-        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ? WHERE product_id = ?";
+        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ?, image_url = ? WHERE product_id = ?";
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
                 VALUES (?, ?, ?, ?)
@@ -616,7 +646,8 @@ public class EditItem extends JFrame {
                     updatePs.setNull(7, java.sql.Types.INTEGER);
                 }
 
-                updatePs.setInt(8, selectedProductId);
+                updatePs.setString(8, imageUrl);
+                updatePs.setInt(9, selectedProductId);
 
                 int rowsUpdated = updatePs.executeUpdate();
                 if (rowsUpdated == 0) {
@@ -673,6 +704,7 @@ public class EditItem extends JFrame {
         reorderLevelField.setText("");
         categoryIdField.setText("");
         categoryIdField.setToolTipText(null);
+        imageSelector.setImageUrl("");
         searchField.setText("");
         setFormEnabled(false);
         searchField.requestFocusInWindow();
@@ -689,6 +721,7 @@ public class EditItem extends JFrame {
         quantityField.setEnabled(enabled);
         reorderLevelField.setEnabled(enabled);
         categoryIdField.setEnabled(enabled);
+        imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
         clearButton.setEnabled(enabled);
     }

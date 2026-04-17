@@ -40,6 +40,14 @@ public final class SupabaseSessionManager {
         return SessionManager.getCurrentRefreshToken();
     }
 
+    public static String getSupabaseUrl() {
+        return SUPABASE_URL;
+    }
+
+    public static String getSupabasePublishableKey() {
+        return SUPABASE_PUBLISHABLE_KEY;
+    }
+
     public static synchronized String getValidAccessToken() throws IOException, InterruptedException {
         ensureConfig();
 

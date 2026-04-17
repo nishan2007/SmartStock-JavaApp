@@ -3,6 +3,7 @@ package ui.screens;
 import data.DB;
 import ui.components.AppMenuBar;
 import ui.components.RoundedBorder;
+import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
 import java.awt.*;
@@ -27,6 +28,7 @@ public class NewItem extends JFrame {
     private JTextField priceField;
     private JTextField categoryIdField;
     private JTextField quantityField;
+    private ProductImageHelper.ImageSelector imageSelector;
     private JButton saveButton;
     private JButton clearButton;
     private JButton cancelButton;
@@ -39,7 +41,7 @@ public class NewItem extends JFrame {
     public NewItem(int selectedLocationId) {
         this.selectedLocationId = selectedLocationId;
         setTitle("Add New Item");
-        setSize(840, 470);
+        setSize(980, 620);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this,"NewItem"));
@@ -84,6 +86,7 @@ public class NewItem extends JFrame {
         priceField = new JTextField();
         categoryIdField = new JTextField();
         quantityField = new JTextField("0");
+        imageSelector = ProductImageHelper.createImageSelector(this);
 
         JScrollPane barcodeScrollPane = new JScrollPane(barcodesArea);
         barcodeScrollPane.setPreferredSize(new Dimension(220, 75));
@@ -192,6 +195,18 @@ public class NewItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 3;
         rightGbc.weightx = 0;
+        rightGbc.anchor = GridBagConstraints.NORTHWEST;
+        rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
+
+        rightGbc.gridx = 1;
+        rightGbc.weightx = 1;
+        rightGbc.weighty = 0;
+        rightGbc.fill = GridBagConstraints.HORIZONTAL;
+        rightColumn.add(imageSelector, rightGbc);
+
+        rightGbc.gridx = 0;
+        rightGbc.gridy = 4;
+        rightGbc.weightx = 0;
         rightGbc.weighty = 1;
         rightColumn.add(Box.createVerticalGlue(), rightGbc);
 
@@ -248,6 +263,14 @@ public class NewItem extends JFrame {
         String priceText = priceField.getText().trim();
         String categoryIdText = categoryIdField.getText().trim();
         String quantityText = quantityField.getText().trim();
+        String imageUrl;
+        try {
+            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
+            imageSelector.setImageUrl(imageUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage());
+            return;
+        }
         List<String> extraBarcodes = new ArrayList<>();
         Set<String> uniqueBarcodes = new LinkedHashSet<>();
         if (!barcodesText.isEmpty()) {
@@ -305,9 +328,9 @@ public class NewItem extends JFrame {
 
         String sql;
         if (categoryId == null) {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price) VALUES (?, ?, ?, ?, ?, ?)";
+            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)";
         } else {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         }
 
         String updateInventorySql = "UPDATE inventory SET quantity_on_hand = ? WHERE product_id = ? AND location_id = ?";
@@ -329,6 +352,9 @@ public class NewItem extends JFrame {
 
                 if (categoryId != null) {
                     ps.setInt(7, categoryId);
+                    ps.setString(8, imageUrl);
+                } else {
+                    ps.setString(7, imageUrl);
                 }
 
                 ps.executeUpdate();
@@ -384,6 +410,7 @@ public class NewItem extends JFrame {
         priceField.setText("");
         categoryIdField.setText("");
         quantityField.setText("0");
+        imageSelector.setImageUrl("");
         nameField.requestFocusInWindow();
     }
 }

@@ -12,6 +12,7 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.File;
 import java.sql.Connection;
 
 
@@ -30,7 +31,7 @@ public class MainMenu extends JFrame {
     public MainMenu() {
         setTitle("SmartStock - Main Menu");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(1000, 650);
+        setSize(1100, 720);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
@@ -58,9 +59,6 @@ public class MainMenu extends JFrame {
         headerPanel.add(Box.createVerticalStrut(8));
         headerPanel.add(subtitleLabel);
 
-        JPanel gridPanel = new JPanel(new GridLayout(2, 4, 20, 20));
-        gridPanel.setOpaque(false);
-
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
         enterInventoryButton = createMenuButton("Enter Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
@@ -71,14 +69,43 @@ public class MainMenu extends JFrame {
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
         applyPermissions();
 
-        gridPanel.add(makeSaleButton);
-        gridPanel.add(enterInventoryButton);
-        gridPanel.add(viewSalesButton);
-        gridPanel.add(viewInventoryButton);
-        gridPanel.add(addItemButton);
-        gridPanel.add(editItemsButton);
-        gridPanel.add(employeeManagementButton);
-        gridPanel.add(rolesPermissionsButton);
+        JPanel sectionStackPanel = new JPanel();
+        sectionStackPanel.setLayout(new BoxLayout(sectionStackPanel, BoxLayout.Y_AXIS));
+        sectionStackPanel.setOpaque(false);
+        sectionStackPanel.add(createSectionPanel(
+                "Point of Sale",
+                new Color(37, 99, 235),
+                makeSaleButton,
+                viewSalesButton
+        ));
+        sectionStackPanel.add(Box.createVerticalStrut(18));
+        sectionStackPanel.add(createSectionPanel(
+                "Inventory",
+                new Color(5, 150, 105),
+                enterInventoryButton,
+                viewInventoryButton,
+                addItemButton,
+                editItemsButton
+        ));
+        sectionStackPanel.add(Box.createVerticalStrut(18));
+        sectionStackPanel.add(createSectionPanel(
+                "Employee",
+                new Color(217, 119, 6),
+                employeeManagementButton
+        ));
+        sectionStackPanel.add(Box.createVerticalStrut(18));
+        sectionStackPanel.add(createSectionPanel(
+                "Admin",
+                new Color(124, 58, 237),
+                rolesPermissionsButton
+        ));
+
+        JScrollPane sectionScrollPane = new JScrollPane(sectionStackPanel);
+        sectionScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        sectionScrollPane.setOpaque(false);
+        sectionScrollPane.getViewport().setOpaque(false);
+        sectionScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        sectionScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 
         logoutButton = new JButton("Logout");
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
@@ -90,7 +117,7 @@ public class MainMenu extends JFrame {
         footerPanel.add(logoutButton);
 
         mainPanel.add(headerPanel, BorderLayout.NORTH);
-        mainPanel.add(gridPanel, BorderLayout.CENTER);
+        mainPanel.add(sectionScrollPane, BorderLayout.CENTER);
         mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         add(mainPanel, BorderLayout.CENTER);
@@ -98,9 +125,77 @@ public class MainMenu extends JFrame {
         wireWindowSessionHandling();
     }
     private ImageIcon loadIcon(String path) {
-        ImageIcon icon = new ImageIcon(path);
+        ImageIcon icon = null;
+        String fileName = new File(path).getName();
+        java.net.URL resource = getClass().getResource("/ICONS/" + fileName);
+        if (resource != null) {
+            icon = new ImageIcon(resource);
+        }
+
+        if (icon == null || icon.getIconWidth() <= 0) {
+            icon = new ImageIcon(path);
+        }
+
+        if (icon.getIconWidth() <= 0) {
+            icon = new ImageIcon("SmartStock/" + path);
+        }
+
+        if (icon.getIconWidth() <= 0) {
+            return createFallbackIcon();
+        }
+
         Image img = icon.getImage().getScaledInstance(48, 48, Image.SCALE_SMOOTH);
         return new ImageIcon(img);
+    }
+
+    private ImageIcon createFallbackIcon() {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(48, 48, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = image.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(new Color(226, 232, 240));
+        g.fillRoundRect(4, 4, 40, 40, 8, 8);
+        g.setColor(new Color(100, 116, 139));
+        g.setStroke(new BasicStroke(3f));
+        g.drawRoundRect(4, 4, 40, 40, 8, 8);
+        g.dispose();
+        return new ImageIcon(image);
+    }
+
+    private JPanel createSectionPanel(String title, Color accentColor, JButton... buttons) {
+        JPanel sectionPanel = new JPanel(new BorderLayout(0, 14));
+        sectionPanel.setBackground(Color.WHITE);
+        sectionPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
+                new EmptyBorder(16, 16, 16, 16)
+        ));
+        sectionPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        sectionPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 170));
+        sectionPanel.setPreferredSize(new Dimension(1000, 170));
+
+        JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
+        headerPanel.setOpaque(false);
+
+        JPanel accentBar = new JPanel();
+        accentBar.setBackground(accentColor);
+        accentBar.setPreferredSize(new Dimension(5, 28));
+
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        titleLabel.setForeground(new Color(32, 41, 57));
+
+        headerPanel.add(accentBar, BorderLayout.WEST);
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        buttonPanel.setOpaque(false);
+
+        for (JButton button : buttons) {
+            buttonPanel.add(button);
+        }
+
+        sectionPanel.add(headerPanel, BorderLayout.NORTH);
+        sectionPanel.add(buttonPanel, BorderLayout.CENTER);
+        return sectionPanel;
     }
 
     public void applyPermissions() {
@@ -210,15 +305,21 @@ public class MainMenu extends JFrame {
                 new EmptyBorder(18, 18, 18, 18)
         ));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setHorizontalAlignment(SwingConstants.LEFT);
+        button.setPreferredSize(new Dimension(245, 88));
+        button.setMinimumSize(new Dimension(245, 88));
+        button.setMaximumSize(new Dimension(245, 88));
 
         JLabel iconLabel = new JLabel(icon);
         iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        iconLabel.setPreferredSize(new Dimension(64, 64));
+        iconLabel.setPreferredSize(new Dimension(54, 54));
+        iconLabel.setMinimumSize(new Dimension(54, 54));
+        iconLabel.setMaximumSize(new Dimension(54, 54));
 
         JLabel titleLabel = new JLabel(title);
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
 
-        JLabel descriptionLabel = new JLabel("<html><div style='width:180px; color:#666666;'>" + description + "</div></html>");
+        JLabel descriptionLabel = new JLabel("<html><div style='width:170px; color:#666666;'>" + description + "</div></html>");
         descriptionLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
 
         JPanel textPanel = new JPanel();
@@ -228,7 +329,7 @@ public class MainMenu extends JFrame {
         textPanel.add(Box.createVerticalStrut(8));
         textPanel.add(descriptionLabel);
 
-        button.add(iconLabel, BorderLayout.NORTH);
+        button.add(iconLabel, BorderLayout.WEST);
         button.add(textPanel, BorderLayout.CENTER);
 
         return button;

@@ -41,7 +41,7 @@ public class EmployeeManagement extends JFrame {
     private JTextField emailField;
     private JTextField phoneField;
     private JTextField badgeIdField;
-    private JComboBox<String> roleBox;
+    private JComboBox<RoleOption> roleBox;
     private JCheckBox activeCheckBox;
 
     private JButton addButton;
@@ -119,7 +119,7 @@ public class EmployeeManagement extends JFrame {
         emailField = new JTextField();
         phoneField = new JTextField();
         badgeIdField = new JTextField();
-        roleBox = new JComboBox<>(new String[]{"ADMIN", "MANAGER", "CASHIER"});
+        roleBox = new JComboBox<>();
         activeCheckBox = new JCheckBox("Active", true);
         activeCheckBox.setEnabled(true);
 
@@ -284,6 +284,7 @@ public class EmployeeManagement extends JFrame {
         refreshButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                loadRoles();
                 loadEmployees();
             }
         });
@@ -312,8 +313,34 @@ public class EmployeeManagement extends JFrame {
 
         assignStoresButton.setEnabled(false);
         deleteButton.setEnabled(false);
+        loadRoles();
         loadEmployees();
         setVisible(true);
+    }
+
+    private void loadRoles() {
+        roleBox.removeAllItems();
+
+        String sql = "SELECT role_name FROM roles ORDER BY role_name";
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                String roleName = rs.getString("role_name");
+                if (roleName != null && !roleName.isBlank()) {
+                    roleBox.addItem(new RoleOption(roleName));
+                }
+            }
+
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load roles: " + ex.getMessage());
+        }
+
+        if (roleBox.getItemCount() == 0) {
+            roleBox.addItem(new RoleOption("USER"));
+        }
     }
 
     private void loadEmployees() {
@@ -368,7 +395,7 @@ public class EmployeeManagement extends JFrame {
         emailField.setText(employeeModel.getValueAt(selectedRow, 3) == null ? "" : employeeModel.getValueAt(selectedRow, 3).toString());
         phoneField.setText(employeeModel.getValueAt(selectedRow, 4) == null ? "" : employeeModel.getValueAt(selectedRow, 4).toString());
         badgeIdField.setText(employeeModel.getValueAt(selectedRow, 5) == null ? "" : employeeModel.getValueAt(selectedRow, 5).toString());
-        roleBox.setSelectedItem(employeeModel.getValueAt(selectedRow, 6).toString());
+        selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 6)));
 
         Object activeValue = employeeModel.getValueAt(selectedRow, 7);
         activeCheckBox.setSelected(activeValue instanceof Boolean ? (Boolean) activeValue : true);
@@ -385,7 +412,7 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
-        String role = roleBox.getSelectedItem().toString();
+        String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
         if (username.isEmpty() || password.isEmpty() || email.isEmpty()) {
@@ -401,7 +428,7 @@ public class EmployeeManagement extends JFrame {
 
                 String sql = """
                         INSERT INTO users (username, password_hash, full_name, email, phone, badge_id, role_id, auth_user_id, is_active)
-                        VALUES (?, NULL, ?, ?, ?, ?, (SELECT role_id FROM roles WHERE role_name = ?), ?::uuid, ?)
+                        VALUES (?, NULL, ?, ?, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
                         """;
 
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -445,7 +472,7 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
-        String role = roleBox.getSelectedItem().toString();
+        String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
         if (username.isEmpty() || email.isEmpty()) {
@@ -476,7 +503,7 @@ public class EmployeeManagement extends JFrame {
                             email = ?,
                             phone = ?,
                             badge_id = ?,
-                            role_id = (SELECT role_id FROM roles WHERE role_name = ?),
+                            role_id = (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)),
                             auth_user_id = ?::uuid,
                             is_active = ?
                         WHERE user_id = ?
@@ -527,6 +554,64 @@ public class EmployeeManagement extends JFrame {
         assignStoresButton.setEnabled(false);
         deleteButton.setEnabled(false);
         usernameField.requestFocusInWindow();
+    }
+
+    private String getSelectedRole() {
+        Object selectedRole = roleBox.getSelectedItem();
+        if (selectedRole instanceof RoleOption roleOption) {
+            return roleOption.roleName;
+        }
+        return selectedRole == null ? "" : selectedRole.toString();
+    }
+
+    private void selectRole(String roleName) {
+        if (roleName == null) {
+            roleBox.setSelectedIndex(roleBox.getItemCount() > 0 ? 0 : -1);
+            return;
+        }
+
+        for (int i = 0; i < roleBox.getItemCount(); i++) {
+            RoleOption option = roleBox.getItemAt(i);
+            if (option.roleName.equalsIgnoreCase(roleName)) {
+                roleBox.setSelectedIndex(i);
+                return;
+            }
+        }
+    }
+
+    private static String formatRoleName(String roleName) {
+        if (roleName == null || roleName.isBlank()) {
+            return "";
+        }
+
+        String[] words = roleName.trim().replace("_", " ").split("\\s+");
+        StringBuilder formatted = new StringBuilder();
+        for (String word : words) {
+            if (word.isBlank()) {
+                continue;
+            }
+            if (!formatted.isEmpty()) {
+                formatted.append(" ");
+            }
+            formatted.append(Character.toUpperCase(word.charAt(0)));
+            if (word.length() > 1) {
+                formatted.append(word.substring(1).toLowerCase());
+            }
+        }
+        return formatted.toString();
+    }
+
+    private static class RoleOption {
+        private final String roleName;
+
+        private RoleOption(String roleName) {
+            this.roleName = roleName;
+        }
+
+        @Override
+        public String toString() {
+            return formatRoleName(roleName);
+        }
     }
 
     private void deleteSupabaseAuthUser(String authUserId) throws IOException, InterruptedException {

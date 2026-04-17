@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.SessionManager;
+import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -93,6 +94,8 @@ public class ViewInventoryDetails extends JDialog {
         metricsPanel.add(buildMetricPanel("Price", moneyValue(itemDetails.get("Price", ""))));
         metricsPanel.add(buildMetricPanel("Status", getStockStatus(itemDetails)));
 
+        JLabel imagePreview = ProductImageHelper.createImagePreview(itemDetails.get("Image Url", ""), 150, 110);
+        header.add(imagePreview, BorderLayout.WEST);
         header.add(titlePanel, BorderLayout.CENTER);
         header.add(metricsPanel, BorderLayout.EAST);
         return header;
@@ -145,7 +148,7 @@ public class ViewInventoryDetails extends JDialog {
 
         gbc.gridx = 0;
         content.add(buildSection("Product", itemDetails, List.of(
-                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name"
+                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name", "Image Url"
         )), gbc);
 
         gbc.gridx = 1;

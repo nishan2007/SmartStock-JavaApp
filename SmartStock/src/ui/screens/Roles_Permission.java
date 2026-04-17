@@ -332,7 +332,29 @@ public class Roles_Permission extends JFrame {
 
         @Override
         public String toString() {
-            return name;
+            return formatRoleName(name);
         }
+    }
+
+    private static String formatRoleName(String roleName) {
+        if (roleName == null || roleName.isBlank()) {
+            return "";
+        }
+
+        String[] words = roleName.trim().replace("_", " ").split("\\s+");
+        StringBuilder formatted = new StringBuilder();
+        for (String word : words) {
+            if (word.isBlank()) {
+                continue;
+            }
+            if (!formatted.isEmpty()) {
+                formatted.append(" ");
+            }
+            formatted.append(Character.toUpperCase(word.charAt(0)));
+            if (word.length() > 1) {
+                formatted.append(word.substring(1).toLowerCase());
+            }
+        }
+        return formatted.toString();
     }
 }
