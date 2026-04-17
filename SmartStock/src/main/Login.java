@@ -1,5 +1,9 @@
 package main;
 
+import Managers.SupabaseSessionManager;
+import device.DeviceService;
+import Managers.SessionManager;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -20,14 +24,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Login extends JFrame {
-
-    public static Integer currentUserId;
-    public static String currentUsername;
-    public static String currentRole;
-    public static Integer currentLocationId;
-    public static String currentLocationName;
-    public static String currentAccessToken;
-    public static String currentRefreshToken;
 
     private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
     private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
@@ -200,20 +196,21 @@ public class Login extends JFrame {
                     }
                 }
 
-                currentUserId = userId;
-                currentUsername = foundUsername;
-                currentRole = role;
-                currentLocationId = selectedLocation.locationId;
-                currentLocationName = selectedLocation.locationName;
-                currentAccessToken = authResult.accessToken;
-                currentRefreshToken = authResult.refreshToken;
-                SupabaseSessionManager.setSession(authResult.accessToken, authResult.refreshToken);
+                SessionManager.setCurrentUserId(userId);
+                SessionManager.setCurrentUsername(foundUsername);
+                SessionManager.setCurrentRole(role);
+                SessionManager.setCurrentLocationId(selectedLocation.locationId);
+                SessionManager.setCurrentLocationName(selectedLocation.locationName);
+                SessionManager.setCurrentAccessToken(authResult.accessToken);
+                SessionManager.setCurrentRefreshToken(authResult.refreshToken);
+                SupabaseSessionManager.setSession(SessionManager.getCurrentAccessToken(), SessionManager.getCurrentRefreshToken());
+                DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
 
                 JOptionPane.showMessageDialog(
                         this,
-                        "Login successful.\nUser: " + currentUsername +
-                                "\nRole: " + currentRole +
-                                "\nStore: " + currentLocationName
+                        "Login successful.\nUser: " + SessionManager.getCurrentUsername() +
+                                "\nRole: " + SessionManager.getCurrentRole() +
+                                "\nStore: " + SessionManager.getCurrentLocationName()
                 );
 
                 dispose();
@@ -301,6 +298,7 @@ public class Login extends JFrame {
                 .replace("\\\\", "\\");
     }
 
+
     private static class SupabaseLoginResult {
         private final boolean success;
         private final String message;
@@ -318,8 +316,7 @@ public class Login extends JFrame {
     private void clearFields() {
         usernameField.setText("");
         passwordField.setText("");
-        currentAccessToken = null;
-        currentRefreshToken = null;
+        SessionManager.clearSessionState();
         SupabaseSessionManager.clearSession();
         usernameField.requestFocusInWindow();
     }

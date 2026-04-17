@@ -1,4 +1,9 @@
 package main;
+import device.DeviceService;
+import Managers.SessionManager;
+import Managers.SupabaseSessionManager;
+import Managers.NavigationManager;
+import Managers.PermissionManager;
 
 import javax.swing.*;
 import java.awt.event.ActionEvent;
@@ -51,8 +56,7 @@ public class AppMenuBar {
                     parent.dispose();
                     return;
                 }
-                new MainMenu().setVisible(true);
-                parent.dispose();
+                NavigationManager.showMainMenu(parent);
             }
         });
         if (!canNewItem || "NewItem".equalsIgnoreCase(screenKey)) {
@@ -83,8 +87,7 @@ public class AppMenuBar {
                     parent.dispose();
                     return;
                 }
-                new MakeASale().setVisible(true);
-                parent.dispose();
+                NavigationManager.openMakeSale(parent);
             }
         });
 
@@ -96,9 +99,7 @@ public class AppMenuBar {
                 if (WindowHelper.focusIfAlreadyOpen(NewItem.class)) {
                     return;
                 }
-                NewItem screen = new NewItem();
-                screen.setLocationRelativeTo(parent);
-                screen.setVisible(true);
+                NavigationManager.openNewItem(parent);
             }
         });
 
@@ -110,9 +111,7 @@ public class AppMenuBar {
                 if (WindowHelper.focusIfAlreadyOpen(EditItem.class)) {
                     return;
                 }
-                EditItem screen = new EditItem();
-                screen.setLocationRelativeTo(parent);
-                screen.setVisible(true);
+                NavigationManager.openEditItem(parent);
             }
         });
 
@@ -124,9 +123,7 @@ public class AppMenuBar {
                   if (WindowHelper.focusIfAlreadyOpen(ViewSales.class)) {
                        return;
                   }
-                  ViewSales screen = new ViewSales();
-                  screen.setLocationRelativeTo(parent);
-                  screen.setVisible(true);
+                  NavigationManager.openViewSales(parent);
              }
         });
 
@@ -139,9 +136,7 @@ public class AppMenuBar {
                 if (WindowHelper.focusIfAlreadyOpen(ViewInventory.class)) {
                 return;
                 }
-                ViewInventory screen = new ViewInventory();
-                screen.setLocationRelativeTo(parent);
-                screen.setVisible(true);
+                NavigationManager.openViewInventory(parent);
             }
         });
 
@@ -155,9 +150,7 @@ public class AppMenuBar {
                 if (WindowHelper.focusIfAlreadyOpen(EmployeeManagement.class)) {
                     return;
                 }
-                EmployeeManagement screen = new EmployeeManagement();
-                screen.setLocationRelativeTo(parent); // open centered on top
-                screen.setVisible(true);
+                NavigationManager.openEmployeeManagement(parent);
             }
         });
 
@@ -169,9 +162,7 @@ public class AppMenuBar {
                 if (WindowHelper.focusIfAlreadyOpen(Roles_Permission.class)) {
                     return;
                 }
-                Roles_Permission screen = new Roles_Permission();
-                screen.setLocationRelativeTo(parent);
-                screen.setVisible(true);
+                NavigationManager.openRolesPermission(parent);
             }
         });
 
@@ -202,12 +193,26 @@ public class AppMenuBar {
         });
         closeItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
+                try (Connection conn = DB.getConnection()) {
+                    DeviceService.endCurrentSession(conn);
+                } catch (SQLException ex) {
+                    ex.printStackTrace();
+                }
                 parent.dispose();
             }
         });
 
         logoutItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
+                try (Connection conn = DB.getConnection()) {
+                    DeviceService.endCurrentSession(conn);
+                } catch (SQLException ex) {
+                    ex.printStackTrace();
+                }
+
+                SessionManager.clearSessionState();
+                SupabaseSessionManager.clearSession();
+
                 Login login = new Login();
                 login.setLocationRelativeTo(parent);
                 parent.dispose();
@@ -230,6 +235,8 @@ public class AppMenuBar {
 
         return menuBar;
     }
+
+
     private static void showChangeLocationDialog(JFrame parent, String currentScreen) {
         if (!PermissionManager.hasPermission("CHANGE_STORE")) {
             JOptionPane.showMessageDialog(
@@ -275,7 +282,7 @@ public class AppMenuBar {
                 if (updated) {
                     JOptionPane.showMessageDialog(
                             parent,
-                            "Current store changed to: " + Login.currentLocationName,
+                            "Current store changed to: " + SessionManager.getCurrentLocationName(),
                             "Store Updated",
                             JOptionPane.INFORMATION_MESSAGE
                     );
@@ -297,58 +304,7 @@ public class AppMenuBar {
             return;
         }
 
-        SwingUtilities.invokeLater(() -> {
-            switch (currentScreen) {
-                case "MainMenu" -> {
-                    JFrame refreshed = new MainMenu();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "MakeASale" -> {
-                    JFrame refreshed = new MakeASale();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "NewItem" -> {
-                    JFrame refreshed = new NewItem();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "EditItem" -> {
-                    JFrame refreshed = new EditItem();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "ViewSales" -> {
-                    JFrame refreshed = new ViewSales();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "ViewInventory" -> {
-                    JFrame refreshed = new ViewInventory();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "EmployeeManagement" -> {
-                    JFrame refreshed = new EmployeeManagement();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-                case "Roles_Permission" -> {
-                    JFrame refreshed = new Roles_Permission();
-                    refreshed.setLocationRelativeTo(parent);
-                    refreshed.setVisible(true);
-                    parent.dispose();
-                }
-            }
-        });
+        SwingUtilities.invokeLater(() -> NavigationManager.refreshCurrentScreen(parent, currentScreen));
     }
 
     private static StoreOption findCurrentStoreOption(List<StoreOption> allowedStores) {
@@ -367,7 +323,7 @@ public class AppMenuBar {
     }
 
     private static Integer getCurrentStoreIdFromSession() {
-        return Login.currentLocationId;
+        return SessionManager.getCurrentLocationId();
     }
 
     private static boolean setCurrentStoreInSession(int storeId) {
@@ -375,8 +331,8 @@ public class AppMenuBar {
 
         for (StoreOption store : stores) {
             if (store.id == storeId) {
-                Login.currentLocationId = store.id;
-                Login.currentLocationName = store.label;
+                SessionManager.setCurrentLocationId(store.id);
+                SessionManager.setCurrentLocationName(store.label);
                 return true;
             }
         }
@@ -387,7 +343,7 @@ public class AppMenuBar {
     private static List<StoreOption> getAllowedStoresFromSession() {
         List<StoreOption> stores = new ArrayList<>();
 
-        if (Login.currentUserId == null) {
+        if (SessionManager.getCurrentUserId() == null) {
             return stores;
         }
 
@@ -402,7 +358,7 @@ public class AppMenuBar {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(storesSql)) {
 
-            ps.setInt(1, Login.currentUserId);
+            ps.setInt(1, SessionManager.getCurrentUserId());
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

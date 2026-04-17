@@ -1,4 +1,7 @@
+
 package main;
+
+import Managers.SessionManager;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -194,6 +197,11 @@ public class ViewSales extends JFrame {
         );
 
         Vector<Object> parameters = new Vector<>();
+
+        if (SessionManager.getCurrentLocationId() != null) {
+            sql.append("AND s.location_id = ? ");
+            parameters.add(SessionManager.getCurrentLocationId());
+        }
 
         String searchText = searchField.getText().trim();
         if (!searchText.isEmpty()) {

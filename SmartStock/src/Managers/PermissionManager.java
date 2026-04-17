@@ -1,4 +1,7 @@
-package main;
+package Managers;
+
+import main.DB;
+import main.AppMenuBar;
 
 import javax.swing.*;
 import java.awt.*;
@@ -15,10 +18,10 @@ public class PermissionManager {
     private static Set<String> cachedPermissions;
 
     public static String getCurrentRole() {
-        if (Login.currentRole == null || Login.currentRole.isBlank()) {
+        if (SessionManager.getCurrentRole() == null || SessionManager.getCurrentRole().isBlank()) {
             return "USER";
         }
-        return Login.currentRole.trim().toUpperCase();
+        return SessionManager.getCurrentRole().trim().toUpperCase();
     }
 
     public static boolean hasPermission(String permissionKey) {

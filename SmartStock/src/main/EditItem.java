@@ -1,5 +1,7 @@
 package main;
 
+import Managers.SessionManager;
+
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -276,7 +278,7 @@ public class EditItem extends JFrame {
     }
 
     private Integer getCurrentSelectedLocationId() {
-        return Login.currentLocationId;
+        return SessionManager.getCurrentLocationId();
     }
 
     private Integer requireCurrentSelectedLocationId() {
@@ -365,8 +367,8 @@ public class EditItem extends JFrame {
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(550, 200));
 
-            String storeLabel = Login.currentLocationName != null && !Login.currentLocationName.isBlank()
-                    ? Login.currentLocationName
+            String storeLabel = SessionManager.getCurrentLocationName() != null && !SessionManager.getCurrentLocationName().isBlank()
+                    ? SessionManager.getCurrentLocationName()
                     : "the currently selected store";
 
             int result = JOptionPane.showConfirmDialog(

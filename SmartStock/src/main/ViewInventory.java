@@ -1,5 +1,7 @@
 package main;
 
+import Managers.SessionManager;
+
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -304,7 +306,7 @@ public class ViewInventory extends JFrame {
 
     private Integer getCurrentLocationId() {
         try {
-            return Login.currentLocationId;
+            return SessionManager.getCurrentLocationId();
         } catch (Exception e) {
             return null;
         }
@@ -312,8 +314,8 @@ public class ViewInventory extends JFrame {
 
     private String getCurrentLocationName() {
         try {
-            if (Login.currentLocationName != null && !Login.currentLocationName.isBlank()) {
-                return Login.currentLocationName;
+            if (SessionManager.getCurrentLocationName() != null && !SessionManager.getCurrentLocationName().isBlank()) {
+                return SessionManager.getCurrentLocationName();
             }
         } catch (Exception ignored) {
         }

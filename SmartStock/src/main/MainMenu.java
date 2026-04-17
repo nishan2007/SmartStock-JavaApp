@@ -1,8 +1,16 @@
 package main;
+import Managers.NavigationManager;
+import Managers.PermissionManager;
+import Managers.SupabaseSessionManager;
+import Managers.SessionManager;
+import device.DeviceService;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.sql.Connection;
 
 
 public class MainMenu extends JFrame {
@@ -83,6 +91,7 @@ public class MainMenu extends JFrame {
 
         add(mainPanel, BorderLayout.CENTER);
         wireActions();
+        wireWindowSessionHandling();
     }
     private ImageIcon loadIcon(String path) {
         ImageIcon icon = new ImageIcon(path);
@@ -90,7 +99,7 @@ public class MainMenu extends JFrame {
         return new ImageIcon(img);
     }
 
-    private void applyPermissions() {
+    public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
@@ -108,59 +117,76 @@ public class MainMenu extends JFrame {
         rolesPermissionsButton.setEnabled(canRolesPermissions);
     }
 
+
+
     private void wireActions() {
         makeSaleButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("MAKE_SALE", this, "Make a Sale")) {
                 return;
             }
-            openScreen(new MakeASale());
+            NavigationManager.openMakeSale(this);
         });
         viewSalesButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_SALES", this, "View Sales")) {
                 return;
             }
-            openScreen(new ViewSales());
+            NavigationManager.openViewSales(this);
         });
         viewInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_INVENTORY", this, "View Inventory")) {
                 return;
             }
-            openScreen(new ViewInventory());
+            NavigationManager.openViewInventory(this);
         });
         addItemButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("NEW_ITEM", this, "Add Item")) {
                 return;
             }
-            openScreen(new NewItem());
+            NavigationManager.openNewItem(this);
         });
         editItemsButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("EDIT_ITEM", this, "Edit Items")) {
                 return;
             }
-            openScreen(new EditItem());
+            NavigationManager.openEditItem(this);
         });
         employeeManagementButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("EMPLOYEE_MANAGEMENT", this, "Employee Management")) {
                 return;
             }
-            openScreen(new EmployeeManagement());
+            NavigationManager.openEmployeeManagement(this);
         });
         rolesPermissionsButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("ROLE_MANAGEMENT", this, "Roles & Permissions")) {
                 return;
             }
-            openScreen(new Roles_Permission());
+            NavigationManager.openRolesPermission(this);
         });
 
         logoutButton.addActionListener(e -> {
+            endSessionSafely();
+            SessionManager.clearSessionState();
+            SupabaseSessionManager.clearSession();
             dispose();
             new Login().setVisible(true);
         });
     }
 
-    private void openScreen(JFrame screen) {
-        screen.setVisible(true);
-        dispose();
+    private void wireWindowSessionHandling() {
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                endSessionSafely();
+            }
+        });
+    }
+
+    private void endSessionSafely() {
+        try (Connection conn = DB.getConnection()) {
+            DeviceService.endCurrentSession(conn);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
     }
 
     private JButton createMenuButton(String title, String description, Icon icon) {

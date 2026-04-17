@@ -1,5 +1,8 @@
 package main;
 
+import Managers.PermissionManager;
+import Managers.SessionManager;
+
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -162,14 +165,14 @@ public class MakeASale extends JFrame {
                    refreshPermissionButtons();
                    return;
                }
-               if (Login.currentLocationId == null) {
+               if (SessionManager.getCurrentLocationId() == null) {
                    JOptionPane.showMessageDialog(MakeASale.this, "No store is selected for this session.");
                    return;
                }
                if (WindowHelper.focusIfAlreadyOpen(NewItem.class)) {
                    return;
                }
-               new NewItem(Login.currentLocationId).setVisible(true);
+               new NewItem(SessionManager.getCurrentLocationId()).setVisible(true);
            }
        });
        editItemBtn.addActionListener(new ActionListener() {
@@ -440,7 +443,7 @@ public class MakeASale extends JFrame {
     private void searchProducts(boolean showMessages) {
         String searchText = searchField.getText().trim();
 
-        if (Login.currentLocationId == null) {
+        if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
             return;
         }
@@ -467,7 +470,7 @@ public class MakeASale extends JFrame {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setInt(1, Login.currentLocationId);
+            ps.setInt(1, SessionManager.getCurrentLocationId());
             ps.setString(2, "%" + searchText + "%");
             ps.setString(3, "%" + searchText + "%");
 
@@ -716,11 +719,11 @@ public class MakeASale extends JFrame {
        if(currentUserLabel == null){
            return;
        }
-       if(Login.currentUserId == null || Login.currentUsername == null){
+       if(SessionManager.getCurrentUserId() == null || SessionManager.getCurrentUsername() == null){
            currentUserLabel.setText("No User currently loged in");
        }
        else{
-           currentUserLabel.setText("Current Cashier: " + Login.currentUsername);
+           currentUserLabel.setText("Current Cashier: " + SessionManager.getCurrentUsername());
        }
     }
     private void updateSelectedStoreLabel() {
@@ -728,10 +731,10 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        if (Login.currentLocationId == null || Login.currentLocationName == null) {
+        if (SessionManager.getCurrentLocationId() == null || SessionManager.getCurrentLocationName() == null) {
             selectedStoreLabel.setText("Store: Not selected");
         } else {
-            selectedStoreLabel.setText("Store: " + Login.currentLocationName + " (ID: " + Login.currentLocationId + ")");
+            selectedStoreLabel.setText("Store: " + SessionManager.getCurrentLocationName() + " (ID: " + SessionManager.getCurrentLocationId() + ")");
         }
     }
 
@@ -746,18 +749,18 @@ public class MakeASale extends JFrame {
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
 
-            if (Login.currentLocationId == null) {
+            if (SessionManager.getCurrentLocationId() == null) {
                 conn.setAutoCommit(true);
                 JOptionPane.showMessageDialog(this, "No store is selected for this session.");
                 return;
             }
-            if (Login.currentUserId == null) {
+            if (SessionManager.getCurrentUserId() == null) {
                 conn.setAutoCommit(true);
                 JOptionPane.showMessageDialog(this, "No cashier is logged in for this session.");
                 return;
             }
 
-            int locationId = Login.currentLocationId;
+            int locationId = SessionManager.getCurrentLocationId();
 
             try {
                 String insertSaleSql = "INSERT INTO sales (location_id, user_id, total_amount, status, payment_method) VALUES (?, ?, ?, ?, ?)";
@@ -765,7 +768,7 @@ public class MakeASale extends JFrame {
 
                 try (PreparedStatement saleStmt = conn.prepareStatement(insertSaleSql, Statement.RETURN_GENERATED_KEYS)) {
                     saleStmt.setInt(1, locationId);
-                    saleStmt.setInt(2, Login.currentUserId);
+                    saleStmt.setInt(2, SessionManager.getCurrentUserId());
                     saleStmt.setBigDecimal(3, BigDecimal.valueOf(getOverallTotal()));
                     saleStmt.setString(4, "COMPLETED");
                     saleStmt.setString(5, paymentMethod);

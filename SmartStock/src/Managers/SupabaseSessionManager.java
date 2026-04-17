@@ -1,4 +1,5 @@
-package main;
+package Managers;
+
 
 import java.io.IOException;
 import java.net.URI;
@@ -18,63 +19,60 @@ public final class SupabaseSessionManager {
             .connectTimeout(Duration.ofSeconds(15))
             .build();
 
-    private static String currentAccessToken;
-    private static String currentRefreshToken;
-
     private SupabaseSessionManager() {
     }
 
     public static synchronized void setSession(String accessToken, String refreshToken) {
-        currentAccessToken = blankToNull(accessToken);
-        currentRefreshToken = blankToNull(refreshToken);
+        SessionManager.setCurrentAccessToken(blankToNull(accessToken));
+        SessionManager.setCurrentRefreshToken(blankToNull(refreshToken));
     }
 
     public static synchronized void clearSession() {
-        currentAccessToken = null;
-        currentRefreshToken = null;
+        SessionManager.setCurrentAccessToken(null);
+        SessionManager.setCurrentRefreshToken(null);
     }
 
     public static synchronized String getAccessToken() {
-        return currentAccessToken;
+        return SessionManager.getCurrentAccessToken();
     }
 
     public static synchronized String getRefreshToken() {
-        return currentRefreshToken;
+        return SessionManager.getCurrentRefreshToken();
     }
 
     public static synchronized String getValidAccessToken() throws IOException, InterruptedException {
         ensureConfig();
 
-        if (currentAccessToken == null || currentAccessToken.isBlank()) {
+        if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
             throw new IllegalStateException("No active Supabase session. Please log in again.");
         }
 
         try {
-            validateAccessToken(currentAccessToken);
-            return currentAccessToken;
+            validateAccessToken(SessionManager.getCurrentAccessToken());
+            return SessionManager.getCurrentAccessToken();
         } catch (IllegalStateException ex) {
-            if (currentRefreshToken == null || currentRefreshToken.isBlank()) {
+            if (SessionManager.getCurrentRefreshToken() == null || SessionManager.getCurrentRefreshToken().isBlank()) {
                 clearSession();
                 throw new IllegalStateException("Session expired. Please log in again.");
             }
 
             refreshSessionNow();
 
-            if (currentAccessToken == null || currentAccessToken.isBlank()) {
+            if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
                 throw new IllegalStateException("Session refresh failed. Please log in again.");
             }
 
-            return currentAccessToken;
+            return SessionManager.getCurrentAccessToken();
         }
     }
 
     public static synchronized String forceRefreshSession() throws IOException, InterruptedException {
         ensureConfig();
         refreshSessionNow();
-        if (currentAccessToken == null || currentAccessToken.isBlank()) {
+        if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
             throw new IllegalStateException("Session refresh failed. Please log in again.");
         }
-        return currentAccessToken;
+        return SessionManager.getCurrentAccessToken();
     }
 
     private static void validateAccessToken(String accessToken) throws IOException, InterruptedException {
@@ -104,12 +102,12 @@ public final class SupabaseSessionManager {
     }
 
     private static void refreshSessionNow() throws IOException, InterruptedException {
-        if (currentRefreshToken == null || currentRefreshToken.isBlank()) {
+        if (SessionManager.getCurrentRefreshToken() == null || SessionManager.getCurrentRefreshToken().isBlank()) {
             throw new IllegalStateException("No refresh token available. Please log in again.");
         }
 
         String body = "{" +
-                "\"refresh_token\":" + jsonValue(currentRefreshToken) +
+                "\"refresh_token\":" + jsonValue(SessionManager.getCurrentRefreshToken()) +
                 "}";
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -148,8 +146,8 @@ public final class SupabaseSessionManager {
             throw new IllegalStateException("Refresh succeeded but no access token was returned.");
         }
 
-        currentAccessToken = newAccessToken;
-        currentRefreshToken = blankToNull(newRefreshToken != null ? newRefreshToken : currentRefreshToken);
+        SessionManager.setCurrentAccessToken(newAccessToken);
+        SessionManager.setCurrentRefreshToken(blankToNull(newRefreshToken != null ? newRefreshToken : SessionManager.getCurrentRefreshToken()));
     }
 
     private static void ensureConfig() {
