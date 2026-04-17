@@ -1,4 +1,4 @@
-package device;
+package models;
 
 public class DeviceInfo {
     private String installationId;

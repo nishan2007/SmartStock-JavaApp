@@ -1,8 +1,8 @@
-package main;
+package ui.components;
 
 import java.awt.*;
 
-class RoundedBorder extends javax.swing.border.AbstractBorder {
+public class RoundedBorder extends javax.swing.border.AbstractBorder {
     private int radius;
     private Color color;
     private int thickness;

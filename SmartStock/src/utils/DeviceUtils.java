@@ -1,4 +1,6 @@
-package device;
+package utils;
+import models.DeviceInfo;
+
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;

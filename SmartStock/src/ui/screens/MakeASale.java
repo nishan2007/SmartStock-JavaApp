@@ -1,7 +1,11 @@
-package main;
+package ui.screens;
 
-import Managers.PermissionManager;
-import Managers.SessionManager;
+import managers.PermissionManager;
+import managers.SessionManager;
+import data.DB;
+import ui.helpers.WindowHelper;
+import ui.components.AppMenuBar;
+
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;

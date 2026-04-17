@@ -1,9 +1,11 @@
-package main;
-import Managers.NavigationManager;
-import Managers.PermissionManager;
-import Managers.SupabaseSessionManager;
-import Managers.SessionManager;
-import device.DeviceService;
+package ui.screens;
+import managers.NavigationManager;
+import managers.PermissionManager;
+import managers.SupabaseSessionManager;
+import managers.SessionManager;
+import services.DeviceService;
+import ui.components.AppMenuBar;
+import data.DB;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -167,8 +169,7 @@ public class MainMenu extends JFrame {
             endSessionSafely();
             SessionManager.clearSessionState();
             SupabaseSessionManager.clearSession();
-            dispose();
-            new Login().setVisible(true);
+            NavigationManager.logoutToLogin(this);
         });
     }
 

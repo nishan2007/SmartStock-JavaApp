@@ -1,13 +1,14 @@
-package Managers;
+package managers;
 
-import main.EditItem;
-import main.EmployeeManagement;
-import main.MainMenu;
-import main.MakeASale;
-import main.NewItem;
-import main.Roles_Permission;
-import main.ViewInventory;
-import main.ViewSales;
+import ui.screens.EditItem;
+import ui.screens.EmployeeManagement;
+import ui.screens.MainMenu;
+import ui.screens.MakeASale;
+import ui.screens.NewItem;
+import ui.screens.Roles_Permission;
+import ui.screens.ViewInventory;
+import ui.screens.ViewSales;
+import ui.screens.Login;
 
 import javax.swing.*;
 import java.awt.event.WindowAdapter;
@@ -195,6 +196,35 @@ public final class NavigationManager {
         newScreen.setLocationRelativeTo(currentScreen);
         newScreen.setVisible(true);
         currentScreen.dispose();
+    }
+
+    public static void logoutToLogin(JFrame currentScreen) {
+        if (transitionInProgress) {
+            return;
+        }
+
+        transitionInProgress = true;
+
+        if (currentScreen != null && currentScreen.getRootPane() != null) {
+            currentScreen.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
+        }
+
+        if (activeMainMenu != null) {
+            if (activeMainMenu != currentScreen) {
+                activeMainMenu.dispose();
+            }
+            activeMainMenu = null;
+        }
+
+        Login login = new Login();
+        login.setLocationRelativeTo(currentScreen);
+        login.setVisible(true);
+
+        if (currentScreen != null) {
+            currentScreen.dispose();
+        }
+
+        transitionInProgress = false;
     }
 
     public static void showMainMenu(JFrame currentScreen) {

@@ -1,8 +1,9 @@
-package main;
+package ui.screens;
 
-import Managers.SupabaseSessionManager;
-import device.DeviceService;
-import Managers.SessionManager;
+import managers.SupabaseSessionManager;
+import services.DeviceService;
+import managers.SessionManager;
+import data.DB;
 
 import javax.swing.*;
 import java.awt.*;

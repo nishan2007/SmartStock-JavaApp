@@ -1,4 +1,8 @@
-package main;
+package ui.screens;
+
+import data.DB;
+import ui.components.AppMenuBar;
+import ui.components.RoundedBorder;
 
 import javax.swing.*;
 import java.awt.*;

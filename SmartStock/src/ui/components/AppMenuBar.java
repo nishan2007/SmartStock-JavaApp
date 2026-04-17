@@ -1,20 +1,29 @@
-package main;
-import device.DeviceService;
-import Managers.SessionManager;
-import Managers.SupabaseSessionManager;
-import Managers.NavigationManager;
-import Managers.PermissionManager;
+package ui.components;
+import services.DeviceService;
+import managers.NavigationManager;
+import managers.PermissionManager;
+import managers.SessionManager;
+import managers.SupabaseSessionManager;
+import data.DB;
+import ui.screens.EditItem;
+import ui.screens.EmployeeManagement;
+import ui.screens.MainMenu;
+import ui.screens.MakeASale;
+import ui.screens.NewItem;
+import ui.screens.Roles_Permission;
+import ui.screens.ViewInventory;
+import ui.screens.ViewSales;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.util.ArrayList;
-import java.util.List;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AppMenuBar {
 
@@ -212,11 +221,7 @@ public class AppMenuBar {
 
                 SessionManager.clearSessionState();
                 SupabaseSessionManager.clearSession();
-
-                Login login = new Login();
-                login.setLocationRelativeTo(parent);
-                parent.dispose();
-                login.setVisible(true);
+                NavigationManager.logoutToLogin(parent);
             }
         });
 

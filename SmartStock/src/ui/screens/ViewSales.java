@@ -1,7 +1,9 @@
 
-package main;
+package ui.screens;
 
-import Managers.SessionManager;
+import managers.SessionManager;
+import ui.components.AppMenuBar;
+import data.DB;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;

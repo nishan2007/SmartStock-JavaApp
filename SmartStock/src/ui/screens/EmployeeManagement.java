@@ -1,6 +1,8 @@
-package main;
+package ui.screens;
 
-import Managers.SupabaseSessionManager;
+import managers.SupabaseSessionManager;
+import ui.components.AppMenuBar;
+import data.DB;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;

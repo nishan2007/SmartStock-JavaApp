@@ -1,4 +1,6 @@
-package main;
+package ui.screens;
+
+import data.DB;
 
 import javax.swing.*;
 import java.awt.*;

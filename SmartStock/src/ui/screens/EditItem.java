@@ -1,6 +1,9 @@
-package main;
+package ui.screens;
 
-import Managers.SessionManager;
+import managers.SessionManager;
+import data.DB;
+import ui.components.RoundedBorder;
+import ui.components.AppMenuBar;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;

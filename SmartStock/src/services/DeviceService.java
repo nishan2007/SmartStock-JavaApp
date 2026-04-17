@@ -1,5 +1,7 @@
-package device;
-import Managers.SessionManager;
+package services;
+import managers.SessionManager;
+import utils.DeviceUtils;
+import models.DeviceInfo;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;

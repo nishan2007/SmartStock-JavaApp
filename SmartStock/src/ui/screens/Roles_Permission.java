@@ -1,6 +1,7 @@
-package main;
+package ui.screens;
 
-import Managers.PermissionManager;
+import managers.PermissionManager;
+import data.DB;
 
 import javax.swing.*;
 import java.awt.*;

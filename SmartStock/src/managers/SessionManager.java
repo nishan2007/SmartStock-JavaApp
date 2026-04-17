@@ -1,5 +1,5 @@
 
-package Managers;
+package managers;
 
 public final class SessionManager {
 

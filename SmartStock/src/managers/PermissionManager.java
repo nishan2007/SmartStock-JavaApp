@@ -1,7 +1,7 @@
-package Managers;
+package managers;
 
-import main.DB;
-import main.AppMenuBar;
+import data.DB;
+import ui.components.AppMenuBar;
 
 import javax.swing.*;
 import java.awt.*;

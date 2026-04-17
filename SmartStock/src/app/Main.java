@@ -1,4 +1,6 @@
-package main;
+package app;
+
+import ui.screens.WelcomeFrame;
 
 import javax.swing.*;
 
