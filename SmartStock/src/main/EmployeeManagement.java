@@ -1,11 +1,11 @@
 package main;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -20,9 +20,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.UUID;
 
 public class EmployeeManagement extends JFrame {
 
@@ -807,42 +807,15 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
-    private static String buildUserAuthHeader() {
-        String accessToken = getCurrentAccessToken();
+    private static String buildUserAuthHeader() throws IOException, InterruptedException {
+        String accessToken = SupabaseSessionManager.getValidAccessToken();
         if (accessToken == null || accessToken.isBlank()) {
             throw new IllegalStateException("Missing logged-in Supabase access token.");
         }
         return "Bearer " + accessToken;
     }
 
-    private static String getCurrentAccessToken() {
-        String token = readStaticStringField("main.Login", "currentAccessToken");
-        if (token == null || token.isBlank()) {
-            token = readStaticStringField("main.Login", "accessToken");
-        }
-        if (token == null || token.isBlank()) {
-            token = readStaticStringField("main.Login", "currentSessionToken");
-        }
-        if (token == null || token.isBlank()) {
-            token = readStaticStringField("main.Login", "sessionAccessToken");
-        }
-        if (token == null || token.isBlank()) {
-            token = getConfig("SUPABASE_ACCESS_TOKEN");
-        }
-        return token;
-    }
 
-    private static String readStaticStringField(String className, String fieldName) {
-        try {
-            Class<?> clazz = Class.forName(className);
-            java.lang.reflect.Field field = clazz.getDeclaredField(fieldName);
-            field.setAccessible(true);
-            Object value = field.get(null);
-            return value == null ? null : String.valueOf(value);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
 
     private static String getConfig(String key) {
         return getConfig(key, null);

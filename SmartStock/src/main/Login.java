@@ -207,6 +207,7 @@ public class Login extends JFrame {
                 currentLocationName = selectedLocation.locationName;
                 currentAccessToken = authResult.accessToken;
                 currentRefreshToken = authResult.refreshToken;
+                SupabaseSessionManager.setSession(authResult.accessToken, authResult.refreshToken);
 
                 JOptionPane.showMessageDialog(
                         this,
@@ -319,6 +320,7 @@ public class Login extends JFrame {
         passwordField.setText("");
         currentAccessToken = null;
         currentRefreshToken = null;
+        SupabaseSessionManager.clearSession();
         usernameField.requestFocusInWindow();
     }
 
