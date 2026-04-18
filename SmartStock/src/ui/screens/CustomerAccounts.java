@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.PermissionManager;
 import ui.components.AppMenuBar;
 
 import javax.swing.*;
@@ -26,6 +27,7 @@ public class CustomerAccounts extends JFrame {
     private JTextField emailField;
     private JTextField creditLimitField;
     private JTextField balanceField;
+    private JTextArea accountNotesArea;
     private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
     private JButton addButton;
@@ -34,7 +36,6 @@ public class CustomerAccounts extends JFrame {
     private JButton refreshButton;
     private JButton addChargeButton;
     private JButton recordPaymentButton;
-    private JButton generateAccountNumberButton;
     private JButton transactionHistoryButton;
     private JButton paymentHistoryButton;
     private Integer selectedCustomerId;
@@ -68,7 +69,7 @@ public class CustomerAccounts extends JFrame {
         searchPanel.add(searchField, BorderLayout.CENTER);
 
         customerModel = new DefaultTableModel(
-                new Object[]{"ID", "Account #", "Name", "Phone", "Email", "Credit Limit", "Balance", "Available", "Type", "Active"},
+                new Object[]{"ID", "Account #", "Name", "Phone", "Email", "Credit Limit", "Balance", "Available", "Type", "Active", "Notes"},
                 0
         ) {
             @Override
@@ -85,6 +86,7 @@ public class CustomerAccounts extends JFrame {
         customerTable.getColumnModel().getColumn(0).setMaxWidth(60);
         customerTable.getColumnModel().getColumn(8).setMaxWidth(95);
         customerTable.getColumnModel().getColumn(9).setMaxWidth(70);
+        customerTable.getColumnModel().getColumn(10).setPreferredWidth(220);
 
         customerTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -95,7 +97,7 @@ public class CustomerAccounts extends JFrame {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {
                 if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
-                    openTransactionHistory();
+                    openAccountDetails();
                 }
             }
         });
@@ -133,21 +135,20 @@ public class CustomerAccounts extends JFrame {
         gbc.anchor = GridBagConstraints.WEST;
 
         accountNumberField = new JTextField();
+        accountNumberField.setEditable(false);
         nameField = new JTextField();
         phoneField = new JTextField();
         emailField = new JTextField();
         creditLimitField = new JTextField("0.00");
         balanceField = new JTextField("0.00");
         balanceField.setEditable(false);
+        accountNotesArea = new JTextArea(4, 20);
+        accountNotesArea.setLineWrap(true);
+        accountNotesArea.setWrapStyleWord(true);
         businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active", true);
 
-        JPanel accountNumberPanel = new JPanel(new BorderLayout(6, 0));
-        accountNumberPanel.add(accountNumberField, BorderLayout.CENTER);
-        generateAccountNumberButton = new JButton("Generate");
-        accountNumberPanel.add(generateAccountNumberButton, BorderLayout.EAST);
-
-        addField(formPanel, gbc, 0, "Account #:", accountNumberPanel);
+        addField(formPanel, gbc, 0, "Account #:", accountNumberField);
         addField(formPanel, gbc, 1, "Name:", nameField);
         addField(formPanel, gbc, 2, "Phone:", phoneField);
         addField(formPanel, gbc, 3, "Email:", emailField);
@@ -166,6 +167,10 @@ public class CustomerAccounts extends JFrame {
         gbc.gridx = 1;
         formPanel.add(activeCheckBox, gbc);
 
+        JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
+        notesScrollPane.setPreferredSize(new Dimension(0, 82));
+        addField(formPanel, gbc, 8, "Notes:", notesScrollPane);
+
         JPanel buttonPanel = new JPanel(new GridLayout(4, 2, 8, 8));
         addButton = new JButton("Add Account");
         updateButton = new JButton("Update Account");
@@ -173,7 +178,7 @@ public class CustomerAccounts extends JFrame {
         refreshButton = new JButton("Refresh");
         addChargeButton = new JButton("Add Charge");
         recordPaymentButton = new JButton("Record Payment");
-        transactionHistoryButton = new JButton("Transactions");
+        transactionHistoryButton = new JButton("Details");
         paymentHistoryButton = new JButton("Payments");
 
         updateButton.setEnabled(false);
@@ -197,9 +202,8 @@ public class CustomerAccounts extends JFrame {
         refreshButton.addActionListener(e -> loadCustomers());
         addChargeButton.addActionListener(e -> adjustBalance(true));
         recordPaymentButton.addActionListener(e -> adjustBalance(false));
-        transactionHistoryButton.addActionListener(e -> openTransactionHistory());
+        transactionHistoryButton.addActionListener(e -> openAccountDetails());
         paymentHistoryButton.addActionListener(e -> openPaymentHistory());
-        generateAccountNumberButton.addActionListener(e -> generateAccountNumberIntoField());
 
         wrapper.add(formPanel, BorderLayout.NORTH);
         wrapper.add(buttonPanel, BorderLayout.SOUTH);
@@ -223,7 +227,8 @@ public class CustomerAccounts extends JFrame {
                        credit_limit, current_balance,
                        (credit_limit - current_balance) AS available_credit,
                        COALESCE(is_business, FALSE) AS is_business,
-                       is_active
+                       is_active,
+                       COALESCE(account_notes, '') AS account_notes
                 FROM customer_accounts
                 ORDER BY name
                 """;
@@ -243,7 +248,8 @@ public class CustomerAccounts extends JFrame {
                         money(rs.getBigDecimal("current_balance")),
                         money(rs.getBigDecimal("available_credit")),
                         rs.getBoolean("is_business") ? "Business" : "Personal",
-                        rs.getBoolean("is_active")
+                        rs.getBoolean("is_active"),
+                        rs.getString("account_notes")
                 });
             }
 
@@ -260,6 +266,7 @@ public class CustomerAccounts extends JFrame {
         int modelRow = customerTable.convertRowIndexToModel(row);
         selectedCustomerId = Integer.parseInt(String.valueOf(customerModel.getValueAt(modelRow, 0)));
         accountNumberField.setText(valueAt(modelRow, 1));
+        accountNumberField.setEditable(PermissionManager.hasPermission("EDIT_ACCOUNT_NUMBER"));
         nameField.setText(valueAt(modelRow, 2));
         phoneField.setText(valueAt(modelRow, 3));
         emailField.setText(valueAt(modelRow, 4));
@@ -267,6 +274,7 @@ public class CustomerAccounts extends JFrame {
         balanceField.setText(stripMoney(valueAt(modelRow, 6)));
         businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 8)));
         activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 9)));
+        accountNotesArea.setText(valueAt(modelRow, 10));
         updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
@@ -274,15 +282,15 @@ public class CustomerAccounts extends JFrame {
         paymentHistoryButton.setEnabled(true);
     }
 
-    private void openTransactionHistory() {
+    private void openAccountDetails() {
         CustomerSelection selection = getSelectedCustomer();
         if (selection == null) {
             JOptionPane.showMessageDialog(this, "Select a customer first.");
             return;
         }
-        CustomerTransactionHistory history = new CustomerTransactionHistory(selection.customerId(), selection.accountLabel());
-        history.setLocationRelativeTo(this);
-        history.setVisible(true);
+        CustomerAccountDetails details = new CustomerAccountDetails(selection.customerId(), this::loadCustomers);
+        details.setLocationRelativeTo(this);
+        details.setVisible(true);
     }
 
     private void openPaymentHistory() {
@@ -310,10 +318,10 @@ public class CustomerAccounts extends JFrame {
     }
 
     private void addCustomer() {
-        String accountNumber = accountNumberField.getText().trim();
         String name = nameField.getText().trim();
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
+        String accountNotes = accountNotesArea.getText().trim();
         boolean businessAccount = businessAccountCheckBox.isSelected();
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         if (creditLimit == null) {
@@ -324,17 +332,15 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
-        if (accountNumber.isEmpty()) {
-            accountNumber = generateNextAccountNumber(businessAccount);
-            if (accountNumber == null) {
-                return;
-            }
-            accountNumberField.setText(accountNumber);
+        String accountNumber = generateNextAccountNumber(businessAccount);
+        if (accountNumber == null) {
+            return;
         }
+        accountNumberField.setText(accountNumber);
 
         String sql = """
-                INSERT INTO customer_accounts (account_number, name, phone, email, credit_limit, current_balance, is_business, is_active)
-                VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                INSERT INTO customer_accounts (account_number, name, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -347,6 +353,7 @@ public class CustomerAccounts extends JFrame {
             ps.setBigDecimal(5, creditLimit);
             ps.setBoolean(6, businessAccount);
             ps.setBoolean(7, activeCheckBox.isSelected());
+            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
             ps.executeUpdate();
 
             JOptionPane.showMessageDialog(this, "Customer account added.");
@@ -367,6 +374,7 @@ public class CustomerAccounts extends JFrame {
         String name = nameField.getText().trim();
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
+        String accountNotes = accountNotesArea.getText().trim();
         boolean businessAccount = businessAccountCheckBox.isSelected();
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         if (creditLimit == null) {
@@ -377,12 +385,12 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
+        if (!PermissionManager.hasPermission("EDIT_ACCOUNT_NUMBER")) {
+            accountNumber = valueAt(customerTable.convertRowIndexToModel(customerTable.getSelectedRow()), 1);
+        }
         if (accountNumber.isEmpty()) {
-            accountNumber = generateNextAccountNumber(businessAccount);
-            if (accountNumber == null) {
-                return;
-            }
-            accountNumberField.setText(accountNumber);
+            JOptionPane.showMessageDialog(this, "Account number is required.");
+            return;
         }
 
         String sql = """
@@ -393,7 +401,8 @@ public class CustomerAccounts extends JFrame {
                     email = ?,
                     credit_limit = ?,
                     is_business = ?,
-                    is_active = ?
+                    is_active = ?,
+                    account_notes = ?
                 WHERE customer_id = ?
                 """;
 
@@ -407,7 +416,8 @@ public class CustomerAccounts extends JFrame {
             ps.setBigDecimal(5, creditLimit);
             ps.setBoolean(6, businessAccount);
             ps.setBoolean(7, activeCheckBox.isSelected());
-            ps.setInt(8, selectedCustomerId);
+            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
+            ps.setInt(9, selectedCustomerId);
             ps.executeUpdate();
 
             JOptionPane.showMessageDialog(this, "Customer account updated.");
@@ -659,11 +669,13 @@ public class CustomerAccounts extends JFrame {
     private void clearFields() {
         selectedCustomerId = null;
         accountNumberField.setText("");
+        accountNumberField.setEditable(false);
         nameField.setText("");
         phoneField.setText("");
         emailField.setText("");
         creditLimitField.setText("0.00");
         balanceField.setText("0.00");
+        accountNotesArea.setText("");
         businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
         updateButton.setEnabled(false);
@@ -673,13 +685,6 @@ public class CustomerAccounts extends JFrame {
         paymentHistoryButton.setEnabled(false);
         customerTable.clearSelection();
         nameField.requestFocusInWindow();
-    }
-
-    private void generateAccountNumberIntoField() {
-        String accountNumber = generateNextAccountNumber(businessAccountCheckBox.isSelected());
-        if (accountNumber != null) {
-            accountNumberField.setText(accountNumber);
-        }
     }
 
     private String generateNextAccountNumber(boolean businessAccount) {

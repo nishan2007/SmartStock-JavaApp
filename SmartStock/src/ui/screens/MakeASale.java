@@ -33,6 +33,7 @@ public class MakeASale extends JFrame {
     private JLabel totalLabel;
     private JComboBox<String> paymentMethodBox;
     private JComboBox<CustomerAccountOption> customerAccountBox;
+    private JButton addCustomerAccountButton;
     private JButton checkoutBtn;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
@@ -151,6 +152,8 @@ public class MakeASale extends JFrame {
        customerAccountBox = new JComboBox<>();
        customerAccountBox.setPreferredSize(new Dimension(260, 28));
        bottomPanel.add(customerAccountBox);
+       addCustomerAccountButton = new JButton("New Customer");
+       bottomPanel.add(addCustomerAccountButton);
        bottomPanel.add(new JLabel("Payment Method:"));
        paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
        bottomPanel.add(paymentMethodBox);
@@ -274,6 +277,7 @@ public class MakeASale extends JFrame {
                checkout();
            }
        });
+       addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
        paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
        addWindowFocusListener(new java.awt.event.WindowAdapter() {
            @Override
@@ -789,6 +793,12 @@ public class MakeASale extends JFrame {
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
         }
+    }
+
+    private void openQuickCustomerAccount() {
+        QuickCustomerAccount screen = new QuickCustomerAccount(this::loadCustomerAccounts);
+        screen.setLocationRelativeTo(this);
+        screen.setVisible(true);
     }
 
     private void updateCustomerAccountEnabled() {
