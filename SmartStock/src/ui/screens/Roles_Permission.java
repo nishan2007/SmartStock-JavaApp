@@ -58,6 +58,7 @@ public class Roles_Permission extends JFrame {
         addPermission("CUSTOMER_ACCOUNTS", "Customer Accounts");
         addPermission("SET_CREDIT_LIMIT", "Set Credit Limit");
         addPermission("EDIT_ACCOUNT_NUMBER", "Edit Account Number");
+        addPermission("LOCAL_DEVICE_SETTINGS", "Local Device Settings");
         ensurePermissionDefinitionsExist();
 
         JScrollPane permScroll = new JScrollPane(permissionPanel);

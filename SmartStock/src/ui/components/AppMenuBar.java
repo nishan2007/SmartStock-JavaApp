@@ -9,6 +9,7 @@ import ui.screens.CustomerAccounts;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
+import ui.screens.LocalDeviceSettings;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
@@ -45,6 +46,7 @@ public class AppMenuBar {
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
+        JMenuItem localDeviceSettingsItem = new JMenuItem("Local Device Settings");
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
@@ -57,7 +59,8 @@ public class AppMenuBar {
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
-        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canRoleManagement;
+        boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
+        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canRoleManagement || canLocalDeviceSettings;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -97,6 +100,9 @@ public class AppMenuBar {
         }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
+        }
+        if (!canLocalDeviceSettings || "LocalDeviceSettings".equalsIgnoreCase(screenKey)) {
+            localDeviceSettingsItem.setEnabled(false);
         }
 
         makeSaleItem.addActionListener(new ActionListener() {
@@ -211,6 +217,18 @@ public class AppMenuBar {
             }
         });
 
+        localDeviceSettingsItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("LOCAL_DEVICE_SETTINGS", parent, "Local Device Settings")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(LocalDeviceSettings.class)) {
+                    return;
+                }
+                NavigationManager.openLocalDeviceSettings(parent);
+            }
+        });
+
         navigateMenu.add(mainMenuItem);
         navigateMenu.addSeparator();
         navigateMenu.add(makeSaleItem);
@@ -267,6 +285,7 @@ public class AppMenuBar {
 
 
         sessionMenu.add(changeStoreItem);
+        sessionMenu.add(localDeviceSettingsItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
         sessionMenu.add(logoutItem);

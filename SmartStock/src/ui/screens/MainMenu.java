@@ -27,6 +27,7 @@ public class MainMenu extends JFrame {
     private final JButton editItemsButton;
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
+    private final JButton localDeviceSettingsButton;
     private final JButton logoutButton;
 
     public MainMenu() {
@@ -69,6 +70,7 @@ public class MainMenu extends JFrame {
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
+        localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
         applyPermissions();
 
         JPanel sectionStackPanel = new JPanel();
@@ -100,7 +102,8 @@ public class MainMenu extends JFrame {
         sectionStackPanel.add(createSectionPanel(
                 "Admin",
                 new Color(124, 58, 237),
-                rolesPermissionsButton
+                rolesPermissionsButton,
+                localDeviceSettingsButton
         ));
 
         JScrollPane sectionScrollPane = new JScrollPane(sectionStackPanel);
@@ -211,6 +214,7 @@ public class MainMenu extends JFrame {
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
+        boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
 
         makeSaleButton.setEnabled(canMakeSale);
         enterInventoryButton.setEnabled(canEnterInventory);
@@ -221,6 +225,7 @@ public class MainMenu extends JFrame {
         editItemsButton.setEnabled(canEditItem);
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
+        localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
     }
 
 
@@ -279,6 +284,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openRolesPermission(this);
+        });
+        localDeviceSettingsButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("LOCAL_DEVICE_SETTINGS", this, "Local Device Settings")) {
+                return;
+            }
+            NavigationManager.openLocalDeviceSettings(this);
         });
 
         logoutButton.addActionListener(e -> {
@@ -380,6 +391,10 @@ public class MainMenu extends JFrame {
 
     public JButton getRolesPermissionsButton() {
         return rolesPermissionsButton;
+    }
+
+    public JButton getLocalDeviceSettingsButton() {
+        return localDeviceSettingsButton;
     }
 
     public JButton getLogoutButton() {

@@ -11,6 +11,7 @@ import ui.screens.Roles_Permission;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
 import ui.screens.Login;
+import ui.screens.LocalDeviceSettings;
 
 import javax.swing.*;
 import java.awt.event.WindowAdapter;
@@ -34,7 +35,8 @@ public final class NavigationManager {
         VIEW_INVENTORY,
         CUSTOMER_ACCOUNTS,
         EMPLOYEE_MANAGEMENT,
-        ROLES_PERMISSION
+        ROLES_PERMISSION,
+        LOCAL_DEVICE_SETTINGS
     }
 
     private static void openScreen(JFrame parent, JFrame screen) {
@@ -94,6 +96,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.ROLES_PERMISSION));
     }
 
+    public static void openLocalDeviceSettings(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.LOCAL_DEVICE_SETTINGS));
+    }
+
     private static JFrame createScreen(ScreenType screenType) {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
@@ -106,6 +112,7 @@ public final class NavigationManager {
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
+            case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
         };
     }
 
@@ -125,6 +132,7 @@ public final class NavigationManager {
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
+            case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
             default -> null;
         };
     }

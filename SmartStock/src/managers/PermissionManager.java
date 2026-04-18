@@ -104,7 +104,8 @@ public class PermissionManager {
                     || hasPermission("ENTER_INVENTORY")
                     || hasPermission("EDIT_ITEM")
                     || hasPermission("EMPLOYEE_MANAGEMENT")
-                    || hasPermission("ROLE_MANAGEMENT");
+                    || hasPermission("ROLE_MANAGEMENT")
+                    || hasPermission("LOCAL_DEVICE_SETTINGS");
             case "MakeASale" -> hasPermission("MAKE_SALE");
             case "EnterInventory" -> hasPermission("ENTER_INVENTORY");
             case "ViewSales" -> hasPermission("VIEW_SALES");
@@ -114,6 +115,7 @@ public class PermissionManager {
             case "EditItem" -> hasPermission("EDIT_ITEM");
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");
             case "Roles_Permission" -> hasPermission("ROLE_MANAGEMENT");
+            case "LocalDeviceSettings" -> hasPermission("LOCAL_DEVICE_SETTINGS");
             default -> true;
         };
     }

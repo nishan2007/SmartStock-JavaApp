@@ -47,7 +47,7 @@ public class ViewSales extends JFrame {
         mainPanel.add(topPanel, BorderLayout.NORTH);
 
         salesTableModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Date / Time", "Cashier", "Store", "Items", "Payment", "Payment Status", "Paid", "Total"}, 0
+                new Object[]{"Sale ID", "Receipt #", "Date / Time", "Cashier", "Store", "Items", "Payment", "Payment Status", "Paid", "Total"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -60,14 +60,15 @@ public class ViewSales extends JFrame {
         salesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         salesTable.getTableHeader().setReorderingAllowed(false);
         salesTable.getColumnModel().getColumn(0).setPreferredWidth(80);
-        salesTable.getColumnModel().getColumn(1).setPreferredWidth(170);
-        salesTable.getColumnModel().getColumn(2).setPreferredWidth(180);
-        salesTable.getColumnModel().getColumn(3).setPreferredWidth(160);
-        salesTable.getColumnModel().getColumn(4).setPreferredWidth(80);
-        salesTable.getColumnModel().getColumn(5).setPreferredWidth(120);
+        salesTable.getColumnModel().getColumn(1).setPreferredWidth(180);
+        salesTable.getColumnModel().getColumn(2).setPreferredWidth(170);
+        salesTable.getColumnModel().getColumn(3).setPreferredWidth(180);
+        salesTable.getColumnModel().getColumn(4).setPreferredWidth(160);
+        salesTable.getColumnModel().getColumn(5).setPreferredWidth(80);
         salesTable.getColumnModel().getColumn(6).setPreferredWidth(120);
         salesTable.getColumnModel().getColumn(7).setPreferredWidth(120);
         salesTable.getColumnModel().getColumn(8).setPreferredWidth(120);
+        salesTable.getColumnModel().getColumn(9).setPreferredWidth(120);
 
         JScrollPane scrollPane = new JScrollPane(salesTable);
         mainPanel.add(scrollPane, BorderLayout.CENTER);
@@ -187,7 +188,9 @@ public class ViewSales extends JFrame {
         salesTableModel.setRowCount(0);
 
         StringBuilder sql = new StringBuilder(
-                "SELECT s.sale_id, s.created_at, " +
+                "SELECT s.sale_id, " +
+                        "COALESCE(s.receipt_number, '') AS receipt_number, " +
+                        "s.created_at, " +
                         "COALESCE(u.full_name, u.username, 'Unknown') AS cashier_name, " +
                         "COALESCE(l.name, 'Unknown') AS store_name, " +
                         "COUNT(si.sale_item_id) AS item_count, " +
@@ -212,11 +215,13 @@ public class ViewSales extends JFrame {
         String searchText = searchField.getText().trim();
         if (!searchText.isEmpty()) {
             sql.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
+                    .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
                     .append("COALESCE(u.full_name, u.username, '') ILIKE ? OR ")
                     .append("COALESCE(l.name, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_method, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_status, 'PAID') ILIKE ?) ");
             String likeValue = "%" + searchText + "%";
+            parameters.add(likeValue);
             parameters.add(likeValue);
             parameters.add(likeValue);
             parameters.add(likeValue);
@@ -244,7 +249,7 @@ public class ViewSales extends JFrame {
             parameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
         }
 
-        sql.append("GROUP BY s.sale_id, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.total_amount ")
+        sql.append("GROUP BY s.sale_id, s.receipt_number, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.total_amount ")
                 .append("ORDER BY s.created_at DESC");
 
         double grandTotal = 0;
@@ -260,6 +265,7 @@ public class ViewSales extends JFrame {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     int saleId = rs.getInt("sale_id");
+                    String receiptNumber = rs.getString("receipt_number");
                     Timestamp saleTimestamp = rs.getTimestamp("created_at");
                     String cashier = rs.getString("cashier_name");
                     String store = rs.getString("store_name");
@@ -271,6 +277,7 @@ public class ViewSales extends JFrame {
 
                     salesTableModel.addRow(new Object[]{
                             saleId,
+                            receiptNumber,
                             formatTimestamp(saleTimestamp),
                             cashier,
                             store,

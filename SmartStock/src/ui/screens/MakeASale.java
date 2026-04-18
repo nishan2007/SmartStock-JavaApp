@@ -1,6 +1,7 @@
 package ui.screens;
 
 import managers.PermissionManager;
+import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import data.DB;
 import ui.helpers.WindowHelper;
@@ -843,11 +844,24 @@ public class MakeASale extends JFrame {
                     validateAndChargeCustomerAccount(conn, selectedCustomer.customerId, saleTotal);
                 }
 
+                ReceiptNumberManager.ReceiptNumber receipt = ReceiptNumberManager.nextReceipt(locationId);
                 String paymentStatus = chargeCustomerAccount ? "UNPAID" : "PAID";
                 BigDecimal amountPaid = chargeCustomerAccount ? BigDecimal.ZERO : saleTotal;
                 String insertSaleSql = """
-                        INSERT INTO sales (location_id, user_id, customer_id, total_amount, status, payment_method, payment_status, amount_paid)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO sales (
+                            location_id,
+                            user_id,
+                            customer_id,
+                            total_amount,
+                            status,
+                            payment_method,
+                            payment_status,
+                            amount_paid,
+                            receipt_number,
+                            receipt_device_id,
+                            receipt_sequence
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """;
                 int saleId;
 
@@ -864,6 +878,9 @@ public class MakeASale extends JFrame {
                     saleStmt.setString(6, paymentMethod);
                     saleStmt.setString(7, paymentStatus);
                     saleStmt.setBigDecimal(8, amountPaid);
+                    saleStmt.setString(9, receipt.receiptNumber());
+                    saleStmt.setString(10, receipt.deviceId());
+                    saleStmt.setInt(11, receipt.sequence());
                     saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -932,7 +949,7 @@ public class MakeASale extends JFrame {
                 }
 
                 conn.commit();
-                JOptionPane.showMessageDialog(this, "Sale completed successfully. Sale ID: " + saleId);
+                JOptionPane.showMessageDialog(this, "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId);
                 cartModel.setRowCount(0);
                 configureCartTableColumns();
                 searchField.setText("");
