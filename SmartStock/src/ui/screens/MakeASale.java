@@ -764,7 +764,8 @@ public class MakeASale extends JFrame {
                        name,
                        credit_limit,
                        current_balance,
-                       (credit_limit - current_balance) AS available_credit
+                       (credit_limit - current_balance) AS available_credit,
+                       COALESCE(is_business, FALSE) AS is_business
                 FROM customer_accounts
                 WHERE is_active = TRUE
                 ORDER BY name
@@ -781,7 +782,8 @@ public class MakeASale extends JFrame {
                         rs.getString("name"),
                         rs.getBigDecimal("credit_limit"),
                         rs.getBigDecimal("current_balance"),
-                        rs.getBigDecimal("available_credit")
+                        rs.getBigDecimal("available_credit"),
+                        rs.getBoolean("is_business")
                 ));
             }
         } catch (SQLException ex) {
@@ -831,7 +833,12 @@ public class MakeASale extends JFrame {
                     validateAndChargeCustomerAccount(conn, selectedCustomer.customerId, saleTotal);
                 }
 
-                String insertSaleSql = "INSERT INTO sales (location_id, user_id, customer_id, total_amount, status, payment_method) VALUES (?, ?, ?, ?, ?, ?)";
+                String paymentStatus = chargeCustomerAccount ? "UNPAID" : "PAID";
+                BigDecimal amountPaid = chargeCustomerAccount ? BigDecimal.ZERO : saleTotal;
+                String insertSaleSql = """
+                        INSERT INTO sales (location_id, user_id, customer_id, total_amount, status, payment_method, payment_status, amount_paid)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """;
                 int saleId;
 
                 try (PreparedStatement saleStmt = conn.prepareStatement(insertSaleSql, Statement.RETURN_GENERATED_KEYS)) {
@@ -845,6 +852,8 @@ public class MakeASale extends JFrame {
                     saleStmt.setBigDecimal(4, saleTotal);
                     saleStmt.setString(5, "COMPLETED");
                     saleStmt.setString(6, paymentMethod);
+                    saleStmt.setString(7, paymentStatus);
+                    saleStmt.setBigDecimal(8, amountPaid);
                     saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -1011,20 +1020,23 @@ public class MakeASale extends JFrame {
         private final BigDecimal creditLimit;
         private final BigDecimal currentBalance;
         private final BigDecimal availableCredit;
+        private final boolean businessAccount;
 
-        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit) {
+        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount) {
             this.customerId = customerId;
             this.accountNumber = accountNumber == null ? "" : accountNumber;
             this.name = name == null ? "" : name;
             this.creditLimit = creditLimit == null ? BigDecimal.ZERO : creditLimit;
             this.currentBalance = currentBalance == null ? BigDecimal.ZERO : currentBalance;
             this.availableCredit = availableCredit == null ? BigDecimal.ZERO : availableCredit;
+            this.businessAccount = businessAccount;
         }
 
         @Override
         public String toString() {
             String accountLabel = accountNumber.isBlank() ? "" : accountNumber + " - ";
-            return accountLabel + name + " (Available: $" + availableCredit + ")";
+            String typeLabel = businessAccount ? "Business" : "Personal";
+            return accountLabel + name + " [" + typeLabel + "] (Available: $" + availableCredit + ")";
         }
     }
 

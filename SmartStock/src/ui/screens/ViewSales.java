@@ -47,7 +47,7 @@ public class ViewSales extends JFrame {
         mainPanel.add(topPanel, BorderLayout.NORTH);
 
         salesTableModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Date / Time", "Cashier", "Store", "Items", "Payment", "Total"}, 0
+                new Object[]{"Sale ID", "Date / Time", "Cashier", "Store", "Items", "Payment", "Payment Status", "Paid", "Total"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -66,6 +66,8 @@ public class ViewSales extends JFrame {
         salesTable.getColumnModel().getColumn(4).setPreferredWidth(80);
         salesTable.getColumnModel().getColumn(5).setPreferredWidth(120);
         salesTable.getColumnModel().getColumn(6).setPreferredWidth(120);
+        salesTable.getColumnModel().getColumn(7).setPreferredWidth(120);
+        salesTable.getColumnModel().getColumn(8).setPreferredWidth(120);
 
         JScrollPane scrollPane = new JScrollPane(salesTable);
         mainPanel.add(scrollPane, BorderLayout.CENTER);
@@ -190,6 +192,8 @@ public class ViewSales extends JFrame {
                         "COALESCE(l.name, 'Unknown') AS store_name, " +
                         "COUNT(si.sale_item_id) AS item_count, " +
                         "COALESCE(s.payment_method, '') AS payment_method, " +
+                        "COALESCE(s.payment_status, 'PAID') AS payment_status, " +
+                        "COALESCE(s.amount_paid, 0) AS amount_paid, " +
                         "COALESCE(s.total_amount, 0) AS total_amount " +
                         "FROM sales s " +
                         "LEFT JOIN users u ON s.user_id = u.user_id " +
@@ -210,8 +214,10 @@ public class ViewSales extends JFrame {
             sql.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
                     .append("COALESCE(u.full_name, u.username, '') ILIKE ? OR ")
                     .append("COALESCE(l.name, '') ILIKE ? OR ")
-                    .append("COALESCE(s.payment_method, '') ILIKE ?) ");
+                    .append("COALESCE(s.payment_method, '') ILIKE ? OR ")
+                    .append("COALESCE(s.payment_status, 'PAID') ILIKE ?) ");
             String likeValue = "%" + searchText + "%";
+            parameters.add(likeValue);
             parameters.add(likeValue);
             parameters.add(likeValue);
             parameters.add(likeValue);
@@ -238,7 +244,7 @@ public class ViewSales extends JFrame {
             parameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
         }
 
-        sql.append("GROUP BY s.sale_id, s.created_at, cashier_name, store_name, s.payment_method, s.total_amount ")
+        sql.append("GROUP BY s.sale_id, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.total_amount ")
                 .append("ORDER BY s.created_at DESC");
 
         double grandTotal = 0;
@@ -259,6 +265,8 @@ public class ViewSales extends JFrame {
                     String store = rs.getString("store_name");
                     int itemCount = rs.getInt("item_count");
                     String paymentMethod = rs.getString("payment_method");
+                    String paymentStatus = rs.getString("payment_status");
+                    double amountPaid = rs.getDouble("amount_paid");
                     double total = rs.getDouble("total_amount");
 
                     salesTableModel.addRow(new Object[]{
@@ -268,6 +276,8 @@ public class ViewSales extends JFrame {
                             store,
                             itemCount,
                             paymentMethod,
+                            formatPaymentStatus(paymentStatus),
+                            currencyFormat.format(amountPaid),
                             currencyFormat.format(total)
                     });
 
@@ -396,6 +406,17 @@ public class ViewSales extends JFrame {
         LocalDateTime utcDateTime = timestamp.toLocalDateTime();
         ZonedDateTime localDateTime = utcDateTime.atZone(ZoneOffset.UTC).withZoneSameInstant(ZoneId.systemDefault());
         return dbDateTimeFormatter.format(localDateTime);
+    }
+
+    private String formatPaymentStatus(String paymentStatus) {
+        if (paymentStatus == null || paymentStatus.isBlank()) {
+            return "Paid";
+        }
+        return switch (paymentStatus.toUpperCase()) {
+            case "UNPAID" -> "Unpaid";
+            case "PAID" -> "Paid";
+            default -> paymentStatus.substring(0, 1).toUpperCase() + paymentStatus.substring(1).toLowerCase();
+        };
     }
 
     private Connection getConnection() throws SQLException {

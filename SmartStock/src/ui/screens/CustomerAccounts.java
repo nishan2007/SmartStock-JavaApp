@@ -26,6 +26,7 @@ public class CustomerAccounts extends JFrame {
     private JTextField emailField;
     private JTextField creditLimitField;
     private JTextField balanceField;
+    private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
     private JButton addButton;
     private JButton updateButton;
@@ -33,6 +34,9 @@ public class CustomerAccounts extends JFrame {
     private JButton refreshButton;
     private JButton addChargeButton;
     private JButton recordPaymentButton;
+    private JButton generateAccountNumberButton;
+    private JButton transactionHistoryButton;
+    private JButton paymentHistoryButton;
     private Integer selectedCustomerId;
 
     public CustomerAccounts() {
@@ -64,7 +68,7 @@ public class CustomerAccounts extends JFrame {
         searchPanel.add(searchField, BorderLayout.CENTER);
 
         customerModel = new DefaultTableModel(
-                new Object[]{"ID", "Account #", "Name", "Phone", "Email", "Credit Limit", "Balance", "Available", "Active"},
+                new Object[]{"ID", "Account #", "Name", "Phone", "Email", "Credit Limit", "Balance", "Available", "Type", "Active"},
                 0
         ) {
             @Override
@@ -79,11 +83,20 @@ public class CustomerAccounts extends JFrame {
         customerTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         customerTable.setRowHeight(26);
         customerTable.getColumnModel().getColumn(0).setMaxWidth(60);
-        customerTable.getColumnModel().getColumn(8).setMaxWidth(70);
+        customerTable.getColumnModel().getColumn(8).setMaxWidth(95);
+        customerTable.getColumnModel().getColumn(9).setMaxWidth(70);
 
         customerTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedCustomer();
+            }
+        });
+        customerTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    openTransactionHistory();
+                }
             }
         });
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -126,9 +139,15 @@ public class CustomerAccounts extends JFrame {
         creditLimitField = new JTextField("0.00");
         balanceField = new JTextField("0.00");
         balanceField.setEditable(false);
+        businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active", true);
 
-        addField(formPanel, gbc, 0, "Account #:", accountNumberField);
+        JPanel accountNumberPanel = new JPanel(new BorderLayout(6, 0));
+        accountNumberPanel.add(accountNumberField, BorderLayout.CENTER);
+        generateAccountNumberButton = new JButton("Generate");
+        accountNumberPanel.add(generateAccountNumberButton, BorderLayout.EAST);
+
+        addField(formPanel, gbc, 0, "Account #:", accountNumberPanel);
         addField(formPanel, gbc, 1, "Name:", nameField);
         addField(formPanel, gbc, 2, "Phone:", phoneField);
         addField(formPanel, gbc, 3, "Email:", emailField);
@@ -137,26 +156,38 @@ public class CustomerAccounts extends JFrame {
 
         gbc.gridx = 0;
         gbc.gridy = 6;
+        formPanel.add(new JLabel("Account Type:"), gbc);
+        gbc.gridx = 1;
+        formPanel.add(businessAccountCheckBox, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 7;
         formPanel.add(new JLabel("Status:"), gbc);
         gbc.gridx = 1;
         formPanel.add(activeCheckBox, gbc);
 
-        JPanel buttonPanel = new JPanel(new GridLayout(3, 2, 8, 8));
+        JPanel buttonPanel = new JPanel(new GridLayout(4, 2, 8, 8));
         addButton = new JButton("Add Account");
         updateButton = new JButton("Update Account");
         clearButton = new JButton("Clear");
         refreshButton = new JButton("Refresh");
         addChargeButton = new JButton("Add Charge");
         recordPaymentButton = new JButton("Record Payment");
+        transactionHistoryButton = new JButton("Transactions");
+        paymentHistoryButton = new JButton("Payments");
 
         updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
+        transactionHistoryButton.setEnabled(false);
+        paymentHistoryButton.setEnabled(false);
 
         buttonPanel.add(addButton);
         buttonPanel.add(updateButton);
         buttonPanel.add(addChargeButton);
         buttonPanel.add(recordPaymentButton);
+        buttonPanel.add(transactionHistoryButton);
+        buttonPanel.add(paymentHistoryButton);
         buttonPanel.add(clearButton);
         buttonPanel.add(refreshButton);
 
@@ -166,6 +197,9 @@ public class CustomerAccounts extends JFrame {
         refreshButton.addActionListener(e -> loadCustomers());
         addChargeButton.addActionListener(e -> adjustBalance(true));
         recordPaymentButton.addActionListener(e -> adjustBalance(false));
+        transactionHistoryButton.addActionListener(e -> openTransactionHistory());
+        paymentHistoryButton.addActionListener(e -> openPaymentHistory());
+        generateAccountNumberButton.addActionListener(e -> generateAccountNumberIntoField());
 
         wrapper.add(formPanel, BorderLayout.NORTH);
         wrapper.add(buttonPanel, BorderLayout.SOUTH);
@@ -188,6 +222,7 @@ public class CustomerAccounts extends JFrame {
                 SELECT customer_id, account_number, name, phone, email,
                        credit_limit, current_balance,
                        (credit_limit - current_balance) AS available_credit,
+                       COALESCE(is_business, FALSE) AS is_business,
                        is_active
                 FROM customer_accounts
                 ORDER BY name
@@ -207,6 +242,7 @@ public class CustomerAccounts extends JFrame {
                         money(rs.getBigDecimal("credit_limit")),
                         money(rs.getBigDecimal("current_balance")),
                         money(rs.getBigDecimal("available_credit")),
+                        rs.getBoolean("is_business") ? "Business" : "Personal",
                         rs.getBoolean("is_active")
                 });
             }
@@ -229,10 +265,48 @@ public class CustomerAccounts extends JFrame {
         emailField.setText(valueAt(modelRow, 4));
         creditLimitField.setText(stripMoney(valueAt(modelRow, 5)));
         balanceField.setText(stripMoney(valueAt(modelRow, 6)));
-        activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 8)));
+        businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 8)));
+        activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 9)));
         updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
+        transactionHistoryButton.setEnabled(true);
+        paymentHistoryButton.setEnabled(true);
+    }
+
+    private void openTransactionHistory() {
+        CustomerSelection selection = getSelectedCustomer();
+        if (selection == null) {
+            JOptionPane.showMessageDialog(this, "Select a customer first.");
+            return;
+        }
+        CustomerTransactionHistory history = new CustomerTransactionHistory(selection.customerId(), selection.accountLabel());
+        history.setLocationRelativeTo(this);
+        history.setVisible(true);
+    }
+
+    private void openPaymentHistory() {
+        CustomerSelection selection = getSelectedCustomer();
+        if (selection == null) {
+            JOptionPane.showMessageDialog(this, "Select a customer first.");
+            return;
+        }
+        CustomerPaymentHistory history = new CustomerPaymentHistory(selection.customerId(), selection.accountLabel());
+        history.setLocationRelativeTo(this);
+        history.setVisible(true);
+    }
+
+    private CustomerSelection getSelectedCustomer() {
+        int row = customerTable.getSelectedRow();
+        if (row == -1) {
+            return null;
+        }
+        int modelRow = customerTable.convertRowIndexToModel(row);
+        int customerId = Integer.parseInt(String.valueOf(customerModel.getValueAt(modelRow, 0)));
+        String accountNumber = valueAt(modelRow, 1);
+        String name = valueAt(modelRow, 2);
+        String accountLabel = accountNumber.isBlank() ? name : accountNumber + " - " + name;
+        return new CustomerSelection(customerId, accountLabel);
     }
 
     private void addCustomer() {
@@ -240,6 +314,7 @@ public class CustomerAccounts extends JFrame {
         String name = nameField.getText().trim();
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
+        boolean businessAccount = businessAccountCheckBox.isSelected();
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         if (creditLimit == null) {
             return;
@@ -249,9 +324,17 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
+        if (accountNumber.isEmpty()) {
+            accountNumber = generateNextAccountNumber(businessAccount);
+            if (accountNumber == null) {
+                return;
+            }
+            accountNumberField.setText(accountNumber);
+        }
+
         String sql = """
-                INSERT INTO customer_accounts (account_number, name, phone, email, credit_limit, current_balance, is_active)
-                VALUES (?, ?, ?, ?, ?, 0, ?)
+                INSERT INTO customer_accounts (account_number, name, phone, email, credit_limit, current_balance, is_business, is_active)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -262,7 +345,8 @@ public class CustomerAccounts extends JFrame {
             ps.setString(3, phone.isEmpty() ? null : phone);
             ps.setString(4, email.isEmpty() ? null : email);
             ps.setBigDecimal(5, creditLimit);
-            ps.setBoolean(6, activeCheckBox.isSelected());
+            ps.setBoolean(6, businessAccount);
+            ps.setBoolean(7, activeCheckBox.isSelected());
             ps.executeUpdate();
 
             JOptionPane.showMessageDialog(this, "Customer account added.");
@@ -283,6 +367,7 @@ public class CustomerAccounts extends JFrame {
         String name = nameField.getText().trim();
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
+        boolean businessAccount = businessAccountCheckBox.isSelected();
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         if (creditLimit == null) {
             return;
@@ -292,6 +377,14 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
+        if (accountNumber.isEmpty()) {
+            accountNumber = generateNextAccountNumber(businessAccount);
+            if (accountNumber == null) {
+                return;
+            }
+            accountNumberField.setText(accountNumber);
+        }
+
         String sql = """
                 UPDATE customer_accounts
                 SET account_number = ?,
@@ -299,6 +392,7 @@ public class CustomerAccounts extends JFrame {
                     phone = ?,
                     email = ?,
                     credit_limit = ?,
+                    is_business = ?,
                     is_active = ?
                 WHERE customer_id = ?
                 """;
@@ -311,8 +405,9 @@ public class CustomerAccounts extends JFrame {
             ps.setString(3, phone.isEmpty() ? null : phone);
             ps.setString(4, email.isEmpty() ? null : email);
             ps.setBigDecimal(5, creditLimit);
-            ps.setBoolean(6, activeCheckBox.isSelected());
-            ps.setInt(7, selectedCustomerId);
+            ps.setBoolean(6, businessAccount);
+            ps.setBoolean(7, activeCheckBox.isSelected());
+            ps.setInt(8, selectedCustomerId);
             ps.executeUpdate();
 
             JOptionPane.showMessageDialog(this, "Customer account updated.");
@@ -362,7 +457,7 @@ public class CustomerAccounts extends JFrame {
                 }
 
                 updateCustomerBalance(conn, selectedCustomerId, newBalance);
-                insertAccountTransaction(
+                AccountTransaction transaction = insertAccountTransaction(
                         conn,
                         selectedCustomerId,
                         signedAmount,
@@ -370,8 +465,16 @@ public class CustomerAccounts extends JFrame {
                         addCharge ? "Manual account charge" : "Customer payment",
                         null
                 );
+                if (!addCharge) {
+                    String allocationNote = applyPaymentToUnpaidSales(conn, selectedCustomerId, amount, transaction.transactionId());
+                    updateTransactionNote(conn, transaction.transactionId(), allocationNote);
+                }
                 conn.commit();
-                JOptionPane.showMessageDialog(this, addCharge ? "Charge added." : "Payment recorded.");
+                if (addCharge) {
+                    JOptionPane.showMessageDialog(this, "Charge added.");
+                } else {
+                    JOptionPane.showMessageDialog(this, "Payment recorded. Payment ID: " + transaction.paymentId());
+                }
                 loadCustomers();
             } catch (Exception ex) {
                 conn.rollback();
@@ -381,6 +484,99 @@ public class CustomerAccounts extends JFrame {
             }
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update account balance: " + ex.getMessage());
+        }
+    }
+
+    private String applyPaymentToUnpaidSales(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId) throws SQLException {
+        BigDecimal remainingPayment = paymentAmount;
+        StringBuilder appliedSales = new StringBuilder();
+        String selectSql = """
+                SELECT sale_id,
+                       COALESCE(total_amount, 0) AS total_amount,
+                       COALESCE(amount_paid, 0) AS amount_paid
+                FROM sales
+                WHERE customer_id = ?
+                  AND payment_method = 'ACCOUNT'
+                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
+                ORDER BY created_at ASC, sale_id ASC
+                FOR UPDATE
+                """;
+        String updateSql = """
+                UPDATE sales
+                SET amount_paid = ?,
+                    payment_status = ?
+                WHERE sale_id = ?
+                """;
+        String allocationSql = """
+                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, sale_id, amount)
+                VALUES (?, ?, ?, ?)
+                """;
+
+        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
+             PreparedStatement updatePs = conn.prepareStatement(updateSql);
+             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
+
+            selectPs.setInt(1, customerId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
+                    int saleId = rs.getInt("sale_id");
+                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    BigDecimal amountDue = totalAmount.subtract(amountPaid);
+
+                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
+                        updateSalePaymentStatus(updatePs, saleId, totalAmount, "PAID");
+                        continue;
+                    }
+
+                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
+                    BigDecimal newAmountPaid = amountPaid.add(appliedAmount);
+                    String paymentStatus = newAmountPaid.compareTo(totalAmount) >= 0 ? "PAID" : "UNPAID";
+                    updateSalePaymentStatus(updatePs, saleId, newAmountPaid, paymentStatus);
+                    insertPaymentAllocation(allocationPs, paymentTransactionId, customerId, saleId, appliedAmount);
+                    if (!appliedSales.isEmpty()) {
+                        appliedSales.append("; ");
+                    }
+                    appliedSales.append("sale #")
+                            .append(saleId)
+                            .append(" ")
+                            .append(money(appliedAmount));
+                    remainingPayment = remainingPayment.subtract(appliedAmount);
+                }
+            }
+        }
+
+        if (appliedSales.isEmpty()) {
+            return "Customer payment. No unpaid account sales were available to apply this payment to.";
+        }
+        if (remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
+            appliedSales.append("; unapplied ")
+                    .append(money(remainingPayment));
+        }
+        return "Customer payment applied to " + appliedSales;
+    }
+
+    private void updateSalePaymentStatus(PreparedStatement ps, int saleId, BigDecimal amountPaid, String paymentStatus) throws SQLException {
+        ps.setBigDecimal(1, amountPaid);
+        ps.setString(2, paymentStatus);
+        ps.setInt(3, saleId);
+        ps.executeUpdate();
+    }
+
+    private void insertPaymentAllocation(PreparedStatement ps, int paymentTransactionId, int customerId, int saleId, BigDecimal amount) throws SQLException {
+        ps.setInt(1, paymentTransactionId);
+        ps.setInt(2, customerId);
+        ps.setInt(3, saleId);
+        ps.setBigDecimal(4, amount);
+        ps.executeUpdate();
+    }
+
+    private void updateTransactionNote(Connection conn, int transactionId, String note) throws SQLException {
+        String sql = "UPDATE customer_account_transactions SET note = ? WHERE transaction_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, note);
+            ps.setInt(2, transactionId);
+            ps.executeUpdate();
         }
     }
 
@@ -414,12 +610,12 @@ public class CustomerAccounts extends JFrame {
         }
     }
 
-    private void insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note, Integer saleId) throws SQLException {
+    private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note, Integer saleId) throws SQLException {
         String sql = """
                 INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note)
                 VALUES (?, ?, ?, ?, ?)
                 """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, customerId);
             if (saleId == null) {
                 ps.setNull(2, java.sql.Types.INTEGER);
@@ -429,6 +625,33 @@ public class CustomerAccounts extends JFrame {
             ps.setBigDecimal(3, amount);
             ps.setString(4, type);
             ps.setString(5, note);
+            ps.executeUpdate();
+
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    int transactionId = rs.getInt(1);
+                    String paymentId = null;
+                    if ("PAYMENT".equals(type)) {
+                        paymentId = generatePaymentId(transactionId);
+                        updateTransactionPaymentId(conn, transactionId, paymentId);
+                    }
+                    return new AccountTransaction(transactionId, paymentId);
+                }
+            }
+        }
+
+        throw new SQLException("Failed to create account transaction.");
+    }
+
+    private String generatePaymentId(int transactionId) {
+        return String.format("PAY-%06d", transactionId);
+    }
+
+    private void updateTransactionPaymentId(Connection conn, int transactionId, String paymentId) throws SQLException {
+        String sql = "UPDATE customer_account_transactions SET payment_id = ? WHERE transaction_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, paymentId);
+            ps.setInt(2, transactionId);
             ps.executeUpdate();
         }
     }
@@ -441,12 +664,46 @@ public class CustomerAccounts extends JFrame {
         emailField.setText("");
         creditLimitField.setText("0.00");
         balanceField.setText("0.00");
+        businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
         updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
+        transactionHistoryButton.setEnabled(false);
+        paymentHistoryButton.setEnabled(false);
         customerTable.clearSelection();
         nameField.requestFocusInWindow();
+    }
+
+    private void generateAccountNumberIntoField() {
+        String accountNumber = generateNextAccountNumber(businessAccountCheckBox.isSelected());
+        if (accountNumber != null) {
+            accountNumberField.setText(accountNumber);
+        }
+    }
+
+    private String generateNextAccountNumber(boolean businessAccount) {
+        String prefix = businessAccount ? "BA" : "CA";
+        String sql = """
+                SELECT COALESCE(MAX(CAST(SUBSTRING(account_number FROM 4) AS INTEGER)), 0) + 1 AS next_number
+                FROM customer_accounts
+                WHERE account_number ~ ?
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, "^" + prefix + "-[0-9]+$");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return String.format("%s-%06d", prefix, rs.getInt("next_number"));
+                }
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to generate account number: " + ex.getMessage());
+        }
+
+        return null;
     }
 
     private void applyCustomerFilter() {
@@ -471,10 +728,12 @@ public class CustomerAccounts extends JFrame {
     }
 
     private String money(BigDecimal value) {
-        if (value == null) {
-            value = BigDecimal.ZERO;
-        }
+        value = defaultZero(value);
         return String.format("$%.2f", value);
+    }
+
+    private BigDecimal defaultZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private BigDecimal parseMoney(String value, String fieldName) {
@@ -487,5 +746,11 @@ public class CustomerAccounts extends JFrame {
     }
 
     private record AccountSnapshot(BigDecimal balance, BigDecimal creditLimit, boolean active) {
+    }
+
+    private record AccountTransaction(int transactionId, String paymentId) {
+    }
+
+    private record CustomerSelection(int customerId, String accountLabel) {
     }
 }
