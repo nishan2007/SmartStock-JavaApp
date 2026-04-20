@@ -84,7 +84,12 @@ public class MainMenu extends JFrame {
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
         applyPermissions();
 
-        JPanel sectionStackPanel = new JPanel();
+        JPanel sectionStackPanel = new JPanel() {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
         sectionStackPanel.setLayout(new BoxLayout(sectionStackPanel, BoxLayout.Y_AXIS));
         sectionStackPanel.setOpaque(false);
         sectionStackPanel.add(createSectionPanel(
@@ -122,12 +127,22 @@ public class MainMenu extends JFrame {
                 localDeviceSettingsButton
         ));
 
-        JScrollPane sectionScrollPane = new JScrollPane(sectionStackPanel);
+        JPanel scrollContentPanel = new ViewportWidthPanel(new BorderLayout());
+        scrollContentPanel.setOpaque(false);
+        scrollContentPanel.add(sectionStackPanel, BorderLayout.NORTH);
+
+        JScrollPane sectionScrollPane = new JScrollPane(scrollContentPanel);
         sectionScrollPane.setBorder(BorderFactory.createEmptyBorder());
         sectionScrollPane.setOpaque(false);
         sectionScrollPane.getViewport().setOpaque(false);
         sectionScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         sectionScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sectionScrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                sectionStackPanel.revalidate();
+            }
+        });
 
         logoutButton = new JButton("Logout");
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
@@ -185,17 +200,19 @@ public class MainMenu extends JFrame {
     }
 
     private JPanel createSectionPanel(String title, Color accentColor, JButton... buttons) {
-        JPanel sectionPanel = new JPanel(new BorderLayout(0, 14));
+        JPanel sectionPanel = new JPanel(new BorderLayout(0, 14)) {
+            @Override
+            public Dimension getMaximumSize() {
+                Dimension preferred = getPreferredSize();
+                return new Dimension(Integer.MAX_VALUE, preferred.height);
+            }
+        };
         sectionPanel.setBackground(Color.WHITE);
         sectionPanel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
                 new EmptyBorder(16, 16, 16, 16)
         ));
         sectionPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        int rowCount = Math.max(1, (buttons.length + 3) / 4);
-        int sectionHeight = 74 + (rowCount * 112);
-        sectionPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, sectionHeight));
-        sectionPanel.setPreferredSize(new Dimension(1000, sectionHeight));
 
         JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
         headerPanel.setOpaque(false);
@@ -211,7 +228,7 @@ public class MainMenu extends JFrame {
         headerPanel.add(accentBar, BorderLayout.WEST);
         headerPanel.add(titleLabel, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        JPanel buttonPanel = new WrappingButtonPanel(12, 12);
         buttonPanel.setOpaque(false);
 
         for (JButton button : buttons) {
@@ -221,6 +238,106 @@ public class MainMenu extends JFrame {
         sectionPanel.add(headerPanel, BorderLayout.NORTH);
         sectionPanel.add(buttonPanel, BorderLayout.CENTER);
         return sectionPanel;
+    }
+
+    private static class WrappingButtonPanel extends JPanel {
+        private final int hGap;
+        private final int vGap;
+
+        private WrappingButtonPanel(int hGap, int vGap) {
+            super(null);
+            this.hGap = hGap;
+            this.vGap = vGap;
+        }
+
+        @Override
+        public void doLayout() {
+            int width = Math.max(getWidth(), getPreferredSize().width);
+            int x = 0;
+            int y = 0;
+            int rowHeight = 0;
+
+            for (Component component : getComponents()) {
+                if (!component.isVisible()) {
+                    continue;
+                }
+                Dimension size = component.getPreferredSize();
+                if (x > 0 && x + size.width > width) {
+                    x = 0;
+                    y += rowHeight + vGap;
+                    rowHeight = 0;
+                }
+                component.setBounds(x, y, size.width, size.height);
+                x += size.width + hGap;
+                rowHeight = Math.max(rowHeight, size.height);
+            }
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int width = getWidth();
+            if (width <= 0 && getParent() != null) {
+                width = getParent().getWidth() - 34;
+            }
+            if (width <= 0) {
+                Window window = SwingUtilities.getWindowAncestor(this);
+                width = window == null ? 1000 : window.getWidth() - 90;
+            }
+            width = Math.max(width, 320);
+            int x = 0;
+            int y = 0;
+            int rowHeight = 0;
+            int maxWidth = 0;
+
+            for (Component component : getComponents()) {
+                if (!component.isVisible()) {
+                    continue;
+                }
+                Dimension size = component.getPreferredSize();
+                if (x > 0 && x + size.width > width) {
+                    maxWidth = Math.max(maxWidth, x - hGap);
+                    x = 0;
+                    y += rowHeight + vGap;
+                    rowHeight = 0;
+                }
+                x += size.width + hGap;
+                rowHeight = Math.max(rowHeight, size.height);
+            }
+
+            maxWidth = Math.max(maxWidth, Math.max(0, x - hGap));
+            return new Dimension(Math.max(Math.min(maxWidth, width), 320), y + rowHeight);
+        }
+    }
+
+    private static class ViewportWidthPanel extends JPanel implements Scrollable {
+        private ViewportWidthPanel(LayoutManager layout) {
+            super(layout);
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return Math.max(visibleRect.height - 32, 16);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
     }
 
     public void applyPermissions() {
@@ -388,7 +505,7 @@ public class MainMenu extends JFrame {
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setPreferredSize(new Dimension(285, 96));
-        button.setMinimumSize(new Dimension(245, 88));
+        button.setMinimumSize(new Dimension(285, 96));
         button.setMaximumSize(new Dimension(320, 104));
 
         JLabel iconLabel = new JLabel(icon);
