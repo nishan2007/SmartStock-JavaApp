@@ -4,6 +4,7 @@ import managers.SupabaseSessionManager;
 import services.DeviceService;
 import managers.SessionManager;
 import data.DB;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import java.awt.*;
@@ -101,6 +102,7 @@ public class Login extends JFrame {
         String userSql = """
                 SELECT u.user_id,
                        u.username,
+                       u.full_name,
                        u.email,
                        u.auth_user_id,
                        u.is_active,
@@ -132,6 +134,7 @@ public class Login extends JFrame {
 
                 int userId = userRs.getInt("user_id");
                 String foundUsername = userRs.getString("username");
+                String fullName = userRs.getString("full_name");
                 String email = userRs.getString("email");
                 String authUserId = userRs.getString("auth_user_id");
                 boolean isActive = userRs.getBoolean("is_active");
@@ -199,6 +202,7 @@ public class Login extends JFrame {
 
                 SessionManager.setCurrentUserId(userId);
                 SessionManager.setCurrentUsername(foundUsername);
+                SessionManager.setCurrentUserDisplayName((fullName == null || fullName.isBlank()) ? foundUsername : fullName);
                 SessionManager.setCurrentRole(role);
                 SessionManager.setCurrentLocationId(selectedLocation.locationId);
                 SessionManager.setCurrentLocationName(selectedLocation.locationName);
@@ -209,13 +213,14 @@ public class Login extends JFrame {
 
                 JOptionPane.showMessageDialog(
                         this,
-                        "Login successful.\nUser: " + SessionManager.getCurrentUsername() +
+                        "Login successful.\nUser: " + SessionManager.getCurrentUserDisplayName() +
                                 "\nRole: " + SessionManager.getCurrentRole() +
                                 "\nStore: " + SessionManager.getCurrentLocationName()
                 );
 
+                MainMenu mainMenu = new MainMenu();
+                WindowHelper.showPosWindow(mainMenu, this);
                 dispose();
-                new MainMenu().setVisible(true);
             }
 
         } catch (SQLException ex) {

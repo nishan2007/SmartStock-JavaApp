@@ -5,6 +5,7 @@ import managers.SupabaseSessionManager;
 import managers.SessionManager;
 import services.DeviceService;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 import data.DB;
 
 import javax.swing.*;
@@ -20,11 +21,15 @@ public class MainMenu extends JFrame {
 
     private final JButton makeSaleButton;
     private final JButton enterInventoryButton;
+    private final JButton receivingHistoryButton;
+    private final JButton storeTransferButton;
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton viewInventoryButton;
     private final JButton addItemButton;
     private final JButton editItemsButton;
+    private final JButton timeClockButton;
+    private final JButton payrollDashboardButton;
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
     private final JButton localDeviceSettingsButton;
@@ -62,12 +67,16 @@ public class MainMenu extends JFrame {
         headerPanel.add(subtitleLabel);
 
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
-        enterInventoryButton = createMenuButton("Enter Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
+        enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
+        receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/ViewSales.png"));
+        storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/ViewInventory.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
+        timeClockButton = createMenuButton("Time Clock", "Clock employees in and out", loadIcon("src/ICONS/Employee.png"));
+        payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/ViewSales.png"));
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
@@ -88,6 +97,8 @@ public class MainMenu extends JFrame {
                 "Inventory",
                 new Color(5, 150, 105),
                 enterInventoryButton,
+                receivingHistoryButton,
+                storeTransferButton,
                 viewInventoryButton,
                 addItemButton,
                 editItemsButton
@@ -96,6 +107,8 @@ public class MainMenu extends JFrame {
         sectionStackPanel.add(createSectionPanel(
                 "Employee",
                 new Color(217, 119, 6),
+                timeClockButton,
+                payrollDashboardButton,
                 employeeManagementButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
@@ -129,6 +142,7 @@ public class MainMenu extends JFrame {
         add(mainPanel, BorderLayout.CENTER);
         wireActions();
         wireWindowSessionHandling();
+        WindowHelper.configurePosWindow(this);
     }
     private ImageIcon loadIcon(String path) {
         ImageIcon icon = null;
@@ -175,8 +189,10 @@ public class MainMenu extends JFrame {
                 new EmptyBorder(16, 16, 16, 16)
         ));
         sectionPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        sectionPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 170));
-        sectionPanel.setPreferredSize(new Dimension(1000, 170));
+        int rowCount = Math.max(1, (buttons.length + 3) / 4);
+        int sectionHeight = 74 + (rowCount * 112);
+        sectionPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, sectionHeight));
+        sectionPanel.setPreferredSize(new Dimension(1000, sectionHeight));
 
         JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
         headerPanel.setOpaque(false);
@@ -206,23 +222,31 @@ public class MainMenu extends JFrame {
 
     public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
-        boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
+        boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
+        boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
+        boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canAddItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
+        boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
+        boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
 
         makeSaleButton.setEnabled(canMakeSale);
         enterInventoryButton.setEnabled(canEnterInventory);
+        receivingHistoryButton.setEnabled(canReceivingHistory);
+        storeTransferButton.setEnabled(canStoreTransfer);
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         viewInventoryButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
         editItemsButton.setEnabled(canEditItem);
+        timeClockButton.setEnabled(canTimeClock);
+        payrollDashboardButton.setEnabled(canPayrollDashboard);
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
         localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
@@ -238,10 +262,22 @@ public class MainMenu extends JFrame {
             NavigationManager.openMakeSale(this);
         });
         enterInventoryButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("ENTER_INVENTORY", this, "Enter Inventory")) {
+            if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", this, "Receiving Inventory")) {
                 return;
             }
             NavigationManager.openEnterInventory(this);
+        });
+        receivingHistoryButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("VIEW_RECEIVING_HISTORY", this, "Receiving History")) {
+                return;
+            }
+            NavigationManager.openReceivingHistory(this);
+        });
+        storeTransferButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("STORE_TRANSFER", this, "Store Transfer")) {
+                return;
+            }
+            NavigationManager.openStoreTransfer(this);
         });
         viewSalesButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_SALES", this, "View Sales")) {
@@ -272,6 +308,18 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openEditItem(this);
+        });
+        timeClockButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("TIME_CLOCK", this, "Time Clock")) {
+                return;
+            }
+            NavigationManager.openTimeClock(this);
+        });
+        payrollDashboardButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("PAYROLL_DASHBOARD", this, "Payroll Dashboard")) {
+                return;
+            }
+            NavigationManager.openPayrollDashboard(this);
         });
         employeeManagementButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("EMPLOYEE_MANAGEMENT", this, "Employee Management")) {
@@ -328,9 +376,9 @@ public class MainMenu extends JFrame {
         ));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setHorizontalAlignment(SwingConstants.LEFT);
-        button.setPreferredSize(new Dimension(245, 88));
+        button.setPreferredSize(new Dimension(285, 96));
         button.setMinimumSize(new Dimension(245, 88));
-        button.setMaximumSize(new Dimension(245, 88));
+        button.setMaximumSize(new Dimension(320, 104));
 
         JLabel iconLabel = new JLabel(icon);
         iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -365,6 +413,10 @@ public class MainMenu extends JFrame {
         return enterInventoryButton;
     }
 
+    public JButton getReceivingHistoryButton() {
+        return receivingHistoryButton;
+    }
+
     public JButton getViewSalesButton() {
         return viewSalesButton;
     }
@@ -383,6 +435,14 @@ public class MainMenu extends JFrame {
 
     public JButton getEditItemsButton() {
         return editItemsButton;
+    }
+
+    public JButton getTimeClockButton() {
+        return timeClockButton;
+    }
+
+    public JButton getPayrollDashboardButton() {
+        return payrollDashboardButton;
     }
 
     public JButton getEmployeeManagementButton() {

@@ -1,8 +1,10 @@
 package ui.screens;
 
 import data.DB;
+import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -37,7 +39,7 @@ public class EnterInventory extends JFrame {
     private javax.swing.Timer searchDebounceTimer;
 
     public EnterInventory() {
-        setTitle("Enter Inventory");
+        setTitle("Receiving Inventory");
         setSize(1000, 600);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -195,7 +197,7 @@ public class EnterInventory extends JFrame {
 
         updateSelectedStoreLabel();
         updateCurrentUserLabel();
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private ImageIcon loadCenterLogoIcon() {
@@ -586,7 +588,7 @@ public class EnterInventory extends JFrame {
         if (SessionManager.getCurrentUserId() == null || SessionManager.getCurrentUsername() == null) {
             currentUserLabel.setText("No User currently logged in");
         } else {
-            currentUserLabel.setText("Current User: " + SessionManager.getCurrentUsername());
+            currentUserLabel.setText("Current User: " + SessionManager.getCurrentUserDisplayName());
         }
     }
 
@@ -625,13 +627,47 @@ public class EnterInventory extends JFrame {
             conn.setAutoCommit(false);
 
             try {
+                ReceiptNumberManager.ReceiveNumber receive = ReceiptNumberManager.nextReceive(locationId);
+                String insertReceivingBatchSql = """
+                        INSERT INTO receiving_batches (
+                            receive_id,
+	                            location_id,
+	                            user_id,
+	                            user_name,
+	                            receive_device_id,
+	                            receive_sequence
+	                        )
+	                        VALUES (?, ?, ?, ?, ?, ?)
+                        """;
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
                 String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
-                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note) VALUES (?, ?, ?, ?, ?)";
+                String insertMovementSql = """
+                        INSERT INTO inventory_movements (
+                            product_id,
+                            location_id,
+                            change_qty,
+                            reason,
+	                            note,
+	                            user_name,
+	                            receive_id,
+	                            receive_device_id,
+	                            receive_sequence
+	                        )
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """;
 
-                try (PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
+                try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
+                     PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
+
+	                    receivingBatchStmt.setString(1, receive.receiveId());
+	                    receivingBatchStmt.setInt(2, locationId);
+	                    receivingBatchStmt.setInt(3, SessionManager.getCurrentUserId());
+	                    receivingBatchStmt.setString(4, SessionManager.getCurrentUserDisplayName());
+	                    receivingBatchStmt.setString(5, receive.deviceId());
+	                    receivingBatchStmt.setInt(6, receive.sequence());
+                    receivingBatchStmt.executeUpdate();
 
                     for (int i = 0; i < inventoryModel.getRowCount(); i++) {
                         int productId = Integer.parseInt(inventoryModel.getValueAt(i, 0).toString());
@@ -651,9 +687,13 @@ public class EnterInventory extends JFrame {
 
                         movementStmt.setInt(1, productId);
                         movementStmt.setInt(2, locationId);
-                        movementStmt.setInt(3, qty);
-                        movementStmt.setString(4, "INVENTORY_ENTRY");
-                        movementStmt.setString(5, "entered_by_user_id=" + SessionManager.getCurrentUserId());
+	                        movementStmt.setInt(3, qty);
+	                        movementStmt.setString(4, "INVENTORY_ENTRY");
+	                        movementStmt.setString(5, "entered_by_user_id=" + SessionManager.getCurrentUserId());
+	                        movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+	                        movementStmt.setString(7, receive.receiveId());
+	                        movementStmt.setString(8, receive.deviceId());
+	                        movementStmt.setInt(9, receive.sequence());
                         movementStmt.addBatch();
                     }
 
@@ -663,7 +703,7 @@ public class EnterInventory extends JFrame {
                 }
 
                 conn.commit();
-                JOptionPane.showMessageDialog(this, "Inventory added successfully.");
+                JOptionPane.showMessageDialog(this, "Inventory added successfully.\nReceive ID: " + receive.receiveId());
                 inventoryModel.setRowCount(0);
                 searchField.setText("");
                 updateTotalUnitsLabel();

@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -45,6 +46,7 @@ public class CustomerPaymentHistory extends JFrame {
         mainPanel.add(buildSummaryPanel(), BorderLayout.SOUTH);
 
         loadPayments();
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
@@ -72,7 +74,7 @@ public class CustomerPaymentHistory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         paymentModel = new DefaultTableModel(
-                new Object[]{"Payment ID", "Payment Date", "Payment Amount", "Sale ID", "Applied", "Sale Total", "Sale Paid", "Sale Status", "Sale Date"},
+                new Object[]{"Payment ID", "Payment Date", "User", "Payment Amount", "Sale ID", "Applied", "Sale Total", "Sale Paid", "Sale Status", "Sale Date"},
                 0
         ) {
             @Override
@@ -87,13 +89,14 @@ public class CustomerPaymentHistory extends JFrame {
         paymentTable.getTableHeader().setReorderingAllowed(false);
         paymentTable.getColumnModel().getColumn(0).setPreferredWidth(130);
         paymentTable.getColumnModel().getColumn(1).setPreferredWidth(160);
-        paymentTable.getColumnModel().getColumn(2).setPreferredWidth(120);
-        paymentTable.getColumnModel().getColumn(3).setPreferredWidth(90);
-        paymentTable.getColumnModel().getColumn(4).setPreferredWidth(110);
+        paymentTable.getColumnModel().getColumn(2).setPreferredWidth(150);
+        paymentTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+        paymentTable.getColumnModel().getColumn(4).setPreferredWidth(90);
         paymentTable.getColumnModel().getColumn(5).setPreferredWidth(110);
         paymentTable.getColumnModel().getColumn(6).setPreferredWidth(110);
-        paymentTable.getColumnModel().getColumn(7).setPreferredWidth(100);
-        paymentTable.getColumnModel().getColumn(8).setPreferredWidth(160);
+        paymentTable.getColumnModel().getColumn(7).setPreferredWidth(110);
+        paymentTable.getColumnModel().getColumn(8).setPreferredWidth(100);
+        paymentTable.getColumnModel().getColumn(9).setPreferredWidth(160);
 
         return new JScrollPane(paymentTable);
     }
@@ -110,9 +113,10 @@ public class CustomerPaymentHistory extends JFrame {
         paymentModel.setRowCount(0);
         String sql = """
                 SELECT COALESCE(t.payment_id, '') AS payment_id,
-                       t.transaction_id,
-                       t.created_at AS payment_date,
-                       ABS(COALESCE(t.amount, 0)) AS payment_amount,
+	                       t.transaction_id,
+	                       t.created_at AS payment_date,
+	                       COALESCE(t.user_name, '') AS user_name,
+	                       ABS(COALESCE(t.amount, 0)) AS payment_amount,
                        a.sale_id,
                        a.amount AS applied_amount,
                        COALESCE(s.total_amount, 0) AS sale_total,
@@ -158,9 +162,10 @@ public class CustomerPaymentHistory extends JFrame {
                     }
 
                     paymentModel.addRow(new Object[]{
-                            displayPaymentId,
-                            formatTimestamp(rs.getTimestamp("payment_date")),
-                            currencyFormat.format(paymentAmount),
+	                            displayPaymentId,
+	                            formatTimestamp(rs.getTimestamp("payment_date")),
+	                            rs.getString("user_name"),
+	                            currencyFormat.format(paymentAmount),
                             nullableInt(rs, "sale_id"),
                             appliedAmount == null ? "" : currencyFormat.format(appliedAmount),
                             currencyFormat.format(defaultZero(rs.getBigDecimal("sale_total"))),

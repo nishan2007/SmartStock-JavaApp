@@ -1,8 +1,10 @@
 package ui.screens;
 
 import data.DB;
+import managers.SessionManager;
 import ui.components.AppMenuBar;
 import ui.components.RoundedBorder;
+import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
@@ -250,7 +252,7 @@ public class NewItem extends JFrame {
             }
         });
 
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private void saveItem() {
@@ -328,20 +330,22 @@ public class NewItem extends JFrame {
 
         String sql;
         if (categoryId == null) {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         } else {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         }
 
         String updateInventorySql = "UPDATE inventory SET quantity_on_hand = ? WHERE product_id = ? AND location_id = ?";
         String insertBarcodeSql = "INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)";
+        String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
 
             try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS);
                  PreparedStatement inventoryPs = conn.prepareStatement(updateInventorySql);
-                 PreparedStatement barcodePs = conn.prepareStatement(insertBarcodeSql)) {
+                 PreparedStatement barcodePs = conn.prepareStatement(insertBarcodeSql);
+                 PreparedStatement movementPs = conn.prepareStatement(insertMovementSql)) {
 
                 ps.setString(1, name);
                 ps.setString(2, sku);
@@ -353,8 +357,10 @@ public class NewItem extends JFrame {
                 if (categoryId != null) {
                     ps.setInt(7, categoryId);
                     ps.setString(8, imageUrl);
+                    setCurrentUserAuditParameters(ps, 9, 10);
                 } else {
                     ps.setString(7, imageUrl);
+                    setCurrentUserAuditParameters(ps, 8, 9);
                 }
 
                 ps.executeUpdate();
@@ -373,6 +379,16 @@ public class NewItem extends JFrame {
                 inventoryPs.executeUpdate();
                 if (inventoryPs.getUpdateCount() == 0) {
                     throw new SQLException("No inventory row found for product " + productId + " at location " + selectedLocationId + ".");
+                }
+
+                if (quantity != 0) {
+                    movementPs.setInt(1, productId);
+                    movementPs.setInt(2, selectedLocationId);
+                    movementPs.setInt(3, quantity);
+                    movementPs.setString(4, "NEW_ITEM");
+                    movementPs.setString(5, "Starting quantity for new item");
+                    movementPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                    movementPs.executeUpdate();
                 }
 
                 for (String extraBarcode : extraBarcodes) {
@@ -398,6 +414,15 @@ public class NewItem extends JFrame {
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
+    }
+
+    private void setCurrentUserAuditParameters(PreparedStatement ps, int userIdParameter, int userNameParameter) throws SQLException {
+        if (SessionManager.getCurrentUserId() == null) {
+            ps.setNull(userIdParameter, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(userIdParameter, SessionManager.getCurrentUserId());
+        }
+        ps.setString(userNameParameter, SessionManager.getCurrentUserDisplayName());
     }
 
     private void clearFields() {

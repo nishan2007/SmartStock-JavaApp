@@ -30,15 +30,40 @@ public class ReceiptNumberManager {
         return new ReceiptNumber(receiptNumber, deviceId, sequence);
     }
 
+    public static synchronized ReceiveNumber nextReceive(int locationId) throws IOException {
+        Properties properties = loadProperties();
+        String deviceId = getOrCreateDeviceId(properties);
+        String storeCode = formatStoreCode(locationId);
+        String sequenceKey = "next_receive_sequence." + storeCode + "." + deviceId;
+        int sequence = parsePositiveInt(properties.getProperty(sequenceKey), 1);
+
+        properties.setProperty(sequenceKey, String.valueOf(sequence + 1));
+        saveProperties(properties);
+
+        String receiveId = formatReceiveId(storeCode, deviceId, sequence);
+        return new ReceiveNumber(receiveId, deviceId, sequence);
+    }
+
     public static synchronized DeviceReceiptSettings getDeviceReceiptSettings(int locationId) throws IOException {
         Properties properties = loadProperties();
         String deviceId = getOrCreateDeviceId(properties);
         String storeCode = formatStoreCode(locationId);
-        String sequenceKey = "next_receipt_sequence." + storeCode + "." + deviceId;
-        int nextSequence = parsePositiveInt(properties.getProperty(sequenceKey), 1);
-        String nextReceiptPreview = formatReceiptNumber(storeCode, deviceId, nextSequence);
+        String receiptSequenceKey = "next_receipt_sequence." + storeCode + "." + deviceId;
+        String receiveSequenceKey = "next_receive_sequence." + storeCode + "." + deviceId;
+        int nextReceiptSequence = parsePositiveInt(properties.getProperty(receiptSequenceKey), 1);
+        int nextReceiveSequence = parsePositiveInt(properties.getProperty(receiveSequenceKey), 1);
+        String nextReceiptPreview = formatReceiptNumber(storeCode, deviceId, nextReceiptSequence);
+        String nextReceivePreview = formatReceiveId(storeCode, deviceId, nextReceiveSequence);
 
-        return new DeviceReceiptSettings(CONFIG_PATH, deviceId, storeCode, nextSequence, nextReceiptPreview);
+        return new DeviceReceiptSettings(
+                CONFIG_PATH,
+                deviceId,
+                storeCode,
+                nextReceiptSequence,
+                nextReceiptPreview,
+                nextReceiveSequence,
+                nextReceivePreview
+        );
     }
 
     public static synchronized String updateDeviceId(String deviceId) throws IOException {
@@ -108,6 +133,10 @@ public class ReceiptNumberManager {
         return "R-" + storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
     }
 
+    private static String formatReceiveId(String storeCode, String deviceId, int sequence) {
+        return "RCV-" + storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
+    }
+
     private static String sanitizeDeviceId(String value) {
         if (value == null) {
             return "";
@@ -129,6 +158,17 @@ public class ReceiptNumberManager {
     public record ReceiptNumber(String receiptNumber, String deviceId, int sequence) {
     }
 
-    public record DeviceReceiptSettings(Path configPath, String deviceId, String storeCode, int nextSequence, String nextReceiptPreview) {
+    public record ReceiveNumber(String receiveId, String deviceId, int sequence) {
+    }
+
+    public record DeviceReceiptSettings(
+            Path configPath,
+            String deviceId,
+            String storeCode,
+            int nextSequence,
+            String nextReceiptPreview,
+            int nextReceiveSequence,
+            String nextReceivePreview
+    ) {
     }
 }

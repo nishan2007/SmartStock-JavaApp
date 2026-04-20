@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.PermissionManager;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -64,6 +65,7 @@ public class CustomerAccountDetails extends JFrame {
 
         loadDetails();
         loadTransactions();
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
@@ -166,7 +168,7 @@ public class CustomerAccountDetails extends JFrame {
         panel.setBorder(BorderFactory.createTitledBorder("Transaction History"));
 
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "Type", "Sale ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Amount", "Sale Status", "Sale Total", "Note"},
                 0
         ) {
             @Override
@@ -182,12 +184,13 @@ public class CustomerAccountDetails extends JFrame {
         transactionTable.getColumnModel().getColumn(0).setPreferredWidth(100);
         transactionTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         transactionTable.getColumnModel().getColumn(2).setPreferredWidth(160);
-        transactionTable.getColumnModel().getColumn(3).setPreferredWidth(130);
-        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(90);
-        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(100);
-        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(260);
+        transactionTable.getColumnModel().getColumn(3).setPreferredWidth(150);
+        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(130);
+        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(90);
+        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(260);
 
         transactionSummaryLabel = new JLabel("Transactions: 0");
         transactionSummaryLabel.setBorder(new EmptyBorder(4, 2, 0, 2));
@@ -259,7 +262,8 @@ public class CustomerAccountDetails extends JFrame {
                 SELECT t.transaction_id,
                        COALESCE(t.payment_id, '') AS payment_id,
                        t.created_at,
-                       COALESCE(t.transaction_type, '') AS transaction_type,
+	                       COALESCE(t.user_name, '') AS user_name,
+	                       COALESCE(t.transaction_type, '') AS transaction_type,
                        t.sale_id,
                        COALESCE(t.amount, 0) AS amount,
                        COALESCE(t.note, '') AS note,
@@ -290,9 +294,10 @@ public class CustomerAccountDetails extends JFrame {
 
                     transactionModel.addRow(new Object[]{
                             rs.getInt("transaction_id"),
-                            rs.getString("payment_id"),
-                            formatTimestamp(rs.getTimestamp("created_at")),
-                            formatType(rs.getString("transaction_type")),
+	                            rs.getString("payment_id"),
+	                            formatTimestamp(rs.getTimestamp("created_at")),
+	                            rs.getString("user_name"),
+	                            formatType(rs.getString("transaction_type")),
                             nullableInt(rs, "sale_id"),
                             currencyFormat.format(amount),
                             formatStatus(rs.getString("payment_status")),
@@ -395,8 +400,7 @@ public class CustomerAccountDetails extends JFrame {
 
     private void openPaymentHistory() {
         CustomerPaymentHistory paymentHistory = new CustomerPaymentHistory(customerId, customerLabel);
-        paymentHistory.setLocationRelativeTo(this);
-        paymentHistory.setVisible(true);
+        WindowHelper.showPosWindow(paymentHistory, this);
     }
 
     private Object nullableInt(ResultSet rs, String column) throws SQLException {

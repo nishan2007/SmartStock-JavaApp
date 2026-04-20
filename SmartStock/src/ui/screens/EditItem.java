@@ -4,6 +4,7 @@ import managers.SessionManager;
 import data.DB;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
@@ -292,7 +293,7 @@ public class EditItem extends JFrame {
             }
         });
 
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private Integer getCurrentSelectedLocationId() {
@@ -489,7 +490,7 @@ public class EditItem extends JFrame {
             return;
         }
 
-        String sql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note) VALUES (?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, productId);
@@ -497,6 +498,7 @@ public class EditItem extends JFrame {
             ps.setInt(3, quantityChange);
             ps.setString(4, "MANUAL_ADJUSTMENT");
             ps.setString(5, "Manual adjustment from Edit Item");
+            ps.setString(6, SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
         }
     }

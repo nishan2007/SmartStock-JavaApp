@@ -1,5 +1,7 @@
 package managers;
 
+import data.DB;
+import services.DeviceService;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
@@ -7,15 +9,23 @@ import ui.screens.EmployeeManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
+import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
+import ui.screens.StoreTransfer;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
 import ui.screens.Login;
 import ui.screens.LocalDeviceSettings;
+import ui.screens.PayrollDashboard;
+import ui.screens.TimeClock;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
+import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.sql.Connection;
+import java.sql.SQLException;
 
 public final class NavigationManager {
 
@@ -28,12 +38,16 @@ public final class NavigationManager {
     public enum ScreenType {
         MAIN_MENU,
         MAKE_SALE,
-        ENTER_INVENTORY,
+        RECEIVING_INVENTORY,
+        RECEIVING_HISTORY,
+        STORE_TRANSFER,
         NEW_ITEM,
         EDIT_ITEM,
         VIEW_SALES,
         VIEW_INVENTORY,
         CUSTOMER_ACCOUNTS,
+        TIME_CLOCK,
+        PAYROLL_DASHBOARD,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
         LOCAL_DEVICE_SETTINGS
@@ -65,7 +79,15 @@ public final class NavigationManager {
     }
 
     public static void openEnterInventory(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.ENTER_INVENTORY));
+        openScreen(parent, createScreen(ScreenType.RECEIVING_INVENTORY));
+    }
+
+    public static void openReceivingHistory(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.RECEIVING_HISTORY));
+    }
+
+    public static void openStoreTransfer(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.STORE_TRANSFER));
     }
 
     public static void openNewItem(JFrame parent) {
@@ -88,6 +110,14 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
     }
 
+    public static void openTimeClock(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.TIME_CLOCK));
+    }
+
+    public static void openPayrollDashboard(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.PAYROLL_DASHBOARD));
+    }
+
     public static void openEmployeeManagement(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.EMPLOYEE_MANAGEMENT));
     }
@@ -104,12 +134,16 @@ public final class NavigationManager {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
             case MAKE_SALE -> new MakeASale();
-            case ENTER_INVENTORY -> new EnterInventory();
+            case RECEIVING_INVENTORY -> new EnterInventory();
+            case RECEIVING_HISTORY -> new ReceivingHistory();
+            case STORE_TRANSFER -> new StoreTransfer();
             case NEW_ITEM -> new NewItem();
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
+            case TIME_CLOCK -> new TimeClock();
+            case PAYROLL_DASHBOARD -> new PayrollDashboard();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
@@ -124,12 +158,16 @@ public final class NavigationManager {
         return switch (currentScreenName) {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
-            case "EnterInventory" -> ScreenType.ENTER_INVENTORY;
+            case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
+            case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
+            case "StoreTransfer" -> ScreenType.STORE_TRANSFER;
             case "NewItem" -> ScreenType.NEW_ITEM;
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
+            case "TimeClock" -> ScreenType.TIME_CLOCK;
+            case "PayrollDashboard" -> ScreenType.PAYROLL_DASHBOARD;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
@@ -140,10 +178,7 @@ public final class NavigationManager {
     private static void showExistingMainMenu(JFrame relativeTo) {
         if (activeMainMenu != null) {
             activeMainMenu.applyPermissions();
-            if (relativeTo != null) {
-                activeMainMenu.setLocationRelativeTo(relativeTo);
-            }
-            activeMainMenu.setVisible(true);
+            WindowHelper.showPosWindow(activeMainMenu, relativeTo);
             activeMainMenu.toFront();
             activeMainMenu.requestFocus();
         }
@@ -179,10 +214,18 @@ public final class NavigationManager {
                     showExistingMainMenu(childScreen);
                 }
             }
+
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (transitionInProgress) {
+                    return;
+                }
+                closeApplication(childScreen);
+            }
         });
 
-        childScreen.setLocationRelativeTo(mainMenu);
-        childScreen.setVisible(true);
+        WindowHelper.showPosWindow(childScreen, mainMenu);
+        transitionInProgress = false;
     }
 
     public static void switchChildScreen(JFrame currentScreen, JFrame newScreen) {
@@ -217,8 +260,8 @@ public final class NavigationManager {
             }
         });
 
-        newScreen.setLocationRelativeTo(currentScreen);
-        newScreen.setVisible(true);
+        WindowHelper.showPosWindow(newScreen, currentScreen);
+        transitionInProgress = false;
         currentScreen.dispose();
     }
 
@@ -267,13 +310,41 @@ public final class NavigationManager {
         } else {
             MainMenu menu = new MainMenu();
             activeMainMenu = menu;
-            menu.setLocationRelativeTo(currentScreen);
-            menu.setVisible(true);
+            WindowHelper.showPosWindow(menu, currentScreen);
         }
 
         if (currentScreen != null) {
             currentScreen.dispose();
         }
+        transitionInProgress = false;
+    }
+
+    public static void closeApplication(JFrame currentScreen) {
+        transitionInProgress = true;
+
+        try (Connection conn = DB.getConnection()) {
+            DeviceService.endCurrentSession(conn);
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+        }
+
+        for (Window window : Window.getWindows()) {
+            if (!(window instanceof JFrame frame)) {
+                continue;
+            }
+            if (frame.getRootPane() != null) {
+                frame.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
+            }
+        }
+
+        activeMainMenu = null;
+
+        for (Window window : Window.getWindows()) {
+            if (window.isDisplayable()) {
+                window.dispose();
+            }
+        }
+
         transitionInProgress = false;
     }
 }

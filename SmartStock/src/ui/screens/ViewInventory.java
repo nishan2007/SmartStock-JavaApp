@@ -1,6 +1,7 @@
 package ui.screens;
 
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 import managers.PermissionManager;
 import managers.SessionManager;
 import data.DB;
@@ -47,6 +48,7 @@ public class ViewInventory extends JFrame {
         mainPanel.add(buildFooterPanel(), BorderLayout.SOUTH);
 
         loadInventory(null, "All");
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
@@ -103,7 +105,7 @@ public class ViewInventory extends JFrame {
     }
 
     private JScrollPane buildTablePanel() {
-        String[] columns = {"Product ID", "SKU", "Name", "Description", "Category", "Price", "Quantity", "Reorder Level", "Status"};
+        String[] columns = {"Product ID", "SKU", "Name", "Description", "Category", "Price", "Quantity", "Reorder Level", "Status", "Created By"};
 
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
@@ -150,6 +152,7 @@ public class ViewInventory extends JFrame {
         columnModel.getColumn(6).setPreferredWidth(90);
         columnModel.getColumn(7).setPreferredWidth(110);
         columnModel.getColumn(8).setPreferredWidth(110);
+        columnModel.getColumn(9).setPreferredWidth(150);
 
         return new JScrollPane(inventoryTable);
     }
@@ -222,9 +225,10 @@ public class ViewInventory extends JFrame {
                        p.name,
                        COALESCE(p.description, '') AS description,
                        COALESCE(c.name, '') AS category_name,
-                       COALESCE(p.price, 0) AS price,
-                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
-                       COALESCE(i.reorder_level, 0) AS reorder_level
+	                       COALESCE(p.price, 0) AS price,
+	                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
+	                       COALESCE(i.reorder_level, 0) AS reorder_level,
+	                       COALESCE(p.created_by_name, '') AS created_by_name
                 FROM products p
                 LEFT JOIN inventory i ON p.product_id = i.product_id
                 LEFT JOIN categories c ON p.category_id = c.category_id
@@ -238,7 +242,7 @@ public class ViewInventory extends JFrame {
 
         boolean hasSearch = searchText != null && !searchText.isBlank();
         if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.description, '') ILIKE ?)");
+            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.description, '') ILIKE ? OR COALESCE(p.created_by_name, '') ILIKE ?)");
         }
 
         if ("In Stock".equals(stockFilter)) {
@@ -268,6 +272,7 @@ public class ViewInventory extends JFrame {
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
+                ps.setString(paramIndex++, pattern);
             }
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -280,6 +285,7 @@ public class ViewInventory extends JFrame {
                     double price = rs.getDouble("price");
                     int quantity = rs.getInt("quantity_on_hand");
                     int reorderLevel = rs.getInt("reorder_level");
+                    String createdBy = rs.getString("created_by_name");
                     String status = getStockStatus(quantity, reorderLevel);
 
                     tableModel.addRow(new Object[]{
@@ -289,10 +295,11 @@ public class ViewInventory extends JFrame {
                             description,
                             category,
                             String.format("$%.2f", price),
-                            quantity,
-                            reorderLevel,
-                            status
-                    });
+	                            quantity,
+	                            reorderLevel,
+	                            status,
+	                            createdBy
+	                    });
 
                     totalProducts++;
                     totalUnits += quantity;

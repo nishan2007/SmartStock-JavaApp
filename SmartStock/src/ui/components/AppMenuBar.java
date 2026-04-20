@@ -13,7 +13,11 @@ import ui.screens.LocalDeviceSettings;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
+import ui.screens.PayrollDashboard;
+import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
+import ui.screens.StoreTransfer;
+import ui.screens.TimeClock;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
 import ui.helpers.WindowHelper;
@@ -38,10 +42,14 @@ public class AppMenuBar {
 
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
-        JMenuItem enterInventoryItem = new JMenuItem("Enter Inventory");
+        JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
+        JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
+        JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
+        JMenuItem timeClockItem = new JMenuItem("Time Clock");
+        JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
@@ -51,16 +59,20 @@ public class AppMenuBar {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
-        boolean canEnterInventory = PermissionManager.hasPermission("ENTER_INVENTORY");
+        boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
+        boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
+        boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
 
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
+        boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
+        boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canRoleManagement || canLocalDeviceSettings;
+        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -70,6 +82,12 @@ public class AppMenuBar {
         }
         if (!canEnterInventory || "EnterInventory".equalsIgnoreCase(screenKey)) {
             enterInventoryItem.setEnabled(false);
+        }
+        if (!canReceivingHistory || "ReceivingHistory".equalsIgnoreCase(screenKey)) {
+            receivingHistoryItem.setEnabled(false);
+        }
+        if (!canStoreTransfer || "StoreTransfer".equalsIgnoreCase(screenKey)) {
+            storeTransferItem.setEnabled(false);
         }
         mainMenuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -98,6 +116,12 @@ public class AppMenuBar {
         if (!canEmployeeMgmt || "EmployeeManagement".equalsIgnoreCase(screenKey)) {
             employeeMgmtItem.setEnabled(false);
         }
+        if (!canTimeClock || "TimeClock".equalsIgnoreCase(screenKey)) {
+            timeClockItem.setEnabled(false);
+        }
+        if (!canPayrollDashboard || "PayrollDashboard".equalsIgnoreCase(screenKey)) {
+            payrollDashboardItem.setEnabled(false);
+        }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
         }
@@ -120,13 +144,37 @@ public class AppMenuBar {
 
         enterInventoryItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("ENTER_INVENTORY", parent, "Enter Inventory")) {
+                if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", parent, "Receiving Inventory")) {
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(EnterInventory.class)) {
                     return;
                 }
                 NavigationManager.openEnterInventory(parent);
+            }
+        });
+
+        receivingHistoryItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("VIEW_RECEIVING_HISTORY", parent, "Receiving History")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(ReceivingHistory.class)) {
+                    return;
+                }
+                NavigationManager.openReceivingHistory(parent);
+            }
+        });
+
+        storeTransferItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("STORE_TRANSFER", parent, "Store Transfer")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(StoreTransfer.class)) {
+                    return;
+                }
+                NavigationManager.openStoreTransfer(parent);
             }
         });
 
@@ -205,6 +253,30 @@ public class AppMenuBar {
             }
         });
 
+        timeClockItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("TIME_CLOCK", parent, "Time Clock")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(TimeClock.class)) {
+                    return;
+                }
+                NavigationManager.openTimeClock(parent);
+            }
+        });
+
+        payrollDashboardItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("PAYROLL_DASHBOARD", parent, "Payroll Dashboard")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(PayrollDashboard.class)) {
+                    return;
+                }
+                NavigationManager.openPayrollDashboard(parent);
+            }
+        });
+
         rolesPermissionItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("ROLE_MANAGEMENT", parent, "Roles & Permission")) {
@@ -233,6 +305,8 @@ public class AppMenuBar {
         navigateMenu.addSeparator();
         navigateMenu.add(makeSaleItem);
         navigateMenu.add(enterInventoryItem);
+        navigateMenu.add(receivingHistoryItem);
+        navigateMenu.add(storeTransferItem);
         navigateMenu.add(newItemItem);
         navigateMenu.add(editItemItem);
         navigateMenu.add(ViewSalesItem);
@@ -240,6 +314,8 @@ public class AppMenuBar {
         navigateMenu.add(customerAccountsItem);
 
         employeeMenu.add(employeeMgmtItem);
+        employeeMenu.add(timeClockItem);
+        employeeMenu.add(payrollDashboardItem);
         employeeMenu.add(rolesPermissionItem);
 
         JMenu sessionMenu = new JMenu("Session");
@@ -258,12 +334,7 @@ public class AppMenuBar {
         });
         closeItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                try (Connection conn = DB.getConnection()) {
-                    DeviceService.endCurrentSession(conn);
-                } catch (SQLException ex) {
-                    ex.printStackTrace();
-                }
-                parent.dispose();
+                NavigationManager.closeApplication(parent);
             }
         });
 

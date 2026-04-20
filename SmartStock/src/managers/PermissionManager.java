@@ -101,16 +101,24 @@ public class PermissionManager {
                     || hasPermission("VIEW_INVENTORY")
                     || hasPermission("CUSTOMER_ACCOUNTS")
                     || hasPermission("NEW_ITEM")
-                    || hasPermission("ENTER_INVENTORY")
+                    || hasPermission("RECEIVING_INVENTORY")
+                    || hasPermission("VIEW_RECEIVING_HISTORY")
+                    || hasPermission("STORE_TRANSFER")
                     || hasPermission("EDIT_ITEM")
+                    || hasPermission("TIME_CLOCK")
+                    || hasPermission("PAYROLL_DASHBOARD")
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("LOCAL_DEVICE_SETTINGS");
             case "MakeASale" -> hasPermission("MAKE_SALE");
-            case "EnterInventory" -> hasPermission("ENTER_INVENTORY");
+            case "EnterInventory" -> hasPermission("RECEIVING_INVENTORY");
+            case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
+            case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
+            case "TimeClock" -> hasPermission("TIME_CLOCK");
+            case "PayrollDashboard" -> hasPermission("PAYROLL_DASHBOARD");
             case "NewItem" -> hasPermission("NEW_ITEM");
             case "EditItem" -> hasPermission("EDIT_ITEM");
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");

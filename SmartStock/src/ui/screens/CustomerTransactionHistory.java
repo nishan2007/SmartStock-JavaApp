@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -45,6 +46,7 @@ public class CustomerTransactionHistory extends JFrame {
         mainPanel.add(buildSummaryPanel(), BorderLayout.SOUTH);
 
         loadTransactions();
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
@@ -78,7 +80,7 @@ public class CustomerTransactionHistory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "Type", "Sale ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Amount", "Sale Status", "Sale Total", "Note"},
                 0
         ) {
             @Override
@@ -94,12 +96,13 @@ public class CustomerTransactionHistory extends JFrame {
         transactionTable.getColumnModel().getColumn(0).setPreferredWidth(100);
         transactionTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         transactionTable.getColumnModel().getColumn(2).setPreferredWidth(160);
-        transactionTable.getColumnModel().getColumn(3).setPreferredWidth(130);
-        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(90);
-        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(100);
-        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(240);
+        transactionTable.getColumnModel().getColumn(3).setPreferredWidth(150);
+        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(130);
+        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(90);
+        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(240);
 
         return new JScrollPane(transactionTable);
     }
@@ -117,8 +120,9 @@ public class CustomerTransactionHistory extends JFrame {
         String sql = """
                 SELECT t.transaction_id,
                        COALESCE(t.payment_id, '') AS payment_id,
-                       t.created_at,
-                       COALESCE(t.transaction_type, '') AS transaction_type,
+	                       t.created_at,
+	                       COALESCE(t.user_name, '') AS user_name,
+	                       COALESCE(t.transaction_type, '') AS transaction_type,
                        t.sale_id,
                        COALESCE(t.amount, 0) AS amount,
                        COALESCE(t.note, '') AS note,
@@ -149,9 +153,10 @@ public class CustomerTransactionHistory extends JFrame {
 
                     transactionModel.addRow(new Object[]{
                             rs.getInt("transaction_id"),
-                            rs.getString("payment_id"),
-                            formatTimestamp(rs.getTimestamp("created_at")),
-                            formatType(rs.getString("transaction_type")),
+	                            rs.getString("payment_id"),
+	                            formatTimestamp(rs.getTimestamp("created_at")),
+	                            rs.getString("user_name"),
+	                            formatType(rs.getString("transaction_type")),
                             nullableInt(rs, "sale_id"),
                             currencyFormat.format(amount),
                             formatStatus(rs.getString("payment_status")),
@@ -172,8 +177,7 @@ public class CustomerTransactionHistory extends JFrame {
 
     private void openPaymentHistory() {
         CustomerPaymentHistory paymentHistory = new CustomerPaymentHistory(customerId, customerLabel);
-        paymentHistory.setLocationRelativeTo(this);
-        paymentHistory.setVisible(true);
+        WindowHelper.showPosWindow(paymentHistory, this);
     }
 
     private Object nullableInt(ResultSet rs, String column) throws SQLException {

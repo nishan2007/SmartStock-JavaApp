@@ -148,7 +148,7 @@ public class ViewInventoryDetails extends JDialog {
 
         gbc.gridx = 0;
         content.add(buildSection("Product", itemDetails, List.of(
-                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name", "Image Url"
+                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name", "Created By Name", "Image Url"
         )), gbc);
 
         gbc.gridx = 1;

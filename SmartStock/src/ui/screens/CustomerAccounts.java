@@ -3,6 +3,7 @@ package ui.screens;
 import data.DB;
 import managers.PermissionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -57,7 +58,7 @@ public class CustomerAccounts extends JFrame {
         add(mainPanel, BorderLayout.CENTER);
 
         loadCustomers();
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private JPanel buildTablePanel() {
@@ -289,8 +290,7 @@ public class CustomerAccounts extends JFrame {
             return;
         }
         CustomerAccountDetails details = new CustomerAccountDetails(selection.customerId(), this::loadCustomers);
-        details.setLocationRelativeTo(this);
-        details.setVisible(true);
+        WindowHelper.showPosWindow(details, this);
     }
 
     private void openPaymentHistory() {
@@ -300,8 +300,7 @@ public class CustomerAccounts extends JFrame {
             return;
         }
         CustomerPaymentHistory history = new CustomerPaymentHistory(selection.customerId(), selection.accountLabel());
-        history.setLocationRelativeTo(this);
-        history.setVisible(true);
+        WindowHelper.showPosWindow(history, this);
     }
 
     private CustomerSelection getSelectedCustomer() {
@@ -622,8 +621,8 @@ public class CustomerAccounts extends JFrame {
 
     private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note, Integer saleId) throws SQLException {
         String sql = """
-                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, customerId);
@@ -635,6 +634,7 @@ public class CustomerAccounts extends JFrame {
             ps.setBigDecimal(3, amount);
             ps.setString(4, type);
             ps.setString(5, note);
+            ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {

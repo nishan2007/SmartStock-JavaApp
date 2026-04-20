@@ -1,7 +1,10 @@
 package ui.screens;
 
 import managers.PermissionManager;
+import ui.helpers.WindowHelper;
 import data.DB;
+import ui.components.AppMenuBar;
+
 
 import javax.swing.*;
 import java.awt.*;
@@ -31,7 +34,7 @@ public class Roles_Permission extends JFrame {
         setSize(700, 500);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-
+        setJMenuBar(AppMenuBar.create(this, "Roles_Permissions"));
         setLayout(new BorderLayout());
 
         // LEFT: ROLE LIST
@@ -46,7 +49,9 @@ public class Roles_Permission extends JFrame {
 
         addPermission("MAKE_SALE", "Make Sale");
         addPermission("NEW_ITEM", "Add Item");
-        addPermission("ENTER_INVENTORY", "Enter Inventory");
+        addPermission("RECEIVING_INVENTORY", "Receiving Inventory");
+        addPermission("VIEW_RECEIVING_HISTORY", "View Receiving History");
+        addPermission("STORE_TRANSFER", "Store Transfer");
         addPermission("EDIT_ITEM", "Edit Item");
         addPermission("EMPLOYEE_MANAGEMENT", "Employee Management");
         addPermission("ROLE_MANAGEMENT", "Roles & Permission");
@@ -56,6 +61,9 @@ public class Roles_Permission extends JFrame {
         addPermission("VIEW_INVENTORY", "View Inventory");
         addPermission("VIEW_ITEM_DETAILS", "View Item Details");
         addPermission("CUSTOMER_ACCOUNTS", "Customer Accounts");
+        addPermission("TIME_CLOCK", "Time Clock");
+        addPermission("TIME_CLOCK_MANAGEMENT", "Time Clock Management");
+        addPermission("PAYROLL_DASHBOARD", "Payroll Dashboard");
         addPermission("SET_CREDIT_LIMIT", "Set Credit Limit");
         addPermission("EDIT_ACCOUNT_NUMBER", "Edit Account Number");
         addPermission("LOCAL_DEVICE_SETTINGS", "Local Device Settings");
@@ -94,7 +102,7 @@ public class Roles_Permission extends JFrame {
 
         addRoleButton.addActionListener(e -> addNewRole());
 
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private void addPermission(String key, String label) {

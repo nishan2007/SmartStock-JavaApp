@@ -2,6 +2,7 @@ package ui.screens;
 
 import managers.SupabaseSessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 import data.DB;
 
 import javax.swing.*;
@@ -19,6 +20,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -41,6 +43,11 @@ public class EmployeeManagement extends JFrame {
     private JTextField emailField;
     private JTextField phoneField;
     private JTextField badgeIdField;
+    private JComboBox<CompensationOption> compensationTypeBox;
+    private JTextField hourlyWageField;
+    private JTextField salaryAmountField;
+    private JTextField dailySalaryField;
+    private JComboBox<PayPeriodOption> payPeriodTypeBox;
     private JComboBox<RoleOption> roleBox;
     private JCheckBox activeCheckBox;
 
@@ -72,7 +79,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "Email", "Phone", "Badge ID", "Role", "Active"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "Email", "Phone", "Badge ID", "Pay Type", "Pay Period", "Hourly Wage", "Salary", "Day Salary", "Role", "Active"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -105,9 +112,14 @@ public class EmployeeManagement extends JFrame {
         employeeTable.getColumnModel().getColumn(4).setPreferredWidth(120);
         employeeTable.getColumnModel().getColumn(5).setPreferredWidth(100);
         employeeTable.getColumnModel().getColumn(6).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(7).setPreferredWidth(70);
-        employeeTable.getColumnModel().getColumn(7).setMinWidth(60);
-        employeeTable.getColumnModel().getColumn(7).setMaxWidth(80);
+        employeeTable.getColumnModel().getColumn(7).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(8).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(9).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(10).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(11).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(12).setPreferredWidth(70);
+        employeeTable.getColumnModel().getColumn(12).setMinWidth(60);
+        employeeTable.getColumnModel().getColumn(12).setMaxWidth(80);
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
@@ -119,6 +131,20 @@ public class EmployeeManagement extends JFrame {
         emailField = new JTextField();
         phoneField = new JTextField();
         badgeIdField = new JTextField();
+        compensationTypeBox = new JComboBox<>(new CompensationOption[]{
+                new CompensationOption("HOURLY", "Hourly"),
+                new CompensationOption("SALARY", "Fixed Salary"),
+                new CompensationOption("DAILY", "Day Salary")
+        });
+        compensationTypeBox.setEditable(false);
+        hourlyWageField = new JTextField();
+        salaryAmountField = new JTextField();
+        dailySalaryField = new JTextField();
+        payPeriodTypeBox = new JComboBox<>(new PayPeriodOption[]{
+                new PayPeriodOption("SEMI_MONTHLY", "Semi-Monthly"),
+                new PayPeriodOption("WEEKLY", "Weekly")
+        });
+        payPeriodTypeBox.setEditable(false);
         roleBox = new JComboBox<>();
         activeCheckBox = new JCheckBox("Active", true);
         activeCheckBox.setEnabled(true);
@@ -187,6 +213,51 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 6;
         gbc.weightx = 0;
+        formPanel.add(new JLabel("Pay Type:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(compensationTypeBox, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 7;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Pay Period:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(payPeriodTypeBox, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 8;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Hourly Wage:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(hourlyWageField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 9;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Salary / Pay Period:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(salaryAmountField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 10;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Day Salary:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(dailySalaryField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 11;
+        gbc.weightx = 0;
         formPanel.add(new JLabel("Role:"), gbc);
 
         gbc.gridx = 1;
@@ -194,7 +265,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 7;
+        gbc.gridy = 12;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
@@ -203,7 +274,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(activeCheckBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 13;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(Box.createVerticalGlue(), gbc);
@@ -315,7 +386,7 @@ public class EmployeeManagement extends JFrame {
         deleteButton.setEnabled(false);
         loadRoles();
         loadEmployees();
-        setVisible(true);
+        WindowHelper.showPosWindow(this);
     }
 
     private void loadRoles() {
@@ -353,6 +424,11 @@ public class EmployeeManagement extends JFrame {
                        u.email,
                        u.phone,
                        u.badge_id,
+                       COALESCE(u.compensation_type, 'HOURLY') AS compensation_type,
+                       COALESCE(u.pay_period_type, 'SEMI_MONTHLY') AS pay_period_type,
+                       COALESCE(u.hourly_wage, 0) AS hourly_wage,
+                       COALESCE(u.salary_amount, 0) AS salary_amount,
+                       COALESCE(u.daily_salary, 0) AS daily_salary,
                        COALESCE(r.role_name, 'USER') AS role,
                        COALESCE(u.is_active, TRUE) AS is_active
                 FROM users u
@@ -372,6 +448,11 @@ public class EmployeeManagement extends JFrame {
                         rs.getString("email"),
                         rs.getString("phone"),
                         rs.getString("badge_id"),
+                        rs.getString("compensation_type"),
+                        rs.getString("pay_period_type"),
+                        rs.getBigDecimal("hourly_wage"),
+                        rs.getBigDecimal("salary_amount"),
+                        rs.getBigDecimal("daily_salary"),
                         rs.getString("role"),
                         rs.getBoolean("is_active")
                 });
@@ -395,9 +476,14 @@ public class EmployeeManagement extends JFrame {
         emailField.setText(employeeModel.getValueAt(selectedRow, 3) == null ? "" : employeeModel.getValueAt(selectedRow, 3).toString());
         phoneField.setText(employeeModel.getValueAt(selectedRow, 4) == null ? "" : employeeModel.getValueAt(selectedRow, 4).toString());
         badgeIdField.setText(employeeModel.getValueAt(selectedRow, 5) == null ? "" : employeeModel.getValueAt(selectedRow, 5).toString());
-        selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 6)));
+        selectCompensationType(employeeModel.getValueAt(selectedRow, 6) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 6).toString());
+        selectPayPeriodType(employeeModel.getValueAt(selectedRow, 7) == null ? "SEMI_MONTHLY" : employeeModel.getValueAt(selectedRow, 7).toString());
+        hourlyWageField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
+        salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
+        dailySalaryField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
+        selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 11)));
 
-        Object activeValue = employeeModel.getValueAt(selectedRow, 7);
+        Object activeValue = employeeModel.getValueAt(selectedRow, 12);
         activeCheckBox.setSelected(activeValue instanceof Boolean ? (Boolean) activeValue : true);
 
         passwordField.setText("");
@@ -412,6 +498,20 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
+        String compensationType = getSelectedCompensationType();
+        String payPeriodType = getSelectedPayPeriodType();
+        BigDecimal hourlyWage = parseMoneyAmount(hourlyWageField, "Hourly wage");
+        if (hourlyWage == null) {
+            return;
+        }
+        BigDecimal salaryAmount = parseMoneyAmount(salaryAmountField, "Salary amount");
+        if (salaryAmount == null) {
+            return;
+        }
+        BigDecimal dailySalary = parseMoneyAmount(dailySalaryField, "Day salary");
+        if (dailySalary == null) {
+            return;
+        }
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
@@ -427,8 +527,8 @@ public class EmployeeManagement extends JFrame {
                 String authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
 
                 String sql = """
-                        INSERT INTO users (username, password_hash, full_name, email, phone, badge_id, role_id, auth_user_id, is_active)
-                        VALUES (?, NULL, ?, ?, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
+                        INSERT INTO users (username, password_hash, full_name, email, phone, badge_id, compensation_type, pay_period_type, hourly_wage, salary_amount, daily_salary, role_id, auth_user_id, is_active)
+                        VALUES (?, NULL, ?, ?, ?, ?, ?::compensation_type_enum, ?::pay_period_type_enum, ?, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
                         """;
 
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -437,9 +537,14 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(3, email.isEmpty() ? null : email);
                     ps.setString(4, phoneNumber.isEmpty() ? null : phoneNumber);
                     ps.setString(5, badgeId.isEmpty() ? null : badgeId);
-                    ps.setString(6, role);
-                    ps.setString(7, normalizeUuid(authUserId));
-                    ps.setBoolean(8, isActive);
+                    ps.setString(6, compensationType);
+                    ps.setString(7, payPeriodType);
+                    ps.setBigDecimal(8, hourlyWage);
+                    ps.setBigDecimal(9, salaryAmount);
+                    ps.setBigDecimal(10, dailySalary);
+                    ps.setString(11, role);
+                    ps.setString(12, normalizeUuid(authUserId));
+                    ps.setBoolean(13, isActive);
                     ps.executeUpdate();
                 }
 
@@ -472,6 +577,20 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
+        String compensationType = getSelectedCompensationType();
+        String payPeriodType = getSelectedPayPeriodType();
+        BigDecimal hourlyWage = parseMoneyAmount(hourlyWageField, "Hourly wage");
+        if (hourlyWage == null) {
+            return;
+        }
+        BigDecimal salaryAmount = parseMoneyAmount(salaryAmountField, "Salary amount");
+        if (salaryAmount == null) {
+            return;
+        }
+        BigDecimal dailySalary = parseMoneyAmount(dailySalaryField, "Day salary");
+        if (dailySalary == null) {
+            return;
+        }
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
@@ -503,6 +622,11 @@ public class EmployeeManagement extends JFrame {
                             email = ?,
                             phone = ?,
                             badge_id = ?,
+                            compensation_type = ?::compensation_type_enum,
+                            pay_period_type = ?::pay_period_type_enum,
+                            hourly_wage = ?,
+                            salary_amount = ?,
+                            daily_salary = ?,
                             role_id = (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)),
                             auth_user_id = ?::uuid,
                             is_active = ?
@@ -515,10 +639,15 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(3, email.isEmpty() ? null : email);
                     ps.setString(4, phoneNumber.isEmpty() ? null : phoneNumber);
                     ps.setString(5, badgeId.isEmpty() ? null : badgeId);
-                    ps.setString(6, role);
-                    ps.setString(7, normalizeUuid(authUserId));
-                    ps.setBoolean(8, isActive);
-                    ps.setInt(9, selectedUserId);
+                    ps.setString(6, compensationType);
+                    ps.setString(7, payPeriodType);
+                    ps.setBigDecimal(8, hourlyWage);
+                    ps.setBigDecimal(9, salaryAmount);
+                    ps.setBigDecimal(10, dailySalary);
+                    ps.setString(11, role);
+                    ps.setString(12, normalizeUuid(authUserId));
+                    ps.setBoolean(13, isActive);
+                    ps.setInt(14, selectedUserId);
                     ps.executeUpdate();
                 }
 
@@ -547,6 +676,11 @@ public class EmployeeManagement extends JFrame {
         emailField.setText("");
         phoneField.setText("");
         badgeIdField.setText("");
+        selectCompensationType("HOURLY");
+        selectPayPeriodType("SEMI_MONTHLY");
+        hourlyWageField.setText("");
+        salaryAmountField.setText("");
+        dailySalaryField.setText("");
         roleBox.setSelectedIndex(0);
         activeCheckBox.setSelected(true);
         activeCheckBox.setEnabled(true);
@@ -562,6 +696,71 @@ public class EmployeeManagement extends JFrame {
             return roleOption.roleName;
         }
         return selectedRole == null ? "" : selectedRole.toString();
+    }
+
+    private String getSelectedCompensationType() {
+        Object selected = compensationTypeBox.getSelectedItem();
+        if (selected instanceof CompensationOption option) {
+            return option.key;
+        }
+        return "HOURLY";
+    }
+
+    private String getSelectedPayPeriodType() {
+        Object selected = payPeriodTypeBox.getSelectedItem();
+        if (selected instanceof PayPeriodOption option) {
+            return option.key;
+        }
+        return "SEMI_MONTHLY";
+    }
+
+    private void selectCompensationType(String compensationType) {
+        String key = compensationType == null || compensationType.isBlank()
+                ? "HOURLY"
+                : compensationType.trim().toUpperCase();
+
+        for (int i = 0; i < compensationTypeBox.getItemCount(); i++) {
+            CompensationOption option = compensationTypeBox.getItemAt(i);
+            if (option.key.equalsIgnoreCase(key)) {
+                compensationTypeBox.setSelectedIndex(i);
+                return;
+            }
+        }
+        compensationTypeBox.setSelectedIndex(0);
+    }
+
+    private void selectPayPeriodType(String payPeriodType) {
+        String key = payPeriodType == null || payPeriodType.isBlank()
+                ? "SEMI_MONTHLY"
+                : payPeriodType.trim().toUpperCase();
+
+        for (int i = 0; i < payPeriodTypeBox.getItemCount(); i++) {
+            PayPeriodOption option = payPeriodTypeBox.getItemAt(i);
+            if (option.key.equalsIgnoreCase(key)) {
+                payPeriodTypeBox.setSelectedIndex(i);
+                return;
+            }
+        }
+        payPeriodTypeBox.setSelectedIndex(0);
+    }
+
+    private BigDecimal parseMoneyAmount(JTextField field, String label) {
+        String value = field.getText().trim();
+        if (value.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        try {
+            BigDecimal amount = new BigDecimal(value.replace("$", "").replace(",", ""));
+            if (amount.compareTo(BigDecimal.ZERO) < 0) {
+                JOptionPane.showMessageDialog(this, label + " cannot be negative.");
+                return null;
+            }
+            return amount;
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Enter a valid " + label.toLowerCase() + ".");
+            return null;
+        }
     }
 
     private void selectRole(String roleName) {
@@ -611,6 +810,36 @@ public class EmployeeManagement extends JFrame {
         @Override
         public String toString() {
             return formatRoleName(roleName);
+        }
+    }
+
+    private static class CompensationOption {
+        private final String key;
+        private final String label;
+
+        private CompensationOption(String key, String label) {
+            this.key = key;
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private static class PayPeriodOption {
+        private final String key;
+        private final String label;
+
+        private PayPeriodOption(String key, String label) {
+            this.key = key;
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
         }
     }
 

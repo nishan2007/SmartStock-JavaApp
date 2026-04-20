@@ -5,6 +5,7 @@ public final class SessionManager {
 
     private static Integer currentUserId;
     private static String currentUsername;
+    private static String currentUserDisplayName;
     private static String currentRole;
     private static Integer currentLocationId;
     private static String currentLocationName;
@@ -30,6 +31,17 @@ public final class SessionManager {
 
     public static void setCurrentUsername(String currentUsername) {
         SessionManager.currentUsername = currentUsername;
+    }
+
+    public static String getCurrentUserDisplayName() {
+        if (currentUserDisplayName != null && !currentUserDisplayName.isBlank()) {
+            return currentUserDisplayName;
+        }
+        return currentUsername == null ? "" : currentUsername;
+    }
+
+    public static void setCurrentUserDisplayName(String currentUserDisplayName) {
+        SessionManager.currentUserDisplayName = currentUserDisplayName;
     }
 
     public static String getCurrentRole() {
@@ -91,6 +103,7 @@ public final class SessionManager {
     public static void clearSessionState() {
         currentUserId = null;
         currentUsername = null;
+        currentUserDisplayName = null;
         currentRole = null;
         currentLocationId = null;
         currentLocationName = null;

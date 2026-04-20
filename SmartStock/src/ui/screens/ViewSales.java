@@ -3,6 +3,7 @@ package ui.screens;
 
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 import data.DB;
 
 import javax.swing.*;
@@ -80,6 +81,7 @@ public class ViewSales extends JFrame {
         mainPanel.add(bottomPanel, BorderLayout.SOUTH);
 
         loadSales();
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
@@ -191,7 +193,7 @@ public class ViewSales extends JFrame {
                 "SELECT s.sale_id, " +
                         "COALESCE(s.receipt_number, '') AS receipt_number, " +
                         "s.created_at, " +
-                        "COALESCE(u.full_name, u.username, 'Unknown') AS cashier_name, " +
+                        "COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS cashier_name, " +
                         "COALESCE(l.name, 'Unknown') AS store_name, " +
                         "COUNT(si.sale_item_id) AS item_count, " +
                         "COALESCE(s.payment_method, '') AS payment_method, " +
@@ -216,7 +218,7 @@ public class ViewSales extends JFrame {
         if (!searchText.isEmpty()) {
             sql.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
                     .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
-                    .append("COALESCE(u.full_name, u.username, '') ILIKE ? OR ")
+                    .append("COALESCE(s.user_name, u.full_name, u.username, '') ILIKE ? OR ")
                     .append("COALESCE(l.name, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_method, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_status, 'PAID') ILIKE ?) ");

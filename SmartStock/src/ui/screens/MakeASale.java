@@ -185,7 +185,7 @@ public class MakeASale extends JFrame {
                if (WindowHelper.focusIfAlreadyOpen(NewItem.class)) {
                    return;
                }
-               new NewItem(SessionManager.getCurrentLocationId()).setVisible(true);
+               WindowHelper.showPosWindow(new NewItem(SessionManager.getCurrentLocationId()), MakeASale.this);
            }
        });
        editItemBtn.addActionListener(new ActionListener() {
@@ -198,8 +198,7 @@ public class MakeASale extends JFrame {
                    return;
                }
                EditItem screen = new EditItem();
-               screen.setLocationRelativeTo(MakeASale.this);
-               screen.setVisible(true);
+               WindowHelper.showPosWindow(screen, MakeASale.this);
            }
        });
        searchBtn.addActionListener(new ActionListener() {
@@ -290,7 +289,7 @@ public class MakeASale extends JFrame {
        updateCurrentUserLabel(); //displays the current user
        loadCustomerAccounts();
        updateCustomerAccountEnabled();
-       setVisible(true); //runs last for the main UI to show
+       WindowHelper.showPosWindow(this); //runs last for the main UI to show
    }
 
 
@@ -740,7 +739,7 @@ public class MakeASale extends JFrame {
            currentUserLabel.setText("No User currently loged in");
        }
        else{
-           currentUserLabel.setText("Current Cashier: " + SessionManager.getCurrentUsername());
+           currentUserLabel.setText("Current Cashier: " + SessionManager.getCurrentUserDisplayName());
        }
     }
     private void updateSelectedStoreLabel() {
@@ -855,13 +854,14 @@ public class MakeASale extends JFrame {
                             total_amount,
                             status,
                             payment_method,
-                            payment_status,
-                            amount_paid,
-                            receipt_number,
-                            receipt_device_id,
-                            receipt_sequence
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                            payment_status,
+	                            amount_paid,
+	                            user_name,
+	                            receipt_number,
+	                            receipt_device_id,
+	                            receipt_sequence
+	                        )
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """;
                 int saleId;
 
@@ -876,11 +876,12 @@ public class MakeASale extends JFrame {
                     saleStmt.setBigDecimal(4, saleTotal);
                     saleStmt.setString(5, "COMPLETED");
                     saleStmt.setString(6, paymentMethod);
-                    saleStmt.setString(7, paymentStatus);
-                    saleStmt.setBigDecimal(8, amountPaid);
-                    saleStmt.setString(9, receipt.receiptNumber());
-                    saleStmt.setString(10, receipt.deviceId());
-                    saleStmt.setInt(11, receipt.sequence());
+	                    saleStmt.setString(7, paymentStatus);
+	                    saleStmt.setBigDecimal(8, amountPaid);
+	                    saleStmt.setString(9, SessionManager.getCurrentUserDisplayName());
+	                    saleStmt.setString(10, receipt.receiptNumber());
+	                    saleStmt.setString(11, receipt.deviceId());
+	                    saleStmt.setInt(12, receipt.sequence());
                     saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -905,7 +906,7 @@ public class MakeASale extends JFrame {
                 }
 
                 String insertItemSql = "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)";
-                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note) VALUES (?, ?, ?, ?, ?)";
+	                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
                 String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ?";
 
@@ -931,10 +932,11 @@ public class MakeASale extends JFrame {
 
                         movementStmt.setInt(1, productId);
                         movementStmt.setInt(2, locationId);
-                        movementStmt.setInt(3, -qty);
-                        movementStmt.setString(4, "SALE");
-                        movementStmt.setString(5, "sale_id=" + saleId);
-                        movementStmt.addBatch();
+	                        movementStmt.setInt(3, -qty);
+	                        movementStmt.setString(4, "SALE");
+	                        movementStmt.setString(5, "sale_id=" + saleId);
+	                        movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+	                        movementStmt.addBatch();
 
                         updateInventoryStmt.setInt(1, qty);
                         updateInventoryStmt.setInt(2, productId);
@@ -1010,17 +1012,18 @@ public class MakeASale extends JFrame {
 
     private void insertCustomerAccountTransaction(Connection conn, int customerId, int saleId, BigDecimal amount, String type, String note) throws SQLException {
         String sql = """
-                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note)
-                VALUES (?, ?, ?, ?, ?)
+	                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name)
+	                VALUES (?, ?, ?, ?, ?, ?)
                 """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, customerId);
             ps.setInt(2, saleId);
-            ps.setBigDecimal(3, amount);
-            ps.setString(4, type);
-            ps.setString(5, note);
-            ps.executeUpdate();
+	            ps.setBigDecimal(3, amount);
+	            ps.setString(4, type);
+	            ps.setString(5, note);
+	            ps.setString(6, SessionManager.getCurrentUserDisplayName());
+	            ps.executeUpdate();
         }
     }
 

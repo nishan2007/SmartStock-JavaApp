@@ -4,6 +4,7 @@ import managers.NavigationManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -18,6 +19,7 @@ public class LocalDeviceSettings extends JFrame {
     private final JTextField configPathField = new JTextField();
     private final JLabel currentStoreLabel = new JLabel();
     private final JLabel nextReceiptLabel = new JLabel();
+    private final JLabel nextReceiveLabel = new JLabel();
     private final JLabel nextSequenceLabel = new JLabel();
 
     public LocalDeviceSettings() {
@@ -51,7 +53,8 @@ public class LocalDeviceSettings extends JFrame {
         addRow(contentPanel, 2, "Config File", configPathField);
         addLabelRow(contentPanel, 3, "Current Store", currentStoreLabel);
         addLabelRow(contentPanel, 4, "Next Receipt", nextReceiptLabel);
-        addLabelRow(contentPanel, 5, "Next Sequence", nextSequenceLabel);
+        addLabelRow(contentPanel, 5, "Next Receive ID", nextReceiveLabel);
+        addLabelRow(contentPanel, 6, "Next Sequences", nextSequenceLabel);
 
         JPanel warningPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         warningPanel.setOpaque(false);
@@ -64,7 +67,7 @@ public class LocalDeviceSettings extends JFrame {
 
         GridBagConstraints warningConstraints = new GridBagConstraints();
         warningConstraints.gridx = 0;
-        warningConstraints.gridy = 6;
+        warningConstraints.gridy = 7;
         warningConstraints.gridwidth = 2;
         warningConstraints.weightx = 1;
         warningConstraints.insets = new Insets(16, 0, 0, 0);
@@ -107,6 +110,7 @@ public class LocalDeviceSettings extends JFrame {
         saveButton.addActionListener(e -> saveDeviceId());
 
         loadSettings();
+        WindowHelper.configurePosWindow(this);
     }
 
     private void addRow(JPanel panel, int row, String label, JTextField field) {
@@ -163,7 +167,8 @@ public class LocalDeviceSettings extends JFrame {
             configPathField.setText(settings.configPath().toString());
             currentStoreLabel.setText(getStoreDisplay(settings.storeCode()));
             nextReceiptLabel.setText(settings.nextReceiptPreview());
-            nextSequenceLabel.setText(String.valueOf(settings.nextSequence()));
+            nextReceiveLabel.setText(settings.nextReceivePreview());
+            nextSequenceLabel.setText("Receipt: " + settings.nextSequence() + "   Receiving: " + settings.nextReceiveSequence());
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(
                     this,
