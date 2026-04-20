@@ -5,6 +5,7 @@ import services.DeviceService;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
+import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -41,6 +42,7 @@ public final class NavigationManager {
         RECEIVING_INVENTORY,
         RECEIVING_HISTORY,
         STORE_TRANSFER,
+        DEPARTMENT_LIST,
         NEW_ITEM,
         EDIT_ITEM,
         VIEW_SALES,
@@ -90,6 +92,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.STORE_TRANSFER));
     }
 
+    public static void openDepartmentList(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.DEPARTMENT_LIST));
+    }
+
     public static void openNewItem(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.NEW_ITEM));
     }
@@ -137,6 +143,7 @@ public final class NavigationManager {
             case RECEIVING_INVENTORY -> new EnterInventory();
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
+            case DEPARTMENT_LIST -> new DepartmentList();
             case NEW_ITEM -> new NewItem();
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
@@ -161,6 +168,7 @@ public final class NavigationManager {
             case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;
+            case "DepartmentList" -> ScreenType.DEPARTMENT_LIST;
             case "NewItem" -> ScreenType.NEW_ITEM;
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;

@@ -52,6 +52,7 @@ public class Roles_Permission extends JFrame {
         addPermission("RECEIVING_INVENTORY", "Receiving Inventory");
         addPermission("VIEW_RECEIVING_HISTORY", "View Receiving History");
         addPermission("STORE_TRANSFER", "Store Transfer");
+        addPermission("DEPARTMENT_MANAGEMENT", "Department Management");
         addPermission("EDIT_ITEM", "Edit Item");
         addPermission("EMPLOYEE_MANAGEMENT", "Employee Management");
         addPermission("ROLE_MANAGEMENT", "Roles & Permission");

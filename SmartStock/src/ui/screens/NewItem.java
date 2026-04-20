@@ -3,6 +3,7 @@ package ui.screens;
 import data.DB;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.components.DepartmentSelector;
 import ui.components.RoundedBorder;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
@@ -28,7 +29,7 @@ public class NewItem extends JFrame {
     private JTextArea barcodesArea;
     private JTextField costPriceField;
     private JTextField priceField;
-    private JTextField categoryIdField;
+    private DepartmentSelector departmentSelector;
     private JTextField quantityField;
     private ProductImageHelper.ImageSelector imageSelector;
     private JButton saveButton;
@@ -86,7 +87,7 @@ public class NewItem extends JFrame {
         barcodesArea.setWrapStyleWord(true);
         costPriceField = new JTextField();
         priceField = new JTextField();
-        categoryIdField = new JTextField();
+        departmentSelector = new DepartmentSelector();
         quantityField = new JTextField("0");
         imageSelector = ProductImageHelper.createImageSelector(this);
 
@@ -176,11 +177,11 @@ public class NewItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 1;
         rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Category ID (optional):"), rightGbc);
+        rightColumn.add(new JLabel("Department:"), rightGbc);
 
         rightGbc.gridx = 1;
         rightGbc.weightx = 1;
-        rightColumn.add(categoryIdField, rightGbc);
+        rightColumn.add(departmentSelector, rightGbc);
 
         rightGbc.gridx = 0;
         rightGbc.gridy = 2;
@@ -263,7 +264,6 @@ public class NewItem extends JFrame {
         String barcodesText = barcodesArea.getText().trim();
         String costPriceText = costPriceField.getText().trim();
         String priceText = priceField.getText().trim();
-        String categoryIdText = categoryIdField.getText().trim();
         String quantityText = quantityField.getText().trim();
         String imageUrl;
         try {
@@ -318,14 +318,9 @@ public class NewItem extends JFrame {
             return;
         }
 
-        Integer categoryId = null;
-        if (!categoryIdText.isEmpty()) {
-            try {
-                categoryId = Integer.parseInt(categoryIdText);
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Category ID must be a whole number.");
-                return;
-            }
+        Integer categoryId = departmentSelector.getSelectedDepartmentId();
+        if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
+            return;
         }
 
         String sql;
@@ -433,7 +428,7 @@ public class NewItem extends JFrame {
         barcodesArea.setText("");
         costPriceField.setText("");
         priceField.setText("");
-        categoryIdField.setText("");
+        departmentSelector.clearSelection();
         quantityField.setText("0");
         imageSelector.setImageUrl("");
         nameField.requestFocusInWindow();

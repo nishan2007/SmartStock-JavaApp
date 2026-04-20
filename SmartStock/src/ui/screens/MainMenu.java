@@ -23,6 +23,7 @@ public class MainMenu extends JFrame {
     private final JButton enterInventoryButton;
     private final JButton receivingHistoryButton;
     private final JButton storeTransferButton;
+    private final JButton departmentListButton;
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton viewInventoryButton;
@@ -70,6 +71,7 @@ public class MainMenu extends JFrame {
         enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/ViewSales.png"));
         storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/ViewInventory.png"));
+        departmentListButton = createMenuButton("Departments", "Manage item departments", loadIcon("src/ICONS/ViewInventory.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
@@ -99,6 +101,7 @@ public class MainMenu extends JFrame {
                 enterInventoryButton,
                 receivingHistoryButton,
                 storeTransferButton,
+                departmentListButton,
                 viewInventoryButton,
                 addItemButton,
                 editItemsButton
@@ -225,6 +228,7 @@ public class MainMenu extends JFrame {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
+        boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
@@ -240,6 +244,7 @@ public class MainMenu extends JFrame {
         enterInventoryButton.setEnabled(canEnterInventory);
         receivingHistoryButton.setEnabled(canReceivingHistory);
         storeTransferButton.setEnabled(canStoreTransfer);
+        departmentListButton.setEnabled(canDepartmentManagement);
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         viewInventoryButton.setEnabled(canViewInventory);
@@ -278,6 +283,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openStoreTransfer(this);
+        });
+        departmentListButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("DEPARTMENT_MANAGEMENT", this, "Department Management")) {
+                return;
+            }
+            NavigationManager.openDepartmentList(this);
         });
         viewSalesButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_SALES", this, "View Sales")) {

@@ -4,6 +4,7 @@ import managers.SessionManager;
 import data.DB;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
+import ui.components.DepartmentSelector;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
@@ -35,7 +36,7 @@ public class EditItem extends JFrame {
     private JTextField priceField;
     private JTextField quantityField;
     private JTextField reorderLevelField;
-    private JTextField categoryIdField;
+    private DepartmentSelector departmentSelector;
     private ProductImageHelper.ImageSelector imageSelector;
 
     private JButton saveButton;
@@ -100,7 +101,7 @@ public class EditItem extends JFrame {
         priceField = new JTextField();
         quantityField = new JTextField();
         reorderLevelField = new JTextField();
-        categoryIdField = new JTextField();
+        departmentSelector = new DepartmentSelector();
         imageSelector = ProductImageHelper.createImageSelector(this);
 
         JScrollPane descriptionScrollPane = new JScrollPane(descriptionArea);
@@ -197,11 +198,11 @@ public class EditItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 3;
         rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Category ID (optional):"), rightGbc);
+        rightColumn.add(new JLabel("Department:"), rightGbc);
 
         rightGbc.gridx = 1;
         rightGbc.weightx = 1;
-        rightColumn.add(categoryIdField, rightGbc);
+        rightColumn.add(departmentSelector, rightGbc);
 
         rightGbc.gridx = 0;
         rightGbc.gridy = 4;
@@ -374,7 +375,7 @@ public class EditItem extends JFrame {
                 return;
             }
 
-            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Category ID", "Category", "Image URL"};
+            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Department ID", "Department", "Image URL"};
             DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -388,6 +389,9 @@ public class EditItem extends JFrame {
             table.getColumnModel().getColumn(11).setMinWidth(0);
             table.getColumnModel().getColumn(11).setMaxWidth(0);
             table.getColumnModel().getColumn(11).setPreferredWidth(0);
+            table.getColumnModel().getColumn(9).setMinWidth(0);
+            table.getColumnModel().getColumn(9).setMaxWidth(0);
+            table.getColumnModel().getColumn(9).setPreferredWidth(0);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(550, 200));
 
@@ -419,8 +423,8 @@ public class EditItem extends JFrame {
                 double price = (double) table.getValueAt(selectedRow, 6);
                 Object quantity = table.getValueAt(selectedRow, 7);
                 Object reorderLevel = table.getValueAt(selectedRow, 8);
-                Object categoryId = table.getValueAt(selectedRow, 9);
-                Object categoryName = table.getValueAt(selectedRow, 10);
+                Object departmentId = table.getValueAt(selectedRow, 9);
+                Object departmentName = table.getValueAt(selectedRow, 10);
                 Object imageUrl = table.getValueAt(selectedRow, 11);
 
                 nameField.setText(name);
@@ -431,8 +435,16 @@ public class EditItem extends JFrame {
                 priceField.setText(String.valueOf(price));
                 quantityField.setText(quantity != null ? quantity.toString() : "0");
                 reorderLevelField.setText(reorderLevel != null ? reorderLevel.toString() : "0");
-                categoryIdField.setText(categoryId != null ? categoryId.toString() : "");
-                categoryIdField.setToolTipText(categoryName != null && !categoryName.toString().isBlank() ? "Category: " + categoryName : null);
+                Integer selectedDepartmentId = null;
+                if (departmentId instanceof Integer id) {
+                    selectedDepartmentId = id;
+                } else if (departmentId != null && !departmentId.toString().isBlank()) {
+                    selectedDepartmentId = Integer.parseInt(departmentId.toString());
+                }
+                departmentSelector.setSelectedDepartment(
+                        selectedDepartmentId,
+                        departmentName != null ? departmentName.toString() : ""
+                );
                 barcodesArea.setText(loadAdditionalBarcodes(selectedProductId));
                 imageSelector.setImageUrl(imageUrl != null ? imageUrl.toString() : "");
 
@@ -523,7 +535,6 @@ public class EditItem extends JFrame {
         String priceText = priceField.getText().trim();
         String quantityText = quantityField.getText().trim();
         String reorderLevelText = reorderLevelField.getText().trim();
-        String categoryIdText = categoryIdField.getText().trim();
         String imageUrl;
         try {
             imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
@@ -586,32 +597,9 @@ public class EditItem extends JFrame {
             return;
         }
 
-        Integer categoryId = null;
-        if (!categoryIdText.isEmpty()) {
-            try {
-                categoryId = Integer.parseInt(categoryIdText);
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Category ID must be a whole number.");
-                return;
-            }
-        }
-
-        if (categoryId != null) {
-            String validateCategorySql = "SELECT 1 FROM categories WHERE category_id = ?";
-            try (Connection conn = DB.getConnection();
-                 PreparedStatement validatePs = conn.prepareStatement(validateCategorySql)) {
-                validatePs.setInt(1, categoryId);
-                try (ResultSet rs = validatePs.executeQuery()) {
-                    if (!rs.next()) {
-                        JOptionPane.showMessageDialog(this, "Category ID " + categoryId + " does not exist.");
-                        return;
-                    }
-                }
-            } catch (SQLException ex) {
-                ex.printStackTrace();
-                JOptionPane.showMessageDialog(this, "Failed to validate category: " + ex.getMessage());
-                return;
-            }
+        Integer categoryId = departmentSelector.getSelectedDepartmentId();
+        if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
+            return;
         }
 
         String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ?, image_url = ? WHERE product_id = ?";
@@ -704,8 +692,7 @@ public class EditItem extends JFrame {
         priceField.setText("");
         quantityField.setText("");
         reorderLevelField.setText("");
-        categoryIdField.setText("");
-        categoryIdField.setToolTipText(null);
+        departmentSelector.clearSelection();
         imageSelector.setImageUrl("");
         searchField.setText("");
         setFormEnabled(false);
@@ -722,7 +709,7 @@ public class EditItem extends JFrame {
         priceField.setEnabled(enabled);
         quantityField.setEnabled(enabled);
         reorderLevelField.setEnabled(enabled);
-        categoryIdField.setEnabled(enabled);
+        departmentSelector.setSelectorEnabled(enabled);
         imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
         clearButton.setEnabled(enabled);

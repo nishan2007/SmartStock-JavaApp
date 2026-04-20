@@ -6,6 +6,7 @@ import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.CustomerAccounts;
+import ui.screens.DepartmentList;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
@@ -45,6 +46,7 @@ public class AppMenuBar {
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
+        JMenuItem departmentListItem = new JMenuItem("Departments");
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
@@ -62,6 +64,7 @@ public class AppMenuBar {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
+        boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
@@ -72,7 +75,7 @@ public class AppMenuBar {
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
+        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -88,6 +91,9 @@ public class AppMenuBar {
         }
         if (!canStoreTransfer || "StoreTransfer".equalsIgnoreCase(screenKey)) {
             storeTransferItem.setEnabled(false);
+        }
+        if (!canDepartmentManagement || "DepartmentList".equalsIgnoreCase(screenKey)) {
+            departmentListItem.setEnabled(false);
         }
         mainMenuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -175,6 +181,18 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openStoreTransfer(parent);
+            }
+        });
+
+        departmentListItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("DEPARTMENT_MANAGEMENT", parent, "Department Management")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(DepartmentList.class)) {
+                    return;
+                }
+                NavigationManager.openDepartmentList(parent);
             }
         });
 
@@ -307,6 +325,7 @@ public class AppMenuBar {
         navigateMenu.add(enterInventoryItem);
         navigateMenu.add(receivingHistoryItem);
         navigateMenu.add(storeTransferItem);
+        navigateMenu.add(departmentListItem);
         navigateMenu.add(newItemItem);
         navigateMenu.add(editItemItem);
         navigateMenu.add(ViewSalesItem);

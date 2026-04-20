@@ -36,6 +36,8 @@ public class MakeASale extends JFrame {
     private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton addCustomerAccountButton;
     private JButton checkoutBtn;
+    private JButton holdCartBtn;
+    private JButton resumeHeldCartBtn;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
     private JButton editItemBtn;
@@ -163,6 +165,10 @@ public class MakeASale extends JFrame {
        bottomPanel.add(totalLabel);
 
        checkoutBtn = new JButton("Checkout");
+       holdCartBtn = new JButton("Hold Cart");
+       resumeHeldCartBtn = new JButton("Resume Hold");
+       bottomPanel.add(holdCartBtn);
+       bottomPanel.add(resumeHeldCartBtn);
        bottomPanel.add(checkoutBtn);
 
        panel.add(bottomPanel, BorderLayout.SOUTH);
@@ -277,6 +283,8 @@ public class MakeASale extends JFrame {
                checkout();
            }
        });
+       holdCartBtn.addActionListener(e -> holdCurrentCart());
+       resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
        addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
        paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
        addWindowFocusListener(new java.awt.event.WindowAdapter() {
@@ -953,6 +961,7 @@ public class MakeASale extends JFrame {
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId);
                 cartModel.setRowCount(0);
+                clearHeldCartSelection();
                 configureCartTableColumns();
                 searchField.setText("");
                 loadCustomerAccounts();
@@ -967,6 +976,312 @@ public class MakeASale extends JFrame {
 
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Checkout failed: " + ex.getMessage());
+        }
+    }
+
+    private void holdCurrentCart() {
+        if (cartModel.getRowCount() == 0) {
+            JOptionPane.showMessageDialog(this, "Cart is empty.");
+            return;
+        }
+        if (SessionManager.getCurrentLocationId() == null) {
+            JOptionPane.showMessageDialog(this, "No store is selected for this session.");
+            return;
+        }
+
+        String holdName = JOptionPane.showInputDialog(this, "Hold name / note:", "Held Cart");
+        if (holdName == null) {
+            return;
+        }
+
+        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
+        String insertHoldSql = """
+                INSERT INTO held_carts (
+                    location_id,
+                    user_id,
+                    user_name,
+                    customer_id,
+                    hold_name,
+                    payment_method,
+                    total_amount,
+                    status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+                RETURNING held_cart_id
+                """;
+        String insertItemSql = """
+                INSERT INTO held_cart_items (
+                    held_cart_id,
+                    product_id,
+                    product_name,
+                    description,
+                    sku,
+                    unit_price,
+                    quantity
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """;
+
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                int heldCartId;
+                try (PreparedStatement holdStmt = conn.prepareStatement(insertHoldSql)) {
+                    holdStmt.setInt(1, SessionManager.getCurrentLocationId());
+                    setNullableInteger(holdStmt, 2, SessionManager.getCurrentUserId());
+                    holdStmt.setString(3, SessionManager.getCurrentUserDisplayName());
+                    if (selectedCustomer == null) {
+                        holdStmt.setNull(4, java.sql.Types.INTEGER);
+                    } else {
+                        holdStmt.setInt(4, selectedCustomer.customerId);
+                    }
+                    holdStmt.setString(5, holdName.trim());
+                    holdStmt.setString(6, String.valueOf(paymentMethodBox.getSelectedItem()));
+                    holdStmt.setBigDecimal(7, BigDecimal.valueOf(getOverallTotal()));
+                    try (ResultSet rs = holdStmt.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new SQLException("Failed to create held cart.");
+                        }
+                        heldCartId = rs.getInt("held_cart_id");
+                    }
+                }
+
+                try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql)) {
+                    for (int i = 0; i < cartModel.getRowCount(); i++) {
+                        itemStmt.setInt(1, heldCartId);
+                        itemStmt.setInt(2, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, 0))));
+                        itemStmt.setString(3, String.valueOf(cartModel.getValueAt(i, 1)));
+                        itemStmt.setString(4, String.valueOf(cartModel.getValueAt(i, 2)));
+                        itemStmt.setString(5, String.valueOf(cartModel.getValueAt(i, 3)));
+                        itemStmt.setBigDecimal(6, BigDecimal.valueOf(Double.parseDouble(String.valueOf(cartModel.getValueAt(i, 4)))));
+                        itemStmt.setInt(7, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, 5))));
+                        itemStmt.addBatch();
+                    }
+                    itemStmt.executeBatch();
+                }
+
+                conn.commit();
+                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
+                cartModel.setRowCount(0);
+                clearHeldCartSelection();
+                configureCartTableColumns();
+                updateOverallTotal();
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to hold cart: " + ex.getMessage(), "Hold Cart", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void resumeHeldCart() {
+        if (SessionManager.getCurrentLocationId() == null) {
+            JOptionPane.showMessageDialog(this, "No store is selected for this session.");
+            return;
+        }
+        if (cartModel.getRowCount() > 0) {
+            int result = JOptionPane.showConfirmDialog(
+                    this,
+                    "Replace the current cart with a held cart?",
+                    "Resume Held Cart",
+                    JOptionPane.YES_NO_OPTION
+            );
+            if (result != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+
+        HeldCartOption selectedHold = selectHeldCart();
+        if (selectedHold == null) {
+            return;
+        }
+
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                loadHeldCartIntoCurrentCart(conn, selectedHold.heldCartId());
+                deleteHeldCart(conn, selectedHold.heldCartId());
+                conn.commit();
+                JOptionPane.showMessageDialog(this, "Held cart resumed.");
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to resume held cart: " + ex.getMessage(), "Resume Held Cart", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private HeldCartOption selectHeldCart() {
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"Hold ID", "Held At", "Hold Name", "Cashier", "Customer", "Items", "Total"},
+                0
+        ) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
+        String sql = """
+                SELECT hc.held_cart_id,
+                       hc.created_at,
+                       COALESCE(hc.hold_name, '') AS hold_name,
+                       COALESCE(hc.user_name, '') AS user_name,
+                       COALESCE(ca.name, '') AS customer_name,
+                       COUNT(hci.held_cart_item_id) AS item_count,
+                       COALESCE(hc.total_amount, 0) AS total_amount
+                FROM held_carts hc
+                LEFT JOIN held_cart_items hci ON hci.held_cart_id = hc.held_cart_id
+                LEFT JOIN customer_accounts ca ON ca.customer_id = hc.customer_id
+                WHERE hc.location_id = ?
+                  AND UPPER(COALESCE(hc.status, 'OPEN')) = 'OPEN'
+                GROUP BY hc.held_cart_id, hc.created_at, hc.hold_name, hc.user_name, ca.name, hc.total_amount
+                ORDER BY hc.created_at DESC
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, SessionManager.getCurrentLocationId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    model.addRow(new Object[]{
+                            rs.getInt("held_cart_id"),
+                            rs.getTimestamp("created_at"),
+                            rs.getString("hold_name"),
+                            rs.getString("user_name"),
+                            rs.getString("customer_name"),
+                            rs.getInt("item_count"),
+                            "$" + rs.getBigDecimal("total_amount")
+                    });
+                }
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load held carts: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+
+        if (model.getRowCount() == 0) {
+            JOptionPane.showMessageDialog(this, "There are no held carts for this store.");
+            return null;
+        }
+
+        JTable table = new JTable(model);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowSelectionInterval(0, 0);
+        JScrollPane scrollPane = new JScrollPane(table);
+        scrollPane.setPreferredSize(new Dimension(780, 280));
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                scrollPane,
+                "Select Held Cart",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (result != JOptionPane.OK_OPTION || table.getSelectedRow() < 0) {
+            return null;
+        }
+
+        int modelRow = table.convertRowIndexToModel(table.getSelectedRow());
+        return new HeldCartOption(Integer.parseInt(String.valueOf(model.getValueAt(modelRow, 0))));
+    }
+
+    private void loadHeldCartIntoCurrentCart(Connection conn, int heldCartId) throws SQLException {
+        String holdSql = "SELECT customer_id, payment_method FROM held_carts WHERE held_cart_id = ? AND location_id = ? AND UPPER(COALESCE(status, 'OPEN')) = 'OPEN' FOR UPDATE";
+        Integer customerId = null;
+        String paymentMethod = null;
+        try (PreparedStatement ps = conn.prepareStatement(holdSql)) {
+            ps.setInt(1, heldCartId);
+            ps.setInt(2, SessionManager.getCurrentLocationId());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Held cart is no longer available.");
+                }
+                int loadedCustomerId = rs.getInt("customer_id");
+                if (!rs.wasNull()) {
+                    customerId = loadedCustomerId;
+                }
+                paymentMethod = rs.getString("payment_method");
+            }
+        }
+
+        String itemsSql = """
+                SELECT product_id, product_name, description, sku, unit_price, quantity
+                FROM held_cart_items
+                WHERE held_cart_id = ?
+                ORDER BY held_cart_item_id
+                """;
+
+        cartModel.setRowCount(0);
+        try (PreparedStatement ps = conn.prepareStatement(itemsSql)) {
+            ps.setInt(1, heldCartId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    double price = rs.getBigDecimal("unit_price").doubleValue();
+                    int qty = rs.getInt("quantity");
+                    cartModel.addRow(new Object[]{
+                            rs.getInt("product_id"),
+                            rs.getString("product_name"),
+                            rs.getString("description"),
+                            rs.getString("sku"),
+                            price,
+                            qty,
+                            price * qty
+                    });
+                }
+            }
+        }
+
+        if (cartModel.getRowCount() == 0) {
+            throw new SQLException("Held cart has no items.");
+        }
+
+        if (paymentMethod != null && !paymentMethod.isBlank()) {
+            paymentMethodBox.setSelectedItem(paymentMethod);
+        }
+        selectCustomerById(customerId);
+        configureCartTableColumns();
+        updateOverallTotal();
+    }
+
+    private void deleteHeldCart(Connection conn, int heldCartId) throws SQLException {
+        String sql = "DELETE FROM held_carts WHERE held_cart_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, heldCartId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void selectCustomerById(Integer customerId) {
+        if (customerId == null) {
+            customerAccountBox.setSelectedItem(null);
+            return;
+        }
+        for (int i = 0; i < customerAccountBox.getItemCount(); i++) {
+            Object item = customerAccountBox.getItemAt(i);
+            if (item instanceof CustomerAccountOption option && option.customerId == customerId) {
+                customerAccountBox.setSelectedIndex(i);
+                return;
+            }
+        }
+    }
+
+    private void clearHeldCartSelection() {
+        customerAccountBox.setSelectedItem(null);
+        paymentMethodBox.setSelectedItem("CASH");
+    }
+
+    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
         }
     }
 
@@ -1068,6 +1383,9 @@ public class MakeASale extends JFrame {
             String typeLabel = businessAccount ? "Business" : "Personal";
             return accountLabel + name + " [" + typeLabel + "] (Available: $" + availableCredit + ")";
         }
+    }
+
+    private record HeldCartOption(int heldCartId) {
     }
 
 }
