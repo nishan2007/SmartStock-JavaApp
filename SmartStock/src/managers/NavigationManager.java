@@ -15,6 +15,7 @@ import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
 import ui.screens.StoreTransfer;
+import ui.screens.VendorList;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
 import ui.screens.Login;
@@ -47,6 +48,7 @@ public final class NavigationManager {
         RECEIVING_HISTORY,
         STORE_TRANSFER,
         DEPARTMENT_LIST,
+        VENDOR_LIST,
         NEW_ITEM,
         EDIT_ITEM,
         VIEW_SALES,
@@ -108,6 +110,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.DEPARTMENT_LIST));
     }
 
+    public static void openVendorList(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.VENDOR_LIST));
+    }
+
     public static void openNewItem(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.NEW_ITEM));
     }
@@ -158,6 +164,7 @@ public final class NavigationManager {
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
             case DEPARTMENT_LIST -> new DepartmentList();
+            case VENDOR_LIST -> new VendorList();
             case NEW_ITEM -> new NewItem();
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
@@ -185,6 +192,7 @@ public final class NavigationManager {
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;
             case "DepartmentList" -> ScreenType.DEPARTMENT_LIST;
+            case "VendorList" -> ScreenType.VENDOR_LIST;
             case "NewItem" -> ScreenType.NEW_ITEM;
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;

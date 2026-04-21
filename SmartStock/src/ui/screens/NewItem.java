@@ -5,6 +5,7 @@ import managers.SessionManager;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
 import ui.components.RoundedBorder;
+import ui.components.VendorSelector;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
@@ -30,6 +31,7 @@ public class NewItem extends JFrame {
     private JTextField costPriceField;
     private JTextField priceField;
     private DepartmentSelector departmentSelector;
+    private VendorSelector vendorSelector;
     private JTextField quantityField;
     private ProductImageHelper.ImageSelector imageSelector;
     private JButton saveButton;
@@ -88,6 +90,7 @@ public class NewItem extends JFrame {
         costPriceField = new JTextField();
         priceField = new JTextField();
         departmentSelector = new DepartmentSelector();
+        vendorSelector = new VendorSelector();
         quantityField = new JTextField("0");
         imageSelector = ProductImageHelper.createImageSelector(this);
 
@@ -186,6 +189,15 @@ public class NewItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 2;
         rightGbc.weightx = 0;
+        rightColumn.add(new JLabel("Vendor:"), rightGbc);
+
+        rightGbc.gridx = 1;
+        rightGbc.weightx = 1;
+        rightColumn.add(vendorSelector, rightGbc);
+
+        rightGbc.gridx = 0;
+        rightGbc.gridy = 3;
+        rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Additional Barcodes:"), rightGbc);
 
@@ -196,7 +208,7 @@ public class NewItem extends JFrame {
         rightColumn.add(barcodeScrollPane, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 3;
+        rightGbc.gridy = 4;
         rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
@@ -208,7 +220,7 @@ public class NewItem extends JFrame {
         rightColumn.add(imageSelector, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 4;
+        rightGbc.gridy = 5;
         rightGbc.weightx = 0;
         rightGbc.weighty = 1;
         rightColumn.add(Box.createVerticalGlue(), rightGbc);
@@ -322,13 +334,12 @@ public class NewItem extends JFrame {
         if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
             return;
         }
-
-        String sql;
-        if (categoryId == null) {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        } else {
-            sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        Integer vendorId = vendorSelector.getSelectedVendorId();
+        if (vendorId == null && !vendorSelector.getSelectedVendorName().isBlank()) {
+            return;
         }
+
+        String sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, vendor_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         String updateInventorySql = "UPDATE inventory SET quantity_on_hand = ? WHERE product_id = ? AND location_id = ?";
         String insertBarcodeSql = "INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)";
@@ -349,14 +360,18 @@ public class NewItem extends JFrame {
                 ps.setDouble(5, costPrice);
                 ps.setDouble(6, price);
 
-                if (categoryId != null) {
-                    ps.setInt(7, categoryId);
-                    ps.setString(8, imageUrl);
-                    setCurrentUserAuditParameters(ps, 9, 10);
+                if (categoryId == null) {
+                    ps.setNull(7, java.sql.Types.INTEGER);
                 } else {
-                    ps.setString(7, imageUrl);
-                    setCurrentUserAuditParameters(ps, 8, 9);
+                    ps.setInt(7, categoryId);
                 }
+                if (vendorId == null) {
+                    ps.setNull(8, java.sql.Types.INTEGER);
+                } else {
+                    ps.setInt(8, vendorId);
+                }
+                ps.setString(9, imageUrl);
+                setCurrentUserAuditParameters(ps, 10, 11);
 
                 ps.executeUpdate();
 
@@ -429,6 +444,7 @@ public class NewItem extends JFrame {
         costPriceField.setText("");
         priceField.setText("");
         departmentSelector.clearSelection();
+        vendorSelector.clearSelection();
         quantityField.setText("0");
         imageSelector.setImageUrl("");
         nameField.requestFocusInWindow();

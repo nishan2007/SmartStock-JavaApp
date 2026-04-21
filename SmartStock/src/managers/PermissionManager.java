@@ -107,6 +107,7 @@ public class PermissionManager {
                     || hasPermission("VIEW_RECEIVING_HISTORY")
                     || hasPermission("STORE_TRANSFER")
                     || hasPermission("DEPARTMENT_MANAGEMENT")
+                    || hasPermission("VENDOR_MANAGEMENT")
                     || hasPermission("EDIT_ITEM")
                     || hasPermission("TIME_CLOCK")
                     || hasPermission("PAYROLL_DASHBOARD")
@@ -119,6 +120,7 @@ public class PermissionManager {
             case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
             case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
             case "DepartmentList" -> hasPermission("DEPARTMENT_MANAGEMENT");
+            case "VendorList" -> hasPermission("VENDOR_MANAGEMENT");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ReturnSale" -> hasPermission("PROCESS_RETURNS");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");

@@ -35,6 +35,7 @@ public class EndOfDay extends JFrame {
     private final JLabel storeLabel = new JLabel();
     private final JLabel transactionsLabel = metricLabel();
     private final JLabel totalSalesLabel = metricLabel();
+    private final JLabel discountsLabel = metricLabel();
     private final JLabel returnsLabel = metricLabel();
     private final JLabel netSalesLabel = metricLabel();
     private final JLabel paidLabel = metricLabel();
@@ -138,10 +139,11 @@ public class EndOfDay extends JFrame {
         JPanel panel = new JPanel(new BorderLayout(12, 12));
         panel.setOpaque(false);
 
-        JPanel metricsPanel = new JPanel(new GridLayout(1, 9, 10, 0));
+        JPanel metricsPanel = new JPanel(new GridLayout(2, 5, 10, 10));
         metricsPanel.setOpaque(false);
         metricsPanel.add(transactionsLabel);
         metricsPanel.add(totalSalesLabel);
+        metricsPanel.add(discountsLabel);
         metricsPanel.add(returnsLabel);
         metricsPanel.add(netSalesLabel);
         metricsPanel.add(paidLabel);
@@ -271,9 +273,10 @@ public class EndOfDay extends JFrame {
                        COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS employee_name,
                        COALESCE(s.receipt_device_id, '') AS device_id,
                        COALESCE(s.payment_method, '') AS payment_method,
-                       COALESCE(s.payment_status, 'PAID') AS payment_status,
-                       COALESCE(s.amount_paid, 0) AS amount_paid,
-                       COALESCE(s.total_amount, 0) AS total_amount
+	                       COALESCE(s.payment_status, 'PAID') AS payment_status,
+	                       COALESCE(s.amount_paid, 0) AS amount_paid,
+	                       COALESCE(s.discount_amount, 0) AS discount_amount,
+	                       COALESCE(s.total_amount, 0) AS total_amount
                 FROM sales s
                 LEFT JOIN users u ON u.user_id = s.user_id
                 WHERE s.location_id = ?
@@ -304,6 +307,7 @@ public class EndOfDay extends JFrame {
 
         int transactions = 0;
         BigDecimal totalSales = BigDecimal.ZERO;
+        BigDecimal discounts = BigDecimal.ZERO;
         BigDecimal returns = BigDecimal.ZERO;
         BigDecimal paid = BigDecimal.ZERO;
         BigDecimal cash = BigDecimal.ZERO;
@@ -320,9 +324,11 @@ public class EndOfDay extends JFrame {
                 while (rs.next()) {
                     transactions++;
                     BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    BigDecimal discountAmount = defaultZero(rs.getBigDecimal("discount_amount"));
                     BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
                     String paymentMethod = rs.getString("payment_method");
                     totalSales = totalSales.add(totalAmount);
+                    discounts = discounts.add(discountAmount);
                     paid = paid.add(amountPaid);
                     if ("CASH".equalsIgnoreCase(paymentMethod)) {
                         cash = cash.add(amountPaid);
@@ -350,6 +356,7 @@ public class EndOfDay extends JFrame {
 
             transactionsLabel.setText("Transactions: " + transactions);
             totalSalesLabel.setText("Total Sales: " + CURRENCY.format(totalSales));
+            discountsLabel.setText("Discounts: " + CURRENCY.format(discounts));
             returnsLabel.setText("Returns: " + CURRENCY.format(returns));
             netSalesLabel.setText("Net Sales: " + CURRENCY.format(totalSales.subtract(returns)));
             paidLabel.setText("Paid: " + CURRENCY.format(paid));

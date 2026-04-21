@@ -1,10 +1,12 @@
 package ui.screens;
 
+import managers.PermissionManager;
 import managers.SessionManager;
 import data.DB;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
+import ui.components.VendorSelector;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
@@ -37,6 +39,7 @@ public class EditItem extends JFrame {
     private JTextField quantityField;
     private JTextField reorderLevelField;
     private DepartmentSelector departmentSelector;
+    private VendorSelector vendorSelector;
     private ProductImageHelper.ImageSelector imageSelector;
 
     private JButton saveButton;
@@ -44,6 +47,8 @@ public class EditItem extends JFrame {
     private JButton cancelButton;
 
     private int selectedProductId = -1;
+    private int selectedOriginalQuantity = 0;
+    private final boolean canAdjustInventoryQuantity = PermissionManager.hasPermission("ADJUST_INVENTORY_QUANTITY");
 
     public EditItem() {
         setTitle("Edit Item");
@@ -100,8 +105,12 @@ public class EditItem extends JFrame {
         costPriceField = new JTextField();
         priceField = new JTextField();
         quantityField = new JTextField();
+        if (!canAdjustInventoryQuantity) {
+            quantityField.setToolTipText("Requires Adjust Inventory Quantity permission.");
+        }
         reorderLevelField = new JTextField();
         departmentSelector = new DepartmentSelector();
+        vendorSelector = new VendorSelector();
         imageSelector = ProductImageHelper.createImageSelector(this);
 
         JScrollPane descriptionScrollPane = new JScrollPane(descriptionArea);
@@ -207,6 +216,15 @@ public class EditItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 4;
         rightGbc.weightx = 0;
+        rightColumn.add(new JLabel("Vendor:"), rightGbc);
+
+        rightGbc.gridx = 1;
+        rightGbc.weightx = 1;
+        rightColumn.add(vendorSelector, rightGbc);
+
+        rightGbc.gridx = 0;
+        rightGbc.gridy = 5;
+        rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Additional Barcodes:"), rightGbc);
 
@@ -217,7 +235,7 @@ public class EditItem extends JFrame {
         rightColumn.add(barcodeScrollPane, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 5;
+        rightGbc.gridy = 6;
         rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
@@ -229,7 +247,7 @@ public class EditItem extends JFrame {
         rightColumn.add(imageSelector, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 6;
+        rightGbc.gridy = 7;
         rightGbc.weightx = 0;
         rightGbc.weighty = 1;
         rightColumn.add(Box.createVerticalGlue(), rightGbc);
@@ -334,9 +352,12 @@ public class EditItem extends JFrame {
                        COALESCE(i.reorder_level, 0) AS reorder_level,
                        p.category_id,
                        c.name AS category_name,
+                       p.vendor_id,
+                       v.name AS vendor_name,
                        p.image_url
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.category_id
+                LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
                 LEFT JOIN inventory i ON p.product_id = i.product_id AND i.location_id = ?
                 WHERE p.name ILIKE ? OR p.sku ILIKE ? OR p.barcode ILIKE ?
                 ORDER BY p.name
@@ -366,6 +387,8 @@ public class EditItem extends JFrame {
                         rs.getInt("reorder_level"),
                         rs.getObject("category_id") != null ? rs.getInt("category_id") : "",
                         rs.getString("category_name") != null ? rs.getString("category_name") : "",
+                        rs.getObject("vendor_id") != null ? rs.getInt("vendor_id") : "",
+                        rs.getString("vendor_name") != null ? rs.getString("vendor_name") : "",
                         rs.getString("image_url") != null ? rs.getString("image_url") : ""
                 });
             }
@@ -375,7 +398,7 @@ public class EditItem extends JFrame {
                 return;
             }
 
-            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Department ID", "Department", "Image URL"};
+            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
             DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -386,6 +409,9 @@ public class EditItem extends JFrame {
             JTable table = new JTable(model);
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             table.setRowSelectionInterval(0, 0);
+            table.getColumnModel().getColumn(13).setMinWidth(0);
+            table.getColumnModel().getColumn(13).setMaxWidth(0);
+            table.getColumnModel().getColumn(13).setPreferredWidth(0);
             table.getColumnModel().getColumn(11).setMinWidth(0);
             table.getColumnModel().getColumn(11).setMaxWidth(0);
             table.getColumnModel().getColumn(11).setPreferredWidth(0);
@@ -425,7 +451,9 @@ public class EditItem extends JFrame {
                 Object reorderLevel = table.getValueAt(selectedRow, 8);
                 Object departmentId = table.getValueAt(selectedRow, 9);
                 Object departmentName = table.getValueAt(selectedRow, 10);
-                Object imageUrl = table.getValueAt(selectedRow, 11);
+                Object vendorId = table.getValueAt(selectedRow, 11);
+                Object vendorName = table.getValueAt(selectedRow, 12);
+                Object imageUrl = table.getValueAt(selectedRow, 13);
 
                 nameField.setText(name);
                 skuField.setText(sku);
@@ -434,6 +462,7 @@ public class EditItem extends JFrame {
                 costPriceField.setText(String.valueOf(costPrice));
                 priceField.setText(String.valueOf(price));
                 quantityField.setText(quantity != null ? quantity.toString() : "0");
+                selectedOriginalQuantity = parseIntOrDefault(quantity, 0);
                 reorderLevelField.setText(reorderLevel != null ? reorderLevel.toString() : "0");
                 Integer selectedDepartmentId = null;
                 if (departmentId instanceof Integer id) {
@@ -444,6 +473,16 @@ public class EditItem extends JFrame {
                 departmentSelector.setSelectedDepartment(
                         selectedDepartmentId,
                         departmentName != null ? departmentName.toString() : ""
+                );
+                Integer selectedVendorId = null;
+                if (vendorId instanceof Integer id) {
+                    selectedVendorId = id;
+                } else if (vendorId != null && !vendorId.toString().isBlank()) {
+                    selectedVendorId = Integer.parseInt(vendorId.toString());
+                }
+                vendorSelector.setSelectedVendor(
+                        selectedVendorId,
+                        vendorName != null ? vendorName.toString() : ""
                 );
                 barcodesArea.setText(loadAdditionalBarcodes(selectedProductId));
                 imageSelector.setImageUrl(imageUrl != null ? imageUrl.toString() : "");
@@ -560,7 +599,7 @@ public class EditItem extends JFrame {
         uniqueBarcodes.remove(barcode);
         extraBarcodes.addAll(uniqueBarcodes);
 
-        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || quantityText.isEmpty() || reorderLevelText.isEmpty()) {
+        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (canAdjustInventoryQuantity && quantityText.isEmpty()) || reorderLevelText.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, Price, Quantity, and Reorder Quantity are required.");
             return;
         }
@@ -581,12 +620,14 @@ public class EditItem extends JFrame {
             return;
         }
 
-        int quantity;
-        try {
-            quantity = Integer.parseInt(quantityText);
-        } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Quantity must be a whole number.");
-            return;
+        int quantity = selectedOriginalQuantity;
+        if (canAdjustInventoryQuantity) {
+            try {
+                quantity = Integer.parseInt(quantityText);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Quantity must be a whole number.");
+                return;
+            }
         }
 
         int reorderLevel;
@@ -601,8 +642,12 @@ public class EditItem extends JFrame {
         if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
             return;
         }
+        Integer vendorId = vendorSelector.getSelectedVendorId();
+        if (vendorId == null && !vendorSelector.getSelectedVendorName().isBlank()) {
+            return;
+        }
 
-        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ?, image_url = ? WHERE product_id = ?";
+        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
                 VALUES (?, ?, ?, ?)
@@ -635,9 +680,14 @@ public class EditItem extends JFrame {
                 } else {
                     updatePs.setNull(7, java.sql.Types.INTEGER);
                 }
+                if (vendorId != null) {
+                    updatePs.setInt(8, vendorId);
+                } else {
+                    updatePs.setNull(8, java.sql.Types.INTEGER);
+                }
 
-                updatePs.setString(8, imageUrl);
-                updatePs.setInt(9, selectedProductId);
+                updatePs.setString(9, imageUrl);
+                updatePs.setInt(10, selectedProductId);
 
                 int rowsUpdated = updatePs.executeUpdate();
                 if (rowsUpdated == 0) {
@@ -683,6 +733,7 @@ public class EditItem extends JFrame {
 
     private void clearSelection() {
         selectedProductId = -1;
+        selectedOriginalQuantity = 0;
         nameField.setText("");
         skuField.setText("");
         barcodeField.setText("");
@@ -693,6 +744,7 @@ public class EditItem extends JFrame {
         quantityField.setText("");
         reorderLevelField.setText("");
         departmentSelector.clearSelection();
+        vendorSelector.clearSelection();
         imageSelector.setImageUrl("");
         searchField.setText("");
         setFormEnabled(false);
@@ -707,11 +759,23 @@ public class EditItem extends JFrame {
         barcodesArea.setEnabled(enabled);
         costPriceField.setEnabled(enabled);
         priceField.setEnabled(enabled);
-        quantityField.setEnabled(enabled);
+        quantityField.setEnabled(enabled && canAdjustInventoryQuantity);
         reorderLevelField.setEnabled(enabled);
         departmentSelector.setSelectorEnabled(enabled);
+        vendorSelector.setSelectorEnabled(enabled);
         imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
         clearButton.setEnabled(enabled);
+    }
+
+    private int parseIntOrDefault(Object value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
     }
 }

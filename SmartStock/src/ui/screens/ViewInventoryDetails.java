@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.PermissionManager;
 import managers.SessionManager;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.StoreTimeZoneHelper;
@@ -35,6 +36,9 @@ public class ViewInventoryDetails extends JDialog {
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private final int productId;
+    private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
+    private final boolean canViewVendor = PermissionManager.hasPermission("VIEW_VENDOR");
+    private final boolean canViewCreatedBy = PermissionManager.hasPermission("VIEW_CREATED_BY");
 
     public ViewInventoryDetails(Window owner, int productId) {
         super(owner, "Item Details - Product #" + productId, ModalityType.APPLICATION_MODAL);
@@ -151,14 +155,24 @@ public class ViewInventoryDetails extends JDialog {
         gbc.gridy = 0;
 
         gbc.gridx = 0;
-        content.add(buildSection("Product", itemDetails, List.of(
-                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name", "Created By Name", "Image Url"
-        )), gbc);
+        List<String> productFields = new ArrayList<>(List.of(
+                "Product Id", "Name", "Sku", "Barcode", "Category Id", "Category Name", "Image Url"
+        ));
+        if (canViewCreatedBy) {
+            productFields.add("Created By Name");
+        }
+        if (canViewVendor) {
+            productFields.add("Vendor Name");
+        }
+        content.add(buildSection("Product", itemDetails, productFields), gbc);
 
         gbc.gridx = 1;
-        content.add(buildSection("Pricing", itemDetails, List.of(
-                "Cost Price", "Price"
-        )), gbc);
+        List<String> pricingFields = new ArrayList<>();
+        if (canViewCostPrice) {
+            pricingFields.add("Cost Price");
+        }
+        pricingFields.add("Price");
+        content.add(buildSection("Pricing", itemDetails, pricingFields), gbc);
 
         gbc.gridy = 1;
         gbc.gridx = 0;
@@ -304,10 +318,12 @@ public class ViewInventoryDetails extends JDialog {
         String sql = """
                 SELECT p.*,
                        COALESCE(c.name, '') AS category_name,
+                       COALESCE(v.name, '') AS vendor_name,
                        COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
                        COALESCE(i.reorder_level, 0) AS reorder_level
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.category_id
+                LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
                 LEFT JOIN inventory i ON p.product_id = i.product_id
                 """;
         if (currentLocationId != null) {
@@ -330,7 +346,11 @@ public class ViewInventoryDetails extends JDialog {
                 if (rs.next()) {
                     ResultSetMetaData metaData = rs.getMetaData();
                     for (int i = 1; i <= metaData.getColumnCount(); i++) {
-                        details.put(formatFieldName(metaData.getColumnLabel(i)), formatValue(rs.getObject(i)));
+                        String fieldName = formatFieldName(metaData.getColumnLabel(i));
+                        if (isRestrictedField(fieldName)) {
+                            continue;
+                        }
+                        details.put(fieldName, formatValue(rs.getObject(i)));
                     }
                 }
             }
@@ -338,6 +358,16 @@ public class ViewInventoryDetails extends JDialog {
 
         details.put("Additional Barcodes", loadAdditionalBarcodes(conn));
         return details;
+    }
+
+    private boolean isRestrictedField(String fieldName) {
+        if (!canViewCostPrice && "Cost Price".equals(fieldName)) {
+            return true;
+        }
+        if (!canViewVendor && ("Vendor Id".equals(fieldName) || "Vendor Name".equals(fieldName))) {
+            return true;
+        }
+        return !canViewCreatedBy && ("Created By User Id".equals(fieldName) || "Created By Name".equals(fieldName));
     }
 
     private JTable buildMovementHistoryTable(Connection conn) throws SQLException {
@@ -370,14 +400,20 @@ public class ViewInventoryDetails extends JDialog {
                     }
                 };
 
+                List<Integer> visibleColumnIndexes = new ArrayList<>();
                 for (int i = 1; i <= metaData.getColumnCount(); i++) {
-                    movementModel.addColumn(formatFieldName(metaData.getColumnLabel(i)));
+                    String fieldName = formatFieldName(metaData.getColumnLabel(i));
+                    if (isRestrictedField(fieldName)) {
+                        continue;
+                    }
+                    visibleColumnIndexes.add(i);
+                    movementModel.addColumn(fieldName);
                 }
 
                 while (rs.next()) {
-                    Object[] row = new Object[metaData.getColumnCount()];
-                    for (int i = 1; i <= metaData.getColumnCount(); i++) {
-                        row[i - 1] = formatValue(rs.getObject(i));
+                    Object[] row = new Object[visibleColumnIndexes.size()];
+                    for (int i = 0; i < visibleColumnIndexes.size(); i++) {
+                        row[i] = formatValue(rs.getObject(visibleColumnIndexes.get(i)));
                     }
                     movementModel.addRow(row);
                 }

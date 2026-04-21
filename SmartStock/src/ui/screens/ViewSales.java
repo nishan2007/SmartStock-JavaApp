@@ -50,7 +50,7 @@ public class ViewSales extends JFrame {
         mainPanel.add(topPanel, BorderLayout.NORTH);
 
         salesTableModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Receipt #", "Date / Time", "Cashier", "Store", "Items", "Payment", "Payment Status", "Paid", "Returned", "Total", "Net"}, 0
+                new Object[]{"Sale ID", "Receipt #", "Date / Time", "Cashier", "Store", "Items", "Payment", "Payment Status", "Paid", "Returned", "Discount", "Total", "Net"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -74,6 +74,7 @@ public class ViewSales extends JFrame {
         salesTable.getColumnModel().getColumn(9).setPreferredWidth(120);
         salesTable.getColumnModel().getColumn(10).setPreferredWidth(120);
         salesTable.getColumnModel().getColumn(11).setPreferredWidth(120);
+        salesTable.getColumnModel().getColumn(12).setPreferredWidth(120);
 
         JScrollPane scrollPane = new JScrollPane(salesTable);
         mainPanel.add(scrollPane, BorderLayout.CENTER);
@@ -197,48 +198,26 @@ public class ViewSales extends JFrame {
     private void loadSales() {
         salesTableModel.setRowCount(0);
 
-        StringBuilder sql = new StringBuilder(
-                "SELECT s.sale_id, " +
-                        "COALESCE(s.receipt_number, '') AS receipt_number, " +
-                        "(s.created_at AT TIME ZONE ?) AS local_created_at, " +
-                        "COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS cashier_name, " +
-                        "COALESCE(l.name, 'Unknown') AS store_name, " +
-                        "COUNT(si.sale_item_id) AS item_count, " +
-                        "COALESCE(s.payment_method, '') AS payment_method, " +
-                        "COALESCE(s.payment_status, 'PAID') AS payment_status, " +
-                        "COALESCE(s.amount_paid, 0) AS amount_paid, " +
-                        "COALESCE(s.returned_amount, 0) AS returned_amount, " +
-                        "COALESCE(s.total_amount, 0) AS total_amount " +
-                        "FROM sales s " +
-                        "LEFT JOIN users u ON s.user_id = u.user_id " +
-                        "LEFT JOIN locations l ON s.location_id = l.location_id " +
-                        "LEFT JOIN sale_items si ON s.sale_id = si.sale_id " +
-                        "WHERE 1=1 "
-        );
-
-        Vector<Object> parameters = new Vector<>();
-        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
+        StringBuilder salesWhere = new StringBuilder("WHERE 1=1 ");
+        Vector<Object> salesParameters = new Vector<>();
 
         if (SessionManager.getCurrentLocationId() != null) {
-            sql.append("AND s.location_id = ? ");
-            parameters.add(SessionManager.getCurrentLocationId());
+            salesWhere.append("AND s.location_id = ? ");
+            salesParameters.add(SessionManager.getCurrentLocationId());
         }
 
         String searchText = searchField.getText().trim();
         if (!searchText.isEmpty()) {
-            sql.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
+            salesWhere.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
                     .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
                     .append("COALESCE(s.user_name, u.full_name, u.username, '') ILIKE ? OR ")
                     .append("COALESCE(l.name, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_method, '') ILIKE ? OR ")
                     .append("COALESCE(s.payment_status, 'PAID') ILIKE ?) ");
             String likeValue = "%" + searchText + "%";
-            parameters.add(likeValue);
-            parameters.add(likeValue);
-            parameters.add(likeValue);
-            parameters.add(likeValue);
-            parameters.add(likeValue);
-            parameters.add(likeValue);
+            for (int i = 0; i < 6; i++) {
+                salesParameters.add(likeValue);
+            }
         }
 
         LocalDate fromDate = parseDate(fromDateField.getText().trim(), "From Date");
@@ -252,25 +231,119 @@ public class ViewSales extends JFrame {
         }
 
         if (fromDate != null) {
-            sql.append("AND (s.created_at AT TIME ZONE ?) >= ? ");
-            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            parameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
+            salesWhere.append("AND (s.created_at AT TIME ZONE ?) >= ? ");
+            salesParameters.add(StoreTimeZoneHelper.getStoreZoneId());
+            salesParameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
         }
 
         if (toDate != null) {
-            sql.append("AND (s.created_at AT TIME ZONE ?) < ? ");
-            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            parameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
+            salesWhere.append("AND (s.created_at AT TIME ZONE ?) < ? ");
+            salesParameters.add(StoreTimeZoneHelper.getStoreZoneId());
+            salesParameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
         }
 
-        sql.append("GROUP BY s.sale_id, s.receipt_number, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.returned_amount, s.total_amount ")
-                .append("ORDER BY s.created_at DESC");
+        StringBuilder returnsWhere = new StringBuilder("WHERE 1=1 ");
+        Vector<Object> returnsParameters = new Vector<>();
 
-        double grandTotal = 0;
+        if (SessionManager.getCurrentLocationId() != null) {
+            returnsWhere.append("AND sr.location_id = ? ");
+            returnsParameters.add(SessionManager.getCurrentLocationId());
+        }
+
+        if (!searchText.isEmpty()) {
+            returnsWhere.append("AND (CAST(sr.return_id AS TEXT) ILIKE ? OR ")
+                    .append("CAST(sr.sale_id AS TEXT) ILIKE ? OR ")
+                    .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
+                    .append("COALESCE(sr.user_name, u.full_name, u.username, '') ILIKE ? OR ")
+                    .append("COALESCE(l.name, '') ILIKE ? OR ")
+                    .append("COALESCE(sr.refund_method, '') ILIKE ? OR ")
+                    .append("'RETURN' ILIKE ?) ");
+            String likeValue = "%" + searchText + "%";
+            for (int i = 0; i < 7; i++) {
+                returnsParameters.add(likeValue);
+            }
+        }
+
+        if (fromDate != null) {
+            returnsWhere.append("AND (sr.created_at AT TIME ZONE ?) >= ? ");
+            returnsParameters.add(StoreTimeZoneHelper.getStoreZoneId());
+            returnsParameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
+        }
+
+        if (toDate != null) {
+            returnsWhere.append("AND (sr.created_at AT TIME ZONE ?) < ? ");
+            returnsParameters.add(StoreTimeZoneHelper.getStoreZoneId());
+            returnsParameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
+        }
+
+        String sql = """
+                SELECT *
+                FROM (
+                    SELECT 'SALE' AS transaction_type,
+                           s.sale_id,
+                           NULL::BIGINT AS return_id,
+                           COALESCE(s.receipt_number, '') AS receipt_number,
+                           s.created_at AS sort_created_at,
+                           (s.created_at AT TIME ZONE ?) AS local_created_at,
+                           COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS cashier_name,
+                           COALESCE(l.name, 'Unknown') AS store_name,
+                           COUNT(si.sale_item_id) AS item_count,
+                           COALESCE(s.payment_method, '') AS payment_method,
+                           COALESCE(s.payment_status, 'PAID') AS payment_status,
+	                           COALESCE(s.amount_paid, 0) AS amount_paid,
+	                           COALESCE(s.returned_amount, 0) AS returned_amount,
+	                           COALESCE(s.discount_amount, 0) AS discount_amount,
+	                           COALESCE(s.total_amount, 0) AS total_amount,
+	                           GREATEST(COALESCE(s.total_amount, 0) - COALESCE(s.returned_amount, 0), 0) AS net_amount
+                    FROM sales s
+                    LEFT JOIN users u ON s.user_id = u.user_id
+                    LEFT JOIN locations l ON s.location_id = l.location_id
+                    LEFT JOIN sale_items si ON s.sale_id = si.sale_id
+                    %s
+                    GROUP BY s.sale_id, s.receipt_number, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.returned_amount, s.discount_amount, s.total_amount
+
+                    UNION ALL
+
+                    SELECT 'RETURN' AS transaction_type,
+                           sr.sale_id,
+                           sr.return_id,
+                           COALESCE(s.receipt_number, '') AS receipt_number,
+                           sr.created_at AS sort_created_at,
+                           (sr.created_at AT TIME ZONE ?) AS local_created_at,
+                           COALESCE(sr.user_name, u.full_name, u.username, 'Unknown') AS cashier_name,
+                           COALESCE(l.name, 'Unknown') AS store_name,
+                           COALESCE(SUM(sri.quantity), 0) AS item_count,
+                           COALESCE(sr.refund_method, '') AS payment_method,
+                           'RETURN' AS payment_status,
+	                           -COALESCE(sr.refund_amount, 0) AS amount_paid,
+	                           COALESCE(sr.refund_amount, 0) AS returned_amount,
+	                           0::NUMERIC AS discount_amount,
+	                           -COALESCE(sr.refund_amount, 0) AS total_amount,
+                           -COALESCE(sr.refund_amount, 0) AS net_amount
+                    FROM sale_returns sr
+                    LEFT JOIN sales s ON s.sale_id = sr.sale_id
+                    LEFT JOIN users u ON sr.user_id = u.user_id
+                    LEFT JOIN locations l ON sr.location_id = l.location_id
+                    LEFT JOIN sale_return_items sri ON sri.return_id = sr.return_id
+                    %s
+                    GROUP BY sr.return_id, sr.sale_id, s.receipt_number, sr.created_at, cashier_name, store_name, sr.refund_method, sr.refund_amount
+                ) transactions
+                ORDER BY sort_created_at DESC, transaction_type ASC
+                """.formatted(salesWhere, returnsWhere);
+
+        Vector<Object> parameters = new Vector<>();
+        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
+        parameters.addAll(salesParameters);
+        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
+        parameters.addAll(returnsParameters);
+
+        double grossSales = 0;
+        double returnTotal = 0;
+        double netTotal = 0;
         int transactionCount = 0;
 
         try (Connection conn = getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
 
             for (int i = 0; i < parameters.size(); i++) {
                 ps.setObject(i + 1, parameters.get(i));
@@ -279,6 +352,8 @@ public class ViewSales extends JFrame {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     int saleId = rs.getInt("sale_id");
+                    String transactionType = rs.getString("transaction_type");
+                    long returnId = rs.getLong("return_id");
                     String receiptNumber = rs.getString("receipt_number");
                     Timestamp saleTimestamp = rs.getTimestamp("local_created_at");
                     String cashier = rs.getString("cashier_name");
@@ -288,12 +363,14 @@ public class ViewSales extends JFrame {
                     String paymentStatus = rs.getString("payment_status");
                     double amountPaid = rs.getDouble("amount_paid");
                     double returnedAmount = rs.getDouble("returned_amount");
+                    double discountAmount = rs.getDouble("discount_amount");
                     double total = rs.getDouble("total_amount");
-                    double net = Math.max(0, total - returnedAmount);
+                    double net = rs.getDouble("net_amount");
+                    boolean returnRow = "RETURN".equalsIgnoreCase(transactionType);
 
                     salesTableModel.addRow(new Object[]{
                             saleId,
-                            receiptNumber,
+                            returnRow ? receiptNumber + " / Return #" + returnId : receiptNumber,
                             formatTimestamp(saleTimestamp),
                             cashier,
                             store,
@@ -302,16 +379,25 @@ public class ViewSales extends JFrame {
                             formatPaymentStatus(paymentStatus),
                             currencyFormat.format(amountPaid),
                             currencyFormat.format(returnedAmount),
+                            currencyFormat.format(discountAmount),
                             currencyFormat.format(total),
                             currencyFormat.format(net)
                     });
 
-                    grandTotal += total;
+                    if (returnRow) {
+                        returnTotal += returnedAmount;
+                    } else {
+                        grossSales += total;
+                    }
+                    netTotal += net;
                     transactionCount++;
                 }
             }
 
-            summaryLabel.setText("Transactions: " + transactionCount + "    Total Sales: " + currencyFormat.format(grandTotal));
+            summaryLabel.setText("Transactions: " + transactionCount
+                    + "    Gross Sales: " + currencyFormat.format(grossSales)
+                    + "    Returns: " + currencyFormat.format(returnTotal)
+                    + "    Net: " + currencyFormat.format(netTotal));
         } catch (SQLException e) {
             JOptionPane.showMessageDialog(this,
                     "Failed to load sales.\n\n" + e.getMessage(),
@@ -395,6 +481,14 @@ public class ViewSales extends JFrame {
                 GROUP BY si.sale_item_id, p.product_id, p.name, si.quantity, si.unit_price
                 ORDER BY si.sale_item_id ASC
                 """;
+        String saleSummarySql = """
+                SELECT COALESCE(subtotal_amount, total_amount) AS subtotal_amount,
+                       COALESCE(discount_percent, 0) AS discount_percent,
+                       COALESCE(discount_amount, 0) AS discount_amount,
+                       COALESCE(total_amount, 0) AS total_amount
+                FROM sales
+                WHERE sale_id = ?
+                """;
         String returnsSql = """
                 SELECT return_id,
                        (created_at AT TIME ZONE ?) AS local_created_at,
@@ -421,14 +515,28 @@ public class ViewSales extends JFrame {
                 """;
 
         double total = 0;
+        double recordedSaleTotal = 0;
+        double subtotalAmount = 0;
+        double discountPercent = 0;
+        double discountAmount = 0;
         double returnedTotal = 0;
 
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(detailsSql);
+             PreparedStatement summaryPs = conn.prepareStatement(saleSummarySql);
              PreparedStatement returnsPs = conn.prepareStatement(returnsSql);
              PreparedStatement returnItemsPs = conn.prepareStatement(returnItemsSql)) {
 
             ps.setInt(1, saleId);
+            summaryPs.setInt(1, saleId);
+            try (ResultSet rs = summaryPs.executeQuery()) {
+                if (rs.next()) {
+                    subtotalAmount = rs.getDouble("subtotal_amount");
+                    discountPercent = rs.getDouble("discount_percent");
+                    discountAmount = rs.getDouble("discount_amount");
+                    recordedSaleTotal = rs.getDouble("total_amount");
+                }
+            }
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -443,6 +551,9 @@ public class ViewSales extends JFrame {
                     });
                     total += lineTotal;
                 }
+            }
+            if (recordedSaleTotal > 0) {
+                total = recordedSaleTotal;
             }
 
             returnsPs.setString(1, StoreTimeZoneHelper.getStoreZoneId());
@@ -514,7 +625,9 @@ public class ViewSales extends JFrame {
         tabs.addTab("Returns (" + returnsModel.getRowCount() + ")", returnsPanel);
         panel.add(tabs, BorderLayout.CENTER);
 
-        JLabel totalLabel = new JLabel("Sale Total: " + currencyFormat.format(total)
+        JLabel totalLabel = new JLabel("Subtotal: " + currencyFormat.format(subtotalAmount > 0 ? subtotalAmount : total)
+                + "    Discount: " + currencyFormat.format(discountAmount) + " (" + String.format("%.2f", discountPercent) + "%)"
+                + "    Sale Total: " + currencyFormat.format(total)
                 + "    Returned: " + currencyFormat.format(returnedTotal)
                 + "    Net: " + currencyFormat.format(Math.max(0, total - returnedTotal)));
         totalLabel.setBorder(new EmptyBorder(4, 4, 0, 4));

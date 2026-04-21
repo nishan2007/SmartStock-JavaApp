@@ -20,6 +20,7 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URL;
 import java.sql.*;
 import java.time.LocalDateTime;
@@ -33,6 +34,9 @@ public class MakeASale extends JFrame {
     private DefaultTableModel cartModel;
     private boolean updatingCart = false;
     private JLabel totalLabel;
+    private JLabel subtotalLabel;
+    private JLabel discountAmountLabel;
+    private JTextField discountPercentField;
     private JComboBox<String> paymentMethodBox;
     private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton addCustomerAccountButton;
@@ -50,6 +54,7 @@ public class MakeASale extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
+    private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
 
    public MakeASale() {
 
@@ -162,8 +167,20 @@ public class MakeASale extends JFrame {
        paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
        bottomPanel.add(paymentMethodBox);
 
-       totalLabel = new JLabel("Overall Total: $0.00");
-       bottomPanel.add(totalLabel);
+	       bottomPanel.add(new JLabel("Discount %:"));
+	       discountPercentField = new JTextField("0", 5);
+	       discountPercentField.setEnabled(canApplySaleDiscount());
+	       if (!canApplySaleDiscount()) {
+	           discountPercentField.setToolTipText("Requires Apply Sale Discount permission.");
+	       }
+	       bottomPanel.add(discountPercentField);
+
+	       subtotalLabel = new JLabel("Subtotal: $0.00");
+	       bottomPanel.add(subtotalLabel);
+	       discountAmountLabel = new JLabel("Discount: $0.00");
+	       bottomPanel.add(discountAmountLabel);
+	       totalLabel = new JLabel("Overall Total: $0.00");
+	       bottomPanel.add(totalLabel);
 
        checkoutBtn = new JButton("Checkout");
        holdCartBtn = new JButton("Hold Cart");
@@ -287,8 +304,33 @@ public class MakeASale extends JFrame {
        holdCartBtn.addActionListener(e -> holdCurrentCart());
        resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
        addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
-       paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
-       addWindowFocusListener(new java.awt.event.WindowAdapter() {
+	       paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
+	       discountPercentField.getDocument().addDocumentListener(new DocumentListener() {
+	           private void refreshTotals() {
+	               SwingUtilities.invokeLater(() -> {
+	                   if (!canApplySaleDiscount()) {
+	                       discountPercentField.setText("0");
+	                   }
+	                   updateOverallTotal();
+	               });
+	           }
+
+	           @Override
+	           public void insertUpdate(DocumentEvent e) {
+	               refreshTotals();
+	           }
+
+	           @Override
+	           public void removeUpdate(DocumentEvent e) {
+	               refreshTotals();
+	           }
+
+	           @Override
+	           public void changedUpdate(DocumentEvent e) {
+	               refreshTotals();
+	           }
+	       });
+	       addWindowFocusListener(new java.awt.event.WindowAdapter() {
            @Override
            public void windowGainedFocus(java.awt.event.WindowEvent e) {
                refreshPermissionButtons();
@@ -343,6 +385,16 @@ public class MakeASale extends JFrame {
         if (editItemBtn != null) {
             editItemBtn.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
         }
+        if (discountPercentField != null) {
+            discountPercentField.setEnabled(canApplySaleDiscount());
+            if (!canApplySaleDiscount()) {
+                discountPercentField.setText("0");
+            }
+        }
+    }
+
+    private boolean canApplySaleDiscount() {
+        return PermissionManager.hasPermission(APPLY_SALE_DISCOUNT_PERMISSION);
     }
 
     private void configureCartTableColumns() {
@@ -694,7 +746,7 @@ public class MakeASale extends JFrame {
         }
     }
 
-    private double getOverallTotal() {
+    private double getCartSubtotal() {
         double total = 0.0;
 
         for (int i = 0; i < cartModel.getRowCount(); i++) {
@@ -707,6 +759,65 @@ public class MakeASale extends JFrame {
         }
 
         return total;
+    }
+
+    private double getOverallTotal() {
+        BigDecimal subtotal = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal discountAmount = getDiscountAmount(subtotal);
+        return subtotal.subtract(discountAmount).max(BigDecimal.ZERO).doubleValue();
+    }
+
+    private BigDecimal getDiscountPercent() {
+        if (!canApplySaleDiscount() || discountPercentField == null) {
+            return BigDecimal.ZERO;
+        }
+
+        String text = discountPercentField.getText().trim();
+        if (text.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        try {
+            BigDecimal percent = new BigDecimal(text);
+            if (percent.compareTo(BigDecimal.ZERO) < 0) {
+                return BigDecimal.ZERO;
+            }
+            if (percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+                return BigDecimal.valueOf(100);
+            }
+            return percent;
+        } catch (NumberFormatException ex) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private BigDecimal parseDiscountPercentOrShowError() {
+        if (!canApplySaleDiscount()) {
+            return BigDecimal.ZERO;
+        }
+
+        String text = discountPercentField.getText().trim();
+        if (text.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        try {
+            BigDecimal percent = new BigDecimal(text).setScale(2, RoundingMode.HALF_UP);
+            if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+                JOptionPane.showMessageDialog(this, "Discount percent must be between 0 and 100.");
+                return null;
+            }
+            return percent;
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Discount percent must be a valid number.");
+            return null;
+        }
+    }
+
+    private BigDecimal getDiscountAmount(BigDecimal subtotal) {
+        BigDecimal discountPercent = getDiscountPercent();
+        return subtotal.multiply(discountPercent)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
     }
 
     private void updateCurrentDateLabel() {
@@ -820,6 +931,17 @@ public class MakeASale extends JFrame {
             return;
         }
 
+        BigDecimal discountPercent = parseDiscountPercentOrShowError();
+        if (discountPercent == null) {
+            return;
+        }
+        if (discountPercent.compareTo(BigDecimal.ZERO) > 0 && !canApplySaleDiscount()) {
+            JOptionPane.showMessageDialog(this, "You do not have permission to apply sale discounts.");
+            discountPercentField.setText("0");
+            updateOverallTotal();
+            return;
+        }
+
         String paymentMethod = (String) paymentMethodBox.getSelectedItem();
         CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
 
@@ -847,7 +969,13 @@ public class MakeASale extends JFrame {
             int locationId = SessionManager.getCurrentLocationId();
 
             try {
-                BigDecimal saleTotal = BigDecimal.valueOf(getOverallTotal());
+                BigDecimal subtotalAmount = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal discountAmount = subtotalAmount.multiply(discountPercent)
+                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                BigDecimal saleTotal = subtotalAmount.subtract(discountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
+                        discountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
+                );
                 if (chargeCustomerAccount) {
                     validateAndChargeCustomerAccount(conn, selectedCustomer.customerId, saleTotal);
                 }
@@ -868,10 +996,13 @@ public class MakeASale extends JFrame {
 	                            user_name,
 	                            receipt_number,
 	                            receipt_device_id,
-	                            receipt_sequence
+	                            receipt_sequence,
+	                            subtotal_amount,
+	                            discount_percent,
+	                            discount_amount
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """;
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                        """;
                 int saleId;
 
                 try (PreparedStatement saleStmt = conn.prepareStatement(insertSaleSql, Statement.RETURN_GENERATED_KEYS)) {
@@ -888,10 +1019,13 @@ public class MakeASale extends JFrame {
 	                    saleStmt.setString(7, paymentStatus);
 	                    saleStmt.setBigDecimal(8, amountPaid);
 	                    saleStmt.setString(9, SessionManager.getCurrentUserDisplayName());
-	                    saleStmt.setString(10, receipt.receiptNumber());
-	                    saleStmt.setString(11, receipt.deviceId());
-	                    saleStmt.setInt(12, receipt.sequence());
-                    saleStmt.executeUpdate();
+		                    saleStmt.setString(10, receipt.receiptNumber());
+		                    saleStmt.setString(11, receipt.deviceId());
+		                    saleStmt.setInt(12, receipt.sequence());
+		                    saleStmt.setBigDecimal(13, subtotalAmount);
+		                    saleStmt.setBigDecimal(14, discountPercent);
+		                    saleStmt.setBigDecimal(15, discountAmount);
+	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
                         if (!generatedKeys.next()) {
@@ -925,15 +1059,16 @@ public class MakeASale extends JFrame {
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql)) {
 
                     for (int i = 0; i < cartModel.getRowCount(); i++) {
-                        int productId = Integer.parseInt(cartModel.getValueAt(i, 0).toString());
-                        int qty = Integer.parseInt(cartModel.getValueAt(i, 5).toString());
-                        double price = Double.parseDouble(cartModel.getValueAt(i, 4).toString());
+	                        int productId = Integer.parseInt(cartModel.getValueAt(i, 0).toString());
+	                        int qty = Integer.parseInt(cartModel.getValueAt(i, 5).toString());
+	                        BigDecimal originalPrice = BigDecimal.valueOf(Double.parseDouble(cartModel.getValueAt(i, 4).toString()));
+	                        BigDecimal chargedPrice = originalPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
 
-                        itemStmt.setInt(1, saleId);
-                        itemStmt.setInt(2, productId);
-                        itemStmt.setInt(3, qty);
-                        itemStmt.setBigDecimal(4, BigDecimal.valueOf(price));
-                        itemStmt.addBatch();
+	                        itemStmt.setInt(1, saleId);
+	                        itemStmt.setInt(2, productId);
+	                        itemStmt.setInt(3, qty);
+	                        itemStmt.setBigDecimal(4, chargedPrice);
+	                        itemStmt.addBatch();
 
                         ensureInventoryStmt.setInt(1, productId);
                         ensureInventoryStmt.setInt(2, locationId);
@@ -960,9 +1095,10 @@ public class MakeASale extends JFrame {
                 }
 
                 conn.commit();
-                JOptionPane.showMessageDialog(this, "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId);
-                cartModel.setRowCount(0);
-                clearHeldCartSelection();
+	                JOptionPane.showMessageDialog(this, "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId);
+	                cartModel.setRowCount(0);
+	                discountPercentField.setText("0");
+	                clearHeldCartSelection();
                 configureCartTableColumns();
                 searchField.setText("");
                 loadCustomerAccounts();
@@ -995,21 +1131,31 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
-        String insertHoldSql = """
-                INSERT INTO held_carts (
-                    location_id,
+	        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
+        BigDecimal subtotalAmount = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal discountPercent = parseDiscountPercentOrShowError();
+        if (discountPercent == null) {
+            return;
+        }
+        BigDecimal discountAmount = subtotalAmount.multiply(discountPercent)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+	        String insertHoldSql = """
+	                INSERT INTO held_carts (
+	                    location_id,
                     user_id,
                     user_name,
-                    customer_id,
-                    hold_name,
-                    payment_method,
-                    total_amount,
-                    status
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
-                RETURNING held_cart_id
-                """;
+	                    customer_id,
+	                    hold_name,
+	                    payment_method,
+	                    subtotal_amount,
+	                    discount_percent,
+	                    discount_amount,
+	                    total_amount,
+	                    status
+	                )
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+	                RETURNING held_cart_id
+	                """;
         String insertItemSql = """
                 INSERT INTO held_cart_items (
                     held_cart_id,
@@ -1035,11 +1181,14 @@ public class MakeASale extends JFrame {
                         holdStmt.setNull(4, java.sql.Types.INTEGER);
                     } else {
                         holdStmt.setInt(4, selectedCustomer.customerId);
-                    }
-                    holdStmt.setString(5, holdName.trim());
-                    holdStmt.setString(6, String.valueOf(paymentMethodBox.getSelectedItem()));
-                    holdStmt.setBigDecimal(7, BigDecimal.valueOf(getOverallTotal()));
-                    try (ResultSet rs = holdStmt.executeQuery()) {
+	                    }
+	                    holdStmt.setString(5, holdName.trim());
+	                    holdStmt.setString(6, String.valueOf(paymentMethodBox.getSelectedItem()));
+	                    holdStmt.setBigDecimal(7, subtotalAmount);
+	                    holdStmt.setBigDecimal(8, discountPercent);
+	                    holdStmt.setBigDecimal(9, discountAmount);
+	                    holdStmt.setBigDecimal(10, subtotalAmount.subtract(discountAmount).max(BigDecimal.ZERO));
+	                    try (ResultSet rs = holdStmt.executeQuery()) {
                         if (!rs.next()) {
                             throw new SQLException("Failed to create held cart.");
                         }
@@ -1062,9 +1211,9 @@ public class MakeASale extends JFrame {
                 }
 
                 conn.commit();
-                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
-                cartModel.setRowCount(0);
-                clearHeldCartSelection();
+	                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
+	                cartModel.setRowCount(0);
+	                clearHeldCartSelection();
                 configureCartTableColumns();
                 updateOverallTotal();
             } catch (Exception ex) {
@@ -1198,9 +1347,10 @@ public class MakeASale extends JFrame {
     }
 
     private void loadHeldCartIntoCurrentCart(Connection conn, int heldCartId) throws SQLException {
-        String holdSql = "SELECT customer_id, payment_method FROM held_carts WHERE held_cart_id = ? AND location_id = ? AND UPPER(COALESCE(status, 'OPEN')) = 'OPEN' FOR UPDATE";
+        String holdSql = "SELECT customer_id, payment_method, COALESCE(discount_percent, 0) AS discount_percent FROM held_carts WHERE held_cart_id = ? AND location_id = ? AND UPPER(COALESCE(status, 'OPEN')) = 'OPEN' FOR UPDATE";
         Integer customerId = null;
         String paymentMethod = null;
+        BigDecimal discountPercent = BigDecimal.ZERO;
         try (PreparedStatement ps = conn.prepareStatement(holdSql)) {
             ps.setInt(1, heldCartId);
             ps.setInt(2, SessionManager.getCurrentLocationId());
@@ -1211,10 +1361,11 @@ public class MakeASale extends JFrame {
                 int loadedCustomerId = rs.getInt("customer_id");
                 if (!rs.wasNull()) {
                     customerId = loadedCustomerId;
-                }
-                paymentMethod = rs.getString("payment_method");
-            }
-        }
+	                }
+	                paymentMethod = rs.getString("payment_method");
+	                discountPercent = rs.getBigDecimal("discount_percent");
+	            }
+	        }
 
         String itemsSql = """
                 SELECT product_id, product_name, description, sku, unit_price, quantity
@@ -1247,10 +1398,13 @@ public class MakeASale extends JFrame {
             throw new SQLException("Held cart has no items.");
         }
 
-        if (paymentMethod != null && !paymentMethod.isBlank()) {
-            paymentMethodBox.setSelectedItem(paymentMethod);
-        }
-        selectCustomerById(customerId);
+	        if (paymentMethod != null && !paymentMethod.isBlank()) {
+	            paymentMethodBox.setSelectedItem(paymentMethod);
+	        }
+	        if (discountPercentField != null) {
+	            discountPercentField.setText(discountPercent == null ? "0" : discountPercent.stripTrailingZeros().toPlainString());
+	        }
+	        selectCustomerById(customerId);
         configureCartTableColumns();
         updateOverallTotal();
     }
@@ -1280,6 +1434,9 @@ public class MakeASale extends JFrame {
     private void clearHeldCartSelection() {
         customerAccountBox.setSelectedItem(null);
         paymentMethodBox.setSelectedItem("CASH");
+        if (discountPercentField != null) {
+            discountPercentField.setText("0");
+        }
     }
 
     private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
@@ -1348,19 +1505,17 @@ public class MakeASale extends JFrame {
     }
 
     private void updateOverallTotal() {
-        double total = 0.0;
+        BigDecimal subtotal = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal discountAmount = getDiscountAmount(subtotal);
+        BigDecimal total = subtotal.subtract(discountAmount).max(BigDecimal.ZERO);
 
-        for (int i = 0; i < cartModel.getRowCount(); i++) {
-            Object lineTotalValue = cartModel.getValueAt(i, 6);
-
-            try {
-                total += Double.parseDouble(lineTotalValue.toString());
-            } catch (NumberFormatException ex) {
-                // ignore invalid values
-            }
+        if (subtotalLabel != null) {
+            subtotalLabel.setText(String.format("Subtotal: $%.2f", subtotal.doubleValue()));
         }
-
-        totalLabel.setText(String.format("Overall Total: $%.2f", total));
+        if (discountAmountLabel != null) {
+            discountAmountLabel.setText(String.format("Discount: $%.2f", discountAmount.doubleValue()));
+        }
+        totalLabel.setText(String.format("Overall Total: $%.2f", total.doubleValue()));
     }
 
     private static class CustomerAccountOption {

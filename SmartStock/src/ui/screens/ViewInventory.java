@@ -16,7 +16,10 @@ import java.awt.*;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
+import java.util.Vector;
 
 public class ViewInventory extends JFrame {
 
@@ -28,6 +31,9 @@ public class ViewInventory extends JFrame {
     private JLabel totalProductsLabel;
     private JLabel locationLabel;
     private JButton viewDetailsButton;
+    private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
+    private final boolean canViewVendor = PermissionManager.hasPermission("VIEW_VENDOR");
+    private final boolean canViewCreatedBy = PermissionManager.hasPermission("VIEW_CREATED_BY");
 
     public ViewInventory() {
         setTitle("View Inventory");
@@ -105,9 +111,27 @@ public class ViewInventory extends JFrame {
     }
 
     private JScrollPane buildTablePanel() {
-        String[] columns = {"Product ID", "SKU", "Name", "Description", "Category", "Price", "Quantity", "Reorder Level", "Status", "Created By"};
+        List<String> columns = new ArrayList<>();
+        columns.add("Product ID");
+        columns.add("SKU");
+        columns.add("Name");
+        columns.add("Description");
+        columns.add("Category");
+        if (canViewVendor) {
+            columns.add("Vendor");
+        }
+        if (canViewCostPrice) {
+            columns.add("Cost Price");
+        }
+        columns.add("Price");
+        columns.add("Quantity");
+        columns.add("Reorder Level");
+        columns.add("Status");
+        if (canViewCreatedBy) {
+            columns.add("Created By");
+        }
 
-        tableModel = new DefaultTableModel(columns, 0) {
+        tableModel = new DefaultTableModel(columns.toArray(new String[0]), 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -130,31 +154,55 @@ public class ViewInventory extends JFrame {
         });
 
         TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(tableModel);
-        sorter.setComparator(0, Comparator.comparingInt(value -> Integer.parseInt(String.valueOf(value))));
-        sorter.setComparator(5, Comparator.comparingDouble(value -> {
-            String text = String.valueOf(value).replace("$", "").replace(",", "").trim();
-            if (text.isEmpty()) {
-                return 0.0;
-            }
-            return Double.parseDouble(text);
-        }));
-        sorter.setComparator(6, Comparator.comparingInt(value -> Integer.parseInt(String.valueOf(value))));
-        sorter.setComparator(7, Comparator.comparingInt(value -> Integer.parseInt(String.valueOf(value))));
+        setIntegerComparator(sorter, "Product ID");
+        setMoneyComparator(sorter, "Cost Price");
+        setMoneyComparator(sorter, "Price");
+        setIntegerComparator(sorter, "Quantity");
+        setIntegerComparator(sorter, "Reorder Level");
         inventoryTable.setRowSorter(sorter);
 
         TableColumnModel columnModel = inventoryTable.getColumnModel();
-        columnModel.getColumn(0).setPreferredWidth(80);
-        columnModel.getColumn(1).setPreferredWidth(130);
-        columnModel.getColumn(2).setPreferredWidth(180);
-        columnModel.getColumn(3).setPreferredWidth(240);
-        columnModel.getColumn(4).setPreferredWidth(120);
-        columnModel.getColumn(5).setPreferredWidth(90);
-        columnModel.getColumn(6).setPreferredWidth(90);
-        columnModel.getColumn(7).setPreferredWidth(110);
-        columnModel.getColumn(8).setPreferredWidth(110);
-        columnModel.getColumn(9).setPreferredWidth(150);
+        setColumnWidth(columnModel, "Product ID", 80);
+        setColumnWidth(columnModel, "SKU", 130);
+        setColumnWidth(columnModel, "Name", 180);
+        setColumnWidth(columnModel, "Description", 240);
+        setColumnWidth(columnModel, "Category", 120);
+        setColumnWidth(columnModel, "Vendor", 160);
+        setColumnWidth(columnModel, "Cost Price", 90);
+        setColumnWidth(columnModel, "Price", 90);
+        setColumnWidth(columnModel, "Quantity", 90);
+        setColumnWidth(columnModel, "Reorder Level", 110);
+        setColumnWidth(columnModel, "Status", 110);
+        setColumnWidth(columnModel, "Created By", 150);
 
         return new JScrollPane(inventoryTable);
+    }
+
+    private void setIntegerComparator(TableRowSorter<DefaultTableModel> sorter, String columnName) {
+        int index = tableModel.findColumn(columnName);
+        if (index >= 0) {
+            sorter.setComparator(index, Comparator.comparingInt(value -> Integer.parseInt(String.valueOf(value))));
+        }
+    }
+
+    private void setMoneyComparator(TableRowSorter<DefaultTableModel> sorter, String columnName) {
+        int index = tableModel.findColumn(columnName);
+        if (index >= 0) {
+            sorter.setComparator(index, Comparator.comparingDouble(value -> {
+                String text = String.valueOf(value).replace("$", "").replace(",", "").trim();
+                if (text.isEmpty()) {
+                    return 0.0;
+                }
+                return Double.parseDouble(text);
+            }));
+        }
+    }
+
+    private void setColumnWidth(TableColumnModel columnModel, String columnName, int width) {
+        int index = tableModel.findColumn(columnName);
+        if (index >= 0) {
+            columnModel.getColumn(index).setPreferredWidth(width);
+        }
     }
 
     private JPanel buildFooterPanel() {
@@ -179,8 +227,11 @@ public class ViewInventory extends JFrame {
             Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
             int modelRow = table.convertRowIndexToModel(row);
-            Object quantityObj = table.getModel().getValueAt(modelRow, 6);
-            Object reorderObj = table.getModel().getValueAt(modelRow, 7);
+            DefaultTableModel model = (DefaultTableModel) table.getModel();
+            int quantityColumn = model.findColumn("Quantity");
+            int reorderColumn = model.findColumn("Reorder Level");
+            Object quantityObj = quantityColumn >= 0 ? model.getValueAt(modelRow, quantityColumn) : 0;
+            Object reorderObj = reorderColumn >= 0 ? model.getValueAt(modelRow, reorderColumn) : 0;
 
             int quantity = 0;
             int reorderLevel = 0;
@@ -219,21 +270,25 @@ public class ViewInventory extends JFrame {
     private void loadInventory(String searchText, String stockFilter) {
         tableModel.setRowCount(0);
 
-        StringBuilder sql = new StringBuilder("""
-                SELECT p.product_id,
-                       p.sku,
-                       p.name,
-                       COALESCE(p.description, '') AS description,
-                       COALESCE(c.name, '') AS category_name,
-	                       COALESCE(p.price, 0) AS price,
-	                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
-	                       COALESCE(i.reorder_level, 0) AS reorder_level,
-	                       COALESCE(p.created_by_name, '') AS created_by_name
-                FROM products p
-                LEFT JOIN inventory i ON p.product_id = i.product_id
-                LEFT JOIN categories c ON p.category_id = c.category_id
-                WHERE 1 = 1
-                """);
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT p.product_id, ");
+        sql.append("p.sku, ");
+        sql.append("p.name, ");
+        sql.append("COALESCE(p.description, '') AS description, ");
+        sql.append("COALESCE(c.name, '') AS category_name, ");
+        sql.append(canViewVendor ? "COALESCE(v.name, '') AS vendor_name, " : "'' AS vendor_name, ");
+        sql.append(canViewCostPrice ? "COALESCE(p.cost_price, 0) AS cost_price, " : "0 AS cost_price, ");
+        sql.append("COALESCE(p.price, 0) AS price, ");
+        sql.append("COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand, ");
+        sql.append("COALESCE(i.reorder_level, 0) AS reorder_level, ");
+        sql.append(canViewCreatedBy ? "COALESCE(p.created_by_name, '') AS created_by_name " : "'' AS created_by_name ");
+        sql.append("FROM products p ");
+        sql.append("LEFT JOIN inventory i ON p.product_id = i.product_id ");
+        sql.append("LEFT JOIN categories c ON p.category_id = c.category_id ");
+        if (canViewVendor) {
+            sql.append("LEFT JOIN vendors v ON p.vendor_id = v.vendor_id ");
+        }
+        sql.append("WHERE 1 = 1");
 
         Integer currentLocationId = getCurrentLocationId();
         if (currentLocationId != null) {
@@ -242,7 +297,14 @@ public class ViewInventory extends JFrame {
 
         boolean hasSearch = searchText != null && !searchText.isBlank();
         if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.description, '') ILIKE ? OR COALESCE(p.created_by_name, '') ILIKE ?)");
+            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.description, '') ILIKE ?");
+            if (canViewCreatedBy) {
+                sql.append(" OR COALESCE(p.created_by_name, '') ILIKE ?");
+            }
+            if (canViewVendor) {
+                sql.append(" OR COALESCE(v.name, '') ILIKE ?");
+            }
+            sql.append(")");
         }
 
         if ("In Stock".equals(stockFilter)) {
@@ -272,7 +334,12 @@ public class ViewInventory extends JFrame {
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
-                ps.setString(paramIndex++, pattern);
+                if (canViewCreatedBy) {
+                    ps.setString(paramIndex++, pattern);
+                }
+                if (canViewVendor) {
+                    ps.setString(paramIndex++, pattern);
+                }
             }
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -282,24 +349,34 @@ public class ViewInventory extends JFrame {
                     String name = rs.getString("name");
                     String description = rs.getString("description");
                     String category = rs.getString("category_name");
+                    String vendor = rs.getString("vendor_name");
+                    double costPrice = rs.getDouble("cost_price");
                     double price = rs.getDouble("price");
                     int quantity = rs.getInt("quantity_on_hand");
                     int reorderLevel = rs.getInt("reorder_level");
                     String createdBy = rs.getString("created_by_name");
                     String status = getStockStatus(quantity, reorderLevel);
 
-                    tableModel.addRow(new Object[]{
-                            productId,
-                            sku,
-                            name,
-                            description,
-                            category,
-                            String.format("$%.2f", price),
-	                            quantity,
-	                            reorderLevel,
-	                            status,
-	                            createdBy
-	                    });
+                    Vector<Object> row = new Vector<>();
+                    row.add(productId);
+                    row.add(sku);
+                    row.add(name);
+                    row.add(description);
+                    row.add(category);
+                    if (canViewVendor) {
+                        row.add(vendor);
+                    }
+                    if (canViewCostPrice) {
+                        row.add(String.format("$%.2f", costPrice));
+                    }
+                    row.add(String.format("$%.2f", price));
+                    row.add(quantity);
+                    row.add(reorderLevel);
+                    row.add(status);
+                    if (canViewCreatedBy) {
+                        row.add(createdBy);
+                    }
+                    tableModel.addRow(row);
 
                     totalProducts++;
                     totalUnits += quantity;
