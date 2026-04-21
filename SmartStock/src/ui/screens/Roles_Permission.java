@@ -465,6 +465,7 @@ public class Roles_Permission extends JFrame {
         permissions.put("TIME_CLOCK_MANAGEMENT", "Time Clock Management");
         permissions.put("PAYROLL_DASHBOARD", "Payroll Dashboard");
         permissions.put("ROLE_MANAGEMENT", "Roles & Permission");
+        permissions.put("LOCATION_MANAGEMENT", "Location Management");
         permissions.put("COMPANY_CUSTOMIZATION", "Company Customization");
         permissions.put("CHANGE_STORE", "Change Store");
         permissions.put("VIEW_REPORTS", "View Reports");

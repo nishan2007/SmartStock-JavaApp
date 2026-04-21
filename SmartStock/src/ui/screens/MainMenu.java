@@ -36,6 +36,7 @@ public class MainMenu extends JFrame {
     private final JButton payrollDashboardButton;
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
+    private final JButton locationManagementButton;
     private final JButton companyCustomizationButton;
     private final JButton localDeviceSettingsButton;
     private final JButton hardwareSetupButton;
@@ -89,6 +90,7 @@ public class MainMenu extends JFrame {
         payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/ViewSales.png"));
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
+        locationManagementButton = createMenuButton("Locations", "Manage store locations", loadIcon("src/ICONS/Security.png"));
         companyCustomizationButton = createMenuButton("Company Customization", "Customize receipt branding", loadIcon("src/ICONS/Security.png"));
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
         hardwareSetupButton = createMenuButton("Hardware Setup", "Configure POS printers", loadIcon("src/ICONS/Security.png"));
@@ -137,6 +139,7 @@ public class MainMenu extends JFrame {
                 "Admin",
                 new Color(124, 58, 237),
                 rolesPermissionsButton,
+                locationManagementButton,
                 companyCustomizationButton,
                 localDeviceSettingsButton,
                 hardwareSetupButton
@@ -373,6 +376,7 @@ public class MainMenu extends JFrame {
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
+        boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
@@ -394,6 +398,7 @@ public class MainMenu extends JFrame {
         payrollDashboardButton.setEnabled(canPayrollDashboard);
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
+        locationManagementButton.setEnabled(canLocationManagement);
         companyCustomizationButton.setEnabled(canCompanyCustomization);
         localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
         hardwareSetupButton.setEnabled(canHardwareSetup);
@@ -503,6 +508,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openRolesPermission(this);
+        });
+        locationManagementButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", this, "Location Management")) {
+                return;
+            }
+            NavigationManager.openLocationManagement(this);
         });
         companyCustomizationButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("COMPANY_CUSTOMIZATION", this, "Company Customization")) {

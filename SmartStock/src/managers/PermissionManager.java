@@ -113,6 +113,9 @@ public class PermissionManager {
                     || hasPermission("PAYROLL_DASHBOARD")
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
+                    || hasPermission("LOCATION_MANAGEMENT")
+                    || hasPermission("COMPANY_CUSTOMIZATION")
+                    || hasPermission("HARDWARE_SETUP")
                     || hasPermission("LOCAL_DEVICE_SETTINGS");
             case "MakeASale" -> hasPermission("MAKE_SALE");
             case "EndOfDay" -> hasPermission("END_OF_DAY");
@@ -131,7 +134,10 @@ public class PermissionManager {
             case "EditItem" -> hasPermission("EDIT_ITEM");
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");
             case "Roles_Permission" -> hasPermission("ROLE_MANAGEMENT");
+            case "LocationManagement" -> hasPermission("LOCATION_MANAGEMENT");
             case "LocalDeviceSettings" -> hasPermission("LOCAL_DEVICE_SETTINGS");
+            case "HardwareSetup" -> hasPermission("HARDWARE_SETUP");
+            case "CompanyCustomization" -> hasPermission("COMPANY_CUSTOMIZATION");
             default -> true;
         };
     }

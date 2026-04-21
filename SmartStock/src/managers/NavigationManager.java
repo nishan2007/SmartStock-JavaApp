@@ -13,6 +13,7 @@ import ui.screens.HardwareSetup;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
+import ui.screens.LocationManagement;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
@@ -60,6 +61,7 @@ public final class NavigationManager {
         PAYROLL_DASHBOARD,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
+        LOCATION_MANAGEMENT,
         LOCAL_DEVICE_SETTINGS,
         HARDWARE_SETUP,
         COMPANY_CUSTOMIZATION
@@ -154,6 +156,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.ROLES_PERMISSION));
     }
 
+    public static void openLocationManagement(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.LOCATION_MANAGEMENT));
+    }
+
     public static void openLocalDeviceSettings(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.LOCAL_DEVICE_SETTINGS));
     }
@@ -186,6 +192,7 @@ public final class NavigationManager {
             case PAYROLL_DASHBOARD -> new PayrollDashboard();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
+            case LOCATION_MANAGEMENT -> new LocationManagement();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
             case HARDWARE_SETUP -> new HardwareSetup();
             case COMPANY_CUSTOMIZATION -> new CompanyCustomization();
@@ -216,6 +223,7 @@ public final class NavigationManager {
             case "PayrollDashboard" -> ScreenType.PAYROLL_DASHBOARD;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
+            case "LocationManagement" -> ScreenType.LOCATION_MANAGEMENT;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
             case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;
             case "CompanyCustomization" -> ScreenType.COMPANY_CUSTOMIZATION;

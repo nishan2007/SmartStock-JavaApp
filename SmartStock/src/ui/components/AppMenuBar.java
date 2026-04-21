@@ -14,6 +14,7 @@ import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.HardwareSetup;
 import ui.screens.LocalDeviceSettings;
+import ui.screens.LocationManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
@@ -43,8 +44,10 @@ public class AppMenuBar {
     public static JMenuBar create(JFrame parent, String currentScreen) {
         JMenuBar menuBar = new JMenuBar();
 
-        JMenu navigateMenu = new JMenu("Navigate");
+        JMenu pointOfSaleMenu = new JMenu("Point of Sale");
+        JMenu inventoryMenu = new JMenu("Inventory");
         JMenu employeeMenu = new JMenu("Employee");
+        JMenu adminMenu = new JMenu("Admin");
 
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
@@ -61,6 +64,7 @@ public class AppMenuBar {
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
+        JMenuItem locationManagementItem = new JMenuItem("Locations");
         JMenuItem companyCustomizationItem = new JMenuItem("Company Customization");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
@@ -86,11 +90,12 @@ public class AppMenuBar {
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
+        boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -154,6 +159,9 @@ public class AppMenuBar {
         }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
+        }
+        if (!canLocationManagement || "LocationManagement".equalsIgnoreCase(screenKey)) {
+            locationManagementItem.setEnabled(false);
         }
         if (!canCompanyCustomization || "CompanyCustomization".equalsIgnoreCase(screenKey)) {
             companyCustomizationItem.setEnabled(false);
@@ -373,6 +381,18 @@ public class AppMenuBar {
             }
         });
 
+        locationManagementItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", parent, "Location Management")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(LocationManagement.class)) {
+                    return;
+                }
+                NavigationManager.openLocationManagement(parent);
+            }
+        });
+
         companyCustomizationItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("COMPANY_CUSTOMIZATION", parent, "Company Customization")) {
@@ -409,27 +429,32 @@ public class AppMenuBar {
             }
         });
 
-        navigateMenu.add(mainMenuItem);
-        navigateMenu.addSeparator();
-        navigateMenu.add(makeSaleItem);
-        navigateMenu.add(returnSaleItem);
-        navigateMenu.add(endOfDayItem);
-        navigateMenu.add(enterInventoryItem);
-        navigateMenu.add(receivingHistoryItem);
-        navigateMenu.add(storeTransferItem);
-        navigateMenu.add(departmentListItem);
-        navigateMenu.add(vendorListItem);
-        navigateMenu.add(newItemItem);
-        navigateMenu.add(editItemItem);
-        navigateMenu.add(ViewSalesItem);
-        navigateMenu.add(viewInventoryItem);
-        navigateMenu.add(customerAccountsItem);
+        pointOfSaleMenu.add(mainMenuItem);
+        pointOfSaleMenu.addSeparator();
+        pointOfSaleMenu.add(makeSaleItem);
+        pointOfSaleMenu.add(returnSaleItem);
+        pointOfSaleMenu.add(endOfDayItem);
+        pointOfSaleMenu.add(ViewSalesItem);
+        pointOfSaleMenu.add(customerAccountsItem);
+
+        inventoryMenu.add(enterInventoryItem);
+        inventoryMenu.add(receivingHistoryItem);
+        inventoryMenu.add(storeTransferItem);
+        inventoryMenu.add(departmentListItem);
+        inventoryMenu.add(vendorListItem);
+        inventoryMenu.add(viewInventoryItem);
+        inventoryMenu.add(newItemItem);
+        inventoryMenu.add(editItemItem);
 
         employeeMenu.add(employeeMgmtItem);
         employeeMenu.add(timeClockItem);
         employeeMenu.add(payrollDashboardItem);
-        employeeMenu.add(rolesPermissionItem);
-        employeeMenu.add(companyCustomizationItem);
+
+        adminMenu.add(rolesPermissionItem);
+        adminMenu.add(locationManagementItem);
+        adminMenu.add(companyCustomizationItem);
+        adminMenu.add(localDeviceSettingsItem);
+        adminMenu.add(hardwareSetupItem);
 
         JMenu sessionMenu = new JMenu("Session");
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
@@ -469,15 +494,15 @@ public class AppMenuBar {
 
 
         sessionMenu.add(changeStoreItem);
-        sessionMenu.add(localDeviceSettingsItem);
-        sessionMenu.add(hardwareSetupItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
         sessionMenu.add(logoutItem);
 
 
-        menuBar.add(navigateMenu);
+        menuBar.add(pointOfSaleMenu);
+        menuBar.add(inventoryMenu);
         menuBar.add(employeeMenu);
+        menuBar.add(adminMenu);
         menuBar.add(sessionMenu);
 
         return menuBar;
