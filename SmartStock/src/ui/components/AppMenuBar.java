@@ -5,6 +5,7 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
+import ui.screens.CompanyCustomization;
 import ui.screens.CustomerAccounts;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
@@ -60,6 +61,7 @@ public class AppMenuBar {
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
+        JMenuItem companyCustomizationItem = new JMenuItem("Company Customization");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
@@ -84,10 +86,11 @@ public class AppMenuBar {
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
+        boolean canCompanyCustomization = PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -151,6 +154,9 @@ public class AppMenuBar {
         }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
+        }
+        if (!canCompanyCustomization || "CompanyCustomization".equalsIgnoreCase(screenKey)) {
+            companyCustomizationItem.setEnabled(false);
         }
         if (!canLocalDeviceSettings || "LocalDeviceSettings".equalsIgnoreCase(screenKey)) {
             localDeviceSettingsItem.setEnabled(false);
@@ -367,6 +373,18 @@ public class AppMenuBar {
             }
         });
 
+        companyCustomizationItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("COMPANY_CUSTOMIZATION", parent, "Company Customization")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(CompanyCustomization.class)) {
+                    return;
+                }
+                NavigationManager.openCompanyCustomization(parent);
+            }
+        });
+
         localDeviceSettingsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("LOCAL_DEVICE_SETTINGS", parent, "Local Device Settings")) {
@@ -411,6 +429,7 @@ public class AppMenuBar {
         employeeMenu.add(timeClockItem);
         employeeMenu.add(payrollDashboardItem);
         employeeMenu.add(rolesPermissionItem);
+        employeeMenu.add(companyCustomizationItem);
 
         JMenu sessionMenu = new JMenu("Session");
         JMenuItem changeStoreItem = new JMenuItem("Change Store");

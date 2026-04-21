@@ -5,6 +5,7 @@ import services.DeviceService;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
+import ui.screens.CompanyCustomization;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
 import ui.screens.EndOfDay;
@@ -60,7 +61,8 @@ public final class NavigationManager {
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
         LOCAL_DEVICE_SETTINGS,
-        HARDWARE_SETUP
+        HARDWARE_SETUP,
+        COMPANY_CUSTOMIZATION
     }
 
     private static void openScreen(JFrame parent, JFrame screen) {
@@ -160,6 +162,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.HARDWARE_SETUP));
     }
 
+    public static void openCompanyCustomization(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.COMPANY_CUSTOMIZATION));
+    }
+
     private static JFrame createScreen(ScreenType screenType) {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
@@ -182,6 +188,7 @@ public final class NavigationManager {
             case ROLES_PERMISSION -> new Roles_Permission();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
             case HARDWARE_SETUP -> new HardwareSetup();
+            case COMPANY_CUSTOMIZATION -> new CompanyCustomization();
         };
     }
 
@@ -211,6 +218,7 @@ public final class NavigationManager {
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
             case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;
+            case "CompanyCustomization" -> ScreenType.COMPANY_CUSTOMIZATION;
             default -> null;
         };
     }

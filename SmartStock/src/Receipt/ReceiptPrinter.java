@@ -1,5 +1,6 @@
 package Receipt;
 
+import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
 
 import javax.print.Doc;
@@ -17,6 +18,7 @@ import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
+import java.awt.image.BufferedImage;
 
 public class ReceiptPrinter {
     private ReceiptPrinter() {
@@ -54,19 +56,20 @@ public class ReceiptPrinter {
     }
 
     private static void printToService(ReceiptData receipt, PrintService service, HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
+        CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
         if (printFormat == HardwareSettingsManager.PrintFormat.LETTER) {
-            printLetterToService(receipt, service);
+            printLetterToService(receipt, service, settings);
             return;
         }
 
-        byte[] bytes = ReceiptFormatter.formatEscPos(receipt);
+        byte[] bytes = ReceiptFormatter.formatEscPos(receipt, settings);
         DocFlavor flavor = DocFlavor.BYTE_ARRAY.AUTOSENSE;
         Doc doc = new SimpleDoc(bytes, flavor, null);
         DocPrintJob job = service.createPrintJob();
         job.print(doc, null);
     }
 
-    private static void printLetterToService(ReceiptData receipt, PrintService service) throws PrintException {
+    private static void printLetterToService(ReceiptData receipt, PrintService service, CompanyCustomizationManager.ReceiptSettings settings) throws PrintException {
         PrinterJob job = PrinterJob.getPrinterJob();
         try {
             job.setPrintService(service);
@@ -74,10 +77,11 @@ public class ReceiptPrinter {
             throw new PrintException(ex);
         }
 
-        String[] lines = ReceiptFormatter.formatLetterText(receipt).split("\\R", -1);
+        String[] lines = ReceiptFormatter.formatLetterText(receipt, settings).split("\\R", -1);
         Font font = new Font(Font.MONOSPACED, Font.PLAIN, 10);
+        BufferedImage logo = CompanyCustomizationManager.loadReceiptLogo(settings);
         job.setPrintable(
-                (graphics, pageFormat, pageIndex) -> printLetterPage(graphics, pageFormat, pageIndex, lines, font),
+                (graphics, pageFormat, pageIndex) -> printLetterPage(graphics, pageFormat, pageIndex, lines, font, logo),
                 createLetterPageFormat(job)
         );
 
@@ -88,15 +92,19 @@ public class ReceiptPrinter {
         }
     }
 
-    private static int printLetterPage(Graphics graphics, PageFormat pageFormat, int pageIndex, String[] lines, Font font) {
+    private static int printLetterPage(Graphics graphics, PageFormat pageFormat, int pageIndex, String[] lines, Font font, BufferedImage logo) {
         Graphics2D g2 = (Graphics2D) graphics;
         g2.setFont(font);
 
         int lineHeight = g2.getFontMetrics().getHeight();
         int x = (int) pageFormat.getImageableX();
         int y = (int) pageFormat.getImageableY() + lineHeight;
-        int linesPerPage = Math.max((int) pageFormat.getImageableHeight() / lineHeight, 1);
-        int startLine = pageIndex * linesPerPage;
+        int logoSpace = pageIndex == 0 ? drawLetterLogo(g2, pageFormat, logo) : 0;
+        y += logoSpace;
+        int standardLinesPerPage = Math.max((int) pageFormat.getImageableHeight() / lineHeight, 1);
+        int firstPageLines = Math.max(((int) pageFormat.getImageableHeight() - logoSpace) / lineHeight, 1);
+        int linesPerPage = pageIndex == 0 ? firstPageLines : standardLinesPerPage;
+        int startLine = pageIndex == 0 ? 0 : firstPageLines + ((pageIndex - 1) * standardLinesPerPage);
 
         if (startLine >= lines.length) {
             return Printable.NO_SUCH_PAGE;
@@ -109,6 +117,23 @@ public class ReceiptPrinter {
         }
 
         return Printable.PAGE_EXISTS;
+    }
+
+    private static int drawLetterLogo(Graphics2D graphics, PageFormat pageFormat, BufferedImage logo) {
+        if (logo == null) {
+            return 0;
+        }
+
+        int maxWidth = 220;
+        int maxHeight = 90;
+        double scale = Math.min((double) maxWidth / logo.getWidth(), (double) maxHeight / logo.getHeight());
+        scale = Math.min(scale, 1.0);
+        int width = Math.max((int) Math.round(logo.getWidth() * scale), 1);
+        int height = Math.max((int) Math.round(logo.getHeight() * scale), 1);
+        int x = (int) (pageFormat.getImageableX() + ((pageFormat.getImageableWidth() - width) / 2));
+        int y = (int) pageFormat.getImageableY();
+        graphics.drawImage(logo, x, y, width, height, null);
+        return height + 16;
     }
 
     private static PageFormat createLetterPageFormat(PrinterJob job) {

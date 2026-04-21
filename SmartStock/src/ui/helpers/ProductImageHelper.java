@@ -1,6 +1,7 @@
 package ui.helpers;
 
 import managers.SupabaseSessionManager;
+import utils.ImageOptimizationHelper;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -15,11 +16,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.time.Duration;
 
 public final class ProductImageHelper {
     private static final String PRODUCT_IMAGE_BUCKET = getConfig("PRODUCT_IMAGE_BUCKET", "Product Images");
+    private static final long MAX_ORIGINAL_IMAGE_BYTES = 15L * 1024L * 1024L;
+    private static final long MAX_PRODUCT_UPLOAD_BYTES = 200L * 1024L;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .build();
@@ -231,48 +233,55 @@ public final class ProductImageHelper {
     }
 
     private static String uploadProductImage(File imageFile) throws Exception {
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
-        String objectPath = "products/" + System.currentTimeMillis() + "-" + sanitizeFilename(imageFile.getName());
-        String encodedBucket = encodePathSegment(PRODUCT_IMAGE_BUCKET);
-        String encodedObjectPath = encodeObjectPath(objectPath);
-        String contentType = Files.probeContentType(imageFile.toPath());
-        if (contentType == null || contentType.isBlank()) {
-            contentType = "application/octet-stream";
+        try (ImageOptimizationHelper.OptimizedImage optimizedImage = ImageOptimizationHelper.optimizeForUpload(
+                imageFile,
+                "product-image",
+                1200,
+                1200,
+                0.78f,
+                MAX_ORIGINAL_IMAGE_BYTES,
+                MAX_PRODUCT_UPLOAD_BYTES,
+                false
+        )) {
+            String accessToken = SupabaseSessionManager.getValidAccessToken();
+            String objectPath = "products/" + System.currentTimeMillis() + "-" + sanitizeFilename(optimizedImage.filename());
+            String encodedBucket = encodePathSegment(PRODUCT_IMAGE_BUCKET);
+            String encodedObjectPath = encodeObjectPath(objectPath);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
+                            + "/storage/v1/object/"
+                            + encodedBucket
+                            + "/"
+                            + encodedObjectPath))
+                    .timeout(Duration.ofSeconds(45))
+                    .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Content-Type", optimizedImage.contentType())
+                    .header("x-upsert", "true")
+                    .POST(HttpRequest.BodyPublishers.ofFile(optimizedImage.file().toPath()))
+                    .build();
+
+            HttpResponse<String> response = HTTP_CLIENT.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+            );
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("Supabase Storage returned HTTP "
+                        + response.statusCode()
+                        + " while uploading to bucket "
+                        + PRODUCT_IMAGE_BUCKET
+                        + ": "
+                        + response.body());
+            }
+
+            return SupabaseSessionManager.getSupabaseUrl()
+                    + "/storage/v1/object/public/"
+                    + encodedBucket
+                    + "/"
+                    + encodedObjectPath;
         }
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
-                        + "/storage/v1/object/"
-                        + encodedBucket
-                        + "/"
-                        + encodedObjectPath))
-                .timeout(Duration.ofSeconds(45))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Content-Type", contentType)
-                .header("x-upsert", "true")
-                .POST(HttpRequest.BodyPublishers.ofFile(imageFile.toPath()))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Supabase Storage returned HTTP "
-                    + response.statusCode()
-                    + " while uploading to bucket "
-                    + PRODUCT_IMAGE_BUCKET
-                    + ": "
-                    + response.body());
-        }
-
-        return SupabaseSessionManager.getSupabaseUrl()
-                + "/storage/v1/object/public/"
-                + encodedBucket
-                + "/"
-                + encodedObjectPath;
     }
 
     private static String sanitizeFilename(String filename) {
