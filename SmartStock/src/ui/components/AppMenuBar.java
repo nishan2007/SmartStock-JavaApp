@@ -11,6 +11,7 @@ import ui.screens.EditItem;
 import ui.screens.EndOfDay;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
+import ui.screens.HardwareSetup;
 import ui.screens.LocalDeviceSettings;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -63,6 +64,7 @@ public class AppMenuBar {
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
         JMenuItem localDeviceSettingsItem = new JMenuItem("Local Device Settings");
+        JMenuItem hardwareSetupItem = new JMenuItem("Hardware Setup");
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
@@ -84,7 +86,8 @@ public class AppMenuBar {
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
+        boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -151,6 +154,9 @@ public class AppMenuBar {
         }
         if (!canLocalDeviceSettings || "LocalDeviceSettings".equalsIgnoreCase(screenKey)) {
             localDeviceSettingsItem.setEnabled(false);
+        }
+        if (!canHardwareSetup || "HardwareSetup".equalsIgnoreCase(screenKey)) {
+            hardwareSetupItem.setEnabled(false);
         }
 
         makeSaleItem.addActionListener(new ActionListener() {
@@ -373,6 +379,18 @@ public class AppMenuBar {
             }
         });
 
+        hardwareSetupItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("HARDWARE_SETUP", parent, "Hardware Setup")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(HardwareSetup.class)) {
+                    return;
+                }
+                NavigationManager.openHardwareSetup(parent);
+            }
+        });
+
         navigateMenu.add(mainMenuItem);
         navigateMenu.addSeparator();
         navigateMenu.add(makeSaleItem);
@@ -433,6 +451,7 @@ public class AppMenuBar {
 
         sessionMenu.add(changeStoreItem);
         sessionMenu.add(localDeviceSettingsItem);
+        sessionMenu.add(hardwareSetupItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
         sessionMenu.add(logoutItem);

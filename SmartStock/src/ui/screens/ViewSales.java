@@ -441,7 +441,7 @@ public class ViewSales extends JFrame {
 
     private void showSaleDetailsDialog(int saleId) {
         DefaultTableModel detailsModel = new DefaultTableModel(
-                new Object[]{"Product ID", "Item Name", "Qty", "Returned", "Unit Price", "Line Total"}, 0
+                new Object[]{"Product ID", "Item Name", "Qty", "Returned", "Original Unit", "Item Disc %", "Item Discount", "Final Unit", "Line Total"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -469,16 +469,19 @@ public class ViewSales extends JFrame {
 
         String detailsSql = """
                 SELECT COALESCE(p.product_id, 0) AS product_id,
-                       COALESCE(p.name, 'Deleted Item') AS product_name,
-                       COALESCE(si.quantity, 0) AS quantity,
-                       COALESCE(si.unit_price, 0) AS unit_price,
-                       COALESCE(SUM(sri.quantity), 0) AS returned_qty,
-                       COALESCE(si.quantity, 0) * COALESCE(si.unit_price, 0) AS line_total
+	                       COALESCE(p.name, 'Deleted Item') AS product_name,
+	                       COALESCE(si.quantity, 0) AS quantity,
+	                       COALESCE(si.original_unit_price, si.unit_price, 0) AS original_unit_price,
+	                       COALESCE(si.discount_percent, 0) AS discount_percent,
+	                       COALESCE(si.discount_amount, 0) AS discount_amount,
+	                       COALESCE(si.unit_price, 0) AS unit_price,
+	                       COALESCE(SUM(sri.quantity), 0) AS returned_qty,
+	                       COALESCE(si.quantity, 0) * COALESCE(si.unit_price, 0) AS line_total
                 FROM sale_items si
                 LEFT JOIN products p ON si.product_id = p.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
                 WHERE si.sale_id = ?
-                GROUP BY si.sale_item_id, p.product_id, p.name, si.quantity, si.unit_price
+	                GROUP BY si.sale_item_id, p.product_id, p.name, si.quantity, si.original_unit_price, si.discount_percent, si.discount_amount, si.unit_price
                 ORDER BY si.sale_item_id ASC
                 """;
         String saleSummarySql = """
@@ -543,12 +546,15 @@ public class ViewSales extends JFrame {
                     double lineTotal = rs.getDouble("line_total");
                     detailsModel.addRow(new Object[]{
                             rs.getInt("product_id"),
-                            rs.getString("product_name"),
-                            rs.getInt("quantity"),
-                            rs.getInt("returned_qty"),
-                            currencyFormat.format(rs.getDouble("unit_price")),
-                            currencyFormat.format(lineTotal)
-                    });
+	                            rs.getString("product_name"),
+	                            rs.getInt("quantity"),
+	                            rs.getInt("returned_qty"),
+	                            currencyFormat.format(rs.getDouble("original_unit_price")),
+	                            String.format("%.2f%%", rs.getDouble("discount_percent")),
+	                            currencyFormat.format(rs.getDouble("discount_amount")),
+	                            currencyFormat.format(rs.getDouble("unit_price")),
+	                            currencyFormat.format(lineTotal)
+	                    });
                     total += lineTotal;
                 }
             }

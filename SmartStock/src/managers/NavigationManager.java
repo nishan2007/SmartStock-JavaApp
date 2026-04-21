@@ -8,6 +8,7 @@ import ui.screens.CustomerAccounts;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
 import ui.screens.EndOfDay;
+import ui.screens.HardwareSetup;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
@@ -58,7 +59,8 @@ public final class NavigationManager {
         PAYROLL_DASHBOARD,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
-        LOCAL_DEVICE_SETTINGS
+        LOCAL_DEVICE_SETTINGS,
+        HARDWARE_SETUP
     }
 
     private static void openScreen(JFrame parent, JFrame screen) {
@@ -154,6 +156,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.LOCAL_DEVICE_SETTINGS));
     }
 
+    public static void openHardwareSetup(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.HARDWARE_SETUP));
+    }
+
     private static JFrame createScreen(ScreenType screenType) {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
@@ -175,6 +181,7 @@ public final class NavigationManager {
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
+            case HARDWARE_SETUP -> new HardwareSetup();
         };
     }
 
@@ -203,6 +210,7 @@ public final class NavigationManager {
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
+            case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;
             default -> null;
         };
     }

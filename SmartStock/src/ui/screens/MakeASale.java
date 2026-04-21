@@ -1,5 +1,7 @@
 package ui.screens;
 
+import Receipt.ReceiptBuilder;
+import Receipt.ReceiptData;
 import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
@@ -28,6 +30,18 @@ import java.time.format.DateTimeFormatter;
 
 
 public class MakeASale extends JFrame {
+    private static final int CART_COL_ID = 0;
+    private static final int CART_COL_NAME = 1;
+    private static final int CART_COL_DESCRIPTION = 2;
+    private static final int CART_COL_SKU = 3;
+    private static final int CART_COL_PRICE = 4;
+    private static final int CART_COL_QTY = 5;
+    private static final int CART_COL_ITEM_DISCOUNT = 6;
+    private static final int CART_COL_LINE_TOTAL = 7;
+    private static final int CART_COL_ORIGINAL_PRICE = 8;
+    private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
+    private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
+
     private JTextField searchField;
     private JButton searchBtn;
     private JTable cartTable;
@@ -41,6 +55,7 @@ public class MakeASale extends JFrame {
     private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton addCustomerAccountButton;
     private JButton checkoutBtn;
+    private JButton checkoutPrintBtn;
     private JButton holdCartBtn;
     private JButton resumeHeldCartBtn;
     private JLabel selectedStoreLabel;
@@ -54,7 +69,6 @@ public class MakeASale extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
-    private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
 
    public MakeASale() {
 
@@ -136,21 +150,24 @@ public class MakeASale extends JFrame {
        searchPanel.add(centerSection, BorderLayout.CENTER);
        searchPanel.add(searchRow, BorderLayout.SOUTH);
 
-       // Cart table
-       cartModel = new DefaultTableModel(
-               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Line Total"},
-               0
-       ) {
-           @Override
-           public boolean isCellEditable(int row, int column) {
-               return column == 4 || column == 5; // Price and Qty editable
-           }
-       };
+	       // Cart table
+	       cartModel = new DefaultTableModel(
+	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price"},
+	               0
+	       ) {
+	           @Override
+	           public boolean isCellEditable(int row, int column) {
+	               return (column == CART_COL_PRICE && canChangeSaleItemPrice())
+	                       || column == CART_COL_QTY
+	                       || (column == CART_COL_ITEM_DISCOUNT && canApplySaleDiscount());
+	           }
+	       };
        cartTable = new JTable(cartModel);
        cartTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
        JScrollPane cartScrollPane = new JScrollPane(cartTable);
-       cartTable.getColumnModel().getColumn(4).setCellEditor(new DefaultCellEditor(new JTextField()));
-       cartTable.getColumnModel().getColumn(5).setCellEditor(new DefaultCellEditor(new JTextField()));
+	       cartTable.getColumnModel().getColumn(CART_COL_PRICE).setCellEditor(new DefaultCellEditor(new JTextField()));
+	       cartTable.getColumnModel().getColumn(CART_COL_QTY).setCellEditor(new DefaultCellEditor(new JTextField()));
+	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(new DefaultCellEditor(new JTextField()));
        configureCartTableColumns();
 
        panel.add(searchPanel, BorderLayout.NORTH);
@@ -163,9 +180,9 @@ public class MakeASale extends JFrame {
        bottomPanel.add(customerAccountBox);
        addCustomerAccountButton = new JButton("New Customer");
        bottomPanel.add(addCustomerAccountButton);
-       bottomPanel.add(new JLabel("Payment Method:"));
-       paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
-       bottomPanel.add(paymentMethodBox);
+	       bottomPanel.add(new JLabel("Payment Method:"));
+	       paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
+	       bottomPanel.add(paymentMethodBox);
 
 	       bottomPanel.add(new JLabel("Discount %:"));
 	       discountPercentField = new JTextField("0", 5);
@@ -183,11 +200,13 @@ public class MakeASale extends JFrame {
 	       bottomPanel.add(totalLabel);
 
        checkoutBtn = new JButton("Checkout");
+       checkoutPrintBtn = new JButton("Checkout & Print");
        holdCartBtn = new JButton("Hold Cart");
        resumeHeldCartBtn = new JButton("Resume Hold");
        bottomPanel.add(holdCartBtn);
        bottomPanel.add(resumeHeldCartBtn);
        bottomPanel.add(checkoutBtn);
+       bottomPanel.add(checkoutPrintBtn);
 
        panel.add(bottomPanel, BorderLayout.SOUTH);
 
@@ -292,15 +311,19 @@ public class MakeASale extends JFrame {
            if (updatingCart) {
                return;
            }
-           if (e.getColumn() == 4 || e.getColumn() == 5 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
-               updateLineTotals();
-           }
-       });
+	           if (e.getColumn() == CART_COL_PRICE
+	                   || e.getColumn() == CART_COL_QTY
+	                   || e.getColumn() == CART_COL_ITEM_DISCOUNT
+	                   || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
+	               updateLineTotals();
+	           }
+	       });
        checkoutBtn.addActionListener(new ActionListener() {
            public void actionPerformed(ActionEvent e) {
-               checkout();
+               checkout(false);
            }
        });
+       checkoutPrintBtn.addActionListener(e -> checkout(true));
        holdCartBtn.addActionListener(e -> holdCurrentCart());
        resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
        addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
@@ -338,10 +361,10 @@ public class MakeASale extends JFrame {
        });
        updateSelectedStoreLabel(); //displays the current store
        updateCurrentUserLabel(); //displays the current user
-       loadCustomerAccounts();
-       updateCustomerAccountEnabled();
-       WindowHelper.showPosWindow(this); //runs last for the main UI to show
-   }
+	       loadCustomerAccounts();
+	       updateCustomerAccountEnabled();
+	       WindowHelper.showPosWindow(this); //runs last for the main UI to show
+	   }
 
 
     private ImageIcon loadCenterLogoIcon() {
@@ -385,58 +408,74 @@ public class MakeASale extends JFrame {
         if (editItemBtn != null) {
             editItemBtn.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
         }
-        if (discountPercentField != null) {
-            discountPercentField.setEnabled(canApplySaleDiscount());
-            if (!canApplySaleDiscount()) {
-                discountPercentField.setText("0");
-            }
-        }
-    }
+	        if (discountPercentField != null) {
+	            discountPercentField.setEnabled(canApplySaleDiscount());
+	            if (!canApplySaleDiscount()) {
+	                discountPercentField.setText("0");
+	            }
+	        }
+	        if (cartModel != null && !canChangeSaleItemPrice()) {
+	            restoreUnauthorizedCartPrices();
+	        }
+	    }
 
     private boolean canApplySaleDiscount() {
         return PermissionManager.hasPermission(APPLY_SALE_DISCOUNT_PERMISSION);
     }
 
+    private boolean canChangeSaleItemPrice() {
+        return PermissionManager.hasPermission(CHANGE_SALE_ITEM_PRICE_PERMISSION);
+    }
+
     private void configureCartTableColumns() {
-        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 7) {
+        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 9) {
             return;
         }
 
         TableColumnModel columnModel = cartTable.getColumnModel();
 
-        int idWidth = fitColumnWidth(cartTable, 0, 45);
-        int nameWidth = fitColumnWidth(cartTable, 1, 120);
-        int skuWidth = fitColumnWidth(cartTable, 3, 100);
-        int priceWidth = fitColumnWidth(cartTable, 4, 75);
-        int qtyWidth = fitColumnWidth(cartTable, 5, 55);
-        int lineTotalWidth = fitColumnWidth(cartTable, 6, 95);
+        int idWidth = fitColumnWidth(cartTable, CART_COL_ID, 45);
+        int nameWidth = fitColumnWidth(cartTable, CART_COL_NAME, 120);
+        int skuWidth = fitColumnWidth(cartTable, CART_COL_SKU, 100);
+        int priceWidth = fitColumnWidth(cartTable, CART_COL_PRICE, 75);
+        int qtyWidth = fitColumnWidth(cartTable, CART_COL_QTY, 55);
+        int itemDiscountWidth = fitColumnWidth(cartTable, CART_COL_ITEM_DISCOUNT, 90);
+        int lineTotalWidth = fitColumnWidth(cartTable, CART_COL_LINE_TOTAL, 95);
 
-        columnModel.getColumn(0).setMinWidth(40);
-        columnModel.getColumn(0).setMaxWidth(70);
-        columnModel.getColumn(0).setPreferredWidth(idWidth);
+        columnModel.getColumn(CART_COL_ID).setMinWidth(40);
+        columnModel.getColumn(CART_COL_ID).setMaxWidth(70);
+        columnModel.getColumn(CART_COL_ID).setPreferredWidth(idWidth);
 
-        columnModel.getColumn(1).setMinWidth(90);
-        columnModel.getColumn(1).setMaxWidth(200);
-        columnModel.getColumn(1).setPreferredWidth(nameWidth);
+        columnModel.getColumn(CART_COL_NAME).setMinWidth(90);
+        columnModel.getColumn(CART_COL_NAME).setMaxWidth(200);
+        columnModel.getColumn(CART_COL_NAME).setPreferredWidth(nameWidth);
 
-        columnModel.getColumn(2).setMinWidth(220);
-        columnModel.getColumn(2).setPreferredWidth(320);
-        columnModel.getColumn(2).setCellRenderer(new MultiLineTableCellRenderer());
+        columnModel.getColumn(CART_COL_DESCRIPTION).setMinWidth(220);
+        columnModel.getColumn(CART_COL_DESCRIPTION).setPreferredWidth(320);
+        columnModel.getColumn(CART_COL_DESCRIPTION).setCellRenderer(new MultiLineTableCellRenderer());
 
-        columnModel.getColumn(3).setMinWidth(90);
-        columnModel.getColumn(3).setPreferredWidth(skuWidth);
+        columnModel.getColumn(CART_COL_SKU).setMinWidth(90);
+        columnModel.getColumn(CART_COL_SKU).setPreferredWidth(skuWidth);
 
-        columnModel.getColumn(4).setMinWidth(70);
-        columnModel.getColumn(4).setMaxWidth(95);
-        columnModel.getColumn(4).setPreferredWidth(priceWidth);
+        columnModel.getColumn(CART_COL_PRICE).setMinWidth(70);
+        columnModel.getColumn(CART_COL_PRICE).setMaxWidth(95);
+        columnModel.getColumn(CART_COL_PRICE).setPreferredWidth(priceWidth);
 
-        columnModel.getColumn(5).setMinWidth(50);
-        columnModel.getColumn(5).setMaxWidth(70);
-        columnModel.getColumn(5).setPreferredWidth(qtyWidth);
+        columnModel.getColumn(CART_COL_QTY).setMinWidth(50);
+        columnModel.getColumn(CART_COL_QTY).setMaxWidth(70);
+        columnModel.getColumn(CART_COL_QTY).setPreferredWidth(qtyWidth);
 
-        columnModel.getColumn(6).setMinWidth(90);
-        columnModel.getColumn(6).setMaxWidth(120);
-        columnModel.getColumn(6).setPreferredWidth(lineTotalWidth);
+        columnModel.getColumn(CART_COL_ITEM_DISCOUNT).setMinWidth(80);
+        columnModel.getColumn(CART_COL_ITEM_DISCOUNT).setMaxWidth(115);
+        columnModel.getColumn(CART_COL_ITEM_DISCOUNT).setPreferredWidth(itemDiscountWidth);
+
+        columnModel.getColumn(CART_COL_LINE_TOTAL).setMinWidth(90);
+        columnModel.getColumn(CART_COL_LINE_TOTAL).setMaxWidth(120);
+        columnModel.getColumn(CART_COL_LINE_TOTAL).setPreferredWidth(lineTotalWidth);
+
+        columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setMinWidth(0);
+        columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setMaxWidth(0);
+        columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setPreferredWidth(0);
 
         updateDescriptionRowHeights();
     }
@@ -479,7 +518,7 @@ public class MakeASale extends JFrame {
             Component component = renderer.getTableCellRendererComponent(cartTable, text, false, false, row, 2);
 
             if (component instanceof JTextArea textArea) {
-                int columnWidth = cartTable.getColumnModel().getColumn(2).getWidth();
+                int columnWidth = cartTable.getColumnModel().getColumn(CART_COL_DESCRIPTION).getWidth();
                 textArea.setSize(columnWidth, Short.MAX_VALUE);
                 rowHeight = Math.max(rowHeight, textArea.getPreferredSize().height + 4);
             }
@@ -692,35 +731,55 @@ public class MakeASale extends JFrame {
     }
     private void addToCart(int productId, String name, String description, String sku, double price, int qty) {
         for (int i = 0; i < cartModel.getRowCount(); i++) {
-            int existingProductId = Integer.parseInt(cartModel.getValueAt(i, 0).toString());
+            int existingProductId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 
             if (existingProductId == productId) {
-                int existingQty = Integer.parseInt(cartModel.getValueAt(i, 5).toString());
+                int existingQty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
                 int newQty = existingQty + qty;
-                double newLineTotal = price * newQty;
 
-                cartModel.setValueAt(newQty, i, 5);
-                cartModel.setValueAt(newLineTotal, i, 6);
-                updateOverallTotal();
+                cartModel.setValueAt(newQty, i, CART_COL_QTY);
+                updateLineTotals();
                 configureCartTableColumns();
                 return;
             }
         }
 
-        double lineTotal = price * qty;
-        cartModel.addRow(new Object[]{productId, name, description, sku, price, qty, lineTotal});
+        cartModel.addRow(new Object[]{productId, name, description, sku, price, qty, BigDecimal.ZERO, price * qty, BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP)});
         updateLineTotals();
         configureCartTableColumns();
+    }
+
+    private void restoreUnauthorizedCartPrices() {
+        if (cartModel == null || updatingCart) {
+            return;
+        }
+
+        updatingCart = true;
+        try {
+            for (int i = 0; i < cartModel.getRowCount(); i++) {
+                Object originalPrice = cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE);
+                if (originalPrice != null) {
+                    cartModel.setValueAt(parseMoneyOrZero(originalPrice), i, CART_COL_PRICE);
+                }
+            }
+        } finally {
+            updatingCart = false;
+        }
+        updateLineTotals();
     }
     private void updateLineTotals() {
         updatingCart = true;
         try {
             for (int i = 0; i < cartModel.getRowCount(); i++) {
-                Object priceValue = cartModel.getValueAt(i, 4);
-                Object qtyValue = cartModel.getValueAt(i, 5);
+                Object priceValue = canChangeSaleItemPrice()
+                        ? cartModel.getValueAt(i, CART_COL_PRICE)
+                        : cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE);
+                Object qtyValue = cartModel.getValueAt(i, CART_COL_QTY);
+                Object itemDiscountValue = cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT);
 
                 int qty;
-                double price;
+                BigDecimal price;
+                BigDecimal itemDiscountPercent;
 
                 try {
                     qty = Integer.parseInt(qtyValue.toString());
@@ -729,14 +788,25 @@ public class MakeASale extends JFrame {
                 }
 
                 try {
-                    price = Double.parseDouble(priceValue.toString());
+                    price = new BigDecimal(priceValue.toString()).setScale(2, RoundingMode.HALF_UP);
                 } catch (NumberFormatException ex) {
-                    price = 0.0;
+                    price = BigDecimal.ZERO;
                 }
 
-                cartModel.setValueAt(price, i, 4);
-                cartModel.setValueAt(qty, i, 5);
-                cartModel.setValueAt(price * qty, i, 6);
+                itemDiscountPercent = parsePercentOrZero(itemDiscountValue);
+                if (!canApplySaleDiscount()) {
+                    itemDiscountPercent = BigDecimal.ZERO;
+                }
+
+                BigDecimal lineGross = price.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal lineDiscount = lineGross.multiply(itemDiscountPercent)
+                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                BigDecimal lineTotal = lineGross.subtract(lineDiscount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+
+                cartModel.setValueAt(price, i, CART_COL_PRICE);
+                cartModel.setValueAt(qty, i, CART_COL_QTY);
+                cartModel.setValueAt(itemDiscountPercent, i, CART_COL_ITEM_DISCOUNT);
+                cartModel.setValueAt(lineTotal, i, CART_COL_LINE_TOTAL);
             }
             updateOverallTotal();
             updateDescriptionRowHeights();
@@ -750,7 +820,7 @@ public class MakeASale extends JFrame {
         double total = 0.0;
 
         for (int i = 0; i < cartModel.getRowCount(); i++) {
-            Object lineTotalValue = cartModel.getValueAt(i, 6);
+            Object lineTotalValue = cartModel.getValueAt(i, CART_COL_LINE_TOTAL);
             try {
                 total += Double.parseDouble(lineTotalValue.toString());
             } catch (NumberFormatException ex) {
@@ -761,10 +831,33 @@ public class MakeASale extends JFrame {
         return total;
     }
 
+    private BigDecimal getCartGrossSubtotal() {
+        BigDecimal total = BigDecimal.ZERO;
+        for (int i = 0; i < cartModel.getRowCount(); i++) {
+            BigDecimal price = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE));
+            if (!canChangeSaleItemPrice()) {
+                price = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
+            }
+            int qty = parseIntOrDefault(cartModel.getValueAt(i, CART_COL_QTY), 0);
+            total = total.add(price.multiply(BigDecimal.valueOf(qty)));
+        }
+        return total.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal getItemDiscountTotal() {
+        return getCartGrossSubtotal().subtract(BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP))
+                .max(BigDecimal.ZERO)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
     private double getOverallTotal() {
+        return getFinalTotalAmount().doubleValue();
+    }
+
+    private BigDecimal getFinalTotalAmount() {
         BigDecimal subtotal = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal discountAmount = getDiscountAmount(subtotal);
-        return subtotal.subtract(discountAmount).max(BigDecimal.ZERO).doubleValue();
+        return subtotal.subtract(discountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal getDiscountPercent() {
@@ -818,6 +911,39 @@ public class MakeASale extends JFrame {
         BigDecimal discountPercent = getDiscountPercent();
         return subtotal.multiply(discountPercent)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal parsePercentOrZero(Object value) {
+        BigDecimal percent = parseMoneyOrZero(value);
+        if (percent.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        if (percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+            return BigDecimal.valueOf(100);
+        }
+        return percent.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal parseMoneyOrZero(Object value) {
+        if (value == null) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            return new BigDecimal(String.valueOf(value).trim()).setScale(2, RoundingMode.HALF_UP);
+        } catch (NumberFormatException ex) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private int parseIntOrDefault(Object value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
     }
 
     private void updateCurrentDateLabel() {
@@ -925,7 +1051,7 @@ public class MakeASale extends JFrame {
         customerAccountBox.setEnabled(true);
     }
 
-    private void checkout() {
+    private void checkout(boolean showReceiptPreview) {
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
@@ -946,10 +1072,19 @@ public class MakeASale extends JFrame {
         CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
 
         boolean chargeCustomerAccount = "ACCOUNT".equals(paymentMethod);
+        boolean cashPayment = "CASH".equals(paymentMethod);
 
         if (chargeCustomerAccount && selectedCustomer == null) {
             JOptionPane.showMessageDialog(this, "Select a customer account for account payment.");
             return;
+        }
+
+        BigDecimal cashCollected = BigDecimal.ZERO;
+        if (cashPayment) {
+            cashCollected = promptForCashCollected(getFinalTotalAmount());
+            if (cashCollected == null) {
+                return;
+            }
         }
 
         try (Connection conn = DB.getConnection()) {
@@ -969,11 +1104,14 @@ public class MakeASale extends JFrame {
             int locationId = SessionManager.getCurrentLocationId();
 
             try {
-                BigDecimal subtotalAmount = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal discountAmount = subtotalAmount.multiply(discountPercent)
+                BigDecimal subtotalAmount = getCartGrossSubtotal();
+                BigDecimal itemDiscountTotal = getItemDiscountTotal();
+                BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal saleLevelDiscountAmount = lineSubtotalAfterItemDiscounts.multiply(discountPercent)
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                BigDecimal saleTotal = subtotalAmount.subtract(discountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
+                BigDecimal saleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal saleDiscountMultiplier = BigDecimal.ONE.subtract(
                         discountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
                 );
                 if (chargeCustomerAccount) {
@@ -1048,7 +1186,18 @@ public class MakeASale extends JFrame {
                     );
                 }
 
-                String insertItemSql = "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)";
+                String insertItemSql = """
+                        INSERT INTO sale_items (
+                            sale_id,
+                            product_id,
+                            quantity,
+                            unit_price,
+                            original_unit_price,
+                            discount_percent,
+                            discount_amount
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """;
 	                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
                 String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ?";
@@ -1058,17 +1207,31 @@ public class MakeASale extends JFrame {
                      PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql)) {
 
-                    for (int i = 0; i < cartModel.getRowCount(); i++) {
-	                        int productId = Integer.parseInt(cartModel.getValueAt(i, 0).toString());
-	                        int qty = Integer.parseInt(cartModel.getValueAt(i, 5).toString());
-	                        BigDecimal originalPrice = BigDecimal.valueOf(Double.parseDouble(cartModel.getValueAt(i, 4).toString()));
-	                        BigDecimal chargedPrice = originalPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
+	                    for (int i = 0; i < cartModel.getRowCount(); i++) {
+		                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
+		                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
+	                        BigDecimal originalPrice = canChangeSaleItemPrice()
+	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
+	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
+		                        BigDecimal itemDiscountPercent = parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT));
+		                        BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
+		                                itemDiscountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
+		                        );
+		                        BigDecimal itemDiscountedPrice = originalPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
+		                        BigDecimal chargedPrice = itemDiscountedPrice.multiply(saleDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
+		                        BigDecimal itemDiscountAmount = originalPrice
+		                                .multiply(BigDecimal.valueOf(qty))
+		                                .multiply(itemDiscountPercent)
+		                                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
 
-	                        itemStmt.setInt(1, saleId);
-	                        itemStmt.setInt(2, productId);
-	                        itemStmt.setInt(3, qty);
-	                        itemStmt.setBigDecimal(4, chargedPrice);
-	                        itemStmt.addBatch();
+		                        itemStmt.setInt(1, saleId);
+		                        itemStmt.setInt(2, productId);
+		                        itemStmt.setInt(3, qty);
+		                        itemStmt.setBigDecimal(4, chargedPrice);
+		                        itemStmt.setBigDecimal(5, originalPrice);
+		                        itemStmt.setBigDecimal(6, itemDiscountPercent);
+		                        itemStmt.setBigDecimal(7, itemDiscountAmount);
+		                        itemStmt.addBatch();
 
                         ensureInventoryStmt.setInt(1, productId);
                         ensureInventoryStmt.setInt(2, locationId);
@@ -1095,7 +1258,32 @@ public class MakeASale extends JFrame {
                 }
 
                 conn.commit();
-	                JOptionPane.showMessageDialog(this, "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId);
+	                String successMessage = "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId;
+	                BigDecimal changeDue = BigDecimal.ZERO;
+	                if (cashPayment) {
+	                    changeDue = cashCollected.subtract(saleTotal).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+	                    successMessage += "\nCash Collected: $" + cashCollected.setScale(2, RoundingMode.HALF_UP)
+	                            + "\nChange Due: $" + changeDue;
+	                }
+	                if (showReceiptPreview) {
+	                    try {
+	                        ReceiptData receiptData = ReceiptBuilder.loadSaleReceipt(
+	                                saleId,
+	                                cashPayment ? cashCollected : null,
+	                                cashPayment ? changeDue : null
+	                        );
+	                        WindowHelper.showPosWindow(new ReceiptPreview(receiptData), this);
+	                    } catch (SQLException receiptEx) {
+	                        JOptionPane.showMessageDialog(
+	                                this,
+	                                successMessage + "\n\nReceipt preview failed: " + receiptEx.getMessage(),
+	                                "Receipt Preview",
+	                                JOptionPane.WARNING_MESSAGE
+	                        );
+	                    }
+	                } else {
+	                    JOptionPane.showMessageDialog(this, successMessage);
+	                }
 	                cartModel.setRowCount(0);
 	                discountPercentField.setText("0");
 	                clearHeldCartSelection();
@@ -1132,13 +1320,16 @@ public class MakeASale extends JFrame {
         }
 
 	        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
-        BigDecimal subtotalAmount = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal subtotalAmount = getCartGrossSubtotal();
+        BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal itemDiscountTotal = getItemDiscountTotal();
         BigDecimal discountPercent = parseDiscountPercentOrShowError();
         if (discountPercent == null) {
             return;
         }
-        BigDecimal discountAmount = subtotalAmount.multiply(discountPercent)
+        BigDecimal saleLevelDiscountAmount = lineSubtotalAfterItemDiscounts.multiply(discountPercent)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
 	        String insertHoldSql = """
 	                INSERT INTO held_carts (
 	                    location_id,
@@ -1162,12 +1353,13 @@ public class MakeASale extends JFrame {
                     product_id,
                     product_name,
                     description,
-                    sku,
-                    unit_price,
-                    quantity
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """;
+	                    sku,
+	                    unit_price,
+	                    quantity,
+	                    discount_percent
+	                )
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	                """;
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -1187,7 +1379,7 @@ public class MakeASale extends JFrame {
 	                    holdStmt.setBigDecimal(7, subtotalAmount);
 	                    holdStmt.setBigDecimal(8, discountPercent);
 	                    holdStmt.setBigDecimal(9, discountAmount);
-	                    holdStmt.setBigDecimal(10, subtotalAmount.subtract(discountAmount).max(BigDecimal.ZERO));
+		                    holdStmt.setBigDecimal(10, lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO));
 	                    try (ResultSet rs = holdStmt.executeQuery()) {
                         if (!rs.next()) {
                             throw new SQLException("Failed to create held cart.");
@@ -1199,13 +1391,17 @@ public class MakeASale extends JFrame {
                 try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql)) {
                     for (int i = 0; i < cartModel.getRowCount(); i++) {
                         itemStmt.setInt(1, heldCartId);
-                        itemStmt.setInt(2, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, 0))));
-                        itemStmt.setString(3, String.valueOf(cartModel.getValueAt(i, 1)));
-                        itemStmt.setString(4, String.valueOf(cartModel.getValueAt(i, 2)));
-                        itemStmt.setString(5, String.valueOf(cartModel.getValueAt(i, 3)));
-                        itemStmt.setBigDecimal(6, BigDecimal.valueOf(Double.parseDouble(String.valueOf(cartModel.getValueAt(i, 4)))));
-                        itemStmt.setInt(7, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, 5))));
-                        itemStmt.addBatch();
+	                        itemStmt.setInt(2, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, CART_COL_ID))));
+	                        itemStmt.setString(3, String.valueOf(cartModel.getValueAt(i, CART_COL_NAME)));
+	                        itemStmt.setString(4, String.valueOf(cartModel.getValueAt(i, CART_COL_DESCRIPTION)));
+	                        itemStmt.setString(5, String.valueOf(cartModel.getValueAt(i, CART_COL_SKU)));
+	                        BigDecimal heldUnitPrice = canChangeSaleItemPrice()
+	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
+	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
+	                        itemStmt.setBigDecimal(6, heldUnitPrice);
+	                        itemStmt.setInt(7, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, CART_COL_QTY))));
+	                        itemStmt.setBigDecimal(8, parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT)));
+	                        itemStmt.addBatch();
                     }
                     itemStmt.executeBatch();
                 }
@@ -1368,7 +1564,13 @@ public class MakeASale extends JFrame {
 	        }
 
         String itemsSql = """
-                SELECT product_id, product_name, description, sku, unit_price, quantity
+                SELECT product_id,
+                       product_name,
+                       description,
+                       sku,
+                       unit_price,
+                       quantity,
+                       COALESCE(discount_percent, 0) AS discount_percent
                 FROM held_cart_items
                 WHERE held_cart_id = ?
                 ORDER BY held_cart_item_id
@@ -1379,17 +1581,23 @@ public class MakeASale extends JFrame {
             ps.setInt(1, heldCartId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    double price = rs.getBigDecimal("unit_price").doubleValue();
-                    int qty = rs.getInt("quantity");
-                    cartModel.addRow(new Object[]{
-                            rs.getInt("product_id"),
-                            rs.getString("product_name"),
-                            rs.getString("description"),
-                            rs.getString("sku"),
-                            price,
-                            qty,
-                            price * qty
-                    });
+	                    double price = rs.getBigDecimal("unit_price").doubleValue();
+	                    int qty = rs.getInt("quantity");
+	                    BigDecimal itemDiscountPercent = rs.getBigDecimal("discount_percent");
+	                    BigDecimal lineGross = BigDecimal.valueOf(price).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
+	                    BigDecimal lineDiscount = lineGross.multiply(itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent)
+	                            .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+	                    cartModel.addRow(new Object[]{
+	                            rs.getInt("product_id"),
+	                            rs.getString("product_name"),
+	                            rs.getString("description"),
+	                            rs.getString("sku"),
+	                            price,
+	                            qty,
+	                            itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent,
+	                            lineGross.subtract(lineDiscount).max(BigDecimal.ZERO),
+	                            BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP)
+	                    });
                 }
             }
         }
@@ -1505,8 +1713,11 @@ public class MakeASale extends JFrame {
     }
 
     private void updateOverallTotal() {
-        BigDecimal subtotal = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal discountAmount = getDiscountAmount(subtotal);
+        BigDecimal subtotal = getCartGrossSubtotal();
+        BigDecimal afterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal itemDiscountAmount = getItemDiscountTotal();
+        BigDecimal saleDiscountAmount = getDiscountAmount(afterItemDiscounts);
+        BigDecimal discountAmount = itemDiscountAmount.add(saleDiscountAmount).setScale(2, RoundingMode.HALF_UP);
         BigDecimal total = subtotal.subtract(discountAmount).max(BigDecimal.ZERO);
 
         if (subtotalLabel != null) {
@@ -1516,6 +1727,124 @@ public class MakeASale extends JFrame {
             discountAmountLabel.setText(String.format("Discount: $%.2f", discountAmount.doubleValue()));
         }
         totalLabel.setText(String.format("Overall Total: $%.2f", total.doubleValue()));
+    }
+
+    private BigDecimal promptForCashCollected(BigDecimal amountDue) {
+        BigDecimal due = amountDue == null ? BigDecimal.ZERO : amountDue.setScale(2, RoundingMode.HALF_UP);
+
+        JDialog dialog = new JDialog(this, "Cash Checkout", true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel content = new JPanel(new BorderLayout(14, 14));
+        content.setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
+
+        JPanel fieldsPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        JLabel amountDueValue = new JLabel("$" + due.toPlainString());
+        amountDueValue.setFont(amountDueValue.getFont().deriveFont(Font.BOLD, 18f));
+        JTextField collectedField = new JTextField(due.toPlainString(), 12);
+        JLabel changeLabel = new JLabel("Change: $0.00");
+        changeLabel.setFont(changeLabel.getFont().deriveFont(Font.BOLD, 16f));
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        fieldsPanel.add(new JLabel("Amount Due:"), gbc);
+        gbc.gridx = 1;
+        fieldsPanel.add(amountDueValue, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        fieldsPanel.add(new JLabel("Cash Collected:"), gbc);
+        gbc.gridx = 1;
+        fieldsPanel.add(collectedField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        fieldsPanel.add(new JLabel("Result:"), gbc);
+        gbc.gridx = 1;
+        fieldsPanel.add(changeLabel, gbc);
+
+        JButton doneButton = new JButton("Done");
+        JButton cancelButton = new JButton("Cancel");
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttonPanel.add(cancelButton);
+        buttonPanel.add(doneButton);
+
+        content.add(fieldsPanel, BorderLayout.CENTER);
+        content.add(buttonPanel, BorderLayout.SOUTH);
+        dialog.setContentPane(content);
+
+        final BigDecimal[] result = new BigDecimal[1];
+
+        Runnable updateChange = () -> {
+            try {
+                String text = collectedField.getText().trim();
+                BigDecimal collected = text.isEmpty()
+                        ? BigDecimal.ZERO
+                        : new BigDecimal(text).setScale(2, RoundingMode.HALF_UP);
+                if (collected.compareTo(BigDecimal.ZERO) < 0) {
+                    changeLabel.setText("Cash collected cannot be negative.");
+                    doneButton.setEnabled(false);
+                    return;
+                }
+
+                BigDecimal difference = collected.subtract(due).setScale(2, RoundingMode.HALF_UP);
+                if (difference.compareTo(BigDecimal.ZERO) < 0) {
+                    changeLabel.setText("Short: $" + difference.abs().toPlainString());
+                    doneButton.setEnabled(false);
+                } else {
+                    changeLabel.setText("Change: $" + difference.toPlainString());
+                    doneButton.setEnabled(true);
+                }
+            } catch (NumberFormatException ex) {
+                changeLabel.setText("Enter a valid cash amount.");
+                doneButton.setEnabled(false);
+            }
+        };
+
+        collectedField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                SwingUtilities.invokeLater(updateChange);
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                SwingUtilities.invokeLater(updateChange);
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                SwingUtilities.invokeLater(updateChange);
+            }
+        });
+
+        doneButton.addActionListener(e -> {
+            try {
+                result[0] = new BigDecimal(collectedField.getText().trim()).setScale(2, RoundingMode.HALF_UP);
+                dialog.dispose();
+            } catch (NumberFormatException ex) {
+                changeLabel.setText("Enter a valid cash amount.");
+                doneButton.setEnabled(false);
+            }
+        });
+        cancelButton.addActionListener(e -> dialog.dispose());
+        dialog.getRootPane().setDefaultButton(doneButton);
+
+        updateChange.run();
+        dialog.pack();
+        dialog.setMinimumSize(new Dimension(360, dialog.getHeight()));
+        dialog.setLocationRelativeTo(this);
+        SwingUtilities.invokeLater(() -> {
+            collectedField.requestFocusInWindow();
+            collectedField.selectAll();
+        });
+        dialog.setVisible(true);
+        return result[0];
     }
 
     private static class CustomerAccountOption {

@@ -37,6 +37,7 @@ public class MainMenu extends JFrame {
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
     private final JButton localDeviceSettingsButton;
+    private final JButton hardwareSetupButton;
     private final JButton logoutButton;
 
     public MainMenu() {
@@ -88,6 +89,7 @@ public class MainMenu extends JFrame {
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
+        hardwareSetupButton = createMenuButton("Hardware Setup", "Configure POS printers", loadIcon("src/ICONS/Security.png"));
         applyPermissions();
 
         JPanel sectionStackPanel = new JPanel() {
@@ -133,7 +135,8 @@ public class MainMenu extends JFrame {
                 "Admin",
                 new Color(124, 58, 237),
                 rolesPermissionsButton,
-                localDeviceSettingsButton
+                localDeviceSettingsButton,
+                hardwareSetupButton
         ));
 
         JPanel scrollContentPanel = new ViewportWidthPanel(new BorderLayout());
@@ -368,6 +371,7 @@ public class MainMenu extends JFrame {
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
+        boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
 
         makeSaleButton.setEnabled(canMakeSale);
         returnSaleButton.setEnabled(canProcessReturns);
@@ -387,6 +391,7 @@ public class MainMenu extends JFrame {
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
         localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
+        hardwareSetupButton.setEnabled(canHardwareSetup);
     }
 
 
@@ -499,6 +504,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openLocalDeviceSettings(this);
+        });
+        hardwareSetupButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("HARDWARE_SETUP", this, "Hardware Setup")) {
+                return;
+            }
+            NavigationManager.openHardwareSetup(this);
         });
 
         logoutButton.addActionListener(e -> {
@@ -616,6 +627,10 @@ public class MainMenu extends JFrame {
 
     public JButton getLocalDeviceSettingsButton() {
         return localDeviceSettingsButton;
+    }
+
+    public JButton getHardwareSetupButton() {
+        return hardwareSetupButton;
     }
 
     public JButton getLogoutButton() {

@@ -440,6 +440,7 @@ public class Roles_Permission extends JFrame {
         Map<String, String> permissions = new LinkedHashMap<>();
         permissions.put("MAKE_SALE", "Make Sale");
         permissions.put("APPLY_SALE_DISCOUNT", "Apply Sale Discount");
+        permissions.put("CHANGE_SALE_ITEM_PRICE", "Change Sale Item Price");
         permissions.put("PROCESS_RETURNS", "Process Returns");
         permissions.put("END_OF_DAY", "End of Day");
         permissions.put("VIEW_SALES", "View Sales");
@@ -467,6 +468,7 @@ public class Roles_Permission extends JFrame {
         permissions.put("CHANGE_STORE", "Change Store");
         permissions.put("VIEW_REPORTS", "View Reports");
         permissions.put("LOCAL_DEVICE_SETTINGS", "Local Device Settings");
+        permissions.put("HARDWARE_SETUP", "Hardware Setup");
         return permissions;
     }
 }
