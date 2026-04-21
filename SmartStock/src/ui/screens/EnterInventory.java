@@ -4,6 +4,7 @@ import data.DB;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -552,7 +553,7 @@ public class EnterInventory extends JFrame {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
         lastShownDate = now.format(formatter);
         currentDateLabel.setText("Date: " + lastShownDate);
@@ -563,7 +564,7 @@ public class EnterInventory extends JFrame {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a");
         currentTimeLabel.setText("Time: " + now.format(formatter));
     }
@@ -571,7 +572,7 @@ public class EnterInventory extends JFrame {
     private void startDateRefreshTimer() {
         javax.swing.Timer dateTimer = new javax.swing.Timer(1000, e -> {
             updateCurrentTimeLabel();
-            String today = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy"));
+            String today = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone()).format(DateTimeFormatter.ofPattern("MM/dd/yyyy"));
             if (!today.equals(lastShownDate)) {
                 updateCurrentDateLabel();
             }

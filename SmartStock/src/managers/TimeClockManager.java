@@ -13,6 +13,7 @@ import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -59,7 +60,7 @@ public final class TimeClockManager {
                        COALESCE(u.full_name, u.username),
                        ?,
                        ?,
-                       CURRENT_DATE,
+                       ?,
                        CURRENT_TIMESTAMP,
                        COALESCE(u.compensation_type, 'HOURLY'),
                        COALESCE(u.pay_period_type, 'SEMI_MONTHLY'),
@@ -80,7 +81,8 @@ public final class TimeClockManager {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             setNullableInteger(ps, 1, SessionManager.getCurrentLocationId());
             ps.setString(2, SessionManager.getCurrentLocationName());
-            ps.setInt(3, userId);
+            ps.setDate(3, java.sql.Date.valueOf(LocalDate.now(ZoneId.of(currentStoreZoneId()))));
+            ps.setInt(4, userId);
 
             int inserted = ps.executeUpdate();
             if (inserted == 0) {
@@ -110,10 +112,10 @@ public final class TimeClockManager {
                        COALESCE(tc.user_name, u.full_name, u.username, '') AS employee_name,
                        COALESCE(r.role_name, '') AS employee_role,
                        tc.work_date,
-                       tc.clock_in,
-                       tc.lunch_start,
-                       tc.lunch_end,
-                       tc.clock_out,
+                       (tc.clock_in AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_in,
+                       (tc.lunch_start AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_start,
+                       (tc.lunch_end AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_end,
+                       (tc.clock_out AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_out,
                        COALESCE(tc.compensation_type, u.compensation_type, 'HOURLY') AS compensation_type,
                        COALESCE(tc.pay_period_type, u.pay_period_type, 'SEMI_MONTHLY') AS pay_period_type,
                        COALESCE(tc.hourly_wage, u.hourly_wage, 0) AS hourly_wage,
@@ -133,8 +135,12 @@ public final class TimeClockManager {
         sql.append(" ORDER BY tc.work_date DESC, tc.clock_in DESC, tc.clock_id DESC");
 
         try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            ps.setString(1, currentStoreZoneId());
+            ps.setString(2, currentStoreZoneId());
+            ps.setString(3, currentStoreZoneId());
+            ps.setString(4, currentStoreZoneId());
             if (!canViewAllRecords) {
-                ps.setInt(1, requireCurrentUserId());
+                ps.setInt(5, requireCurrentUserId());
             }
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -145,10 +151,10 @@ public final class TimeClockManager {
                             rs.getString("employee_name"),
                             rs.getString("employee_role"),
                             rs.getDate("work_date").toLocalDate(),
-                            toLocalDateTime(rs.getTimestamp("clock_in")),
-                            toLocalDateTime(rs.getTimestamp("lunch_start")),
-                            toLocalDateTime(rs.getTimestamp("lunch_end")),
-                            toLocalDateTime(rs.getTimestamp("clock_out")),
+                            toLocalDateTime(rs.getTimestamp("local_clock_in")),
+                            toLocalDateTime(rs.getTimestamp("local_lunch_start")),
+                            toLocalDateTime(rs.getTimestamp("local_lunch_end")),
+                            toLocalDateTime(rs.getTimestamp("local_clock_out")),
                             rs.getString("compensation_type"),
                             rs.getString("pay_period_type"),
                             rs.getBigDecimal("hourly_wage"),
@@ -342,12 +348,17 @@ public final class TimeClockManager {
     private static Map<String, PayrollPaymentStatus> loadPayrollPaymentStatuses(Connection conn) throws SQLException {
         Map<String, PayrollPaymentStatus> statuses = new HashMap<>();
         String sql = """
-                SELECT user_id, pay_period_start, pay_period_end, paid_at, paid_by_name
+                SELECT user_id,
+                       pay_period_start,
+                       pay_period_end,
+                       (paid_at AT TIME ZONE ?) AS local_paid_at,
+                       paid_by_name
                 FROM payroll_payments
                 """;
 
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, currentStoreZoneId());
+            try (ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 statuses.put(
                         payrollKey(
@@ -356,10 +367,11 @@ public final class TimeClockManager {
                                 rs.getDate("pay_period_end").toLocalDate()
                         ),
                         new PayrollPaymentStatus(
-                                toLocalDateTime(rs.getTimestamp("paid_at")),
+                                toLocalDateTime(rs.getTimestamp("local_paid_at")),
                                 rs.getString("paid_by_name")
                         )
                 );
+            }
             }
         }
 
@@ -451,7 +463,7 @@ public final class TimeClockManager {
     }
 
     private static BigDecimal calculateHours(TimeRecord record) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(ZoneId.of(currentStoreZoneId()));
         LocalDateTime shiftEnd = record.clockOut == null ? now : record.clockOut;
         BigDecimal totalMinutes = BigDecimal.valueOf(minutesBetween(record.clockIn, shiftEnd));
 
@@ -494,6 +506,18 @@ public final class TimeClockManager {
 
     private static LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private static String currentStoreZoneId() {
+        String timezone = SessionManager.getCurrentLocationTimezone();
+        if (timezone != null && !timezone.isBlank()) {
+            try {
+                return ZoneId.of(timezone.trim()).getId();
+            } catch (Exception ignored) {
+                // Fall back to the device zone if the stored value is invalid.
+            }
+        }
+        return ZoneId.systemDefault().getId();
     }
 
     private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {

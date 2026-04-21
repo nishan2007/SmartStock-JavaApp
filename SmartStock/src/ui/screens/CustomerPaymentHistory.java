@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -14,9 +15,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.NumberFormat;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 
 public class CustomerPaymentHistory extends JFrame {
@@ -114,7 +112,7 @@ public class CustomerPaymentHistory extends JFrame {
         String sql = """
                 SELECT COALESCE(t.payment_id, '') AS payment_id,
 	                       t.transaction_id,
-	                       t.created_at AS payment_date,
+	                       (t.created_at AT TIME ZONE ?) AS payment_date,
 	                       COALESCE(t.user_name, '') AS user_name,
 	                       ABS(COALESCE(t.amount, 0)) AS payment_amount,
                        a.sale_id,
@@ -122,7 +120,7 @@ public class CustomerPaymentHistory extends JFrame {
                        COALESCE(s.total_amount, 0) AS sale_total,
                        COALESCE(s.amount_paid, 0) AS sale_paid,
                        COALESCE(s.payment_status, '') AS payment_status,
-                       s.created_at AS sale_date
+                       (s.created_at AT TIME ZONE ?) AS sale_date
                 FROM customer_account_transactions t
                 LEFT JOIN customer_account_payment_allocations a
                     ON a.payment_transaction_id = t.transaction_id
@@ -141,7 +139,9 @@ public class CustomerPaymentHistory extends JFrame {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setInt(1, customerId);
+            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+            ps.setString(2, StoreTimeZoneHelper.getStoreZoneId());
+            ps.setInt(3, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String paymentId = rs.getString("payment_id");
@@ -195,10 +195,7 @@ public class CustomerPaymentHistory extends JFrame {
         if (timestamp == null) {
             return "";
         }
-        ZonedDateTime localDateTime = timestamp.toLocalDateTime()
-                .atZone(ZoneOffset.UTC)
-                .withZoneSameInstant(ZoneId.systemDefault());
-        return dateTimeFormatter.format(localDateTime);
+        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, dateTimeFormatter);
     }
 
     private String formatStatus(String status) {

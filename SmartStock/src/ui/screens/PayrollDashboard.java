@@ -4,6 +4,7 @@ import managers.TimeClockManager;
 import managers.TimeClockManager.PayrollSummary;
 import managers.TimeClockManager.TimeClockRow;
 import ui.components.AppMenuBar;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -420,7 +421,7 @@ public class PayrollDashboard extends JFrame {
 
     private boolean matchesPeriod(LocalDate start, LocalDate end, PayPeriodOption selectedPeriod) {
         if (selectedPeriod != null && selectedPeriod.currentOnly()) {
-            LocalDate today = LocalDate.now();
+            LocalDate today = StoreTimeZoneHelper.today();
             return !today.isBefore(start) && !today.isAfter(end);
         }
 

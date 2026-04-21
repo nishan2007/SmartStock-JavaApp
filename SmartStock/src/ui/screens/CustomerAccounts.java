@@ -501,7 +501,7 @@ public class CustomerAccounts extends JFrame {
         StringBuilder appliedSales = new StringBuilder();
         String selectSql = """
                 SELECT sale_id,
-                       COALESCE(total_amount, 0) AS total_amount,
+                       GREATEST(COALESCE(total_amount, 0) - COALESCE(returned_amount, 0), 0) AS total_amount,
                        COALESCE(amount_paid, 0) AS amount_paid
                 FROM sales
                 WHERE customer_id = ?

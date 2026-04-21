@@ -7,11 +7,13 @@ import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
+import ui.screens.EndOfDay;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.NewItem;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
+import ui.screens.ReturnSale;
 import ui.screens.StoreTransfer;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
@@ -39,6 +41,8 @@ public final class NavigationManager {
     public enum ScreenType {
         MAIN_MENU,
         MAKE_SALE,
+        RETURN_SALE,
+        END_OF_DAY,
         RECEIVING_INVENTORY,
         RECEIVING_HISTORY,
         STORE_TRANSFER,
@@ -78,6 +82,14 @@ public final class NavigationManager {
 
     public static void openMakeSale(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.MAKE_SALE));
+    }
+
+    public static void openReturnSale(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.RETURN_SALE));
+    }
+
+    public static void openEndOfDay(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.END_OF_DAY));
     }
 
     public static void openEnterInventory(JFrame parent) {
@@ -140,6 +152,8 @@ public final class NavigationManager {
         return switch (screenType) {
             case MAIN_MENU -> new MainMenu();
             case MAKE_SALE -> new MakeASale();
+            case RETURN_SALE -> new ReturnSale();
+            case END_OF_DAY -> new EndOfDay();
             case RECEIVING_INVENTORY -> new EnterInventory();
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
@@ -165,6 +179,8 @@ public final class NavigationManager {
         return switch (currentScreenName) {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
+            case "ReturnSale" -> ScreenType.RETURN_SALE;
+            case "EndOfDay" -> ScreenType.END_OF_DAY;
             case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;

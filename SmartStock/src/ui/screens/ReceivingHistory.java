@@ -3,6 +3,7 @@ package ui.screens;
 import data.DB;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -178,7 +179,7 @@ public class ReceivingHistory extends JFrame {
         StringBuilder sql = new StringBuilder("""
                 SELECT im.movement_id,
                        COALESCE(im.receive_id, '') AS receive_id,
-                       im.created_at,
+                       (im.created_at AT TIME ZONE ?) AS local_created_at,
                        COALESCE(p.name, 'Unknown') AS product_name,
                        COALESCE(p.sku, '') AS sku,
                        COALESCE(l.name, 'Unknown') AS store_name,
@@ -194,6 +195,7 @@ public class ReceivingHistory extends JFrame {
                 """);
 
         List<Object> parameters = new ArrayList<>();
+        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
 
         Integer currentLocationId = SessionManager.getCurrentLocationId();
         if (currentLocationId != null) {
@@ -221,12 +223,14 @@ public class ReceivingHistory extends JFrame {
         }
 
         if (fromDate != null) {
-            sql.append(" AND im.created_at >= ?");
+            sql.append(" AND (im.created_at AT TIME ZONE ?) >= ?");
+            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
             parameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
         }
 
         if (toDate != null) {
-            sql.append(" AND im.created_at < ?");
+            sql.append(" AND (im.created_at AT TIME ZONE ?) < ?");
+            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
             parameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
         }
 
@@ -247,7 +251,7 @@ public class ReceivingHistory extends JFrame {
                     tableModel.addRow(new Object[]{
                             rs.getString("receive_id"),
                             rs.getInt("movement_id"),
-                            formatTimestamp(rs.getTimestamp("created_at")),
+                            formatTimestamp(rs.getTimestamp("local_created_at")),
                             rs.getString("product_name"),
                             rs.getString("sku"),
                             rs.getString("store_name"),
@@ -286,7 +290,7 @@ public class ReceivingHistory extends JFrame {
         if (timestamp == null) {
             return "";
         }
-        return timestamp.toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
+        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
     }
 
     private String formatReceivedBy(String receivedBy, String note) {

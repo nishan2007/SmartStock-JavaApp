@@ -113,7 +113,9 @@ public class Login extends JFrame {
                    OR LOWER(u.email) = LOWER(?)
                 """;
         String storesSql = """
-                SELECT l.location_id, l.name
+                SELECT l.location_id,
+                       l.name,
+                       COALESCE(l.timezone, '') AS timezone
                 FROM user_locations ul
                 JOIN locations l ON ul.location_id = l.location_id
                 WHERE ul.user_id = ?
@@ -170,7 +172,8 @@ public class Login extends JFrame {
                         while (storesRs.next()) {
                             locations.add(new LocationOption(
                                     storesRs.getInt("location_id"),
-                                    storesRs.getString("name")
+                                    storesRs.getString("name"),
+                                    storesRs.getString("timezone")
                             ));
                         }
                     }
@@ -206,6 +209,7 @@ public class Login extends JFrame {
                 SessionManager.setCurrentRole(role);
                 SessionManager.setCurrentLocationId(selectedLocation.locationId);
                 SessionManager.setCurrentLocationName(selectedLocation.locationName);
+                SessionManager.setCurrentLocationTimezone(selectedLocation.timezone);
                 SessionManager.setCurrentAccessToken(authResult.accessToken);
                 SessionManager.setCurrentRefreshToken(authResult.refreshToken);
                 SupabaseSessionManager.setSession(SessionManager.getCurrentAccessToken(), SessionManager.getCurrentRefreshToken());
@@ -330,10 +334,12 @@ public class Login extends JFrame {
     private static class LocationOption {
         private final int locationId;
         private final String locationName;
+        private final String timezone;
 
-        private LocationOption(int locationId, String locationName) {
+        private LocationOption(int locationId, String locationName, String timezone) {
             this.locationId = locationId;
             this.locationName = locationName;
+            this.timezone = timezone;
         }
 
         @Override

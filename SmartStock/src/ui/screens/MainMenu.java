@@ -20,6 +20,8 @@ import java.sql.Connection;
 public class MainMenu extends JFrame {
 
     private final JButton makeSaleButton;
+    private final JButton returnSaleButton;
+    private final JButton endOfDayButton;
     private final JButton enterInventoryButton;
     private final JButton receivingHistoryButton;
     private final JButton storeTransferButton;
@@ -68,6 +70,8 @@ public class MainMenu extends JFrame {
         headerPanel.add(subtitleLabel);
 
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
+        returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/ViewSales.png"));
+        endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/ViewSales.png"));
         enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/ViewSales.png"));
         storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/ViewInventory.png"));
@@ -96,6 +100,8 @@ public class MainMenu extends JFrame {
                 "Point of Sale",
                 new Color(37, 99, 235),
                 makeSaleButton,
+                returnSaleButton,
+                endOfDayButton,
                 viewSalesButton,
                 customerAccountsButton
         ));
@@ -342,6 +348,8 @@ public class MainMenu extends JFrame {
 
     public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
+        boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
@@ -358,6 +366,8 @@ public class MainMenu extends JFrame {
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
 
         makeSaleButton.setEnabled(canMakeSale);
+        returnSaleButton.setEnabled(canProcessReturns);
+        endOfDayButton.setEnabled(canEndOfDay);
         enterInventoryButton.setEnabled(canEnterInventory);
         receivingHistoryButton.setEnabled(canReceivingHistory);
         storeTransferButton.setEnabled(canStoreTransfer);
@@ -382,6 +392,18 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openMakeSale(this);
+        });
+        returnSaleButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Returns")) {
+                return;
+            }
+            NavigationManager.openReturnSale(this);
+        });
+        endOfDayButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("END_OF_DAY", this, "End of Day")) {
+                return;
+            }
+            NavigationManager.openEndOfDay(this);
         });
         enterInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", this, "Receiving Inventory")) {

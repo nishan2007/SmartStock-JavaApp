@@ -3,6 +3,7 @@ package ui.screens;
 import data.DB;
 import managers.SessionManager;
 import ui.helpers.ProductImageHelper;
+import ui.helpers.StoreTimeZoneHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -15,6 +16,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -29,6 +32,7 @@ public class ViewInventoryDetails extends JDialog {
     private static final Color PRIMARY = new Color(36, 99, 235);
     private static final Color TEXT = new Color(32, 41, 57);
     private static final Color MUTED = new Color(101, 116, 139);
+    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private final int productId;
 
@@ -522,6 +526,9 @@ public class ViewInventoryDetails extends JDialog {
     private String formatValue(Object value) {
         if (value == null) {
             return "";
+        }
+        if (value instanceof Timestamp timestamp) {
+            return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DATE_TIME_FORMAT);
         }
         return String.valueOf(value);
     }

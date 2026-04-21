@@ -9,6 +9,7 @@ public final class SessionManager {
     private static String currentRole;
     private static Integer currentLocationId;
     private static String currentLocationName;
+    private static String currentLocationTimezone;
     private static String currentAccessToken;
     private static String currentRefreshToken;
     private static String currentDeviceId;
@@ -68,6 +69,14 @@ public final class SessionManager {
         SessionManager.currentLocationName = currentLocationName;
     }
 
+    public static String getCurrentLocationTimezone() {
+        return currentLocationTimezone;
+    }
+
+    public static void setCurrentLocationTimezone(String currentLocationTimezone) {
+        SessionManager.currentLocationTimezone = currentLocationTimezone;
+    }
+
     public static String getCurrentAccessToken() {
         return currentAccessToken;
     }
@@ -107,6 +116,7 @@ public final class SessionManager {
         currentRole = null;
         currentLocationId = null;
         currentLocationName = null;
+        currentLocationTimezone = null;
         currentAccessToken = null;
         currentRefreshToken = null;
         currentDeviceId = null;

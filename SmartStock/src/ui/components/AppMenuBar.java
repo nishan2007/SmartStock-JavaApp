@@ -8,6 +8,7 @@ import data.DB;
 import ui.screens.CustomerAccounts;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
+import ui.screens.EndOfDay;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.LocalDeviceSettings;
@@ -17,6 +18,7 @@ import ui.screens.NewItem;
 import ui.screens.PayrollDashboard;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
+import ui.screens.ReturnSale;
 import ui.screens.StoreTransfer;
 import ui.screens.TimeClock;
 import ui.screens.ViewInventory;
@@ -43,6 +45,8 @@ public class AppMenuBar {
 
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
+        JMenuItem returnSaleItem = new JMenuItem("Returns");
+        JMenuItem endOfDayItem = new JMenuItem("End of Day");
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
@@ -59,6 +63,8 @@ public class AppMenuBar {
         JMenuItem localDeviceSettingsItem = new JMenuItem("Local Device Settings");
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
+        boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
@@ -75,13 +81,19 @@ public class AppMenuBar {
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canOpenMainMenu = canMakeSale || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocalDeviceSettings;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
         }
         if (!canMakeSale || "MakeASale".equalsIgnoreCase(screenKey)) {
             makeSaleItem.setEnabled(false);
+        }
+        if (!canProcessReturns || "ReturnSale".equalsIgnoreCase(screenKey)) {
+            returnSaleItem.setEnabled(false);
+        }
+        if (!canEndOfDay || "EndOfDay".equalsIgnoreCase(screenKey)) {
+            endOfDayItem.setEnabled(false);
         }
         if (!canEnterInventory || "EnterInventory".equalsIgnoreCase(screenKey)) {
             enterInventoryItem.setEnabled(false);
@@ -145,6 +157,30 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openMakeSale(parent);
+            }
+        });
+
+        returnSaleItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("PROCESS_RETURNS", parent, "Returns")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(ReturnSale.class)) {
+                    return;
+                }
+                NavigationManager.openReturnSale(parent);
+            }
+        });
+
+        endOfDayItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("END_OF_DAY", parent, "End of Day")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(EndOfDay.class)) {
+                    return;
+                }
+                NavigationManager.openEndOfDay(parent);
             }
         });
 
@@ -322,6 +358,8 @@ public class AppMenuBar {
         navigateMenu.add(mainMenuItem);
         navigateMenu.addSeparator();
         navigateMenu.add(makeSaleItem);
+        navigateMenu.add(returnSaleItem);
+        navigateMenu.add(endOfDayItem);
         navigateMenu.add(enterInventoryItem);
         navigateMenu.add(receivingHistoryItem);
         navigateMenu.add(storeTransferItem);
@@ -485,6 +523,7 @@ public class AppMenuBar {
             if (store.id == storeId) {
                 SessionManager.setCurrentLocationId(store.id);
                 SessionManager.setCurrentLocationName(store.label);
+                SessionManager.setCurrentLocationTimezone(store.timezone);
                 return true;
             }
         }
@@ -500,7 +539,9 @@ public class AppMenuBar {
         }
 
         String storesSql = """
-                SELECT l.location_id, l.name
+                SELECT l.location_id,
+                       l.name,
+                       COALESCE(l.timezone, '') AS timezone
                 FROM user_locations ul
                 JOIN locations l ON ul.location_id = l.location_id
                 WHERE ul.user_id = ?
@@ -516,7 +557,8 @@ public class AppMenuBar {
                 while (rs.next()) {
                     stores.add(new StoreOption(
                             rs.getInt("location_id"),
-                            rs.getString("name")
+                            rs.getString("name"),
+                            rs.getString("timezone")
                     ));
                 }
             }
@@ -537,10 +579,12 @@ public class AppMenuBar {
     private static class StoreOption {
         private final int id;
         private final String label;
+        private final String timezone;
 
-        private StoreOption(int id, String label) {
+        private StoreOption(int id, String label, String timezone) {
             this.id = id;
             this.label = label;
+            this.timezone = timezone;
         }
 
         @Override

@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -14,9 +15,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.NumberFormat;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 
 public class CustomerTransactionHistory extends JFrame {
@@ -120,7 +118,7 @@ public class CustomerTransactionHistory extends JFrame {
         String sql = """
                 SELECT t.transaction_id,
                        COALESCE(t.payment_id, '') AS payment_id,
-	                       t.created_at,
+	                       (t.created_at AT TIME ZONE ?) AS local_created_at,
 	                       COALESCE(t.user_name, '') AS user_name,
 	                       COALESCE(t.transaction_type, '') AS transaction_type,
                        t.sale_id,
@@ -141,7 +139,8 @@ public class CustomerTransactionHistory extends JFrame {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setInt(1, customerId);
+            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+            ps.setInt(2, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
@@ -154,7 +153,7 @@ public class CustomerTransactionHistory extends JFrame {
                     transactionModel.addRow(new Object[]{
                             rs.getInt("transaction_id"),
 	                            rs.getString("payment_id"),
-	                            formatTimestamp(rs.getTimestamp("created_at")),
+	                            formatTimestamp(rs.getTimestamp("local_created_at")),
 	                            rs.getString("user_name"),
 	                            formatType(rs.getString("transaction_type")),
                             nullableInt(rs, "sale_id"),
@@ -189,10 +188,7 @@ public class CustomerTransactionHistory extends JFrame {
         if (timestamp == null) {
             return "";
         }
-        ZonedDateTime localDateTime = timestamp.toLocalDateTime()
-                .atZone(ZoneOffset.UTC)
-                .withZoneSameInstant(ZoneId.systemDefault());
-        return dateTimeFormatter.format(localDateTime);
+        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, dateTimeFormatter);
     }
 
     private String formatType(String type) {

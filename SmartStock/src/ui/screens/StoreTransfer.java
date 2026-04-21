@@ -4,6 +4,7 @@ import data.DB;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -15,10 +16,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 public class StoreTransfer extends JFrame {
+    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private final JLabel sourceStoreLabel;
     private final JComboBox<LocationOption> destinationBox;
@@ -497,7 +501,7 @@ public class StoreTransfer extends JFrame {
         String sql = """
                 SELECT st.transfer_id,
                        COALESCE(l.name, 'Unknown') AS from_store,
-                       st.created_at,
+                       (st.created_at AT TIME ZONE ?) AS local_created_at,
                        COALESCE(st.user_name, '') AS sent_by,
                        COALESCE(st.note, '') AS note,
                        COUNT(sti.transfer_item_id) AS item_count,
@@ -513,13 +517,14 @@ public class StoreTransfer extends JFrame {
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, currentLocationId);
+            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+            ps.setInt(2, currentLocationId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     incomingModel.addRow(new Object[]{
                             rs.getLong("transfer_id"),
                             rs.getString("from_store"),
-                            rs.getTimestamp("created_at"),
+                            formatLocalTimestamp(rs.getTimestamp("local_created_at")),
                             rs.getInt("item_count"),
                             rs.getInt("unit_count"),
                             rs.getString("sent_by"),
@@ -791,6 +796,10 @@ public class StoreTransfer extends JFrame {
 
     private static String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    private static String formatLocalTimestamp(Timestamp timestamp) {
+        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DATE_TIME_FORMAT);
     }
 
     private record LocationOption(int locationId, String name) {

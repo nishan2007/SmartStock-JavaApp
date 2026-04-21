@@ -97,7 +97,9 @@ public class PermissionManager {
     public static boolean canAccessScreen(String screenName) {
         return switch (screenName) {
             case "MainMenu" -> hasPermission("MAKE_SALE")
+                    || hasPermission("END_OF_DAY")
                     || hasPermission("VIEW_SALES")
+                    || hasPermission("PROCESS_RETURNS")
                     || hasPermission("VIEW_INVENTORY")
                     || hasPermission("CUSTOMER_ACCOUNTS")
                     || hasPermission("NEW_ITEM")
@@ -112,11 +114,13 @@ public class PermissionManager {
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("LOCAL_DEVICE_SETTINGS");
             case "MakeASale" -> hasPermission("MAKE_SALE");
+            case "EndOfDay" -> hasPermission("END_OF_DAY");
             case "EnterInventory" -> hasPermission("RECEIVING_INVENTORY");
             case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
             case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
             case "DepartmentList" -> hasPermission("DEPARTMENT_MANAGEMENT");
             case "ViewSales" -> hasPermission("VIEW_SALES");
+            case "ReturnSale" -> hasPermission("PROCESS_RETURNS");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
             case "TimeClock" -> hasPermission("TIME_CLOCK");

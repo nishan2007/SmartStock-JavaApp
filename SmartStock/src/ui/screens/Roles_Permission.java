@@ -48,6 +48,7 @@ public class Roles_Permission extends JFrame {
         permissionPanel.setLayout(new BoxLayout(permissionPanel, BoxLayout.Y_AXIS));
 
         addPermission("MAKE_SALE", "Make Sale");
+        addPermission("END_OF_DAY", "End of Day");
         addPermission("NEW_ITEM", "Add Item");
         addPermission("RECEIVING_INVENTORY", "Receiving Inventory");
         addPermission("VIEW_RECEIVING_HISTORY", "View Receiving History");

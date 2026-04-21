@@ -12,9 +12,14 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.time.ZoneId;
 
 public class LocalDeviceSettings extends JFrame {
     private final JTextField deviceIdField = new JTextField();
+    private final JTextField storeTimezoneField = new JTextField();
     private final JTextField sanitizedPreviewField = new JTextField();
     private final JTextField configPathField = new JTextField();
     private final JLabel currentStoreLabel = new JLabel();
@@ -52,9 +57,10 @@ public class LocalDeviceSettings extends JFrame {
         addRow(contentPanel, 1, "Saved As", sanitizedPreviewField);
         addRow(contentPanel, 2, "Config File", configPathField);
         addLabelRow(contentPanel, 3, "Current Store", currentStoreLabel);
-        addLabelRow(contentPanel, 4, "Next Receipt", nextReceiptLabel);
-        addLabelRow(contentPanel, 5, "Next Receive ID", nextReceiveLabel);
-        addLabelRow(contentPanel, 6, "Next Sequences", nextSequenceLabel);
+        addRow(contentPanel, 4, "Store Timezone", storeTimezoneField);
+        addLabelRow(contentPanel, 5, "Next Receipt", nextReceiptLabel);
+        addLabelRow(contentPanel, 6, "Next Receive ID", nextReceiveLabel);
+        addLabelRow(contentPanel, 7, "Next Sequences", nextSequenceLabel);
 
         JPanel warningPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         warningPanel.setOpaque(false);
@@ -67,7 +73,7 @@ public class LocalDeviceSettings extends JFrame {
 
         GridBagConstraints warningConstraints = new GridBagConstraints();
         warningConstraints.gridx = 0;
-        warningConstraints.gridy = 7;
+        warningConstraints.gridy = 8;
         warningConstraints.gridwidth = 2;
         warningConstraints.weightx = 1;
         warningConstraints.insets = new Insets(16, 0, 0, 0);
@@ -79,8 +85,10 @@ public class LocalDeviceSettings extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JButton closeButton = new JButton("Close");
         JButton saveButton = new JButton("Save Device ID");
+        JButton saveTimezoneButton = new JButton("Save Store Timezone");
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
+        buttonPanel.add(saveTimezoneButton);
         buttonPanel.add(saveButton);
 
         rootPanel.add(titleLabel, BorderLayout.NORTH);
@@ -108,6 +116,7 @@ public class LocalDeviceSettings extends JFrame {
         refreshButton.addActionListener(e -> loadSettings());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveButton.addActionListener(e -> saveDeviceId());
+        saveTimezoneButton.addActionListener(e -> saveStoreTimezone());
 
         loadSettings();
         WindowHelper.configurePosWindow(this);
@@ -166,6 +175,7 @@ public class LocalDeviceSettings extends JFrame {
             sanitizedPreviewField.setText(settings.deviceId());
             configPathField.setText(settings.configPath().toString());
             currentStoreLabel.setText(getStoreDisplay(settings.storeCode()));
+            storeTimezoneField.setText(getCurrentStoreTimezone());
             nextReceiptLabel.setText(settings.nextReceiptPreview());
             nextReceiveLabel.setText(settings.nextReceivePreview());
             nextSequenceLabel.setText("Receipt: " + settings.nextSequence() + "   Receiving: " + settings.nextReceiveSequence());
@@ -200,6 +210,35 @@ public class LocalDeviceSettings extends JFrame {
         }
     }
 
+    private void saveStoreTimezone() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId == null) {
+            JOptionPane.showMessageDialog(this, "No store is selected.", "Store Timezone", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String timezone = storeTimezoneField.getText().trim();
+        try {
+            ZoneId.of(timezone);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Enter a valid timezone, for example America/New_York.", "Store Timezone", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String sql = "UPDATE locations SET timezone = ? WHERE location_id = ?";
+        try (Connection conn = data.DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, timezone);
+            ps.setInt(2, locationId);
+            ps.executeUpdate();
+            SessionManager.setCurrentLocationTimezone(timezone);
+            JOptionPane.showMessageDialog(this, "Store timezone saved.");
+            loadSettings();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save store timezone.\n\n" + ex.getMessage(), "Store Timezone", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void updateSanitizedPreview() {
         sanitizedPreviewField.setText(ReceiptNumberManager.previewSanitizedDeviceId(deviceIdField.getText()));
     }
@@ -215,5 +254,13 @@ public class LocalDeviceSettings extends JFrame {
             return storeCode;
         }
         return locationName + " (" + storeCode + ")";
+    }
+
+    private String getCurrentStoreTimezone() {
+        String timezone = SessionManager.getCurrentLocationTimezone();
+        if (timezone == null || timezone.isBlank()) {
+            timezone = ZoneId.systemDefault().getId();
+        }
+        return timezone;
     }
 }

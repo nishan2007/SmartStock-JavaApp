@@ -4,6 +4,7 @@ import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import data.DB;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
 
@@ -713,7 +714,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
         lastShownDate = now.format(formatter);
         currentDateLabel.setText("Date: " + lastShownDate);
@@ -723,7 +724,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a");
         currentTimeLabel.setText("Time: " + now.format(formatter));
     }
@@ -731,7 +732,7 @@ public class MakeASale extends JFrame {
     private void startDateRefreshTimer() {
         javax.swing.Timer dateTimer = new javax.swing.Timer(1000, e -> {
             updateCurrentTimeLabel();
-            String today = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy"));
+            String today = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone()).format(DateTimeFormatter.ofPattern("MM/dd/yyyy"));
             if (!today.equals(lastShownDate)) {
                 updateCurrentDateLabel();
             }
@@ -1130,7 +1131,7 @@ public class MakeASale extends JFrame {
 
         String sql = """
                 SELECT hc.held_cart_id,
-                       hc.created_at,
+                       (hc.created_at AT TIME ZONE ?) AS local_created_at,
                        COALESCE(hc.hold_name, '') AS hold_name,
                        COALESCE(hc.user_name, '') AS user_name,
                        COALESCE(ca.name, '') AS customer_name,
@@ -1147,12 +1148,16 @@ public class MakeASale extends JFrame {
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, SessionManager.getCurrentLocationId());
+            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+            ps.setInt(2, SessionManager.getCurrentLocationId());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     model.addRow(new Object[]{
                             rs.getInt("held_cart_id"),
-                            rs.getTimestamp("created_at"),
+                            StoreTimeZoneHelper.formatLocalTimestamp(
+                                    rs.getTimestamp("local_created_at"),
+                                    DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a")
+                            ),
                             rs.getString("hold_name"),
                             rs.getString("user_name"),
                             rs.getString("customer_name"),
