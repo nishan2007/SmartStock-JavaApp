@@ -2,6 +2,7 @@ package ui.screens;
 
 import Receipt.ReceiptBuilder;
 import Receipt.ReceiptData;
+import managers.CompanyCustomizationManager;
 import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
@@ -21,6 +22,7 @@ import javax.swing.table.TableColumnModel;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URL;
@@ -41,9 +43,9 @@ public class MakeASale extends JFrame {
     private static final int CART_COL_ORIGINAL_PRICE = 8;
     private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
+    private static final int SEARCH_CONTROL_HEIGHT = 28;
 
     private JTextField searchField;
-    private JButton searchBtn;
     private JTable cartTable;
     private DefaultTableModel cartModel;
     private boolean updatingCart = false;
@@ -51,7 +53,12 @@ public class MakeASale extends JFrame {
     private JLabel subtotalLabel;
     private JLabel discountAmountLabel;
     private JTextField discountPercentField;
-    private JComboBox<String> paymentMethodBox;
+    private ButtonGroup paymentMethodGroup;
+    private JToggleButton cashPaymentButton;
+    private JToggleButton cardPaymentButton;
+    private JToggleButton chequePaymentButton;
+    private JToggleButton accountPaymentButton;
+    private String selectedPaymentMethod;
     private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton addCustomerAccountButton;
     private JButton checkoutBtn;
@@ -60,6 +67,10 @@ public class MakeASale extends JFrame {
     private JButton resumeHeldCartBtn;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
+    private JLabel companyNameLabel;
+    private JLabel companyLogoLabel;
+    private JLabel appLogoLabel;
+    private JButton productDropdownButton;
     private JButton editItemBtn;
     private JButton newItemBtn;
     private JLabel currentDateLabel;
@@ -69,6 +80,8 @@ public class MakeASale extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
+    private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
+    private boolean updatingCustomerAccountFilter = false;
 
    public MakeASale() {
 
@@ -82,33 +95,68 @@ public class MakeASale extends JFrame {
        setJMenuBar(AppMenuBar.create(this, "MakeASale"));
 
        // Main container
-       JPanel panel = new JPanel(new BorderLayout(10, 10));
-       panel.setBorder(BorderFactory.createEmptyBorder(15,15,15,15));
+       JPanel panel = new JPanel(new BorderLayout(16, 16));
+       panel.setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
+       panel.setBackground(new Color(245, 247, 250));
 
-       // Search area
-       JPanel searchPanel = new JPanel(new BorderLayout(10, 10));
+       // Search and register header
+       JPanel searchPanel = new JPanel(new BorderLayout(0, 14));
+       searchPanel.setOpaque(false);
 
-       JLabel logoLabel = new JLabel();
-       logoLabel.setHorizontalAlignment(SwingConstants.CENTER);
-       ImageIcon centerLogoIcon = loadCenterLogoIcon();
-       if (centerLogoIcon != null) {
-           Image scaledImage = centerLogoIcon.getImage().getScaledInstance(180, 80, Image.SCALE_SMOOTH);
-           logoLabel.setIcon(new ImageIcon(scaledImage));
-       } else {
-           logoLabel.setText("SmartStock");
-       }
+       companyLogoLabel = new JLabel("Logo", SwingConstants.CENTER);
+       companyLogoLabel.setOpaque(true);
+       companyLogoLabel.setBackground(Color.WHITE);
+       companyLogoLabel.setForeground(new Color(100, 116, 139));
+       companyLogoLabel.setBorder(BorderFactory.createLineBorder(new Color(226, 232, 240)));
+       companyLogoLabel.setPreferredSize(new Dimension(300, 96));
 
-       newItemBtn = new JButton("New Item");
-       JLabel searchLabel = new JLabel("Search Product");
-       searchField = new JTextField();
-       searchBtn = new JButton("Search");
-       selectedStoreLabel = new JLabel("Store: Not selected");
-       currentUserLabel = new JLabel("No User currently loged in");
-       editItemBtn = new JButton("Edit Item");
-       currentDateLabel = new JLabel("No date yet");
-       currentTimeLabel = new JLabel("no time yet");
+       companyNameLabel = new JLabel("SmartStock");
+       companyNameLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+       companyNameLabel.setForeground(new Color(17, 24, 39));
+
+       JLabel screenTitleLabel = new JLabel("Point of Sale");
+       screenTitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+       screenTitleLabel.setForeground(new Color(100, 116, 139));
+
+       JPanel brandTextPanel = new JPanel();
+       brandTextPanel.setOpaque(false);
+       brandTextPanel.setLayout(new BoxLayout(brandTextPanel, BoxLayout.Y_AXIS));
+       brandTextPanel.add(companyNameLabel);
+       brandTextPanel.add(Box.createVerticalStrut(4));
+       brandTextPanel.add(screenTitleLabel);
+
+       JPanel brandPanel = new JPanel(new BorderLayout(14, 0));
+       brandPanel.setOpaque(false);
+       brandPanel.add(companyLogoLabel, BorderLayout.WEST);
+       brandPanel.add(brandTextPanel, BorderLayout.CENTER);
+
+       appLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
+       appLogoLabel.setForeground(new Color(100, 116, 139));
+       appLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+       appLogoLabel.setPreferredSize(new Dimension(140, 72));
+       setSmartStockAppLogo();
+
+       newItemBtn = createUtilityButton("New Item");
+       searchField = new PromptTextField("Scan or enter item information");
+       searchField.setFont(new Font("SansSerif", Font.PLAIN, 14));
+       searchField.setForeground(new Color(15, 23, 42));
+       searchField.setCaretColor(new Color(15, 23, 42));
+       searchField.setBackground(Color.WHITE);
+       searchField.setBorder(BorderFactory.createCompoundBorder(
+               BorderFactory.createLineBorder(new Color(203, 213, 225)),
+               BorderFactory.createEmptyBorder(2, 10, 2, 10)
+       ));
+       setFixedControlHeight(searchField, 0);
+       searchField.putClientProperty("JTextField.placeholderText", "Scan or enter item information");
+       productDropdownButton = createProductDropdownButton();
+       selectedStoreLabel = createMetaLabel("Store: Not selected");
+       currentUserLabel = createMetaLabel("No User currently logged in");
+       editItemBtn = createUtilityButton("Edit Item");
+       currentDateLabel = createMetaLabel("No date yet");
+       currentTimeLabel = createMetaLabel("No time yet");
 
        JPanel rightSidePanel = new JPanel();
+       rightSidePanel.setOpaque(false);
        rightSidePanel.setLayout(new BoxLayout(rightSidePanel, BoxLayout.Y_AXIS));
        selectedStoreLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
        currentUserLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
@@ -122,32 +170,47 @@ public class MakeASale extends JFrame {
        rightSidePanel.add(currentDateLabel);
        rightSidePanel.add(Box.createVerticalStrut(5));
        rightSidePanel.add(currentTimeLabel);
-       rightSidePanel.add(Box.createVerticalStrut(10));
+       rightSidePanel.add(Box.createVerticalStrut(8));
        rightSidePanel.add(selectedStoreLabel);
-       rightSidePanel.add(Box.createVerticalStrut(10));
+       rightSidePanel.add(Box.createVerticalStrut(8));
        rightSidePanel.add(currentUserLabel);
 
 
-       JPanel leftSidePanel = new JPanel();
-       leftSidePanel.setLayout(new BoxLayout(leftSidePanel, BoxLayout.Y_AXIS));
-       newItemBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
-       editItemBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+       JPanel leftSidePanel = new JPanel(new GridLayout(0, 1, 0, 8));
+       leftSidePanel.setOpaque(false);
        leftSidePanel.add(newItemBtn);
-       leftSidePanel.add(Box.createVerticalStrut(30));
        leftSidePanel.add(editItemBtn);
 
-       JPanel centerSection = new JPanel(new BorderLayout(20, 10));
+       JPanel centerSection = new JPanel(new BorderLayout(20, 0));
+       centerSection.setOpaque(true);
+       centerSection.setBackground(Color.WHITE);
+       centerSection.setBorder(BorderFactory.createCompoundBorder(
+               BorderFactory.createLineBorder(new Color(226, 232, 240)),
+               BorderFactory.createEmptyBorder(16, 16, 16, 16)
+       ));
+       centerSection.add(brandPanel, BorderLayout.CENTER);
        centerSection.add(leftSidePanel, BorderLayout.WEST);
-       centerSection.add(logoLabel, BorderLayout.CENTER);
-       centerSection.add(rightSidePanel, BorderLayout.EAST);
+       JPanel rightHeaderPanel = new JPanel(new BorderLayout(14, 0));
+       rightHeaderPanel.setOpaque(false);
+       rightHeaderPanel.add(appLogoLabel, BorderLayout.WEST);
+       rightHeaderPanel.add(rightSidePanel, BorderLayout.EAST);
+       centerSection.add(rightHeaderPanel, BorderLayout.EAST);
 
         // Search row (THIS is the important part)
-       JPanel searchRow = new JPanel(new BorderLayout(10, 10));
-       searchRow.add(searchLabel, BorderLayout.WEST);
-       searchRow.add(searchField, BorderLayout.CENTER); // EXPANDS
-       searchRow.add(searchBtn, BorderLayout.EAST);
+       JPanel searchRow = new JPanel(new BorderLayout(12, 0));
+       searchRow.setOpaque(true);
+       searchRow.setBackground(Color.WHITE);
+       searchRow.setBorder(BorderFactory.createCompoundBorder(
+               BorderFactory.createLineBorder(new Color(226, 232, 240)),
+               BorderFactory.createEmptyBorder(7, 14, 7, 14)
+       ));
+       JPanel productSearchPanel = new JPanel(new BorderLayout(0, 0));
+       productSearchPanel.setOpaque(false);
+       productSearchPanel.add(searchField, BorderLayout.CENTER);
+       productSearchPanel.add(productDropdownButton, BorderLayout.EAST);
+       searchRow.add(productSearchPanel, BorderLayout.CENTER);
 
-       searchPanel.add(centerSection, BorderLayout.CENTER);
+       searchPanel.add(centerSection, BorderLayout.NORTH);
        searchPanel.add(searchRow, BorderLayout.SOUTH);
 
 	       // Cart table
@@ -161,10 +224,20 @@ public class MakeASale extends JFrame {
 	                       || column == CART_COL_QTY
 	                       || (column == CART_COL_ITEM_DISCOUNT && canApplySaleDiscount());
 	           }
-	       };
+       };
        cartTable = new JTable(cartModel);
        cartTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+       cartTable.setFont(new Font("SansSerif", Font.PLAIN, 14));
+       cartTable.setRowHeight(34);
+       cartTable.setShowVerticalLines(false);
+       cartTable.setGridColor(new Color(226, 232, 240));
+       cartTable.setSelectionBackground(new Color(219, 234, 254));
+       cartTable.setSelectionForeground(new Color(17, 24, 39));
+       cartTable.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 13));
+       cartTable.getTableHeader().setBackground(new Color(241, 245, 249));
+       cartTable.getTableHeader().setForeground(new Color(51, 65, 85));
        JScrollPane cartScrollPane = new JScrollPane(cartTable);
+       cartScrollPane.setBorder(BorderFactory.createLineBorder(new Color(226, 232, 240)));
 	       cartTable.getColumnModel().getColumn(CART_COL_PRICE).setCellEditor(new DefaultCellEditor(new JTextField()));
 	       cartTable.getColumnModel().getColumn(CART_COL_QTY).setCellEditor(new DefaultCellEditor(new JTextField()));
 	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(new DefaultCellEditor(new JTextField()));
@@ -173,40 +246,78 @@ public class MakeASale extends JFrame {
        panel.add(searchPanel, BorderLayout.NORTH);
        panel.add(cartScrollPane, BorderLayout.CENTER);
 
-       JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
-       bottomPanel.add(new JLabel("Customer:"));
        customerAccountBox = new JComboBox<>();
-       customerAccountBox.setPreferredSize(new Dimension(260, 28));
-       bottomPanel.add(customerAccountBox);
-       addCustomerAccountButton = new JButton("New Customer");
-       bottomPanel.add(addCustomerAccountButton);
-	       bottomPanel.add(new JLabel("Payment Method:"));
-	       paymentMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
-	       bottomPanel.add(paymentMethodBox);
-
-	       bottomPanel.add(new JLabel("Discount %:"));
+       customerAccountBox.setEditable(true);
+       customerAccountBox.setEditor(new PromptComboBoxEditor("Enter customer name"));
+       customerAccountBox.setBorder(BorderFactory.createLineBorder(new Color(203, 213, 225)));
+       customerAccountBox.setBackground(Color.WHITE);
+       customerAccountBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
+       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false));
+       setFixedControlHeight(customerAccountBox, 360);
+       customerAccountBox.setRenderer(new CustomerAccountRenderer());
+       addCustomerAccountButton = createUtilityButton("New Customer");
+       paymentMethodGroup = new ButtonGroup();
+       cashPaymentButton = createPaymentMethodButton("Cash", "CASH");
+       cardPaymentButton = createPaymentMethodButton("Card", "CARD");
+       chequePaymentButton = createPaymentMethodButton("Cheque", "CHEQUE");
+       accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT");
 	       discountPercentField = new JTextField("0", 5);
+       discountPercentField.setForeground(new Color(15, 23, 42));
+       discountPercentField.setCaretColor(new Color(15, 23, 42));
+       discountPercentField.setBackground(Color.WHITE);
 	       discountPercentField.setEnabled(canApplySaleDiscount());
 	       if (!canApplySaleDiscount()) {
 	           discountPercentField.setToolTipText("Requires Apply Sale Discount permission.");
 	       }
-	       bottomPanel.add(discountPercentField);
+       setFixedControlHeight(discountPercentField, 70);
 
-	       subtotalLabel = new JLabel("Subtotal: $0.00");
-	       bottomPanel.add(subtotalLabel);
-	       discountAmountLabel = new JLabel("Discount: $0.00");
-	       bottomPanel.add(discountAmountLabel);
-	       totalLabel = new JLabel("Overall Total: $0.00");
-	       bottomPanel.add(totalLabel);
+       JPanel customerControlsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+       customerControlsPanel.setOpaque(false);
+       customerControlsPanel.add(customerAccountBox);
+       customerControlsPanel.add(addCustomerAccountButton);
+       searchRow.add(customerControlsPanel, BorderLayout.EAST);
 
-       checkoutBtn = new JButton("Checkout");
-       checkoutPrintBtn = new JButton("Checkout & Print");
-       holdCartBtn = new JButton("Hold Cart");
-       resumeHeldCartBtn = new JButton("Resume Hold");
-       bottomPanel.add(holdCartBtn);
-       bottomPanel.add(resumeHeldCartBtn);
-       bottomPanel.add(checkoutBtn);
-       bottomPanel.add(checkoutPrintBtn);
+       JPanel bottomPanel = new JPanel(new BorderLayout(14, 10));
+       bottomPanel.setOpaque(true);
+       bottomPanel.setBackground(Color.WHITE);
+       bottomPanel.setBorder(BorderFactory.createCompoundBorder(
+               BorderFactory.createLineBorder(new Color(226, 232, 240)),
+               BorderFactory.createEmptyBorder(14, 14, 14, 14)
+       ));
+
+       JPanel totalsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 14, 6));
+       totalsPanel.setOpaque(false);
+       JPanel transactionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 6));
+       transactionPanel.setOpaque(false);
+       transactionPanel.add(cashPaymentButton);
+       transactionPanel.add(cardPaymentButton);
+       transactionPanel.add(chequePaymentButton);
+       transactionPanel.add(accountPaymentButton);
+       transactionPanel.add(buildLabeledControl("Discount %", discountPercentField));
+	       subtotalLabel = createTotalLabel("Subtotal: $0.00", false);
+	       totalsPanel.add(subtotalLabel);
+	       discountAmountLabel = createTotalLabel("Discount: $0.00", false);
+	       totalsPanel.add(discountAmountLabel);
+	       totalLabel = createTotalLabel("Overall Total: $0.00", true);
+	       totalsPanel.add(totalLabel);
+
+       JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 4));
+       actionPanel.setOpaque(false);
+       checkoutBtn = createCheckoutButton("Checkout");
+       checkoutPrintBtn = createCheckoutButton("Checkout & Print");
+       holdCartBtn = createUtilityButton("Hold Cart");
+       resumeHeldCartBtn = createUtilityButton("Resume Hold");
+       actionPanel.add(holdCartBtn);
+       actionPanel.add(resumeHeldCartBtn);
+       actionPanel.add(checkoutBtn);
+       actionPanel.add(checkoutPrintBtn);
+
+       JPanel bottomTopPanel = new JPanel(new BorderLayout(8, 4));
+       bottomTopPanel.setOpaque(false);
+       bottomTopPanel.add(transactionPanel, BorderLayout.WEST);
+       bottomTopPanel.add(totalsPanel, BorderLayout.EAST);
+       bottomPanel.add(bottomTopPanel, BorderLayout.CENTER);
+       bottomPanel.add(actionPanel, BorderLayout.SOUTH);
 
        panel.add(bottomPanel, BorderLayout.SOUTH);
 
@@ -242,11 +353,6 @@ public class MakeASale extends JFrame {
                }
                EditItem screen = new EditItem();
                WindowHelper.showPosWindow(screen, MakeASale.this);
-           }
-       });
-       searchBtn.addActionListener(new ActionListener() {
-           public void actionPerformed(ActionEvent e) {
-               searchProducts();
            }
        });
        searchField.addActionListener(new ActionListener() {
@@ -307,6 +413,23 @@ public class MakeASale extends JFrame {
                }
            }
        });
+       searchField.addFocusListener(new java.awt.event.FocusAdapter() {
+           @Override
+           public void focusGained(java.awt.event.FocusEvent e) {
+               searchProducts(false);
+           }
+       });
+       searchField.addMouseListener(new java.awt.event.MouseAdapter() {
+           @Override
+           public void mouseClicked(java.awt.event.MouseEvent e) {
+               searchProducts(false);
+           }
+       });
+       productDropdownButton.addActionListener(e -> {
+           searchField.requestFocusInWindow();
+           searchProducts(false);
+       });
+       configureCustomerAccountSearch();
        cartModel.addTableModelListener(e -> {
            if (updatingCart) {
                return;
@@ -327,7 +450,6 @@ public class MakeASale extends JFrame {
        holdCartBtn.addActionListener(e -> holdCurrentCart());
        resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
        addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
-	       paymentMethodBox.addActionListener(e -> updateCustomerAccountEnabled());
 	       discountPercentField.getDocument().addDocumentListener(new DocumentListener() {
 	           private void refreshTotals() {
 	               SwingUtilities.invokeLater(() -> {
@@ -363,8 +485,275 @@ public class MakeASale extends JFrame {
        updateCurrentUserLabel(); //displays the current user
 	       loadCustomerAccounts();
 	       updateCustomerAccountEnabled();
+       loadCompanyBranding();
 	       WindowHelper.showPosWindow(this); //runs last for the main UI to show
 	   }
+
+    private JButton createPrimaryButton(String text) {
+        JButton button = new JButton(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 14));
+        button.setFocusPainted(false);
+        button.setForeground(new Color(15, 23, 42));
+        button.setBackground(new Color(37, 99, 235));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(29, 78, 216)),
+                BorderFactory.createEmptyBorder(8, 16, 8, 16)
+        ));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return button;
+    }
+
+    private JButton createCheckoutButton(String text) {
+        JButton button = new JButton(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 14));
+        button.setFocusPainted(false);
+        button.setForeground(Color.WHITE);
+        button.setBackground(new Color(220, 38, 38));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(185, 28, 28)),
+                BorderFactory.createEmptyBorder(8, 18, 8, 18)
+        ));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setEnabled(false);
+        return button;
+    }
+
+    private JToggleButton createPaymentMethodButton(String label, String method) {
+        JToggleButton button = new JToggleButton(label);
+        button.setFont(new Font("SansSerif", Font.BOLD, 14));
+        button.setFocusPainted(false);
+        button.setForeground(Color.WHITE);
+        button.setBackground(new Color(37, 99, 235));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(29, 78, 216)),
+                BorderFactory.createEmptyBorder(8, 18, 8, 18)
+        ));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 118 : 96, 40));
+        button.setMinimumSize(button.getPreferredSize());
+        button.addActionListener(e -> selectPaymentMethod(method));
+        paymentMethodGroup.add(button);
+        return button;
+    }
+
+    private void selectPaymentMethod(String method) {
+        selectedPaymentMethod = method;
+        if ("CASH".equals(method) && cashPaymentButton != null) {
+            cashPaymentButton.setSelected(true);
+        } else if ("CARD".equals(method) && cardPaymentButton != null) {
+            cardPaymentButton.setSelected(true);
+        } else if ("CHEQUE".equals(method) && chequePaymentButton != null) {
+            chequePaymentButton.setSelected(true);
+        } else if ("ACCOUNT".equals(method) && accountPaymentButton != null) {
+            accountPaymentButton.setSelected(true);
+        }
+        updatePaymentButtonStyles();
+        updateCheckoutAvailability();
+        updateCustomerAccountEnabled();
+    }
+
+    private void updatePaymentButtonStyles() {
+        stylePaymentButton(cashPaymentButton, "CASH".equals(selectedPaymentMethod));
+        stylePaymentButton(cardPaymentButton, "CARD".equals(selectedPaymentMethod));
+        stylePaymentButton(chequePaymentButton, "CHEQUE".equals(selectedPaymentMethod));
+        stylePaymentButton(accountPaymentButton, "ACCOUNT".equals(selectedPaymentMethod));
+    }
+
+    private void stylePaymentButton(JToggleButton button, boolean selected) {
+        if (button == null) {
+            return;
+        }
+        button.setBackground(selected ? new Color(30, 64, 175) : new Color(37, 99, 235));
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(selected ? new Color(15, 23, 42) : new Color(29, 78, 216), selected ? 2 : 1),
+                BorderFactory.createEmptyBorder(selected ? 7 : 8, selected ? 17 : 18, selected ? 7 : 8, selected ? 17 : 18)
+        ));
+    }
+
+    private void updateCheckoutAvailability() {
+        boolean hasPaymentMethod = selectedPaymentMethod != null && !selectedPaymentMethod.isBlank();
+        if (checkoutBtn != null) {
+            checkoutBtn.setEnabled(hasPaymentMethod);
+        }
+        if (checkoutPrintBtn != null) {
+            checkoutPrintBtn.setEnabled(hasPaymentMethod);
+        }
+    }
+
+    private JButton createUtilityButton(String text) {
+        JButton button = new JButton(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 13));
+        button.setFocusPainted(false);
+        button.setForeground(new Color(30, 41, 59));
+        button.setBackground(new Color(248, 250, 252));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(203, 213, 225)),
+                BorderFactory.createEmptyBorder(7, 13, 7, 13)
+        ));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return button;
+    }
+
+    private JButton createProductDropdownButton() {
+        JButton button = new JButton("▼");
+        button.setFont(new Font("SansSerif", Font.BOLD, 11));
+        button.setForeground(Color.WHITE);
+        button.setBackground(new Color(22, 163, 74));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setFocusPainted(false);
+        button.setBorder(BorderFactory.createLineBorder(new Color(21, 128, 61)));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Dimension size = new Dimension(38, SEARCH_CONTROL_HEIGHT);
+        button.setPreferredSize(size);
+        button.setMinimumSize(size);
+        button.setMaximumSize(size);
+        button.setToolTipText("Show product list");
+        return button;
+    }
+
+    private JLabel createMetaLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(new Font("SansSerif", Font.BOLD, 13));
+        label.setForeground(new Color(71, 85, 105));
+        return label;
+    }
+
+    private JLabel createTotalLabel(String text, boolean prominent) {
+        JLabel label = new JLabel(text);
+        label.setFont(new Font("SansSerif", prominent ? Font.BOLD : Font.PLAIN, prominent ? 18 : 14));
+        label.setForeground(prominent ? new Color(15, 23, 42) : new Color(71, 85, 105));
+        return label;
+    }
+
+    private void setFixedControlHeight(JComponent component, int width) {
+        int controlWidth = Math.max(width, 0);
+        Dimension preferred = new Dimension(controlWidth, SEARCH_CONTROL_HEIGHT);
+        Dimension minimum = new Dimension(controlWidth, SEARCH_CONTROL_HEIGHT);
+        Dimension maximum = new Dimension(controlWidth == 0 ? Integer.MAX_VALUE : controlWidth, SEARCH_CONTROL_HEIGHT);
+        component.setPreferredSize(preferred);
+        component.setMinimumSize(minimum);
+        component.setMaximumSize(maximum);
+    }
+
+    private static class CustomerAccountRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            label.setFont(new Font("SansSerif", Font.PLAIN, 14));
+            label.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+            if (value == null) {
+                label.setText("");
+            }
+            if (index == -1) {
+                label.setPreferredSize(new Dimension(label.getPreferredSize().width, SEARCH_CONTROL_HEIGHT - 2));
+            }
+            return label;
+        }
+    }
+
+    private JPanel buildLabeledControl(String label, JComponent control) {
+        JPanel panel = new JPanel(new BorderLayout(0, 4));
+        panel.setOpaque(false);
+        JLabel title = new JLabel(label);
+        title.setFont(new Font("SansSerif", Font.BOLD, 11));
+        title.setForeground(new Color(100, 116, 139));
+        panel.add(title, BorderLayout.NORTH);
+        panel.add(control, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void loadCompanyBranding() {
+        if (companyNameLabel == null || companyLogoLabel == null) {
+            return;
+        }
+
+        companyNameLabel.setText("SmartStock");
+        companyLogoLabel.setText("Logo");
+        companyLogoLabel.setIcon(null);
+
+        new SwingWorker<CompanyBranding, Void>() {
+            @Override
+            protected CompanyBranding doInBackground() {
+                CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+                BufferedImage logo = CompanyCustomizationManager.loadCompanyLogo(settings);
+                return new CompanyBranding(settings.companyName(), logo);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    CompanyBranding branding = get();
+                    companyNameLabel.setText(branding.companyName());
+                    if (branding.logo() != null) {
+                        setCompanyLogo(branding.logo());
+                    } else {
+                        setFallbackCompanyLogo();
+                    }
+                } catch (Exception ex) {
+                    setFallbackCompanyLogo();
+                }
+            }
+        }.execute();
+    }
+
+    private void setCompanyLogo(BufferedImage logo) {
+        Image scaled = scaleToFit(logo, 280, 84);
+        companyLogoLabel.setText("");
+        companyLogoLabel.setIcon(new ImageIcon(scaled));
+    }
+
+    private void setFallbackCompanyLogo() {
+        ImageIcon centerLogoIcon = loadCenterLogoIcon();
+        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
+            Image scaled = scaleToFit(centerLogoIcon.getImage(), 280, 84);
+            companyLogoLabel.setText("");
+            companyLogoLabel.setIcon(new ImageIcon(scaled));
+            return;
+        }
+
+        companyLogoLabel.setIcon(null);
+        String name = companyNameLabel == null ? "S" : companyNameLabel.getText().trim();
+        companyLogoLabel.setText(name.isBlank() ? "S" : name.substring(0, 1).toUpperCase());
+        companyLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+    }
+
+    private void setSmartStockAppLogo() {
+        if (appLogoLabel == null) {
+            return;
+        }
+        ImageIcon centerLogoIcon = loadCenterLogoIcon();
+        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
+            Image scaled = scaleToFit(centerLogoIcon.getImage(), 132, 58);
+            appLogoLabel.setText("");
+            appLogoLabel.setIcon(new ImageIcon(scaled));
+            return;
+        }
+
+        appLogoLabel.setIcon(null);
+        appLogoLabel.setText("SmartStock");
+    }
+
+    private Image scaleToFit(Image image, int maxWidth, int maxHeight) {
+        int width = Math.max(image.getWidth(null), 1);
+        int height = Math.max(image.getHeight(null), 1);
+        double scale = Math.min((double) maxWidth / width, (double) maxHeight / height);
+        scale = Math.min(scale, 1.0);
+        int targetWidth = Math.max((int) Math.round(width * scale), 1);
+        int targetHeight = Math.max((int) Math.round(height * scale), 1);
+        return image.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH);
+    }
+
+    private record CompanyBranding(String companyName, BufferedImage logo) {
+    }
 
 
     private ImageIcon loadCenterLogoIcon() {
@@ -564,14 +953,6 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        if (searchText.isEmpty()) {
-            closeSearchPopup();
-            if (showMessages) {
-                JOptionPane.showMessageDialog(this, "Type a product name or SKU first.");
-            }
-            return;
-        }
-
         String sql = """
             SELECT p.product_id, p.name, p.description, p.sku, p.price,
                    COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
@@ -579,16 +960,18 @@ public class MakeASale extends JFrame {
             LEFT JOIN inventory i
                 ON p.product_id = i.product_id
                AND i.location_id = ?
-            WHERE p.name ILIKE ? OR p.sku ILIKE ?
+            WHERE (? = '' OR p.name ILIKE ? OR p.sku ILIKE ?)
             ORDER BY p.name
+            LIMIT 250
             """;
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setInt(1, SessionManager.getCurrentLocationId());
-            ps.setString(2, "%" + searchText + "%");
+            ps.setString(2, searchText);
             ps.setString(3, "%" + searchText + "%");
+            ps.setString(4, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
 
@@ -608,7 +991,7 @@ public class MakeASale extends JFrame {
             if (rows.isEmpty()) {
                 closeSearchPopup();
                 if (showMessages) {
-                    JOptionPane.showMessageDialog(this, "No matching products found.");
+                    JOptionPane.showMessageDialog(this, searchText.isEmpty() ? "No products found for this store." : "No matching products found.");
                 }
                 return;
             }
@@ -1005,8 +1388,9 @@ public class MakeASale extends JFrame {
             return;
         }
 
+        CustomerAccountOption selectedBeforeReload = getSelectedCustomerAccount();
+        customerAccountOptions = new java.util.ArrayList<>();
         customerAccountBox.removeAllItems();
-        customerAccountBox.addItem(null);
 
         String sql = """
                 SELECT customer_id,
@@ -1026,7 +1410,7 @@ public class MakeASale extends JFrame {
              ResultSet rs = ps.executeQuery()) {
 
             while (rs.next()) {
-                customerAccountBox.addItem(new CustomerAccountOption(
+                customerAccountOptions.add(new CustomerAccountOption(
                         rs.getInt("customer_id"),
                         rs.getString("account_number"),
                         rs.getString("name"),
@@ -1035,6 +1419,10 @@ public class MakeASale extends JFrame {
                         rs.getBigDecimal("available_credit"),
                         rs.getBoolean("is_business")
                 ));
+            }
+            applyCustomerAccountFilter("", false);
+            if (selectedBeforeReload != null) {
+                selectCustomerById(selectedBeforeReload.customerId);
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
@@ -1049,6 +1437,101 @@ public class MakeASale extends JFrame {
 
     private void updateCustomerAccountEnabled() {
         customerAccountBox.setEnabled(true);
+    }
+
+    private void configureCustomerAccountSearch() {
+        if (customerAccountBox == null || customerAccountBox.getEditor() == null) {
+            return;
+        }
+
+        Component editorComponent = customerAccountBox.getEditor().getEditorComponent();
+        if (!(editorComponent instanceof JTextField editorField)) {
+            return;
+        }
+
+        editorField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createEmptyBorder(),
+                BorderFactory.createEmptyBorder(0, 8, 0, 8)
+        ));
+        editorField.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        editorField.setForeground(new Color(15, 23, 42));
+        editorField.setCaretColor(new Color(15, 23, 42));
+        editorField.setBackground(Color.WHITE);
+        setFixedControlHeight(editorField, 0);
+        if (editorField instanceof PromptTextField promptTextField) {
+            promptTextField.setPrompt("Enter customer name");
+        }
+        editorField.putClientProperty("JTextField.placeholderText", "Enter customer name");
+        editorField.getDocument().addDocumentListener(new DocumentListener() {
+            private void filter() {
+                if (updatingCustomerAccountFilter) {
+                    return;
+                }
+                SwingUtilities.invokeLater(() -> applyCustomerAccountFilter(editorField.getText(), true));
+            }
+
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                filter();
+            }
+        });
+    }
+
+    private void applyCustomerAccountFilter(String text, boolean showPopup) {
+        if (customerAccountBox == null) {
+            return;
+        }
+
+        String filter = text == null ? "" : text.trim();
+        updatingCustomerAccountFilter = true;
+        try {
+            DefaultComboBoxModel<CustomerAccountOption> model = new DefaultComboBoxModel<>();
+            model.addElement(null);
+            for (CustomerAccountOption option : customerAccountOptions) {
+                if (filter.isBlank() || option.matches(filter)) {
+                    model.addElement(option);
+                }
+            }
+            customerAccountBox.setModel(model);
+            customerAccountBox.setSelectedItem(filter);
+            customerAccountBox.getEditor().setItem(filter);
+        } finally {
+            updatingCustomerAccountFilter = false;
+        }
+
+        if (showPopup && customerAccountBox.isShowing()) {
+            customerAccountBox.setPopupVisible(customerAccountBox.getItemCount() > 1);
+        }
+    }
+
+    private CustomerAccountOption getSelectedCustomerAccount() {
+        Object selected = customerAccountBox == null ? null : customerAccountBox.getSelectedItem();
+        if (selected instanceof CustomerAccountOption option) {
+            return option;
+        }
+
+        if (customerAccountBox != null && customerAccountBox.getEditor() != null) {
+            Object editorItem = customerAccountBox.getEditor().getItem();
+            String text = editorItem == null ? "" : editorItem.toString().trim();
+            if (!text.isBlank()) {
+                for (CustomerAccountOption option : customerAccountOptions) {
+                    if (option.matchesExact(text)) {
+                        return option;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void checkout(boolean showReceiptPreview) {
@@ -1068,8 +1551,13 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        String paymentMethod = (String) paymentMethodBox.getSelectedItem();
-        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
+        String paymentMethod = selectedPaymentMethod;
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Select a payment method before checkout.");
+            updateCheckoutAvailability();
+            return;
+        }
+        CustomerAccountOption selectedCustomer = getSelectedCustomerAccount();
 
         boolean chargeCustomerAccount = "ACCOUNT".equals(paymentMethod);
         boolean cashPayment = "CASH".equals(paymentMethod);
@@ -1319,7 +1807,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-	        CustomerAccountOption selectedCustomer = customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option ? option : null;
+	        CustomerAccountOption selectedCustomer = getSelectedCustomerAccount();
         BigDecimal subtotalAmount = getCartGrossSubtotal();
         BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal itemDiscountTotal = getItemDiscountTotal();
@@ -1375,7 +1863,7 @@ public class MakeASale extends JFrame {
                         holdStmt.setInt(4, selectedCustomer.customerId);
 	                    }
 	                    holdStmt.setString(5, holdName.trim());
-	                    holdStmt.setString(6, String.valueOf(paymentMethodBox.getSelectedItem()));
+	                    holdStmt.setString(6, selectedPaymentMethod == null ? "" : selectedPaymentMethod);
 	                    holdStmt.setBigDecimal(7, subtotalAmount);
 	                    holdStmt.setBigDecimal(8, discountPercent);
 	                    holdStmt.setBigDecimal(9, discountAmount);
@@ -1607,7 +2095,7 @@ public class MakeASale extends JFrame {
         }
 
 	        if (paymentMethod != null && !paymentMethod.isBlank()) {
-	            paymentMethodBox.setSelectedItem(paymentMethod);
+	            selectPaymentMethod(paymentMethod);
 	        }
 	        if (discountPercentField != null) {
 	            discountPercentField.setText(discountPercent == null ? "0" : discountPercent.stripTrailingZeros().toPlainString());
@@ -1627,21 +2115,34 @@ public class MakeASale extends JFrame {
 
     private void selectCustomerById(Integer customerId) {
         if (customerId == null) {
-            customerAccountBox.setSelectedItem(null);
+            customerAccountBox.setSelectedItem("");
+            if (customerAccountBox.getEditor() != null) {
+                customerAccountBox.getEditor().setItem("");
+            }
             return;
         }
-        for (int i = 0; i < customerAccountBox.getItemCount(); i++) {
-            Object item = customerAccountBox.getItemAt(i);
-            if (item instanceof CustomerAccountOption option && option.customerId == customerId) {
-                customerAccountBox.setSelectedIndex(i);
+        applyCustomerAccountFilter("", false);
+        for (int i = 0; i < customerAccountOptions.size(); i++) {
+            CustomerAccountOption option = customerAccountOptions.get(i);
+            if (option.customerId == customerId) {
+                customerAccountBox.setSelectedItem(option);
                 return;
             }
         }
     }
 
     private void clearHeldCartSelection() {
-        customerAccountBox.setSelectedItem(null);
-        paymentMethodBox.setSelectedItem("CASH");
+        applyCustomerAccountFilter("", false);
+        customerAccountBox.setSelectedItem("");
+        if (customerAccountBox.getEditor() != null) {
+            customerAccountBox.getEditor().setItem("");
+        }
+        selectedPaymentMethod = null;
+        if (paymentMethodGroup != null) {
+            paymentMethodGroup.clearSelection();
+        }
+        updatePaymentButtonStyles();
+        updateCheckoutAvailability();
         if (discountPercentField != null) {
             discountPercentField.setText("0");
         }
@@ -1847,6 +2348,51 @@ public class MakeASale extends JFrame {
         return result[0];
     }
 
+    private static class PromptTextField extends JTextField {
+        private String prompt;
+
+        private PromptTextField(String prompt) {
+            this.prompt = prompt == null ? "" : prompt;
+        }
+
+        private void setPrompt(String prompt) {
+            this.prompt = prompt == null ? "" : prompt;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            if (!getText().isEmpty() || prompt.isBlank()) {
+                return;
+            }
+
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setColor(new Color(100, 116, 139));
+            g2.setFont(getFont());
+            Insets insets = getInsets();
+            FontMetrics metrics = g2.getFontMetrics();
+            int y = ((getHeight() - metrics.getHeight()) / 2) + metrics.getAscent();
+            g2.drawString(prompt, insets.left, y);
+            g2.dispose();
+        }
+    }
+
+    private static class PromptComboBoxEditor extends javax.swing.plaf.basic.BasicComboBoxEditor {
+        private final PromptTextField promptField;
+
+        private PromptComboBoxEditor(String prompt) {
+            promptField = new PromptTextField(prompt);
+            editor = promptField;
+        }
+
+        @Override
+        public Component getEditorComponent() {
+            return promptField;
+        }
+    }
+
     private static class CustomerAccountOption {
         private final int customerId;
         private final String accountNumber;
@@ -1871,6 +2417,23 @@ public class MakeASale extends JFrame {
             String accountLabel = accountNumber.isBlank() ? "" : accountNumber + " - ";
             String typeLabel = businessAccount ? "Business" : "Personal";
             return accountLabel + name + " [" + typeLabel + "] (Available: $" + availableCredit + ")";
+        }
+
+        private boolean matches(String filter) {
+            String normalized = filter == null ? "" : filter.trim().toLowerCase();
+            if (normalized.isBlank()) {
+                return true;
+            }
+            return accountNumber.toLowerCase().contains(normalized)
+                    || name.toLowerCase().contains(normalized)
+                    || toString().toLowerCase().contains(normalized);
+        }
+
+        private boolean matchesExact(String value) {
+            String normalized = value == null ? "" : value.trim();
+            return normalized.equalsIgnoreCase(toString())
+                    || normalized.equalsIgnoreCase(accountNumber)
+                    || normalized.equalsIgnoreCase(name);
         }
     }
 

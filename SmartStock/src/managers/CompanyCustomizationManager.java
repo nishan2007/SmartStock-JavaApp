@@ -235,6 +235,10 @@ public class CompanyCustomizationManager {
     }
 
     public static String uploadReceiptLogo(Path sourcePath) throws Exception {
+        return uploadCompanyLogo(sourcePath);
+    }
+
+    public static String uploadCompanyLogo(Path sourcePath) throws Exception {
         if (sourcePath == null || !Files.exists(sourcePath)) {
             throw new IOException("Logo file was not found.");
         }
@@ -255,6 +259,14 @@ public class CompanyCustomizationManager {
 
     public static BufferedImage loadReceiptLogo(ReceiptSettings settings) {
         if (settings == null || !settings.showLogo() || settings.logoPath().isBlank()) {
+            return null;
+        }
+
+        return loadCompanyLogo(settings);
+    }
+
+    public static BufferedImage loadCompanyLogo(ReceiptSettings settings) {
+        if (settings == null || settings.logoPath().isBlank()) {
             return null;
         }
 

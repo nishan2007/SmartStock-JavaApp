@@ -30,6 +30,7 @@ import ui.screens.ViewSales;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
+import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.sql.Connection;
@@ -65,7 +66,7 @@ public class AppMenuBar {
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem locationManagementItem = new JMenuItem("Locations");
-        JMenuItem companyCustomizationItem = new JMenuItem("Company Customization");
+        JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
@@ -91,7 +92,7 @@ public class AppMenuBar {
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
-        boolean canCompanyCustomization = PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+        boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
@@ -395,7 +396,7 @@ public class AppMenuBar {
 
         companyCustomizationItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("COMPANY_CUSTOMIZATION", parent, "Company Customization")) {
+                if (!requireCompanyPreferencesPermission(parent)) {
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(CompanyCustomization.class)) {
@@ -506,6 +507,24 @@ public class AppMenuBar {
         menuBar.add(sessionMenu);
 
         return menuBar;
+    }
+
+    private static boolean hasCompanyPreferencesPermission() {
+        return PermissionManager.hasPermission("COMPANY_PREFERENCES")
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+    }
+
+    private static boolean requireCompanyPreferencesPermission(Component parent) {
+        if (hasCompanyPreferencesPermission()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(
+                parent,
+                "You do not have permission to access Company Preferences.",
+                "Access Denied",
+                JOptionPane.WARNING_MESSAGE
+        );
+        return false;
     }
 
 

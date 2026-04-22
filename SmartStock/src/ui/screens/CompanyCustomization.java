@@ -42,7 +42,7 @@ public class CompanyCustomization extends JFrame {
     private boolean loadingSettings = false;
 
     public CompanyCustomization() {
-        setTitle("Company Customization");
+        setTitle("Company Preferences");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(900, 640);
         setLocationRelativeTo(null);
@@ -52,14 +52,14 @@ public class CompanyCustomization extends JFrame {
         rootPanel.setBorder(new EmptyBorder(24, 24, 24, 24));
         rootPanel.setBackground(new Color(245, 247, 250));
 
-        JLabel titleLabel = new JLabel("Company Customization");
+        JLabel titleLabel = new JLabel("Company Preferences");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
         titleLabel.setForeground(new Color(32, 41, 57));
         rootPanel.add(titleLabel, BorderLayout.NORTH);
 
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
-        contentPanel.add(buildReceiptFormattingPanel(), BorderLayout.CENTER);
+        contentPanel.add(buildPreferencesPanel(), BorderLayout.CENTER);
         contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
         rootPanel.add(contentPanel, BorderLayout.CENTER);
 
@@ -84,6 +84,36 @@ public class CompanyCustomization extends JFrame {
         WindowHelper.configurePosWindow(this);
     }
 
+    private JPanel buildPreferencesPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setOpaque(false);
+        panel.add(buildCompanyIdentityPanel());
+        panel.add(Box.createVerticalStrut(16));
+        panel.add(buildReceiptFormattingPanel());
+        return panel;
+    }
+
+    private JPanel buildCompanyIdentityPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(18, 18, 18, 18)
+        ));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel sectionLabel = new JLabel("Company Identity");
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        addWide(panel, sectionLabel, 0);
+
+        logoPathField.setEditable(false);
+        addRow(panel, 1, "Company Name", companyNameField);
+        addRow(panel, 2, "Company Logo", buildLogoFilePanel());
+
+        return panel;
+    }
+
     private JPanel buildReceiptFormattingPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(Color.WHITE);
@@ -91,21 +121,19 @@ public class CompanyCustomization extends JFrame {
                 BorderFactory.createLineBorder(new Color(220, 224, 230)),
                 new EmptyBorder(18, 18, 18, 18)
         ));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         JLabel sectionLabel = new JLabel("Receipt Formatting");
         sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
         addWide(panel, sectionLabel, 0);
 
-        logoPathField.setEditable(false);
         configPathField.setEditable(false);
         configPathField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         configPathField.setText(CompanyCustomizationManager.getConfigPath().toString());
 
-        addRow(panel, 1, "Company Name", companyNameField);
-        addRow(panel, 2, "Header Line", headerLineField);
-        addRow(panel, 3, "Footer Line", footerLineField);
-        addRow(panel, 4, "Logo File", buildLogoFilePanel());
-        addRow(panel, 5, "Config File", configPathField);
+        addRow(panel, 1, "Header Line", headerLineField);
+        addRow(panel, 2, "Footer Line", footerLineField);
+        addRow(panel, 3, "Config File", configPathField);
 
         JPanel optionsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
         optionsPanel.setOpaque(false);
@@ -116,7 +144,7 @@ public class CompanyCustomization extends JFrame {
         optionsPanel.add(showSkuBox);
         optionsPanel.add(showItemDiscountBox);
         optionsPanel.add(showPaymentStatusBox);
-        addWide(panel, optionsPanel, 6);
+        addWide(panel, optionsPanel, 4);
 
         return panel;
     }
@@ -227,9 +255,9 @@ public class CompanyCustomization extends JFrame {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
-            JOptionPane.showMessageDialog(this, "Company customization saved.");
+            JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save company customization.\n\n" + ex.getMessage(), "Company Customization", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -251,7 +279,7 @@ public class CompanyCustomization extends JFrame {
 
     private void uploadLogo() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Select Receipt Logo");
+        chooser.setDialogTitle("Select Company Logo");
         chooser.setFileFilter(new FileNameExtensionFilter("Image Files", "png", "jpg", "jpeg", "gif", "bmp"));
         int result = chooser.showOpenDialog(this);
         if (result != JFileChooser.APPROVE_OPTION) {
@@ -260,7 +288,7 @@ public class CompanyCustomization extends JFrame {
 
         File selectedFile = chooser.getSelectedFile();
         try {
-            String uploadedPath = CompanyCustomizationManager.uploadReceiptLogo(selectedFile.toPath());
+            String uploadedPath = CompanyCustomizationManager.uploadCompanyLogo(selectedFile.toPath());
             logoPathField.setText(uploadedPath);
             showLogoBox.setSelected(true);
             updateLogoPreview(uploadedPath);

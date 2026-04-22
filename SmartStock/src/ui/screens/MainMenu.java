@@ -91,7 +91,7 @@ public class MainMenu extends JFrame {
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
         locationManagementButton = createMenuButton("Locations", "Manage store locations", loadIcon("src/ICONS/Security.png"));
-        companyCustomizationButton = createMenuButton("Company Customization", "Customize receipt branding", loadIcon("src/ICONS/Security.png"));
+        companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/Security.png"));
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
         hardwareSetupButton = createMenuButton("Hardware Setup", "Configure POS printers", loadIcon("src/ICONS/Security.png"));
         applyPermissions();
@@ -377,7 +377,7 @@ public class MainMenu extends JFrame {
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
-        boolean canCompanyCustomization = PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+        boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
 
@@ -516,7 +516,7 @@ public class MainMenu extends JFrame {
             NavigationManager.openLocationManagement(this);
         });
         companyCustomizationButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("COMPANY_CUSTOMIZATION", this, "Company Customization")) {
+            if (!requireCompanyPreferencesPermission()) {
                 return;
             }
             NavigationManager.openCompanyCustomization(this);
@@ -597,6 +597,24 @@ public class MainMenu extends JFrame {
         button.add(textPanel, BorderLayout.CENTER);
 
         return button;
+    }
+
+    private boolean hasCompanyPreferencesPermission() {
+        return PermissionManager.hasPermission("COMPANY_PREFERENCES")
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+    }
+
+    private boolean requireCompanyPreferencesPermission() {
+        if (hasCompanyPreferencesPermission()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(
+                this,
+                "You do not have permission to access Company Preferences.",
+                "Access Denied",
+                JOptionPane.WARNING_MESSAGE
+        );
+        return false;
     }
 
     public JButton getMakeSaleButton() {

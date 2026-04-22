@@ -114,6 +114,7 @@ public class PermissionManager {
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("LOCATION_MANAGEMENT")
+                    || hasPermission("COMPANY_PREFERENCES")
                     || hasPermission("COMPANY_CUSTOMIZATION")
                     || hasPermission("HARDWARE_SETUP")
                     || hasPermission("LOCAL_DEVICE_SETTINGS");
@@ -137,7 +138,8 @@ public class PermissionManager {
             case "LocationManagement" -> hasPermission("LOCATION_MANAGEMENT");
             case "LocalDeviceSettings" -> hasPermission("LOCAL_DEVICE_SETTINGS");
             case "HardwareSetup" -> hasPermission("HARDWARE_SETUP");
-            case "CompanyCustomization" -> hasPermission("COMPANY_CUSTOMIZATION");
+            case "CompanyCustomization" -> hasPermission("COMPANY_PREFERENCES")
+                    || hasPermission("COMPANY_CUSTOMIZATION");
             default -> true;
         };
     }
