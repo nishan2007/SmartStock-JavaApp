@@ -47,6 +47,7 @@ public class WindowHelper {
         if (frame == null) {
             return;
         }
+        ThemeManager.applyToWindow(frame);
 
         GraphicsConfiguration graphicsConfiguration = getTargetGraphicsConfiguration(frame, anchor);
         Rectangle usableBounds = getUsableBounds(graphicsConfiguration);

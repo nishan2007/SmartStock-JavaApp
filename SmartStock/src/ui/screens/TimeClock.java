@@ -8,10 +8,12 @@ import managers.TimeClockManager.TimeClockDashboard;
 import managers.TimeClockManager.TimeClockException;
 import managers.TimeClockManager.TimeClockRow;
 import ui.components.AppMenuBar;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.basic.BasicButtonUI;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
@@ -33,6 +35,10 @@ public class TimeClock extends JFrame {
     private final JButton clockOutButton;
     private final JButton refreshButton;
     private final JTextField searchField;
+    private final Color clockInColor = new Color(22, 163, 74);
+    private final Color lunchStartColor = new Color(217, 119, 6);
+    private final Color lunchEndColor = new Color(37, 99, 235);
+    private final Color clockOutColor = new Color(220, 38, 38);
     private final DefaultTableModel timeClockModel;
     private final JTable timeClockTable;
     private final TableRowSorter<DefaultTableModel> sorter;
@@ -94,11 +100,14 @@ public class TimeClock extends JFrame {
 
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         actionPanel.setOpaque(false);
-        clockInButton = createActionButton("Clock In", new Color(22, 163, 74));
-        lunchStartButton = createActionButton("Lunch Start", new Color(217, 119, 6));
-        lunchEndButton = createActionButton("Lunch End", new Color(37, 99, 235));
-        clockOutButton = createActionButton("Clock Out", new Color(220, 38, 38));
+        clockInButton = createActionButton("Clock In", clockInColor);
+        lunchStartButton = createActionButton("Lunch Start", lunchStartColor);
+        lunchEndButton = createActionButton("Lunch End", lunchEndColor);
+        clockOutButton = createActionButton("Clock Out", clockOutColor);
         refreshButton = new JButton("Refresh");
+        refreshButton.setUI(new BasicButtonUI());
+        refreshButton.setOpaque(true);
+        refreshButton.setContentAreaFilled(true);
         refreshButton.setPreferredSize(new Dimension(120, 42));
         actionPanel.add(clockInButton);
         actionPanel.add(lunchStartButton);
@@ -170,9 +179,14 @@ public class TimeClock extends JFrame {
 
     private JButton createActionButton(String text, Color color) {
         JButton button = new JButton(text);
+        button.setUI(new BasicButtonUI());
         button.setFont(new Font("SansSerif", Font.BOLD, 14));
         button.setForeground(Color.WHITE);
         button.setBackground(color);
+        button.putClientProperty("Button.disabledText", new Color(210, 210, 210));
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorderPainted(false);
         button.setFocusPainted(false);
         button.setPreferredSize(new Dimension(130, 42));
         return button;
@@ -279,10 +293,33 @@ public class TimeClock extends JFrame {
     }
 
     private void updateButtons(boolean canClockIn, boolean canLunchStart, boolean canLunchEnd, boolean canClockOut) {
-        clockInButton.setEnabled(canClockIn);
-        lunchStartButton.setEnabled(canLunchStart);
-        lunchEndButton.setEnabled(canLunchEnd);
-        clockOutButton.setEnabled(canClockOut);
+        setActionButtonState(clockInButton, clockInColor, canClockIn);
+        setActionButtonState(lunchStartButton, lunchStartColor, canLunchStart);
+        setActionButtonState(lunchEndButton, lunchEndColor, canLunchEnd);
+        setActionButtonState(clockOutButton, clockOutColor, canClockOut);
+    }
+
+    private void setActionButtonState(JButton button, Color enabledColor, boolean enabled) {
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color disabledBackground = mutedButtonColor(enabledColor, dark);
+        Color disabledText = dark ? new Color(225, 225, 225) : new Color(75, 85, 99);
+
+        button.setEnabled(enabled);
+        button.setBackground(enabled ? enabledColor : disabledBackground);
+        button.setForeground(enabled ? Color.WHITE : disabledText);
+        button.putClientProperty("Button.disabledText", disabledText);
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorderPainted(false);
+    }
+
+    private Color mutedButtonColor(Color color, boolean dark) {
+        Color base = dark ? new Color(42, 42, 42) : new Color(229, 231, 235);
+        double colorWeight = dark ? 0.46 : 0.28;
+        int red = (int) Math.round((color.getRed() * colorWeight) + (base.getRed() * (1 - colorWeight)));
+        int green = (int) Math.round((color.getGreen() * colorWeight) + (base.getGreen() * (1 - colorWeight)));
+        int blue = (int) Math.round((color.getBlue() * colorWeight) + (base.getBlue() * (1 - colorWeight)));
+        return new Color(red, green, blue);
     }
 
     private void applyFilter() {

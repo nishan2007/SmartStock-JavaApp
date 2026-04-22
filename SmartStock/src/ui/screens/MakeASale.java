@@ -13,6 +13,7 @@ import ui.components.AppMenuBar;
 
 
 import javax.swing.*;
+import javax.swing.border.AbstractBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
@@ -41,6 +42,7 @@ public class MakeASale extends JFrame {
     private static final int CART_COL_ITEM_DISCOUNT = 6;
     private static final int CART_COL_LINE_TOTAL = 7;
     private static final int CART_COL_ORIGINAL_PRICE = 8;
+    private static final int CART_COL_PRODUCT_TYPE = 9;
     private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
     private static final int SEARCH_CONTROL_HEIGHT = 28;
@@ -215,7 +217,7 @@ public class MakeASale extends JFrame {
 
 	       // Cart table
 	       cartModel = new DefaultTableModel(
-	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price"},
+	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type"},
 	               0
 	       ) {
 	           @Override
@@ -252,7 +254,7 @@ public class MakeASale extends JFrame {
        customerAccountBox.setBorder(BorderFactory.createLineBorder(new Color(203, 213, 225)));
        customerAccountBox.setBackground(Color.WHITE);
        customerAccountBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
-       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false));
+       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false, ""));
        setFixedControlHeight(customerAccountBox, 360);
        customerAccountBox.setRenderer(new CustomerAccountRenderer());
        addCustomerAccountButton = createUtilityButton("New Customer");
@@ -293,7 +295,7 @@ public class MakeASale extends JFrame {
        transactionPanel.add(cardPaymentButton);
        transactionPanel.add(chequePaymentButton);
        transactionPanel.add(accountPaymentButton);
-       transactionPanel.add(buildLabeledControl("Discount %", discountPercentField));
+       totalsPanel.add(buildLabeledControl("Discount %", discountPercentField));
 	       subtotalLabel = createTotalLabel("Subtotal: $0.00", false);
 	       totalsPanel.add(subtotalLabel);
 	       discountAmountLabel = createTotalLabel("Discount: $0.00", false);
@@ -305,8 +307,8 @@ public class MakeASale extends JFrame {
        actionPanel.setOpaque(false);
        checkoutBtn = createCheckoutButton("Checkout");
        checkoutPrintBtn = createCheckoutButton("Checkout & Print");
-       holdCartBtn = createUtilityButton("Hold Cart");
-       resumeHeldCartBtn = createUtilityButton("Resume Hold");
+       holdCartBtn = createActionUtilityButton("Hold Cart");
+       resumeHeldCartBtn = createActionUtilityButton("Resume Hold");
        actionPanel.add(holdCartBtn);
        actionPanel.add(resumeHeldCartBtn);
        actionPanel.add(checkoutBtn);
@@ -490,7 +492,8 @@ public class MakeASale extends JFrame {
 	   }
 
     private JButton createPrimaryButton(String text) {
-        JButton button = new JButton(text);
+        // Standard blue command button: text color, fill color, border color, and internal padding live here.
+        JButton button = new RoundedFillButton(text);
         button.setFont(new Font("SansSerif", Font.BOLD, 14));
         button.setFocusPainted(false);
         button.setForeground(new Color(15, 23, 42));
@@ -506,37 +509,38 @@ public class MakeASale extends JFrame {
     }
 
     private JButton createCheckoutButton(String text) {
-        JButton button = new JButton(text);
-        button.setFont(new Font("SansSerif", Font.BOLD, 14));
+        // Bottom-right checkout buttons: change red fill, text color, rounded border, padding, and size here.
+        JButton button = new RoundedFillButton(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 16));
         button.setFocusPainted(false);
-        button.setForeground(Color.WHITE);
+        button.setForeground(new Color(255, 255, 255));
+        button.putClientProperty("Button.disabledText", new Color(0, 0, 0));
         button.setBackground(new Color(220, 38, 38));
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(185, 28, 28)),
-                BorderFactory.createEmptyBorder(8, 18, 8, 18)
-        ));
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(true);
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        button.setBorder(new OutsideRoundedBorder(new Color(0, 0, 0), 4, 12, new Insets(12, 24, 12, 24)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setEnabled(false);
+        button.setToolTipText("Select a payment method before checkout.");
+        button.setPreferredSize(new Dimension("Checkout & Print".equals(text) ? 205 : 150, 56));
         return button;
     }
 
     private JToggleButton createPaymentMethodButton(String label, String method) {
-        JToggleButton button = new JToggleButton(label);
-        button.setFont(new Font("SansSerif", Font.BOLD, 14));
+        // Payment method buttons: base size, blue fill, text color, rounded border, and padding live here.
+        JToggleButton button = new RoundedFillToggleButton(label);
+        button.setFont(new Font("SansSerif", Font.BOLD, 16));
         button.setFocusPainted(false);
         button.setForeground(Color.WHITE);
         button.setBackground(new Color(37, 99, 235));
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(29, 78, 216)),
-                BorderFactory.createEmptyBorder(8, 18, 8, 18)
-        ));
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setBorder(new OutsideRoundedBorder(new Color(0, 0, 0), 4, 12, new Insets(12, 22, 12, 22)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 118 : 96, 40));
+        button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 155 : 125, 56));
         button.setMinimumSize(button.getPreferredSize());
+        button.setUI(new javax.swing.plaf.basic.BasicToggleButtonUI());
         button.addActionListener(e -> selectPaymentMethod(method));
         paymentMethodGroup.add(button);
         return button;
@@ -566,34 +570,38 @@ public class MakeASale extends JFrame {
     }
 
     private void stylePaymentButton(JToggleButton button, boolean selected) {
+        // Selected/unselected payment button colors and border thickness are controlled here.
         if (button == null) {
             return;
         }
         button.setBackground(selected ? new Color(30, 64, 175) : new Color(37, 99, 235));
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(selected ? new Color(15, 23, 42) : new Color(29, 78, 216), selected ? 2 : 1),
-                BorderFactory.createEmptyBorder(selected ? 7 : 8, selected ? 17 : 18, selected ? 7 : 8, selected ? 17 : 18)
+        button.setBorder(new OutsideRoundedBorder(
+                selected ? new Color(15, 23, 42) : new Color(29, 78, 216),
+                4,
+                12,
+                new Insets(12, 22, 12, 22)
         ));
     }
 
     private void updateCheckoutAvailability() {
         boolean hasPaymentMethod = selectedPaymentMethod != null && !selectedPaymentMethod.isBlank();
         if (checkoutBtn != null) {
-            checkoutBtn.setEnabled(hasPaymentMethod);
+            checkoutBtn.setToolTipText(hasPaymentMethod ? null : "Select a payment method before checkout.");
         }
         if (checkoutPrintBtn != null) {
-            checkoutPrintBtn.setEnabled(hasPaymentMethod);
+            checkoutPrintBtn.setToolTipText(hasPaymentMethod ? null : "Select a payment method before checkout.");
         }
     }
 
     private JButton createUtilityButton(String text) {
+        // Small utility buttons like New Item/New Customer: text color, fill, border, and padding live here.
         JButton button = new JButton(text);
         button.setFont(new Font("SansSerif", Font.BOLD, 13));
         button.setFocusPainted(false);
         button.setForeground(new Color(30, 41, 59));
         button.setBackground(new Color(248, 250, 252));
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
         button.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(203, 213, 225)),
                 BorderFactory.createEmptyBorder(7, 13, 7, 13)
@@ -602,7 +610,24 @@ public class MakeASale extends JFrame {
         return button;
     }
 
+    private JButton createActionUtilityButton(String text) {
+        // Bottom-right Hold/Resume buttons: larger size plus thick rounded border settings live here.
+        JButton button = new RoundedFillButton(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 15));
+        button.setFocusPainted(false);
+        button.setForeground(new Color(30, 41, 59));
+        button.setBackground(new Color(248, 250, 252));
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        button.setBorder(new OutsideRoundedBorder(Color.BLACK, 4, 12, new Insets(12, 22, 12, 22)));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(150, 56));
+        return button;
+    }
+
     private JButton createProductDropdownButton() {
+        // Green arrow section on the product search field: width, height, fill, text, and border live here.
         JButton button = new JButton("▼");
         button.setFont(new Font("SansSerif", Font.BOLD, 11));
         button.setForeground(Color.WHITE);
@@ -628,6 +653,7 @@ public class MakeASale extends JFrame {
     }
 
     private JLabel createTotalLabel(String text, boolean prominent) {
+        // Totals row label sizes and colors are controlled here.
         JLabel label = new JLabel(text);
         label.setFont(new Font("SansSerif", prominent ? Font.BOLD : Font.PLAIN, prominent ? 18 : 14));
         label.setForeground(prominent ? new Color(15, 23, 42) : new Color(71, 85, 105));
@@ -635,6 +661,7 @@ public class MakeASale extends JFrame {
     }
 
     private void setFixedControlHeight(JComponent component, int width) {
+        // Shared control sizing for search fields, dropdowns, payment combo replacements, and discount input.
         int controlWidth = Math.max(width, 0);
         Dimension preferred = new Dimension(controlWidth, SEARCH_CONTROL_HEIGHT);
         Dimension minimum = new Dimension(controlWidth, SEARCH_CONTROL_HEIGHT);
@@ -657,6 +684,115 @@ public class MakeASale extends JFrame {
                 label.setPreferredSize(new Dimension(label.getPreferredSize().width, SEARCH_CONTROL_HEIGHT - 2));
             }
             return label;
+        }
+    }
+
+    private static class RoundedFillButton extends JButton {
+        private RoundedFillButton(String text) {
+            super(text);
+            putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
+            setOpaque(false);
+            setContentAreaFilled(false);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            // Paints a rounded fill before Swing draws the button text.
+            paintRoundedButtonFill(this, graphics);
+            setContentAreaFilled(false);
+            super.paintComponent(graphics);
+        }
+    }
+
+    private static class RoundedFillToggleButton extends JToggleButton {
+        private RoundedFillToggleButton(String text) {
+            super(text);
+            putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
+            setOpaque(false);
+            setContentAreaFilled(false);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            // Paints a rounded fill before Swing draws the toggle button text.
+            paintRoundedButtonFill(this, graphics);
+            setContentAreaFilled(false);
+            super.paintComponent(graphics);
+        }
+    }
+
+    private static void paintRoundedButtonFill(AbstractButton button, Graphics graphics) {
+        int strokeWidth = 0;
+        int radius = 12;
+        if (button.getBorder() instanceof OutsideRoundedBorder roundedBorder) {
+            strokeWidth = roundedBorder.getThickness();
+            radius = roundedBorder.getRadius();
+        }
+
+        int inset = Math.max(strokeWidth - 1, 1);
+        int arc = Math.max(radius - strokeWidth, 4);
+        int width = Math.max(0, button.getWidth() - (inset * 2) - 1);
+        int height = Math.max(0, button.getHeight() - (inset * 2) - 1);
+
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setColor(button.getBackground());
+        g2.fillRoundRect(inset, inset, width, height, arc, arc);
+        g2.dispose();
+    }
+
+    private static class OutsideRoundedBorder extends AbstractBorder {
+        // Reusable thick rounded border. Padding controls the content inset; thickness/radius control the outline.
+        private final Color color;
+        private final int thickness;
+        private final int radius;
+        private final Insets padding;
+
+        private OutsideRoundedBorder(Color color, int thickness, int radius, Insets padding) {
+            this.color = color;
+            this.thickness = thickness;
+            this.radius = radius;
+            this.padding = padding;
+        }
+
+        private int getThickness() {
+            return thickness;
+        }
+
+        private int getRadius() {
+            return radius;
+        }
+
+        @Override
+        public void paintBorder(Component component, Graphics graphics, int x, int y, int width, int height) {
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int inset = Math.max(thickness / 2, 1);
+            g2.setColor(color);
+            g2.setStroke(new BasicStroke(thickness));
+            g2.drawRoundRect(
+                    x + inset,
+                    y + inset,
+                    width - (inset * 2) - 1,
+                    height - (inset * 2) - 1,
+                    radius,
+                    radius
+            );
+            g2.dispose();
+        }
+
+        @Override
+        public Insets getBorderInsets(Component component) {
+            return getBorderInsets(component, new Insets(0, 0, 0, 0));
+        }
+
+        @Override
+        public Insets getBorderInsets(Component component, Insets insets) {
+            insets.top = padding.top;
+            insets.left = padding.left;
+            insets.bottom = padding.bottom;
+            insets.right = padding.right;
+            return insets;
         }
     }
 
@@ -817,7 +953,7 @@ public class MakeASale extends JFrame {
     }
 
     private void configureCartTableColumns() {
-        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 9) {
+        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 10) {
             return;
         }
 
@@ -865,6 +1001,10 @@ public class MakeASale extends JFrame {
         columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setMinWidth(0);
         columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setMaxWidth(0);
         columnModel.getColumn(CART_COL_ORIGINAL_PRICE).setPreferredWidth(0);
+
+        columnModel.getColumn(CART_COL_PRODUCT_TYPE).setMinWidth(0);
+        columnModel.getColumn(CART_COL_PRODUCT_TYPE).setMaxWidth(0);
+        columnModel.getColumn(CART_COL_PRODUCT_TYPE).setPreferredWidth(0);
 
         updateDescriptionRowHeights();
     }
@@ -955,6 +1095,7 @@ public class MakeASale extends JFrame {
 
         String sql = """
             SELECT p.product_id, p.name, p.description, p.sku, p.price,
+                   COALESCE(p.product_type, 'INVENTORY') AS product_type,
                    COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
             FROM products p
             LEFT JOIN inventory i
@@ -984,6 +1125,7 @@ public class MakeASale extends JFrame {
                         rs.getString("description"),
                         rs.getString("sku"),
                         rs.getDouble("price"),
+                        rs.getString("product_type"),
                         rs.getInt("quantity_on_hand")
                 });
             }
@@ -1009,7 +1151,7 @@ public class MakeASale extends JFrame {
             searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
             searchPopup.setFocusable(false);
 
-            String[] columns = {"ID", "Name", "Description", "SKU", "Price", "Stock"};
+            String[] columns = {"ID", "Name", "Description", "SKU", "Price", "Type", "Stock"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -1062,7 +1204,8 @@ public class MakeASale extends JFrame {
         searchResultsTable.getColumnModel().getColumn(2).setPreferredWidth(220);
         searchResultsTable.getColumnModel().getColumn(3).setPreferredWidth(110);
         searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(80);
-        searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(70);
+        searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(100);
+        searchResultsTable.getColumnModel().getColumn(6).setPreferredWidth(70);
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);
@@ -1087,6 +1230,7 @@ public class MakeASale extends JFrame {
         String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
         String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
         double price = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 4)).doubleValue();
+        String productType = normalizeProductType(String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 5)));
 
         String qtyText = JOptionPane.showInputDialog(this, "Enter quantity:", "1");
         if (qtyText == null) {
@@ -1101,7 +1245,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        addToCart(productId, name, description, sku, price, qty);
+        addToCart(productId, name, description, sku, price, qty, productType);
         closeSearchPopup();
         searchField.requestFocusInWindow();
         searchField.selectAll();
@@ -1112,7 +1256,7 @@ public class MakeASale extends JFrame {
             searchPopup.setVisible(false);
         }
     }
-    private void addToCart(int productId, String name, String description, String sku, double price, int qty) {
+    private void addToCart(int productId, String name, String description, String sku, double price, int qty, String productType) {
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             int existingProductId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 
@@ -1127,9 +1271,39 @@ public class MakeASale extends JFrame {
             }
         }
 
-        cartModel.addRow(new Object[]{productId, name, description, sku, price, qty, BigDecimal.ZERO, price * qty, BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP)});
+        cartModel.addRow(new Object[]{
+                productId,
+                name,
+                description,
+                sku,
+                price,
+                qty,
+                BigDecimal.ZERO,
+                price * qty,
+                BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
+                normalizeProductType(productType)
+        });
         updateLineTotals();
         configureCartTableColumns();
+    }
+
+    private String normalizeProductType(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
+        if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
+            return normalized;
+        }
+        return "INVENTORY";
+    }
+
+    private boolean isInventoryProduct(String productType) {
+        return "INVENTORY".equals(normalizeProductType(productType));
+    }
+
+    private String getCartProductType(int row) {
+        if (cartModel.getColumnCount() <= CART_COL_PRODUCT_TYPE) {
+            return "INVENTORY";
+        }
+        return normalizeProductType(String.valueOf(cartModel.getValueAt(row, CART_COL_PRODUCT_TYPE)));
     }
 
     private void restoreUnauthorizedCartPrices() {
@@ -1393,16 +1567,18 @@ public class MakeASale extends JFrame {
         customerAccountBox.removeAllItems();
 
         String sql = """
-                SELECT customer_id,
-                       account_number,
-                       name,
-                       credit_limit,
-                       current_balance,
-                       (credit_limit - current_balance) AS available_credit,
-                       COALESCE(is_business, FALSE) AS is_business
-                FROM customer_accounts
-                WHERE is_active = TRUE
-                ORDER BY name
+                SELECT ca.customer_id,
+                       ca.account_number,
+                       ca.name AS customer_name,
+                       ca.credit_limit,
+                       ca.current_balance,
+                       (ca.credit_limit - ca.current_balance) AS available_credit,
+                       COALESCE(ca.is_business, FALSE) AS is_business,
+                       COALESCE(ct.name, '') AS customer_type_name
+                FROM customer_accounts ca
+                LEFT JOIN customer_types ct ON ct.customer_type_id = ca.customer_type_id
+                WHERE ca.is_active = TRUE
+                ORDER BY ca.name
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -1413,11 +1589,12 @@ public class MakeASale extends JFrame {
                 customerAccountOptions.add(new CustomerAccountOption(
                         rs.getInt("customer_id"),
                         rs.getString("account_number"),
-                        rs.getString("name"),
+                        rs.getString("customer_name"),
                         rs.getBigDecimal("credit_limit"),
                         rs.getBigDecimal("current_balance"),
                         rs.getBigDecimal("available_credit"),
-                        rs.getBoolean("is_business")
+                        rs.getBoolean("is_business"),
+                        rs.getString("customer_type_name")
                 ));
             }
             applyCustomerAccountFilter("", false);
@@ -1682,13 +1859,14 @@ public class MakeASale extends JFrame {
                             unit_price,
                             original_unit_price,
                             discount_percent,
-                            discount_amount
+                            discount_amount,
+                            product_type
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """;
 	                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ?";
+                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ? AND quantity_on_hand >= ?";
 
                 try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
@@ -1698,6 +1876,7 @@ public class MakeASale extends JFrame {
 	                    for (int i = 0; i < cartModel.getRowCount(); i++) {
 		                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 		                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
+	                        String productType = getCartProductType(i);
 	                        BigDecimal originalPrice = canChangeSaleItemPrice()
 	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
 	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
@@ -1719,30 +1898,33 @@ public class MakeASale extends JFrame {
 		                        itemStmt.setBigDecimal(5, originalPrice);
 		                        itemStmt.setBigDecimal(6, itemDiscountPercent);
 		                        itemStmt.setBigDecimal(7, itemDiscountAmount);
+		                        itemStmt.setString(8, productType);
 		                        itemStmt.addBatch();
 
-                        ensureInventoryStmt.setInt(1, productId);
-                        ensureInventoryStmt.setInt(2, locationId);
-                        ensureInventoryStmt.addBatch();
+                        if (isInventoryProduct(productType)) {
+                            ensureInventoryStmt.setInt(1, productId);
+                            ensureInventoryStmt.setInt(2, locationId);
+                            ensureInventoryStmt.executeUpdate();
 
-                        movementStmt.setInt(1, productId);
-                        movementStmt.setInt(2, locationId);
-	                        movementStmt.setInt(3, -qty);
-	                        movementStmt.setString(4, "SALE");
-	                        movementStmt.setString(5, "sale_id=" + saleId);
-	                        movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-	                        movementStmt.addBatch();
+                            updateInventoryStmt.setInt(1, qty);
+                            updateInventoryStmt.setInt(2, productId);
+                            updateInventoryStmt.setInt(3, locationId);
+                            updateInventoryStmt.setInt(4, qty);
+                            if (updateInventoryStmt.executeUpdate() == 0) {
+                                throw new SQLException("Not enough inventory for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
+                            }
 
-                        updateInventoryStmt.setInt(1, qty);
-                        updateInventoryStmt.setInt(2, productId);
-                        updateInventoryStmt.setInt(3, locationId);
-                        updateInventoryStmt.addBatch();
+                            movementStmt.setInt(1, productId);
+                            movementStmt.setInt(2, locationId);
+                            movementStmt.setInt(3, -qty);
+                            movementStmt.setString(4, "SALE");
+                            movementStmt.setString(5, "sale_id=" + saleId);
+                            movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+                            movementStmt.executeUpdate();
+                        }
                     }
 
                     itemStmt.executeBatch();
-                    ensureInventoryStmt.executeBatch();
-                    updateInventoryStmt.executeBatch();
-                    movementStmt.executeBatch();
                 }
 
                 conn.commit();
@@ -1844,9 +2026,10 @@ public class MakeASale extends JFrame {
 	                    sku,
 	                    unit_price,
 	                    quantity,
-	                    discount_percent
+	                    discount_percent,
+	                    product_type
 	                )
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                """;
 
         try (Connection conn = DB.getConnection()) {
@@ -1889,6 +2072,7 @@ public class MakeASale extends JFrame {
 	                        itemStmt.setBigDecimal(6, heldUnitPrice);
 	                        itemStmt.setInt(7, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, CART_COL_QTY))));
 	                        itemStmt.setBigDecimal(8, parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT)));
+	                        itemStmt.setString(9, getCartProductType(i));
 	                        itemStmt.addBatch();
                     }
                     itemStmt.executeBatch();
@@ -2058,7 +2242,8 @@ public class MakeASale extends JFrame {
                        sku,
                        unit_price,
                        quantity,
-                       COALESCE(discount_percent, 0) AS discount_percent
+                       COALESCE(discount_percent, 0) AS discount_percent,
+                       COALESCE(product_type, 'INVENTORY') AS product_type
                 FROM held_cart_items
                 WHERE held_cart_id = ?
                 ORDER BY held_cart_item_id
@@ -2084,7 +2269,8 @@ public class MakeASale extends JFrame {
 	                            qty,
 	                            itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent,
 	                            lineGross.subtract(lineDiscount).max(BigDecimal.ZERO),
-	                            BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP)
+	                            BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
+	                            normalizeProductType(rs.getString("product_type"))
 	                    });
                 }
             }
@@ -2401,8 +2587,9 @@ public class MakeASale extends JFrame {
         private final BigDecimal currentBalance;
         private final BigDecimal availableCredit;
         private final boolean businessAccount;
+        private final String customerTypeName;
 
-        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount) {
+        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount, String customerTypeName) {
             this.customerId = customerId;
             this.accountNumber = accountNumber == null ? "" : accountNumber;
             this.name = name == null ? "" : name;
@@ -2410,13 +2597,15 @@ public class MakeASale extends JFrame {
             this.currentBalance = currentBalance == null ? BigDecimal.ZERO : currentBalance;
             this.availableCredit = availableCredit == null ? BigDecimal.ZERO : availableCredit;
             this.businessAccount = businessAccount;
+            this.customerTypeName = customerTypeName == null ? "" : customerTypeName;
         }
 
         @Override
         public String toString() {
             String accountLabel = accountNumber.isBlank() ? "" : accountNumber + " - ";
             String typeLabel = businessAccount ? "Business" : "Personal";
-            return accountLabel + name + " [" + typeLabel + "] (Available: $" + availableCredit + ")";
+            String customerTypeLabel = customerTypeName.isBlank() ? "" : " / " + customerTypeName;
+            return accountLabel + name + " [" + typeLabel + customerTypeLabel + "] (Available: $" + availableCredit + ")";
         }
 
         private boolean matches(String filter) {

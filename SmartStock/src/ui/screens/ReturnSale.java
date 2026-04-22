@@ -61,12 +61,12 @@ public class ReturnSale extends JFrame {
         setJMenuBar(AppMenuBar.create(this, "ReturnSale"));
 
         itemModel = new DefaultTableModel(
-                new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned", "Available", "Unit Price", "Return Qty"},
+                new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned", "Available", "Unit Price", "Product Type", "Return Qty"},
                 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 8;
+                return column == 9;
             }
         };
         saleSearchModel = new DefaultTableModel(
@@ -195,6 +195,7 @@ public class ReturnSale extends JFrame {
         table.getTableHeader().setReorderingAllowed(false);
         table.removeColumn(table.getColumnModel().getColumn(0));
         table.removeColumn(table.getColumnModel().getColumn(0));
+        table.removeColumn(table.getColumnModel().getColumn(6));
         return new JScrollPane(table);
     }
 
@@ -396,6 +397,7 @@ public class ReturnSale extends JFrame {
                        si.product_id,
                        COALESCE(p.sku, '') AS sku,
                        COALESCE(p.name, 'Unknown') AS product_name,
+                       COALESCE(si.product_type, p.product_type, 'INVENTORY') AS product_type,
                        COALESCE(si.quantity, 0) AS sold_qty,
                        COALESCE(si.unit_price, 0) AS unit_price,
                        COALESCE(SUM(sri.quantity), 0) AS returned_qty
@@ -403,7 +405,7 @@ public class ReturnSale extends JFrame {
                 LEFT JOIN products p ON p.product_id = si.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
                 WHERE si.sale_id = ?
-                GROUP BY si.sale_item_id, si.product_id, p.sku, p.name, si.quantity, si.unit_price
+                GROUP BY si.sale_item_id, si.product_id, p.sku, p.name, si.product_type, p.product_type, si.quantity, si.unit_price
                 ORDER BY si.sale_item_id ASC
                 """;
 
@@ -445,6 +447,7 @@ public class ReturnSale extends JFrame {
                             returnedQty,
                             availableQty,
                             defaultZero(rs.getBigDecimal("unit_price")).setScale(2, RoundingMode.HALF_UP),
+                            normalizeProductType(rs.getString("product_type")),
                             0
                     });
                 }
@@ -598,22 +601,24 @@ public class ReturnSale extends JFrame {
                 itemStmt.setBigDecimal(5, line.unitPrice());
                 itemStmt.addBatch();
 
-                ensureInventoryStmt.setInt(1, line.productId());
-                ensureInventoryStmt.setInt(2, loadedSale.locationId());
-                ensureInventoryStmt.addBatch();
+                if (isInventoryProduct(line.productType())) {
+                    ensureInventoryStmt.setInt(1, line.productId());
+                    ensureInventoryStmt.setInt(2, loadedSale.locationId());
+                    ensureInventoryStmt.addBatch();
 
-                updateInventoryStmt.setInt(1, line.quantity());
-                updateInventoryStmt.setInt(2, line.productId());
-                updateInventoryStmt.setInt(3, loadedSale.locationId());
-                updateInventoryStmt.addBatch();
+                    updateInventoryStmt.setInt(1, line.quantity());
+                    updateInventoryStmt.setInt(2, line.productId());
+                    updateInventoryStmt.setInt(3, loadedSale.locationId());
+                    updateInventoryStmt.addBatch();
 
-                movementStmt.setInt(1, line.productId());
-                movementStmt.setInt(2, loadedSale.locationId());
-                movementStmt.setInt(3, line.quantity());
-                movementStmt.setString(4, "RETURN");
-                movementStmt.setString(5, "return_id=" + returnId + "; sale_id=" + loadedSale.saleId() + "; receipt=" + loadedSale.receiptNumber());
-                movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                movementStmt.addBatch();
+                    movementStmt.setInt(1, line.productId());
+                    movementStmt.setInt(2, loadedSale.locationId());
+                    movementStmt.setInt(3, line.quantity());
+                    movementStmt.setString(4, "RETURN");
+                    movementStmt.setString(5, "return_id=" + returnId + "; sale_id=" + loadedSale.saleId() + "; receipt=" + loadedSale.receiptNumber());
+                    movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+                    movementStmt.addBatch();
+                }
             }
 
             itemStmt.executeBatch();
@@ -712,7 +717,7 @@ public class ReturnSale extends JFrame {
     private List<ReturnLine> collectReturnLines() {
         List<ReturnLine> lines = new ArrayList<>();
         for (int row = 0; row < itemModel.getRowCount(); row++) {
-            int qty = parseInt(itemModel.getValueAt(row, 8), 0);
+            int qty = parseInt(itemModel.getValueAt(row, 9), 0);
             int available = parseInt(itemModel.getValueAt(row, 6), 0);
             if (qty <= 0) {
                 continue;
@@ -724,7 +729,8 @@ public class ReturnSale extends JFrame {
                     parseInt(itemModel.getValueAt(row, 0), 0),
                     parseInt(itemModel.getValueAt(row, 1), 0),
                     qty,
-                    parseMoney(itemModel.getValueAt(row, 7))
+                    parseMoney(itemModel.getValueAt(row, 7)),
+                    normalizeProductType(String.valueOf(itemModel.getValueAt(row, 8)))
             ));
         }
         return lines;
@@ -735,9 +741,9 @@ public class ReturnSale extends JFrame {
         try {
             for (int row = 0; row < itemModel.getRowCount(); row++) {
                 int available = parseInt(itemModel.getValueAt(row, 6), 0);
-                int qty = parseInt(itemModel.getValueAt(row, 8), 0);
+                int qty = parseInt(itemModel.getValueAt(row, 9), 0);
                 qty = Math.max(0, Math.min(qty, available));
-                itemModel.setValueAt(qty, row, 8);
+                itemModel.setValueAt(qty, row, 9);
             }
         } finally {
             updatingModel = false;
@@ -764,7 +770,7 @@ public class ReturnSale extends JFrame {
         updatingModel = true;
         try {
             for (int row = 0; row < itemModel.getRowCount(); row++) {
-                itemModel.setValueAt(itemModel.getValueAt(row, 6), row, 8);
+                itemModel.setValueAt(itemModel.getValueAt(row, 6), row, 9);
             }
         } finally {
             updatingModel = false;
@@ -776,7 +782,7 @@ public class ReturnSale extends JFrame {
         updatingModel = true;
         try {
             for (int row = 0; row < itemModel.getRowCount(); row++) {
-                itemModel.setValueAt(0, row, 8);
+                itemModel.setValueAt(0, row, 9);
             }
         } finally {
             updatingModel = false;
@@ -824,7 +830,19 @@ public class ReturnSale extends JFrame {
     ) {
     }
 
-    private record ReturnLine(int saleItemId, int productId, int quantity, BigDecimal unitPrice) {
+    private String normalizeProductType(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
+        if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
+            return normalized;
+        }
+        return "INVENTORY";
+    }
+
+    private boolean isInventoryProduct(String productType) {
+        return "INVENTORY".equals(normalizeProductType(productType));
+    }
+
+    private record ReturnLine(int saleItemId, int productId, int quantity, BigDecimal unitPrice, String productType) {
     }
 
     private static class TrailingTextRenderer extends DefaultTableCellRenderer {

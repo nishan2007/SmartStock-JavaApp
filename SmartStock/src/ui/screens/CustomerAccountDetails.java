@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.PermissionManager;
+import ui.components.CustomerTypeSelector;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -31,6 +32,7 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField nameField;
     private JTextField phoneField;
     private JTextField emailField;
+    private CustomerTypeSelector customerTypeSelector;
     private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
     private JLabel balanceLabel;
@@ -111,6 +113,7 @@ public class CustomerAccountDetails extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         emailField = new JTextField();
+        customerTypeSelector = new CustomerTypeSelector();
         businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active");
         balanceLabel = new JLabel();
@@ -121,15 +124,16 @@ public class CustomerAccountDetails extends JFrame {
 
         addInfoField(grid, gbc, 0, 0, "Account #:", accountNumberField);
         addInfoField(grid, gbc, 0, 1, "Name:", nameField);
-        addInfoField(grid, gbc, 1, 0, "Phone:", phoneField);
-        addInfoField(grid, gbc, 1, 1, "Email:", emailField);
-        addInfoField(grid, gbc, 2, 0, "Type:", businessAccountCheckBox);
-        addInfoField(grid, gbc, 2, 1, "Status:", activeCheckBox);
-        addInfoField(grid, gbc, 3, 0, "Balance:", balanceLabel);
-        addInfoField(grid, gbc, 3, 1, "Available Credit:", availableCreditLabel);
+        addInfoField(grid, gbc, 1, 0, "Customer Type:", customerTypeSelector);
+        addInfoField(grid, gbc, 1, 1, "Phone:", phoneField);
+        addInfoField(grid, gbc, 2, 0, "Email:", emailField);
+        addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
+        addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
+        addInfoField(grid, gbc, 3, 1, "Balance:", balanceLabel);
+        addInfoField(grid, gbc, 4, 0, "Available Credit:", availableCreditLabel);
 
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 5;
         gbc.weightx = 0;
         grid.add(new JLabel("Credit Limit:"), gbc);
         gbc.gridx = 1;
@@ -208,18 +212,21 @@ public class CustomerAccountDetails extends JFrame {
 
     private void loadDetails() {
         String sql = """
-                SELECT account_number,
-                       name,
-                       phone,
-                       email,
-                       credit_limit,
-                       current_balance,
-                       (credit_limit - current_balance) AS available_credit,
-                       COALESCE(is_business, FALSE) AS is_business,
-                       is_active,
-                       COALESCE(account_notes, '') AS account_notes
-                FROM customer_accounts
-                WHERE customer_id = ?
+                SELECT ca.account_number,
+                       ca.name AS customer_name,
+                       ca.phone AS customer_phone,
+                       ca.email AS customer_email,
+                       ca.credit_limit,
+                       ca.current_balance,
+                       (ca.credit_limit - ca.current_balance) AS available_credit,
+                       COALESCE(ca.is_business, FALSE) AS is_business,
+                       ca.is_active,
+                       COALESCE(ca.account_notes, '') AS account_notes,
+                       ca.customer_type_id,
+                       COALESCE(ct.name, '') AS customer_type_name
+                FROM customer_accounts ca
+                LEFT JOIN customer_types ct ON ct.customer_type_id = ca.customer_type_id
+                WHERE ca.customer_id = ?
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -234,14 +241,18 @@ public class CustomerAccountDetails extends JFrame {
                 }
 
                 String accountNumber = text(rs.getString("account_number"));
-                String name = text(rs.getString("name"));
+                String name = text(rs.getString("customer_name"));
                 customerLabel = accountNumber.isBlank() ? name : accountNumber + " - " + name;
 
                 titleLabel.setText(customerLabel);
                 accountNumberField.setText(accountNumber);
                 nameField.setText(name);
-                phoneField.setText(text(rs.getString("phone")));
-                emailField.setText(text(rs.getString("email")));
+                customerTypeSelector.setSelectedCustomerType(
+                        rs.getObject("customer_type_id") == null ? null : rs.getInt("customer_type_id"),
+                        rs.getString("customer_type_name")
+                );
+                phoneField.setText(text(rs.getString("customer_phone")));
+                emailField.setText(text(rs.getString("customer_email")));
                 businessAccountCheckBox.setSelected(rs.getBoolean("is_business"));
                 activeCheckBox.setSelected(rs.getBoolean("is_active"));
                 balanceLabel.setText(money(rs.getBigDecimal("current_balance")));
@@ -321,6 +332,10 @@ public class CustomerAccountDetails extends JFrame {
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
         String notes = notesArea.getText().trim();
+        Integer customerTypeId = customerTypeSelector.getSelectedCustomerTypeId();
+        if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
+            return;
+        }
 
         if (accountNumber.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Account number is required.");
@@ -348,6 +363,7 @@ public class CustomerAccountDetails extends JFrame {
                 UPDATE customer_accounts
                 SET account_number = ?,
                     name = ?,
+                    customer_type_id = ?,
                     phone = ?,
                     email = ?,
                     is_business = ?,
@@ -360,6 +376,7 @@ public class CustomerAccountDetails extends JFrame {
                 UPDATE customer_accounts
                 SET account_number = ?,
                     name = ?,
+                    customer_type_id = ?,
                     phone = ?,
                     email = ?,
                     is_business = ?,
@@ -373,16 +390,17 @@ public class CustomerAccountDetails extends JFrame {
 
             ps.setString(1, accountNumber);
             ps.setString(2, name);
-            ps.setString(3, phone.isEmpty() ? null : phone);
-            ps.setString(4, email.isEmpty() ? null : email);
-            ps.setBoolean(5, businessAccountCheckBox.isSelected());
-            ps.setBoolean(6, activeCheckBox.isSelected());
-            ps.setString(7, notes.isEmpty() ? null : notes);
+            setNullableInteger(ps, 3, customerTypeId);
+            ps.setString(4, phone.isEmpty() ? null : phone);
+            ps.setString(5, email.isEmpty() ? null : email);
+            ps.setBoolean(6, businessAccountCheckBox.isSelected());
+            ps.setBoolean(7, activeCheckBox.isSelected());
+            ps.setString(8, notes.isEmpty() ? null : notes);
             if (canSetCreditLimit) {
-                ps.setBigDecimal(8, creditLimit);
-                ps.setInt(9, customerId);
+                ps.setBigDecimal(9, creditLimit);
+                ps.setInt(10, customerId);
             } else {
-                ps.setInt(8, customerId);
+                ps.setInt(9, customerId);
             }
             ps.executeUpdate();
 
@@ -461,6 +479,14 @@ public class CustomerAccountDetails extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid amount.");
             return null;
+        }
+    }
+
+    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
         }
     }
 }

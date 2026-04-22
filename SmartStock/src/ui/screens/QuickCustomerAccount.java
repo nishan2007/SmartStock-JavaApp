@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.PermissionManager;
+import ui.components.CustomerTypeSelector;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,6 +21,7 @@ public class QuickCustomerAccount extends JFrame {
     private JTextField nameField;
     private JTextField phoneField;
     private JTextField emailField;
+    private CustomerTypeSelector customerTypeSelector;
     private JTextField creditLimitField;
     private JTextArea accountNotesArea;
     private JCheckBox businessAccountCheckBox;
@@ -29,7 +31,7 @@ public class QuickCustomerAccount extends JFrame {
         this.canSetCreditLimit = PermissionManager.hasPermission("SET_CREDIT_LIMIT");
 
         setTitle("New Customer Account");
-        setSize(460, canSetCreditLimit ? 470 : 420);
+        setSize(460, canSetCreditLimit ? 500 : 450);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(12, 12));
@@ -72,6 +74,7 @@ public class QuickCustomerAccount extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         emailField = new JTextField();
+        customerTypeSelector = new CustomerTypeSelector();
         businessAccountCheckBox = new JCheckBox("Business Account");
         creditLimitField = new JTextField("0.00");
         accountNotesArea = new JTextArea(4, 20);
@@ -81,11 +84,12 @@ public class QuickCustomerAccount extends JFrame {
         accountNumberField.setText("Auto-generated on save");
         addField(formPanel, gbc, 0, "Account #:", accountNumberField);
         addField(formPanel, gbc, 1, "Name:", nameField);
-        addField(formPanel, gbc, 2, "Phone:", phoneField);
-        addField(formPanel, gbc, 3, "Email:", emailField);
+        addField(formPanel, gbc, 2, "Customer Type:", customerTypeSelector);
+        addField(formPanel, gbc, 3, "Phone:", phoneField);
+        addField(formPanel, gbc, 4, "Email:", emailField);
 
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 5;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Account Type:"), gbc);
         gbc.gridx = 1;
@@ -93,11 +97,11 @@ public class QuickCustomerAccount extends JFrame {
         formPanel.add(businessAccountCheckBox, gbc);
 
         if (canSetCreditLimit) {
-            addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
+            addField(formPanel, gbc, 6, "Credit Limit:", creditLimitField);
         }
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
         notesScrollPane.setPreferredSize(new Dimension(0, 82));
-        addField(formPanel, gbc, canSetCreditLimit ? 6 : 5, "Notes:", notesScrollPane);
+        addField(formPanel, gbc, canSetCreditLimit ? 7 : 6, "Notes:", notesScrollPane);
 
         return formPanel;
     }
@@ -130,6 +134,10 @@ public class QuickCustomerAccount extends JFrame {
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
         String accountNotes = accountNotesArea.getText().trim();
+        Integer customerTypeId = customerTypeSelector.getSelectedCustomerTypeId();
+        if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
+            return;
+        }
         boolean businessAccount = businessAccountCheckBox.isSelected();
         BigDecimal creditLimit = BigDecimal.ZERO;
 
@@ -156,8 +164,8 @@ public class QuickCustomerAccount extends JFrame {
         }
 
         String sql = """
-                INSERT INTO customer_accounts (account_number, name, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
-                VALUES (?, ?, ?, ?, ?, 0, ?, TRUE, ?)
+                INSERT INTO customer_accounts (account_number, name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, TRUE, ?)
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -165,11 +173,12 @@ public class QuickCustomerAccount extends JFrame {
 
             ps.setString(1, accountNumber);
             ps.setString(2, name);
-            ps.setString(3, phone.isEmpty() ? null : phone);
-            ps.setString(4, email.isEmpty() ? null : email);
-            ps.setBigDecimal(5, creditLimit);
-            ps.setBoolean(6, businessAccount);
-            ps.setString(7, accountNotes.isEmpty() ? null : accountNotes);
+            setNullableInteger(ps, 3, customerTypeId);
+            ps.setString(4, phone.isEmpty() ? null : phone);
+            ps.setString(5, email.isEmpty() ? null : email);
+            ps.setBigDecimal(6, creditLimit);
+            ps.setBoolean(7, businessAccount);
+            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
             ps.executeUpdate();
 
             JOptionPane.showMessageDialog(this, "Customer account created.");
@@ -212,6 +221,14 @@ public class QuickCustomerAccount extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid amount.");
             return null;
+        }
+    }
+
+    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
         }
     }
 }

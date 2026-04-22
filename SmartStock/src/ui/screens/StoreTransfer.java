@@ -279,6 +279,7 @@ public class StoreTransfer extends JFrame {
                 FROM products p
                 JOIN inventory i ON i.product_id = p.product_id
                 WHERE i.location_id = ?
+                  AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
                 """);
         boolean hasSearch = !search.isBlank();
         if (hasSearch) {

@@ -30,6 +30,7 @@ public class NewItem extends JFrame {
     private JTextArea barcodesArea;
     private JTextField costPriceField;
     private JTextField priceField;
+    private JComboBox<String> itemTypeBox;
     private DepartmentSelector departmentSelector;
     private VendorSelector vendorSelector;
     private JTextField quantityField;
@@ -89,6 +90,7 @@ public class NewItem extends JFrame {
         barcodesArea.setWrapStyleWord(true);
         costPriceField = new JTextField();
         priceField = new JTextField();
+        itemTypeBox = new JComboBox<>(new String[]{"Inventory", "Service", "Non Inventory"});
         departmentSelector = new DepartmentSelector();
         vendorSelector = new VendorSelector();
         quantityField = new JTextField("0");
@@ -153,6 +155,15 @@ public class NewItem extends JFrame {
         leftGbc.gridx = 0;
         leftGbc.gridy = 5;
         leftGbc.weightx = 0;
+        leftColumn.add(new JLabel("Item Type:"), leftGbc);
+
+        leftGbc.gridx = 1;
+        leftGbc.weightx = 1;
+        leftColumn.add(itemTypeBox, leftGbc);
+
+        leftGbc.gridx = 0;
+        leftGbc.gridy = 6;
+        leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Starting Quantity:"), leftGbc);
 
         leftGbc.gridx = 1;
@@ -160,7 +171,7 @@ public class NewItem extends JFrame {
         leftColumn.add(quantityField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 6;
+        leftGbc.gridy = 7;
         leftGbc.weightx = 0;
         leftGbc.weighty = 1;
         leftColumn.add(Box.createVerticalGlue(), leftGbc);
@@ -264,8 +275,27 @@ public class NewItem extends JFrame {
                 dispose();
             }
         });
+        itemTypeBox.addActionListener(e -> updateQuantityEnabledForType());
+        updateQuantityEnabledForType();
 
         WindowHelper.showPosWindow(this);
+    }
+
+    private void updateQuantityEnabledForType() {
+        boolean inventoryItem = "INVENTORY".equals(getSelectedProductType());
+        quantityField.setEnabled(inventoryItem);
+        if (!inventoryItem) {
+            quantityField.setText("0");
+        }
+    }
+
+    private String getSelectedProductType() {
+        Object selected = itemTypeBox == null ? null : itemTypeBox.getSelectedItem();
+        if (selected == null) {
+            return "INVENTORY";
+        }
+        String value = selected.toString().trim().toUpperCase().replace(' ', '_');
+        return value.isBlank() ? "INVENTORY" : value;
     }
 
     private void saveItem() {
@@ -277,6 +307,8 @@ public class NewItem extends JFrame {
         String costPriceText = costPriceField.getText().trim();
         String priceText = priceField.getText().trim();
         String quantityText = quantityField.getText().trim();
+        String productType = getSelectedProductType();
+        boolean inventoryItem = "INVENTORY".equals(productType);
         String imageUrl;
         try {
             imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
@@ -322,12 +354,14 @@ public class NewItem extends JFrame {
             return;
         }
 
-        int quantity;
-        try {
-            quantity = Integer.parseInt(quantityText);
-        } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Starting quantity must be a whole number.");
-            return;
+        int quantity = 0;
+        if (inventoryItem) {
+            try {
+                quantity = Integer.parseInt(quantityText);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Starting quantity must be a whole number.");
+                return;
+            }
         }
 
         Integer categoryId = departmentSelector.getSelectedDepartmentId();
@@ -339,9 +373,14 @@ public class NewItem extends JFrame {
             return;
         }
 
-        String sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, category_id, vendor_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, product_type, category_id, vendor_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        String updateInventorySql = "UPDATE inventory SET quantity_on_hand = ? WHERE product_id = ? AND location_id = ?";
+        String upsertInventorySql = """
+                INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT (product_id, location_id)
+                DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand
+                """;
         String insertBarcodeSql = "INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)";
         String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
 
@@ -349,7 +388,7 @@ public class NewItem extends JFrame {
             conn.setAutoCommit(false);
 
             try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS);
-                 PreparedStatement inventoryPs = conn.prepareStatement(updateInventorySql);
+                 PreparedStatement inventoryPs = conn.prepareStatement(upsertInventorySql);
                  PreparedStatement barcodePs = conn.prepareStatement(insertBarcodeSql);
                  PreparedStatement movementPs = conn.prepareStatement(insertMovementSql)) {
 
@@ -360,18 +399,20 @@ public class NewItem extends JFrame {
                 ps.setDouble(5, costPrice);
                 ps.setDouble(6, price);
 
+                ps.setString(7, productType);
+
                 if (categoryId == null) {
-                    ps.setNull(7, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(7, categoryId);
-                }
-                if (vendorId == null) {
                     ps.setNull(8, java.sql.Types.INTEGER);
                 } else {
-                    ps.setInt(8, vendorId);
+                    ps.setInt(8, categoryId);
                 }
-                ps.setString(9, imageUrl);
-                setCurrentUserAuditParameters(ps, 10, 11);
+                if (vendorId == null) {
+                    ps.setNull(9, java.sql.Types.INTEGER);
+                } else {
+                    ps.setInt(9, vendorId);
+                }
+                ps.setString(10, imageUrl);
+                setCurrentUserAuditParameters(ps, 11, 12);
 
                 ps.executeUpdate();
 
@@ -383,15 +424,14 @@ public class NewItem extends JFrame {
                     productId = rs.getInt(1);
                 }
 
-                inventoryPs.setInt(1, quantity);
-                inventoryPs.setInt(2, productId);
-                inventoryPs.setInt(3, selectedLocationId);
-                inventoryPs.executeUpdate();
-                if (inventoryPs.getUpdateCount() == 0) {
-                    throw new SQLException("No inventory row found for product " + productId + " at location " + selectedLocationId + ".");
+                if (inventoryItem) {
+                    inventoryPs.setInt(1, productId);
+                    inventoryPs.setInt(2, selectedLocationId);
+                    inventoryPs.setInt(3, quantity);
+                    inventoryPs.executeUpdate();
                 }
 
-                if (quantity != 0) {
+                if (inventoryItem && quantity != 0) {
                     movementPs.setInt(1, productId);
                     movementPs.setInt(2, selectedLocationId);
                     movementPs.setInt(3, quantity);
@@ -443,6 +483,7 @@ public class NewItem extends JFrame {
         barcodesArea.setText("");
         costPriceField.setText("");
         priceField.setText("");
+        itemTypeBox.setSelectedItem("Inventory");
         departmentSelector.clearSelection();
         vendorSelector.clearSelection();
         quantityField.setText("0");

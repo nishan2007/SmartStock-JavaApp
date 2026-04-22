@@ -6,6 +6,7 @@ import managers.SessionManager;
 import services.DeviceService;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import ui.helpers.ThemeManager;
 import data.DB;
 
 import javax.swing.*;
@@ -581,10 +582,13 @@ public class MainMenu extends JFrame {
         iconLabel.setMaximumSize(new Dimension(54, 54));
 
         JLabel titleLabel = new JLabel(title);
+        titleLabel.setName("menuButtonTitle");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
 
-        JLabel descriptionLabel = new JLabel("<html><div style='width:170px; color:#666666;'>" + description + "</div></html>");
+        JLabel descriptionLabel = new JLabel("<html><div style='width:170px;'>" + description + "</div></html>");
+        descriptionLabel.setName("menuButtonDescription");
         descriptionLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        descriptionLabel.setForeground(ThemeManager.isDarkModeEnabled() ? Color.WHITE : new Color(90, 90, 90));
 
         JPanel textPanel = new JPanel();
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));

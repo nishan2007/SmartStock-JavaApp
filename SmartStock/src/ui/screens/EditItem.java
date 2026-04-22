@@ -36,6 +36,7 @@ public class EditItem extends JFrame {
     private JTextArea barcodesArea;
     private JTextField costPriceField;
     private JTextField priceField;
+    private JComboBox<String> itemTypeBox;
     private JTextField quantityField;
     private JTextField reorderLevelField;
     private DepartmentSelector departmentSelector;
@@ -48,6 +49,7 @@ public class EditItem extends JFrame {
 
     private int selectedProductId = -1;
     private int selectedOriginalQuantity = 0;
+    private String selectedProductType = "INVENTORY";
     private final boolean canAdjustInventoryQuantity = PermissionManager.hasPermission("ADJUST_INVENTORY_QUANTITY");
 
     public EditItem() {
@@ -104,6 +106,7 @@ public class EditItem extends JFrame {
         barcodesArea.setWrapStyleWord(true);
         costPriceField = new JTextField();
         priceField = new JTextField();
+        itemTypeBox = new JComboBox<>(new String[]{"Inventory", "Service", "Non Inventory"});
         quantityField = new JTextField();
         if (!canAdjustInventoryQuantity) {
             quantityField.setToolTipText("Requires Adjust Inventory Quantity permission.");
@@ -189,6 +192,15 @@ public class EditItem extends JFrame {
         rightGbc.gridx = 0;
         rightGbc.gridy = 1;
         rightGbc.weightx = 0;
+        rightColumn.add(new JLabel("Item Type:"), rightGbc);
+
+        rightGbc.gridx = 1;
+        rightGbc.weightx = 1;
+        rightColumn.add(itemTypeBox, rightGbc);
+
+        rightGbc.gridx = 0;
+        rightGbc.gridy = 2;
+        rightGbc.weightx = 0;
         rightColumn.add(new JLabel("Quantity:"), rightGbc);
 
         rightGbc.gridx = 1;
@@ -196,7 +208,7 @@ public class EditItem extends JFrame {
         rightColumn.add(quantityField, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 2;
+        rightGbc.gridy = 3;
         rightGbc.weightx = 0;
         rightColumn.add(new JLabel("Reorder Quantity:"), rightGbc);
 
@@ -205,7 +217,7 @@ public class EditItem extends JFrame {
         rightColumn.add(reorderLevelField, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 3;
+        rightGbc.gridy = 4;
         rightGbc.weightx = 0;
         rightColumn.add(new JLabel("Department:"), rightGbc);
 
@@ -214,7 +226,7 @@ public class EditItem extends JFrame {
         rightColumn.add(departmentSelector, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 4;
+        rightGbc.gridy = 5;
         rightGbc.weightx = 0;
         rightColumn.add(new JLabel("Vendor:"), rightGbc);
 
@@ -223,7 +235,7 @@ public class EditItem extends JFrame {
         rightColumn.add(vendorSelector, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 5;
+        rightGbc.gridy = 6;
         rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Additional Barcodes:"), rightGbc);
@@ -235,7 +247,7 @@ public class EditItem extends JFrame {
         rightColumn.add(barcodeScrollPane, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 6;
+        rightGbc.gridy = 7;
         rightGbc.weightx = 0;
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
         rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
@@ -247,7 +259,7 @@ public class EditItem extends JFrame {
         rightColumn.add(imageSelector, rightGbc);
 
         rightGbc.gridx = 0;
-        rightGbc.gridy = 7;
+        rightGbc.gridy = 8;
         rightGbc.weightx = 0;
         rightGbc.weighty = 1;
         rightColumn.add(Box.createVerticalGlue(), rightGbc);
@@ -304,6 +316,10 @@ public class EditItem extends JFrame {
                 clearSelection();
             }
         });
+        itemTypeBox.addActionListener(e -> {
+            selectedProductType = getSelectedProductType();
+            updateInventoryFieldsForType();
+        });
 
         cancelButton.addActionListener(new ActionListener() {
             @Override
@@ -348,6 +364,7 @@ public class EditItem extends JFrame {
                        p.description,
                        p.cost_price,
                        p.price,
+                       COALESCE(p.product_type, 'INVENTORY') AS product_type,
                        COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
                        COALESCE(i.reorder_level, 0) AS reorder_level,
                        p.category_id,
@@ -383,6 +400,7 @@ public class EditItem extends JFrame {
                         rs.getString("description") != null ? rs.getString("description") : "",
                         rs.getDouble("cost_price"),
                         rs.getDouble("price"),
+                        rs.getString("product_type"),
                         rs.getInt("quantity_on_hand"),
                         rs.getInt("reorder_level"),
                         rs.getObject("category_id") != null ? rs.getInt("category_id") : "",
@@ -398,7 +416,7 @@ public class EditItem extends JFrame {
                 return;
             }
 
-            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
+            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Type", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
             DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -409,15 +427,9 @@ public class EditItem extends JFrame {
             JTable table = new JTable(model);
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             table.setRowSelectionInterval(0, 0);
-            table.getColumnModel().getColumn(13).setMinWidth(0);
-            table.getColumnModel().getColumn(13).setMaxWidth(0);
-            table.getColumnModel().getColumn(13).setPreferredWidth(0);
-            table.getColumnModel().getColumn(11).setMinWidth(0);
-            table.getColumnModel().getColumn(11).setMaxWidth(0);
-            table.getColumnModel().getColumn(11).setPreferredWidth(0);
-            table.getColumnModel().getColumn(9).setMinWidth(0);
-            table.getColumnModel().getColumn(9).setMaxWidth(0);
-            table.getColumnModel().getColumn(9).setPreferredWidth(0);
+            hideColumn(table, 14);
+            hideColumn(table, 12);
+            hideColumn(table, 10);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(550, 200));
 
@@ -447,13 +459,14 @@ public class EditItem extends JFrame {
                 String description = (String) table.getValueAt(selectedRow, 4);
                 double costPrice = (double) table.getValueAt(selectedRow, 5);
                 double price = (double) table.getValueAt(selectedRow, 6);
-                Object quantity = table.getValueAt(selectedRow, 7);
-                Object reorderLevel = table.getValueAt(selectedRow, 8);
-                Object departmentId = table.getValueAt(selectedRow, 9);
-                Object departmentName = table.getValueAt(selectedRow, 10);
-                Object vendorId = table.getValueAt(selectedRow, 11);
-                Object vendorName = table.getValueAt(selectedRow, 12);
-                Object imageUrl = table.getValueAt(selectedRow, 13);
+                Object productType = table.getValueAt(selectedRow, 7);
+                Object quantity = table.getValueAt(selectedRow, 8);
+                Object reorderLevel = table.getValueAt(selectedRow, 9);
+                Object departmentId = table.getValueAt(selectedRow, 10);
+                Object departmentName = table.getValueAt(selectedRow, 11);
+                Object vendorId = table.getValueAt(selectedRow, 12);
+                Object vendorName = table.getValueAt(selectedRow, 13);
+                Object imageUrl = table.getValueAt(selectedRow, 14);
 
                 nameField.setText(name);
                 skuField.setText(sku);
@@ -461,6 +474,8 @@ public class EditItem extends JFrame {
                 descriptionArea.setText(description != null ? description : "");
                 costPriceField.setText(String.valueOf(costPrice));
                 priceField.setText(String.valueOf(price));
+                selectedProductType = normalizeProductType(productType == null ? null : productType.toString());
+                itemTypeBox.setSelectedItem(formatProductType(selectedProductType));
                 quantityField.setText(quantity != null ? quantity.toString() : "0");
                 selectedOriginalQuantity = parseIntOrDefault(quantity, 0);
                 reorderLevelField.setText(reorderLevel != null ? reorderLevel.toString() : "0");
@@ -488,12 +503,19 @@ public class EditItem extends JFrame {
                 imageSelector.setImageUrl(imageUrl != null ? imageUrl.toString() : "");
 
                 setFormEnabled(true);
+                updateInventoryFieldsForType();
             }
 
         } catch (SQLException ex) {
             ex.printStackTrace();
             JOptionPane.showMessageDialog(this, "Database error: " + ex.getMessage());
         }
+    }
+
+    private void hideColumn(JTable table, int columnIndex) {
+        table.getColumnModel().getColumn(columnIndex).setMinWidth(0);
+        table.getColumnModel().getColumn(columnIndex).setMaxWidth(0);
+        table.getColumnModel().getColumn(columnIndex).setPreferredWidth(0);
     }
 
     private String loadAdditionalBarcodes(int productId) {
@@ -599,8 +621,11 @@ public class EditItem extends JFrame {
         uniqueBarcodes.remove(barcode);
         extraBarcodes.addAll(uniqueBarcodes);
 
-        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (canAdjustInventoryQuantity && quantityText.isEmpty()) || reorderLevelText.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, Price, Quantity, and Reorder Quantity are required.");
+        String productType = getSelectedProductType();
+        boolean inventoryItem = "INVENTORY".equals(productType);
+
+        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (inventoryItem && canAdjustInventoryQuantity && quantityText.isEmpty()) || (inventoryItem && reorderLevelText.isEmpty())) {
+            JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, and Price are required. Inventory items also require Quantity and Reorder Quantity.");
             return;
         }
 
@@ -621,7 +646,7 @@ public class EditItem extends JFrame {
         }
 
         int quantity = selectedOriginalQuantity;
-        if (canAdjustInventoryQuantity) {
+        if (inventoryItem && canAdjustInventoryQuantity) {
             try {
                 quantity = Integer.parseInt(quantityText);
             } catch (NumberFormatException ex) {
@@ -630,12 +655,14 @@ public class EditItem extends JFrame {
             }
         }
 
-        int reorderLevel;
-        try {
-            reorderLevel = Integer.parseInt(reorderLevelText);
-        } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Reorder Quantity must be a whole number.");
-            return;
+        int reorderLevel = 0;
+        if (inventoryItem) {
+            try {
+                reorderLevel = Integer.parseInt(reorderLevelText);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Reorder Quantity must be a whole number.");
+                return;
+            }
         }
 
         Integer categoryId = departmentSelector.getSelectedDepartmentId();
@@ -647,7 +674,7 @@ public class EditItem extends JFrame {
             return;
         }
 
-        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
+        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
                 VALUES (?, ?, ?, ?)
@@ -674,33 +701,35 @@ public class EditItem extends JFrame {
                 updatePs.setString(4, description);
                 updatePs.setDouble(5, costPrice);
                 updatePs.setDouble(6, price);
+                updatePs.setString(7, productType);
 
                 if (categoryId != null) {
-                    updatePs.setInt(7, categoryId);
-                } else {
-                    updatePs.setNull(7, java.sql.Types.INTEGER);
-                }
-                if (vendorId != null) {
-                    updatePs.setInt(8, vendorId);
+                    updatePs.setInt(8, categoryId);
                 } else {
                     updatePs.setNull(8, java.sql.Types.INTEGER);
                 }
+                if (vendorId != null) {
+                    updatePs.setInt(9, vendorId);
+                } else {
+                    updatePs.setNull(9, java.sql.Types.INTEGER);
+                }
 
-                updatePs.setString(9, imageUrl);
-                updatePs.setInt(10, selectedProductId);
+                updatePs.setString(10, imageUrl);
+                updatePs.setInt(11, selectedProductId);
 
                 int rowsUpdated = updatePs.executeUpdate();
                 if (rowsUpdated == 0) {
                     throw new SQLException("Update failed — product not found.");
                 }
 
-                inventoryPs.setInt(1, selectedProductId);
-                inventoryPs.setInt(2, selectedLocationId);
-                inventoryPs.setInt(3, quantity);
-                inventoryPs.setInt(4, reorderLevel);
-                inventoryPs.executeUpdate();
-
-                logManualInventoryAdjustment(conn, selectedProductId, selectedLocationId, previousQuantity, quantity);
+                if (inventoryItem) {
+                    inventoryPs.setInt(1, selectedProductId);
+                    inventoryPs.setInt(2, selectedLocationId);
+                    inventoryPs.setInt(3, quantity);
+                    inventoryPs.setInt(4, reorderLevel);
+                    inventoryPs.executeUpdate();
+                    logManualInventoryAdjustment(conn, selectedProductId, selectedLocationId, previousQuantity, quantity);
+                }
 
                 deletePs.setInt(1, selectedProductId);
                 deletePs.executeUpdate();
@@ -734,6 +763,7 @@ public class EditItem extends JFrame {
     private void clearSelection() {
         selectedProductId = -1;
         selectedOriginalQuantity = 0;
+        selectedProductType = "INVENTORY";
         nameField.setText("");
         skuField.setText("");
         barcodeField.setText("");
@@ -741,6 +771,7 @@ public class EditItem extends JFrame {
         barcodesArea.setText("");
         costPriceField.setText("");
         priceField.setText("");
+        itemTypeBox.setSelectedItem("Inventory");
         quantityField.setText("");
         reorderLevelField.setText("");
         departmentSelector.clearSelection();
@@ -759,13 +790,45 @@ public class EditItem extends JFrame {
         barcodesArea.setEnabled(enabled);
         costPriceField.setEnabled(enabled);
         priceField.setEnabled(enabled);
-        quantityField.setEnabled(enabled && canAdjustInventoryQuantity);
-        reorderLevelField.setEnabled(enabled);
+        itemTypeBox.setEnabled(enabled);
+        updateInventoryFieldsForType();
         departmentSelector.setSelectorEnabled(enabled);
         vendorSelector.setSelectorEnabled(enabled);
         imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
         clearButton.setEnabled(enabled);
+    }
+
+    private void updateInventoryFieldsForType() {
+        boolean enabled = selectedProductId != -1;
+        boolean inventoryItem = "INVENTORY".equals(getSelectedProductType());
+        quantityField.setEnabled(enabled && inventoryItem && canAdjustInventoryQuantity);
+        reorderLevelField.setEnabled(enabled && inventoryItem);
+        if (!inventoryItem) {
+            quantityField.setText("0");
+            reorderLevelField.setText("0");
+        }
+    }
+
+    private String getSelectedProductType() {
+        Object selected = itemTypeBox == null ? null : itemTypeBox.getSelectedItem();
+        return normalizeProductType(selected == null ? selectedProductType : selected.toString());
+    }
+
+    private String normalizeProductType(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
+        if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
+            return normalized;
+        }
+        return "INVENTORY";
+    }
+
+    private String formatProductType(String productType) {
+        return switch (normalizeProductType(productType)) {
+            case "SERVICE" -> "Service";
+            case "NON_INVENTORY" -> "Non Inventory";
+            default -> "Inventory";
+        };
     }
 
     private int parseIntOrDefault(Object value, int fallback) {

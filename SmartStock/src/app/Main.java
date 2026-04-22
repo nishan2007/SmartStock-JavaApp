@@ -1,6 +1,7 @@
 package app;
 
 import ui.screens.WelcomeFrame;
+import ui.helpers.ThemeManager;
 
 import javax.swing.*;
 
@@ -10,6 +11,7 @@ public class Main {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {}
+            ThemeManager.applyLookAndFeelDefaults();
             new WelcomeFrame().setVisible(true);
           // new NewItem().setVisible(true);
            // new EmployeeManagement().setVisible(true);

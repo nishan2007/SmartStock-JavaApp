@@ -1,6 +1,7 @@
 package ui.screens;
 
 import ui.components.AppMenuBar;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -10,6 +11,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.JTableHeader;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
@@ -116,6 +118,7 @@ public class ViewInventory extends JFrame {
         columns.add("SKU");
         columns.add("Name");
         columns.add("Description");
+        columns.add("Type");
         columns.add("Category");
         if (canViewVendor) {
             columns.add("Vendor");
@@ -143,6 +146,7 @@ public class ViewInventory extends JFrame {
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         inventoryTable.getTableHeader().setReorderingAllowed(false);
         inventoryTable.setFillsViewportHeight(true);
+        applyInventoryTableTheme();
         inventoryTable.setDefaultRenderer(Object.class, new InventoryStatusRenderer());
         inventoryTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -166,6 +170,7 @@ public class ViewInventory extends JFrame {
         setColumnWidth(columnModel, "SKU", 130);
         setColumnWidth(columnModel, "Name", 180);
         setColumnWidth(columnModel, "Description", 240);
+        setColumnWidth(columnModel, "Type", 115);
         setColumnWidth(columnModel, "Category", 120);
         setColumnWidth(columnModel, "Vendor", 160);
         setColumnWidth(columnModel, "Cost Price", 90);
@@ -175,7 +180,39 @@ public class ViewInventory extends JFrame {
         setColumnWidth(columnModel, "Status", 110);
         setColumnWidth(columnModel, "Created By", 150);
 
-        return new JScrollPane(inventoryTable);
+        JScrollPane scrollPane = new JScrollPane(inventoryTable);
+        applyInventoryScrollPaneTheme(scrollPane);
+        return scrollPane;
+    }
+
+    private void applyInventoryTableTheme() {
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color tableBackground = dark ? new Color(30, 30, 30) : Color.WHITE;
+        Color tableText = dark ? new Color(235, 235, 235) : Color.BLACK;
+        Color grid = dark ? new Color(75, 75, 75) : new Color(180, 180, 180);
+        Color selectionBackground = dark ? new Color(48, 72, 120) : new Color(57, 73, 171);
+        Color selectionText = Color.WHITE;
+
+        inventoryTable.setBackground(tableBackground);
+        inventoryTable.setForeground(tableText);
+        inventoryTable.setGridColor(grid);
+        inventoryTable.setSelectionBackground(selectionBackground);
+        inventoryTable.setSelectionForeground(selectionText);
+        inventoryTable.setOpaque(true);
+
+        JTableHeader header = inventoryTable.getTableHeader();
+        if (header != null) {
+            header.setBackground(dark ? new Color(38, 38, 38) : new Color(241, 245, 249));
+            header.setForeground(dark ? new Color(235, 235, 235) : new Color(17, 24, 39));
+            header.setOpaque(true);
+        }
+    }
+
+    private void applyInventoryScrollPaneTheme(JScrollPane scrollPane) {
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color background = dark ? new Color(30, 30, 30) : Color.WHITE;
+        scrollPane.setBackground(background);
+        scrollPane.getViewport().setBackground(background);
     }
 
     private void setIntegerComparator(TableRowSorter<DefaultTableModel> sorter, String columnName) {
@@ -230,8 +267,10 @@ public class ViewInventory extends JFrame {
             DefaultTableModel model = (DefaultTableModel) table.getModel();
             int quantityColumn = model.findColumn("Quantity");
             int reorderColumn = model.findColumn("Reorder Level");
+            int typeColumn = model.findColumn("Type");
             Object quantityObj = quantityColumn >= 0 ? model.getValueAt(modelRow, quantityColumn) : 0;
             Object reorderObj = reorderColumn >= 0 ? model.getValueAt(modelRow, reorderColumn) : 0;
+            String productType = typeColumn >= 0 ? normalizeProductType(String.valueOf(model.getValueAt(modelRow, typeColumn))) : "INVENTORY";
 
             int quantity = 0;
             int reorderLevel = 0;
@@ -250,16 +289,26 @@ public class ViewInventory extends JFrame {
                 component.setBackground(table.getSelectionBackground());
                 component.setForeground(table.getSelectionForeground());
             } else {
-                component.setForeground(Color.BLACK);
+                boolean dark = ThemeManager.isDarkModeEnabled();
+                Color text = dark ? new Color(235, 235, 235) : Color.BLACK;
+                Color normalRow = dark ? new Color(30, 30, 30) : Color.WHITE;
+                Color serviceRow = dark ? new Color(36, 36, 36) : Color.WHITE;
+                Color negativeRow = dark ? new Color(116, 58, 20) : new Color(255, 229, 204);
+                Color outOfStockRow = dark ? new Color(127, 29, 29) : new Color(255, 199, 206);
+                Color lowStockRow = dark ? new Color(113, 82, 18) : new Color(255, 242, 204);
 
-                if (quantity < 0) {
-                    component.setBackground(new Color(255, 229, 204));
+                component.setForeground(text);
+
+                if (!isInventoryProduct(productType)) {
+                    component.setBackground(serviceRow);
+                } else if (quantity < 0) {
+                    component.setBackground(negativeRow);
                 } else if (quantity == 0) {
-                    component.setBackground(new Color(255, 199, 206));
+                    component.setBackground(outOfStockRow);
                 } else if (quantity <= reorderLevel) {
-                    component.setBackground(new Color(255, 242, 204));
+                    component.setBackground(lowStockRow);
                 } else {
-                    component.setBackground(Color.WHITE);
+                    component.setBackground(normalRow);
                 }
             }
 
@@ -275,6 +324,7 @@ public class ViewInventory extends JFrame {
         sql.append("p.sku, ");
         sql.append("p.name, ");
         sql.append("COALESCE(p.description, '') AS description, ");
+        sql.append("COALESCE(p.product_type, 'INVENTORY') AS product_type, ");
         sql.append("COALESCE(c.name, '') AS category_name, ");
         sql.append(canViewVendor ? "COALESCE(v.name, '') AS vendor_name, " : "'' AS vendor_name, ");
         sql.append(canViewCostPrice ? "COALESCE(p.cost_price, 0) AS cost_price, " : "0 AS cost_price, ");
@@ -308,11 +358,11 @@ public class ViewInventory extends JFrame {
         }
 
         if ("In Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(i.quantity_on_hand, 0) > 0");
+            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) > 0");
         } else if ("Low Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(i.quantity_on_hand, 0) <= COALESCE(i.reorder_level, 0) AND COALESCE(i.quantity_on_hand, 0) > 0");
+            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) <= COALESCE(i.reorder_level, 0) AND COALESCE(i.quantity_on_hand, 0) > 0");
         } else if ("Out of Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(i.quantity_on_hand, 0) <= 0");
+            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) <= 0");
         }
 
         sql.append(" ORDER BY p.name ASC");
@@ -348,6 +398,7 @@ public class ViewInventory extends JFrame {
                     String sku = rs.getString("sku");
                     String name = rs.getString("name");
                     String description = rs.getString("description");
+                    String productType = normalizeProductType(rs.getString("product_type"));
                     String category = rs.getString("category_name");
                     String vendor = rs.getString("vendor_name");
                     double costPrice = rs.getDouble("cost_price");
@@ -355,13 +406,14 @@ public class ViewInventory extends JFrame {
                     int quantity = rs.getInt("quantity_on_hand");
                     int reorderLevel = rs.getInt("reorder_level");
                     String createdBy = rs.getString("created_by_name");
-                    String status = getStockStatus(quantity, reorderLevel);
+                    String status = isInventoryProduct(productType) ? getStockStatus(quantity, reorderLevel) : formatProductType(productType);
 
                     Vector<Object> row = new Vector<>();
                     row.add(productId);
                     row.add(sku);
                     row.add(name);
                     row.add(description);
+                    row.add(formatProductType(productType));
                     row.add(category);
                     if (canViewVendor) {
                         row.add(vendor);
@@ -379,7 +431,9 @@ public class ViewInventory extends JFrame {
                     tableModel.addRow(row);
 
                     totalProducts++;
-                    totalUnits += quantity;
+                    if (isInventoryProduct(productType)) {
+                        totalUnits += quantity;
+                    }
                 }
             }
 
@@ -402,6 +456,26 @@ public class ViewInventory extends JFrame {
             return "Low Stock";
         }
         return "In Stock";
+    }
+
+    private String normalizeProductType(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
+        if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
+            return normalized;
+        }
+        return "INVENTORY";
+    }
+
+    private boolean isInventoryProduct(String productType) {
+        return "INVENTORY".equals(normalizeProductType(productType));
+    }
+
+    private String formatProductType(String productType) {
+        return switch (normalizeProductType(productType)) {
+            case "SERVICE" -> "Service";
+            case "NON_INVENTORY" -> "Non Inventory";
+            default -> "Inventory";
+        };
     }
 
     private void showSelectedItemDetails() {

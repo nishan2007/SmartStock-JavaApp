@@ -4,6 +4,7 @@ import data.DB;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -443,9 +444,12 @@ public class EndOfDay extends JFrame {
     private static JLabel metricLabel() {
         JLabel label = new JLabel();
         label.setOpaque(true);
-        label.setBackground(Color.WHITE);
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        label.setBackground(dark ? new Color(88, 88, 88) : Color.WHITE);
+        label.setForeground(dark ? Color.WHITE : Color.BLACK);
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         label.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
+                BorderFactory.createLineBorder(dark ? new Color(115, 115, 115) : new Color(220, 224, 230), 1),
                 new EmptyBorder(10, 10, 10, 10)
         ));
         label.setFont(new Font("SansSerif", Font.BOLD, 13));

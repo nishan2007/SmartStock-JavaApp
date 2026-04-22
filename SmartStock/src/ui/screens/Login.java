@@ -4,9 +4,12 @@ import managers.SupabaseSessionManager;
 import services.DeviceService;
 import managers.SessionManager;
 import data.DB;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
+import javax.swing.plaf.basic.BasicButtonUI;
+import javax.swing.plaf.basic.BasicComboBoxUI;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -87,6 +90,7 @@ public class Login extends JFrame {
         });
 
         getRootPane().setDefaultButton(loginButton);
+        ThemeManager.applyToWindow(this);
         setVisible(true);
     }
 
@@ -188,16 +192,7 @@ public class Login extends JFrame {
                 if (locations.size() == 1) {
                     selectedLocation = locations.get(0);
                 } else {
-                    selectedLocation = (LocationOption) JOptionPane.showInputDialog(
-                            this,
-                            "Select store:",
-                            "Store Selection",
-                            JOptionPane.QUESTION_MESSAGE,
-                            null,
-                            locations.toArray(),
-                            locations.get(0)
-                    );
-
+                    selectedLocation = selectStore(locations);
                     if (selectedLocation == null) {
                         return;
                     }
@@ -284,6 +279,119 @@ public class Login extends JFrame {
         } catch (Exception ex) {
             return new SupabaseLoginResult(false, "Unable to reach Supabase Auth: " + ex.getMessage(), null, null);
         }
+    }
+
+    private LocationOption selectStore(List<LocationOption> locations) {
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color background = dark ? new Color(18, 18, 18) : UIManager.getColor("Panel.background");
+        Color surface = dark ? new Color(30, 30, 30) : Color.WHITE;
+        Color field = dark ? new Color(24, 24, 24) : Color.WHITE;
+        Color text = dark ? Color.WHITE : new Color(17, 24, 39);
+        Color buttonColor = dark ? new Color(42, 42, 42) : UIManager.getColor("Button.background");
+        Color buttonText = dark ? Color.WHITE : UIManager.getColor("Button.foreground");
+        final LocationOption[] selectedLocation = new LocationOption[1];
+
+        JComboBox<LocationOption> storeBox = new JComboBox<>(locations.toArray(new LocationOption[0]));
+        storeBox.setSelectedIndex(0);
+        storeBox.setEditable(dark);
+        if (dark) {
+            storeBox.setUI(new BasicComboBoxUI() {
+                @Override
+                protected JButton createArrowButton() {
+                    JButton button = new JButton("▼");
+                    button.setUI(new BasicButtonUI());
+                    button.setBackground(field);
+                    button.setForeground(text);
+                    button.setOpaque(true);
+                    button.setContentAreaFilled(true);
+                    button.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, new Color(75, 75, 75)));
+                    return button;
+                }
+            });
+            storeBox.setBackground(field);
+            storeBox.setForeground(text);
+            Component editorComponent = storeBox.getEditor().getEditorComponent();
+            if (editorComponent instanceof JTextField editorField) {
+                editorField.setEditable(false);
+                editorField.setText(String.valueOf(storeBox.getSelectedItem()));
+                editorField.setBackground(field);
+                editorField.setForeground(text);
+                editorField.setCaretColor(text);
+                editorField.setSelectionColor(field);
+                editorField.setSelectedTextColor(text);
+                editorField.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+                storeBox.addActionListener(e -> editorField.setText(String.valueOf(storeBox.getSelectedItem())));
+            }
+            storeBox.setRenderer(new DefaultListCellRenderer() {
+                @Override
+                public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                    JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                    label.setOpaque(true);
+                    label.setBackground(isSelected ? new Color(88, 88, 88) : field);
+                    label.setForeground(text);
+                    return label;
+                }
+            });
+        }
+
+        JDialog dialog = new JDialog(this, "Store Selection", true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        JPanel root = new JPanel(new BorderLayout(14, 14));
+        root.setBorder(BorderFactory.createEmptyBorder(16, 18, 16, 18));
+        root.setBackground(background);
+
+        JLabel promptLabel = new JLabel("Select store:");
+        promptLabel.setForeground(text);
+
+        JPanel fieldPanel = new JPanel(new BorderLayout(0, 8));
+        fieldPanel.setBackground(background);
+        fieldPanel.add(promptLabel, BorderLayout.NORTH);
+        fieldPanel.add(storeBox, BorderLayout.CENTER);
+
+        JLabel iconLabel = new JLabel(UIManager.getIcon("OptionPane.questionIcon"));
+        JPanel centerPanel = new JPanel(new BorderLayout(16, 0));
+        centerPanel.setBackground(surface);
+        centerPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        centerPanel.add(iconLabel, BorderLayout.WEST);
+        centerPanel.add(fieldPanel, BorderLayout.CENTER);
+
+        JButton cancelButton = createStoreDialogButton("Cancel", buttonColor, buttonText);
+        JButton okButton = createStoreDialogButton("OK", buttonColor, buttonText);
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        buttonPanel.setBackground(background);
+        buttonPanel.add(cancelButton);
+        buttonPanel.add(okButton);
+
+        cancelButton.addActionListener(e -> dialog.dispose());
+        okButton.addActionListener(e -> {
+            selectedLocation[0] = (LocationOption) storeBox.getSelectedItem();
+            dialog.dispose();
+        });
+
+        root.add(centerPanel, BorderLayout.CENTER);
+        root.add(buttonPanel, BorderLayout.SOUTH);
+        dialog.setContentPane(root);
+        dialog.getRootPane().setDefaultButton(okButton);
+        dialog.pack();
+        dialog.setSize(Math.max(dialog.getWidth(), 320), dialog.getHeight());
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+        return selectedLocation[0];
+    }
+
+    private JButton createStoreDialogButton(String text, Color background, Color foreground) {
+        JButton button = new JButton(text);
+        button.setUI(new BasicButtonUI());
+        button.setBackground(background);
+        button.setForeground(foreground);
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(90, 90, 90)),
+                BorderFactory.createEmptyBorder(6, 22, 6, 22)
+        ));
+        button.setFocusPainted(false);
+        return button;
     }
 
     private String escapeJson(String value) {

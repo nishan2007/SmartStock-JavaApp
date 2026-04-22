@@ -4,6 +4,7 @@ import managers.NavigationManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -26,6 +27,7 @@ public class LocalDeviceSettings extends JFrame {
     private final JLabel nextReceiptLabel = new JLabel();
     private final JLabel nextReceiveLabel = new JLabel();
     private final JLabel nextSequenceLabel = new JLabel();
+    private final JCheckBox darkModeBox = new JCheckBox("Use dark mode on this device");
 
     public LocalDeviceSettings() {
         setTitle("Local Device Settings");
@@ -61,6 +63,7 @@ public class LocalDeviceSettings extends JFrame {
         addLabelRow(contentPanel, 5, "Next Receipt", nextReceiptLabel);
         addLabelRow(contentPanel, 6, "Next Receive ID", nextReceiveLabel);
         addLabelRow(contentPanel, 7, "Next Sequences", nextSequenceLabel);
+        addCheckRow(contentPanel, 8, "Appearance", darkModeBox);
 
         JPanel warningPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         warningPanel.setOpaque(false);
@@ -73,7 +76,7 @@ public class LocalDeviceSettings extends JFrame {
 
         GridBagConstraints warningConstraints = new GridBagConstraints();
         warningConstraints.gridx = 0;
-        warningConstraints.gridy = 8;
+        warningConstraints.gridy = 9;
         warningConstraints.gridwidth = 2;
         warningConstraints.weightx = 1;
         warningConstraints.insets = new Insets(16, 0, 0, 0);
@@ -86,8 +89,10 @@ public class LocalDeviceSettings extends JFrame {
         JButton closeButton = new JButton("Close");
         JButton saveButton = new JButton("Save Device ID");
         JButton saveTimezoneButton = new JButton("Save Store Timezone");
+        JButton saveAppearanceButton = new JButton("Save Appearance");
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
+        buttonPanel.add(saveAppearanceButton);
         buttonPanel.add(saveTimezoneButton);
         buttonPanel.add(saveButton);
 
@@ -117,6 +122,7 @@ public class LocalDeviceSettings extends JFrame {
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveButton.addActionListener(e -> saveDeviceId());
         saveTimezoneButton.addActionListener(e -> saveStoreTimezone());
+        saveAppearanceButton.addActionListener(e -> saveAppearance());
 
         loadSettings();
         WindowHelper.configurePosWindow(this);
@@ -167,6 +173,27 @@ public class LocalDeviceSettings extends JFrame {
         panel.add(valueLabel, valueConstraints);
     }
 
+    private void addCheckRow(JPanel panel, int row, String label, JCheckBox checkBox) {
+        JLabel fieldLabel = new JLabel(label);
+        fieldLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+        fieldLabel.setForeground(new Color(55, 65, 81));
+
+        GridBagConstraints labelConstraints = new GridBagConstraints();
+        labelConstraints.gridx = 0;
+        labelConstraints.gridy = row;
+        labelConstraints.insets = new Insets(0, 0, 12, 16);
+        labelConstraints.anchor = GridBagConstraints.WEST;
+        panel.add(fieldLabel, labelConstraints);
+
+        GridBagConstraints valueConstraints = new GridBagConstraints();
+        valueConstraints.gridx = 1;
+        valueConstraints.gridy = row;
+        valueConstraints.insets = new Insets(0, 0, 12, 0);
+        valueConstraints.weightx = 1;
+        valueConstraints.fill = GridBagConstraints.HORIZONTAL;
+        panel.add(checkBox, valueConstraints);
+    }
+
     private void loadSettings() {
         try {
             int locationId = getCurrentLocationIdForPreview();
@@ -179,6 +206,7 @@ public class LocalDeviceSettings extends JFrame {
             nextReceiptLabel.setText(settings.nextReceiptPreview());
             nextReceiveLabel.setText(settings.nextReceivePreview());
             nextSequenceLabel.setText("Receipt: " + settings.nextSequence() + "   Receiving: " + settings.nextReceiveSequence());
+            darkModeBox.setSelected(ThemeManager.isDarkModeEnabled());
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(
                     this,
@@ -236,6 +264,21 @@ public class LocalDeviceSettings extends JFrame {
             loadSettings();
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to save store timezone.\n\n" + ex.getMessage(), "Store Timezone", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void saveAppearance() {
+        try {
+            ThemeManager.setDarkModeEnabled(darkModeBox.isSelected());
+            JOptionPane.showMessageDialog(this, darkModeBox.isSelected() ? "Dark mode enabled for this device." : "Dark mode disabled for this device.");
+            loadSettings();
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to save appearance settings.\n\n" + ex.getMessage(),
+                    "Local Device Settings",
+                    JOptionPane.ERROR_MESSAGE
+            );
         }
     }
 

@@ -332,7 +332,8 @@ public class EnterInventory extends JFrame {
                 LEFT JOIN inventory i
                     ON p.product_id = i.product_id
                    AND i.location_id = ?
-                WHERE p.name ILIKE ? OR p.sku ILIKE ?
+                WHERE COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
+                  AND (p.name ILIKE ? OR p.sku ILIKE ?)
                 ORDER BY p.name
                 """;
 

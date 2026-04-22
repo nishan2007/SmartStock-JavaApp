@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import ui.helpers.ThemeManager;
 
 import javax.swing.*;
 import java.awt.*;
@@ -57,6 +58,7 @@ public class WelcomeFrame extends JFrame {
         root.add(center, BorderLayout.CENTER);
 
         setContentPane(root);
+        ThemeManager.applyToWindow(this);
     }
 
     private void testConnection() {
