@@ -25,7 +25,10 @@ public class Roles_Permission extends JFrame {
     private DefaultListModel<RoleItem> roleListModel;
 
     private Map<String, JCheckBox> permissionCheckboxes = new LinkedHashMap<>();
+    private Map<String, JCheckBox> mobilePermissionCheckboxes = new LinkedHashMap<>();
     private JPanel permissionPanel;
+    private JPanel mobilePermissionPanel;
+    private boolean mobilePermissionsAvailable = false;
 
     private JButton saveButton;
     private JButton addRoleButton;
@@ -49,15 +52,30 @@ public class Roles_Permission extends JFrame {
         permissionPanel = new JPanel();
         permissionPanel.setLayout(new BoxLayout(permissionPanel, BoxLayout.Y_AXIS));
         permissionPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        mobilePermissionPanel = new JPanel();
+        mobilePermissionPanel.setLayout(new BoxLayout(mobilePermissionPanel, BoxLayout.Y_AXIS));
+        mobilePermissionPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         ensurePermissionDefinitionsExist();
         loadPermissionDefinitions();
+        loadMobilePermissionDefinitions();
 
-        JScrollPane permScroll = new JScrollPane(
-                permissionPanel,
+        JScrollPane desktopPermScroll = new JScrollPane(
+                wrapPermissionColumn("Desktop Permissions", permissionPanel),
                 JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
                 JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
         );
-        permScroll.getVerticalScrollBar().setUnitIncrement(16);
+        desktopPermScroll.getVerticalScrollBar().setUnitIncrement(16);
+        JScrollPane mobilePermScroll = new JScrollPane(
+                wrapPermissionColumn("App Permissions", mobilePermissionPanel),
+                JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
+                JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        );
+        mobilePermScroll.getVerticalScrollBar().setUnitIncrement(16);
+
+        JPanel permissionsContainer = new JPanel(new GridLayout(1, 2, 10, 0));
+        permissionsContainer.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        permissionsContainer.add(desktopPermScroll);
+        permissionsContainer.add(mobilePermScroll);
 
         // TOP BUTTONS
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -71,7 +89,7 @@ public class Roles_Permission extends JFrame {
 
         add(topPanel, BorderLayout.NORTH);
         add(roleScroll, BorderLayout.WEST);
-        add(permScroll, BorderLayout.CENTER);
+        add(permissionsContainer, BorderLayout.CENTER);
         add(bottomPanel, BorderLayout.SOUTH);
 
         loadRoles();
@@ -102,6 +120,34 @@ public class Roles_Permission extends JFrame {
         cb.setAlignmentX(Component.LEFT_ALIGNMENT);
         permissionCheckboxes.put(normalizedKey, cb);
         permissionPanel.add(cb);
+    }
+
+    private JPanel wrapPermissionColumn(String title, JPanel contentPanel) {
+        JPanel wrapper = new JPanel(new BorderLayout(0, 8));
+        wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 15));
+        wrapper.add(titleLabel, BorderLayout.NORTH);
+        wrapper.add(contentPanel, BorderLayout.CENTER);
+        return wrapper;
+    }
+
+    private void addMobilePermission(String key, String label, String group) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String normalizedKey = key.trim();
+        if (mobilePermissionCheckboxes.containsKey(normalizedKey)) {
+            return;
+        }
+        JCheckBox cb = new JCheckBox(label);
+        cb.setToolTipText(normalizedKey);
+        cb.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (group != null && !group.isBlank()) {
+            cb.setText(label + "  (" + group + ")");
+        }
+        mobilePermissionCheckboxes.put(normalizedKey, cb);
+        mobilePermissionPanel.add(cb);
     }
 
     private void ensurePermissionDefinitionsExist() {
@@ -207,6 +253,50 @@ public class Roles_Permission extends JFrame {
         permissionPanel.repaint();
     }
 
+    private void loadMobilePermissionDefinitions() {
+        mobilePermissionCheckboxes.clear();
+        mobilePermissionPanel.removeAll();
+        mobilePermissionsAvailable = false;
+
+        try (Connection conn = DB.getConnection()) {
+            if (!tableExists(conn, "mobile_permissions") || !tableExists(conn, "role_mobile_permissions")) {
+                JLabel missingLabel = new JLabel("<html>Run the mobile permissions SQL first to manage app permissions here.</html>");
+                missingLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+                mobilePermissionPanel.add(missingLabel);
+                return;
+            }
+
+            String sql = """
+                    SELECT permission_key, display_name, permission_group
+                    FROM mobile_permissions
+                    ORDER BY permission_group, sort_order, display_name, permission_key
+                    """;
+
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    addMobilePermission(
+                            rs.getString("permission_key"),
+                            rs.getString("display_name"),
+                            rs.getString("permission_group")
+                    );
+                }
+            }
+            mobilePermissionsAvailable = true;
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to load app permissions.\n\n" + ex.getMessage(),
+                    "App Permission Load Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            ex.printStackTrace();
+        }
+
+        mobilePermissionPanel.revalidate();
+        mobilePermissionPanel.repaint();
+    }
+
     private String buildPermissionDisplayExpression(Set<String> permissionColumns) {
         List<String> labelColumns = new ArrayList<>();
         if (permissionColumns.contains("permission_name")) {
@@ -256,6 +346,22 @@ public class Roles_Permission extends JFrame {
         return columns;
     }
 
+    private boolean tableExists(Connection conn, String tableName) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     private void loadRoles() {
         roleListModel.clear();
 
@@ -285,6 +391,9 @@ public class Roles_Permission extends JFrame {
         for (JCheckBox cb : permissionCheckboxes.values()) {
             cb.setSelected(false);
         }
+        for (JCheckBox cb : mobilePermissionCheckboxes.values()) {
+            cb.setSelected(false);
+        }
 
         String sql = """
                 SELECT p.permission_key
@@ -310,6 +419,36 @@ public class Roles_Permission extends JFrame {
         } catch (SQLException ex) {
             ex.printStackTrace();
         }
+
+        if (mobilePermissionsAvailable) {
+            loadMobilePermissionsForRole(selected.id);
+        }
+    }
+
+    private void loadMobilePermissionsForRole(int roleId) {
+        String sql = """
+                SELECT permission_key
+                FROM role_mobile_permissions
+                WHERE role_id = ?
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, roleId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String key = rs.getString("permission_key");
+                    if (mobilePermissionCheckboxes.containsKey(key)) {
+                        mobilePermissionCheckboxes.get(key).setSelected(true);
+                    }
+                }
+            }
+
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+        }
     }
 
     private void savePermissions() {
@@ -320,6 +459,9 @@ public class Roles_Permission extends JFrame {
 
             conn.setAutoCommit(false);
             ensureSelectedPermissionsExist(conn);
+            if (mobilePermissionsAvailable) {
+                ensureSelectedMobilePermissionsExist(conn);
+            }
 
             // DELETE OLD
             try (PreparedStatement delete = conn.prepareStatement(
@@ -345,6 +487,30 @@ public class Roles_Permission extends JFrame {
                 }
 
                 insert.executeBatch();
+            }
+
+            if (mobilePermissionsAvailable) {
+                try (PreparedStatement delete = conn.prepareStatement(
+                        "DELETE FROM role_mobile_permissions WHERE role_id = ?")) {
+                    delete.setInt(1, selected.id);
+                    delete.executeUpdate();
+                }
+
+                String mobileInsertSql = """
+                        INSERT INTO role_mobile_permissions (role_id, permission_key)
+                        SELECT ?, permission_key FROM mobile_permissions WHERE permission_key = ?
+                        """;
+
+                try (PreparedStatement insert = conn.prepareStatement(mobileInsertSql)) {
+                    for (Map.Entry<String, JCheckBox> entry : mobilePermissionCheckboxes.entrySet()) {
+                        if (entry.getValue().isSelected()) {
+                            insert.setInt(1, selected.id);
+                            insert.setString(2, entry.getKey());
+                            insert.addBatch();
+                        }
+                    }
+                    insert.executeBatch();
+                }
             }
 
             conn.commit();
@@ -373,6 +539,25 @@ public class Roles_Permission extends JFrame {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
                         throw new SQLException("Missing permission definition: " + entry.getKey());
+                    }
+                }
+            }
+        }
+    }
+
+    private void ensureSelectedMobilePermissionsExist(Connection conn) throws SQLException {
+        String sql = "SELECT permission_key FROM mobile_permissions WHERE permission_key = ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Map.Entry<String, JCheckBox> entry : mobilePermissionCheckboxes.entrySet()) {
+                if (!entry.getValue().isSelected()) {
+                    continue;
+                }
+
+                ps.setString(1, entry.getKey());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Missing app permission definition: " + entry.getKey());
                     }
                 }
             }
