@@ -1802,9 +1802,10 @@ public class MakeASale extends JFrame {
 	                            receipt_sequence,
 	                            subtotal_amount,
 	                            discount_percent,
-	                            discount_amount
+	                            discount_amount,
+	                            transaction_source
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                        """;
                 int saleId;
 
@@ -1828,6 +1829,7 @@ public class MakeASale extends JFrame {
 		                    saleStmt.setBigDecimal(13, subtotalAmount);
 		                    saleStmt.setBigDecimal(14, discountPercent);
 		                    saleStmt.setBigDecimal(15, discountAmount);
+		                    saleStmt.setString(16, "Java_app");
 	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {

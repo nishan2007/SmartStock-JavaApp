@@ -6,6 +6,7 @@ import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
 import ui.screens.CompanyCustomization;
+import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
 import ui.screens.EndOfDay;
@@ -61,6 +62,7 @@ public final class NavigationManager {
         PAYROLL_DASHBOARD,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
+        DEVICE_MANAGEMENT,
         LOCATION_MANAGEMENT,
         LOCAL_DEVICE_SETTINGS,
         HARDWARE_SETUP,
@@ -156,6 +158,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.ROLES_PERMISSION));
     }
 
+    public static void openDeviceManagement(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.DEVICE_MANAGEMENT));
+    }
+
     public static void openLocationManagement(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.LOCATION_MANAGEMENT));
     }
@@ -192,6 +198,7 @@ public final class NavigationManager {
             case PAYROLL_DASHBOARD -> new PayrollDashboard();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
+            case DEVICE_MANAGEMENT -> new DeviceManagement();
             case LOCATION_MANAGEMENT -> new LocationManagement();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
             case HARDWARE_SETUP -> new HardwareSetup();
@@ -223,6 +230,7 @@ public final class NavigationManager {
             case "PayrollDashboard" -> ScreenType.PAYROLL_DASHBOARD;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
+            case "DeviceManagement" -> ScreenType.DEVICE_MANAGEMENT;
             case "LocationManagement" -> ScreenType.LOCATION_MANAGEMENT;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
             case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;

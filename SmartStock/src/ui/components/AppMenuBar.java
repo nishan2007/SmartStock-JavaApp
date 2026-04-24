@@ -7,6 +7,7 @@ import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.CompanyCustomization;
 import ui.screens.CustomerAccounts;
+import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
 import ui.screens.EndOfDay;
@@ -65,6 +66,7 @@ public class AppMenuBar {
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
+        JMenuItem deviceManagementItem = new JMenuItem("Device Management");
         JMenuItem locationManagementItem = new JMenuItem("Locations");
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
@@ -91,12 +93,13 @@ public class AppMenuBar {
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
+        boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
         boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -160,6 +163,9 @@ public class AppMenuBar {
         }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
+        }
+        if (!canDeviceManagement || "DeviceManagement".equalsIgnoreCase(screenKey)) {
+            deviceManagementItem.setEnabled(false);
         }
         if (!canLocationManagement || "LocationManagement".equalsIgnoreCase(screenKey)) {
             locationManagementItem.setEnabled(false);
@@ -382,6 +388,18 @@ public class AppMenuBar {
             }
         });
 
+        deviceManagementItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("DEVICE_MANAGEMENT", parent, "Device Management")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(DeviceManagement.class)) {
+                    return;
+                }
+                NavigationManager.openDeviceManagement(parent);
+            }
+        });
+
         locationManagementItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", parent, "Location Management")) {
@@ -452,6 +470,7 @@ public class AppMenuBar {
         employeeMenu.add(payrollDashboardItem);
 
         adminMenu.add(rolesPermissionItem);
+        adminMenu.add(deviceManagementItem);
         adminMenu.add(locationManagementItem);
         adminMenu.add(companyCustomizationItem);
         adminMenu.add(localDeviceSettingsItem);

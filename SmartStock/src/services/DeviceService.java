@@ -11,6 +11,11 @@ import java.util.UUID;
 
 public class DeviceService {
 
+    private static boolean shouldAutoApproveCurrentDevice() {
+        String role = SessionManager.getCurrentRole();
+        return role != null && "ADMIN".equalsIgnoreCase(role.trim());
+    }
+
     public static void registerOrUpdateDevice(Connection conn, Integer userId, Integer storeId) throws Exception {
         DeviceInfo info = DeviceUtils.collectDeviceInfo();
 
@@ -86,6 +91,7 @@ public class DeviceService {
 
                     SessionManager.setCurrentDeviceId(deviceId);
                 } else {
+                    boolean autoApprove = shouldAutoApproveCurrentDevice();
                     String insertSql = """
                             insert into devices (
                                 installation_id,
@@ -104,8 +110,10 @@ public class DeviceService {
                                 last_login_user_id,
                                 last_store_id,
                                 is_approved,
-                                is_blocked
-                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, ?, ?, true, false)
+                                is_blocked,
+                                approved_at,
+                                approved_by_user_id
+                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, ?, ?, ?, false, ?, ?)
                             returning device_id
                             """;
 
@@ -134,11 +142,31 @@ public class DeviceService {
                             insertStmt.setInt(13, storeId);
                         }
 
+                        insertStmt.setBoolean(14, autoApprove);
+
+                        if (autoApprove) {
+                            insertStmt.setTimestamp(15, new java.sql.Timestamp(System.currentTimeMillis()));
+                            if (userId == null) {
+                                insertStmt.setNull(16, Types.INTEGER);
+                            } else {
+                                insertStmt.setInt(16, userId);
+                            }
+                        } else {
+                            insertStmt.setNull(15, Types.TIMESTAMP);
+                            insertStmt.setNull(16, Types.INTEGER);
+                        }
+
                         try (ResultSet insertRs = insertStmt.executeQuery()) {
                             if (insertRs.next()) {
-                                SessionManager.setCurrentDeviceId(insertRs.getString("device_id"));
+                                if (autoApprove) {
+                                    SessionManager.setCurrentDeviceId(insertRs.getString("device_id"));
+                                }
                             }
                         }
+                    }
+
+                    if (!autoApprove) {
+                        throw new RuntimeException("This device is pending approval.");
                     }
                 }
             }

@@ -38,4 +38,11 @@ public final class StoreTimeZoneHelper {
         return timestamp.toLocalDateTime().format(formatter);
     }
 
+    public static String formatStoreZonedTimestamp(Timestamp timestamp, DateTimeFormatter formatter) {
+        if (timestamp == null) {
+            return "";
+        }
+        return timestamp.toInstant().atZone(getStoreZone()).format(formatter);
+    }
+
 }
