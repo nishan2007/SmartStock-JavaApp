@@ -267,8 +267,8 @@ public final class TimeClockManager {
                             existing.payPeriodStart(),
                             existing.payPeriodEnd(),
                             existing.payDate(),
-                            row.totalHours(),
-                            row.totalPay(),
+                            existing.totalHours(),
+                            existing.totalPay(),
                             existing.recordCount() + 1,
                             existing.compensationType(),
                             mergeLocations(existing.locationName(), row.locationName()),
@@ -490,18 +490,25 @@ public final class TimeClockManager {
         if ("WEEKLY".equalsIgnoreCase(payPeriodType)) {
             LocalDate start = date.with(DayOfWeek.MONDAY);
             LocalDate end = start.plusDays(6);
-            return new PayPeriod(start, end, end.plusDays(1));
+            return new PayPeriod(start, end, adjustPayDate(end.plusDays(1)));
         }
 
         if (date.getDayOfMonth() <= 15) {
             LocalDate start = date.withDayOfMonth(1);
             LocalDate end = date.withDayOfMonth(15);
-            return new PayPeriod(start, end, end.plusDays(1));
+            return new PayPeriod(start, end, adjustPayDate(end.plusDays(1)));
         }
 
         LocalDate start = date.withDayOfMonth(16);
         LocalDate end = date.withDayOfMonth(date.lengthOfMonth());
-        return new PayPeriod(start, end, end.plusDays(1));
+        return new PayPeriod(start, end, adjustPayDate(end.plusDays(1)));
+    }
+
+    private static LocalDate adjustPayDate(LocalDate payDate) {
+        if (payDate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return payDate.plusDays(1);
+        }
+        return payDate;
     }
 
     private static LocalDateTime toLocalDateTime(Timestamp timestamp) {

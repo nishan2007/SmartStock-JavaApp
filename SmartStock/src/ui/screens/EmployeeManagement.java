@@ -59,6 +59,9 @@ public class EmployeeManagement extends JFrame {
     private JButton assignStoresButton;
 
     private Integer selectedUserId = null;
+    private String originalFullName = "";
+    private String originalEmail = "";
+    private boolean originalIsActive = true;
 
     private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
     private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
@@ -485,6 +488,9 @@ public class EmployeeManagement extends JFrame {
 
         Object activeValue = employeeModel.getValueAt(selectedRow, 12);
         activeCheckBox.setSelected(activeValue instanceof Boolean ? (Boolean) activeValue : true);
+        originalFullName = fullNameField.getText().trim();
+        originalEmail = emailField.getText().trim();
+        originalIsActive = activeCheckBox.isSelected();
 
         passwordField.setText("");
         assignStoresButton.setEnabled(true);
@@ -604,14 +610,20 @@ public class EmployeeManagement extends JFrame {
 
             try {
                 String authUserId = getAuthUserId(conn, selectedUserId);
+                boolean shouldSyncAuth = !password.isBlank()
+                        || !sameText(fullName, originalFullName)
+                        || !sameText(email, originalEmail)
+                        || isActive != originalIsActive;
 
-                if (authUserId == null || authUserId.isBlank()) {
-                    if (password.isEmpty()) {
-                        throw new IllegalStateException("This employee does not have a linked Supabase auth user yet. Enter a password so one can be created.");
+                if (shouldSyncAuth) {
+                    if (authUserId == null || authUserId.isBlank()) {
+                        if (password.isEmpty()) {
+                            throw new IllegalStateException("This employee does not have a linked Supabase auth user yet. Enter a password so one can be created.");
+                        }
+                        authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
+                    } else {
+                        updateSupabaseAuthUser(authUserId, email, password, fullName, isActive);
                     }
-                    authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
-                } else {
-                    updateSupabaseAuthUser(authUserId, email, password, fullName, isActive);
                 }
 
                 String sql = """
@@ -684,10 +696,19 @@ public class EmployeeManagement extends JFrame {
         roleBox.setSelectedIndex(0);
         activeCheckBox.setSelected(true);
         activeCheckBox.setEnabled(true);
+        originalFullName = "";
+        originalEmail = "";
+        originalIsActive = true;
         employeeTable.clearSelection();
         assignStoresButton.setEnabled(false);
         deleteButton.setEnabled(false);
         usernameField.requestFocusInWindow();
+    }
+
+    private static boolean sameText(String left, String right) {
+        String normalizedLeft = left == null ? "" : left.trim();
+        String normalizedRight = right == null ? "" : right.trim();
+        return normalizedLeft.equals(normalizedRight);
     }
 
     private String getSelectedRole() {

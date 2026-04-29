@@ -107,17 +107,29 @@ public class Roles_Permission extends JFrame {
         WindowHelper.showPosWindow(this);
     }
 
-    private void addPermission(String key, String label) {
+    private void addPermission(String key, String label, String group, String description) {
         if (key == null || key.isBlank()) {
             return;
         }
+
         String normalizedKey = key.trim().toUpperCase();
         if (permissionCheckboxes.containsKey(normalizedKey)) {
             return;
         }
+
         JCheckBox cb = new JCheckBox(label);
-        cb.setToolTipText(normalizedKey);
         cb.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        String tooltip = normalizedKey;
+        if (description != null && !description.isBlank()) {
+            tooltip += " - " + description;
+        }
+        cb.setToolTipText(tooltip);
+
+        if (group != null && !group.isBlank()) {
+            cb.setText(label + "  (" + group + ")");
+        }
+
         permissionCheckboxes.put(normalizedKey, cb);
         permissionPanel.add(cb);
     }
@@ -132,20 +144,29 @@ public class Roles_Permission extends JFrame {
         return wrapper;
     }
 
-    private void addMobilePermission(String key, String label, String group) {
+    private void addMobilePermission(String key, String label, String group, String description) {
         if (key == null || key.isBlank()) {
             return;
         }
+
         String normalizedKey = key.trim();
         if (mobilePermissionCheckboxes.containsKey(normalizedKey)) {
             return;
         }
+
         JCheckBox cb = new JCheckBox(label);
-        cb.setToolTipText(normalizedKey);
         cb.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        String tooltip = normalizedKey;
+        if (description != null && !description.isBlank()) {
+            tooltip += " - " + description;
+        }
+        cb.setToolTipText(tooltip);
+
         if (group != null && !group.isBlank()) {
             cb.setText(label + "  (" + group + ")");
         }
+
         mobilePermissionCheckboxes.put(normalizedKey, cb);
         mobilePermissionPanel.add(cb);
     }
@@ -222,17 +243,36 @@ public class Roles_Permission extends JFrame {
             }
 
             String displayExpression = buildPermissionDisplayExpression(permissionColumns);
-            String sql = "SELECT permission_key, " + displayExpression + " AS display_name " +
+            String groupSelect = permissionColumns.contains("permission_group")
+                    ? "permission_group"
+                    : "NULL AS permission_group";
+            String descriptionSelect = permissionColumns.contains("description")
+                    ? "description"
+                    : "NULL AS description";
+            String orderSql = permissionColumns.contains("sort_order")
+                    ? "permission_group NULLS LAST, sort_order NULLS LAST, display_name, permission_key"
+                    : "display_name, permission_key";
+
+            String sql = "SELECT permission_key, " + displayExpression + " AS display_name, " +
+                    groupSelect + ", " + descriptionSelect + " " +
                     "FROM permissions " +
                     "WHERE permission_key IS NOT NULL AND TRIM(permission_key) <> '' " +
-                    "ORDER BY display_name, permission_key";
+                    "ORDER BY " + orderSql;
 
             try (PreparedStatement ps = conn.prepareStatement(sql);
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String key = rs.getString("permission_key");
                     String label = rs.getString("display_name");
-                    addPermission(key, label == null || label.isBlank() ? formatRoleName(key) : label);
+                    String group = rs.getString("permission_group");
+                    String description = rs.getString("description");
+
+                    addPermission(
+                            key,
+                            label == null || label.isBlank() ? formatRoleName(key) : label,
+                            group,
+                            description
+                    );
                 }
             }
         } catch (SQLException ex) {
@@ -245,7 +285,7 @@ public class Roles_Permission extends JFrame {
             ex.printStackTrace();
 
             for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
-                addPermission(entry.getKey(), entry.getValue());
+                addPermission(entry.getKey(), entry.getValue(), null, null);
             }
         }
 
@@ -267,7 +307,7 @@ public class Roles_Permission extends JFrame {
             }
 
             String sql = """
-                    SELECT permission_key, display_name, permission_group
+                    SELECT permission_key, display_name, permission_group, description
                     FROM mobile_permissions
                     ORDER BY permission_group, sort_order, display_name, permission_key
                     """;
@@ -278,7 +318,8 @@ public class Roles_Permission extends JFrame {
                     addMobilePermission(
                             rs.getString("permission_key"),
                             rs.getString("display_name"),
-                            rs.getString("permission_group")
+                            rs.getString("permission_group"),
+                            rs.getString("description")
                     );
                 }
             }
@@ -310,9 +351,6 @@ public class Roles_Permission extends JFrame {
         }
         if (permissionColumns.contains("label")) {
             labelColumns.add("label");
-        }
-        if (permissionColumns.contains("description")) {
-            labelColumns.add("description");
         }
 
         if (labelColumns.isEmpty()) {

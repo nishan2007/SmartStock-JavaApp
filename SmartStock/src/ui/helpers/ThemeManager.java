@@ -265,7 +265,9 @@ public final class ThemeManager {
                 label.setForeground(label.isEnabled() ? text : muted);
             }
         } else if (component instanceof JPanel || component instanceof JScrollPane || component instanceof JViewport || component instanceof JTabbedPane) {
-            component.setBackground(component instanceof JViewport ? surface : background);
+            if (!Boolean.TRUE.equals(((JComponent) component).getClientProperty("SmartStock.preserveBackground"))) {
+                component.setBackground(component instanceof JViewport ? surface : background);
+            }
             component.setForeground(text);
         }
 
