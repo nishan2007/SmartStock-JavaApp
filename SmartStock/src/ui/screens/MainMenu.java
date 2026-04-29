@@ -38,6 +38,9 @@ public class MainMenu extends JFrame {
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
     private final JButton deviceManagementButton;
+    private final JButton machineManagementButton;
+    private final JButton partsManagementButton;
+    private final JButton maintenanceManagementButton;
     private final JButton locationManagementButton;
     private final JButton companyCustomizationButton;
     private final JButton localDeviceSettingsButton;
@@ -93,6 +96,9 @@ public class MainMenu extends JFrame {
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
         deviceManagementButton = createMenuButton("Device Management", "Review devices and approve or block sign-ins", loadIcon("src/ICONS/Security.png"));
+        machineManagementButton = createMenuButton("Machines", "Create, update, and delete machine records", loadIcon("src/ICONS/ViewInventory.png"));
+        partsManagementButton = createMenuButton("Parts", "Create, update, and delete maintenance parts", loadIcon("src/ICONS/ViewInventory.png"));
+        maintenanceManagementButton = createMenuButton("Maintenance", "Manage machines, parts, service logs, and problem tickets", loadIcon("src/ICONS/ViewInventory.png"));
         locationManagementButton = createMenuButton("Locations", "Manage store locations", loadIcon("src/ICONS/Security.png"));
         companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/Security.png"));
         localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
@@ -127,7 +133,8 @@ public class MainMenu extends JFrame {
                 vendorListButton,
                 viewInventoryButton,
                 addItemButton,
-                editItemsButton
+                editItemsButton,
+                maintenanceManagementButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -143,6 +150,8 @@ public class MainMenu extends JFrame {
                 new Color(124, 58, 237),
                 rolesPermissionsButton,
                 deviceManagementButton,
+                machineManagementButton,
+                partsManagementButton,
                 locationManagementButton,
                 companyCustomizationButton,
                 localDeviceSettingsButton,
@@ -381,6 +390,9 @@ public class MainMenu extends JFrame {
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
+        boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
+        boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
+        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
         boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
@@ -404,6 +416,9 @@ public class MainMenu extends JFrame {
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
         deviceManagementButton.setEnabled(canDeviceManagement);
+        machineManagementButton.setEnabled(canMachineManagement);
+        partsManagementButton.setEnabled(canPartsManagement);
+        maintenanceManagementButton.setEnabled(canMaintenanceManagement);
         locationManagementButton.setEnabled(canLocationManagement);
         companyCustomizationButton.setEnabled(canCompanyCustomization);
         localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
@@ -520,6 +535,24 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openDeviceManagement(this);
+        });
+        machineManagementButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("MACHINE_MANAGEMENT", this, "Machine List")) {
+                return;
+            }
+            NavigationManager.openMachineManagement(this);
+        });
+        partsManagementButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("PARTS_MANAGEMENT", this, "Parts List")) {
+                return;
+            }
+            NavigationManager.openPartsManagement(this);
+        });
+        maintenanceManagementButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("MAINTENANCE_MANAGEMENT", this, "Maintenance Management")) {
+                return;
+            }
+            NavigationManager.openMaintenanceManagement(this);
         });
         locationManagementButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", this, "Location Management")) {
@@ -682,6 +715,14 @@ public class MainMenu extends JFrame {
 
     public JButton getDeviceManagementButton() {
         return deviceManagementButton;
+    }
+
+    public JButton getMachineManagementButton() {
+        return machineManagementButton;
+    }
+
+    public JButton getPartsManagementButton() {
+        return partsManagementButton;
     }
 
     public JButton getCompanyCustomizationButton() {

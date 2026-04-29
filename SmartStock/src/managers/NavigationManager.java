@@ -13,8 +13,11 @@ import ui.screens.EndOfDay;
 import ui.screens.HardwareSetup;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
+import ui.screens.MachineManagement;
 import ui.screens.NewItem;
 import ui.screens.LocationManagement;
+import ui.screens.MaintenanceManagement;
+import ui.screens.PartsManagement;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
@@ -63,6 +66,9 @@ public final class NavigationManager {
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
         DEVICE_MANAGEMENT,
+        MACHINE_MANAGEMENT,
+        PARTS_MANAGEMENT,
+        MAINTENANCE_MANAGEMENT,
         LOCATION_MANAGEMENT,
         LOCAL_DEVICE_SETTINGS,
         HARDWARE_SETUP,
@@ -162,6 +168,18 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.DEVICE_MANAGEMENT));
     }
 
+    public static void openMachineManagement(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.MACHINE_MANAGEMENT));
+    }
+
+    public static void openPartsManagement(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.PARTS_MANAGEMENT));
+    }
+
+    public static void openMaintenanceManagement(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.MAINTENANCE_MANAGEMENT));
+    }
+
     public static void openLocationManagement(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.LOCATION_MANAGEMENT));
     }
@@ -199,6 +217,9 @@ public final class NavigationManager {
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
             case DEVICE_MANAGEMENT -> new DeviceManagement();
+            case MACHINE_MANAGEMENT -> new MachineManagement();
+            case PARTS_MANAGEMENT -> new PartsManagement();
+            case MAINTENANCE_MANAGEMENT -> new MaintenanceManagement();
             case LOCATION_MANAGEMENT -> new LocationManagement();
             case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
             case HARDWARE_SETUP -> new HardwareSetup();
@@ -231,6 +252,9 @@ public final class NavigationManager {
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             case "DeviceManagement" -> ScreenType.DEVICE_MANAGEMENT;
+            case "MachineManagement" -> ScreenType.MACHINE_MANAGEMENT;
+            case "PartsManagement" -> ScreenType.PARTS_MANAGEMENT;
+            case "MaintenanceManagement" -> ScreenType.MAINTENANCE_MANAGEMENT;
             case "LocationManagement" -> ScreenType.LOCATION_MANAGEMENT;
             case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
             case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;

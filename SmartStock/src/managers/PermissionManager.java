@@ -114,6 +114,9 @@ public class PermissionManager {
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("DEVICE_MANAGEMENT")
+                    || hasPermission("MACHINE_MANAGEMENT")
+                    || hasPermission("PARTS_MANAGEMENT")
+                    || hasPermission("MAINTENANCE_MANAGEMENT")
                     || hasPermission("LOCATION_MANAGEMENT")
                     || hasPermission("COMPANY_PREFERENCES")
                     || hasPermission("COMPANY_CUSTOMIZATION")
@@ -137,6 +140,9 @@ public class PermissionManager {
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");
             case "Roles_Permission" -> hasPermission("ROLE_MANAGEMENT");
             case "DeviceManagement" -> hasPermission("DEVICE_MANAGEMENT");
+            case "MachineManagement" -> hasPermission("MACHINE_MANAGEMENT");
+            case "PartsManagement" -> hasPermission("PARTS_MANAGEMENT");
+            case "MaintenanceManagement" -> hasPermission("MAINTENANCE_MANAGEMENT");
             case "LocationManagement" -> hasPermission("LOCATION_MANAGEMENT");
             case "LocalDeviceSettings" -> hasPermission("LOCAL_DEVICE_SETTINGS");
             case "HardwareSetup" -> hasPermission("HARDWARE_SETUP");

@@ -16,9 +16,12 @@ import ui.screens.EmployeeManagement;
 import ui.screens.HardwareSetup;
 import ui.screens.LocalDeviceSettings;
 import ui.screens.LocationManagement;
+import ui.screens.MaintenanceManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
+import ui.screens.MachineManagement;
 import ui.screens.NewItem;
+import ui.screens.PartsManagement;
 import ui.screens.PayrollDashboard;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
@@ -60,6 +63,7 @@ public class AppMenuBar {
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
         JMenuItem departmentListItem = new JMenuItem("Departments");
         JMenuItem vendorListItem = new JMenuItem("Vendors");
+        JMenuItem maintenanceManagementItem = new JMenuItem("Maintenance");
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
@@ -67,6 +71,8 @@ public class AppMenuBar {
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem deviceManagementItem = new JMenuItem("Device Management");
+        JMenuItem machineManagementItem = new JMenuItem("Machines");
+        JMenuItem partsManagementItem = new JMenuItem("Parts");
         JMenuItem locationManagementItem = new JMenuItem("Locations");
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
@@ -85,6 +91,7 @@ public class AppMenuBar {
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
+        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
@@ -94,12 +101,14 @@ public class AppMenuBar {
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
+        boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
+        boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
         boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -127,6 +136,9 @@ public class AppMenuBar {
         }
         if (!canVendorManagement || "VendorList".equalsIgnoreCase(screenKey)) {
             vendorListItem.setEnabled(false);
+        }
+        if (!canMaintenanceManagement || "MaintenanceManagement".equalsIgnoreCase(screenKey)) {
+            maintenanceManagementItem.setEnabled(false);
         }
         mainMenuItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -166,6 +178,12 @@ public class AppMenuBar {
         }
         if (!canDeviceManagement || "DeviceManagement".equalsIgnoreCase(screenKey)) {
             deviceManagementItem.setEnabled(false);
+        }
+        if (!canMachineManagement || "MachineManagement".equalsIgnoreCase(screenKey)) {
+            machineManagementItem.setEnabled(false);
+        }
+        if (!canPartsManagement || "PartsManagement".equalsIgnoreCase(screenKey)) {
+            partsManagementItem.setEnabled(false);
         }
         if (!canLocationManagement || "LocationManagement".equalsIgnoreCase(screenKey)) {
             locationManagementItem.setEnabled(false);
@@ -274,6 +292,18 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openVendorList(parent);
+            }
+        });
+
+        maintenanceManagementItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("MAINTENANCE_MANAGEMENT", parent, "Maintenance Management")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(MaintenanceManagement.class)) {
+                    return;
+                }
+                NavigationManager.openMaintenanceManagement(parent);
             }
         });
 
@@ -400,6 +430,30 @@ public class AppMenuBar {
             }
         });
 
+        machineManagementItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("MACHINE_MANAGEMENT", parent, "Machine List")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(MachineManagement.class)) {
+                    return;
+                }
+                NavigationManager.openMachineManagement(parent);
+            }
+        });
+
+        partsManagementItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("PARTS_MANAGEMENT", parent, "Parts List")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(PartsManagement.class)) {
+                    return;
+                }
+                NavigationManager.openPartsManagement(parent);
+            }
+        });
+
         locationManagementItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", parent, "Location Management")) {
@@ -461,6 +515,7 @@ public class AppMenuBar {
         inventoryMenu.add(storeTransferItem);
         inventoryMenu.add(departmentListItem);
         inventoryMenu.add(vendorListItem);
+        inventoryMenu.add(maintenanceManagementItem);
         inventoryMenu.add(viewInventoryItem);
         inventoryMenu.add(newItemItem);
         inventoryMenu.add(editItemItem);
@@ -471,6 +526,8 @@ public class AppMenuBar {
 
         adminMenu.add(rolesPermissionItem);
         adminMenu.add(deviceManagementItem);
+        adminMenu.add(machineManagementItem);
+        adminMenu.add(partsManagementItem);
         adminMenu.add(locationManagementItem);
         adminMenu.add(companyCustomizationItem);
         adminMenu.add(localDeviceSettingsItem);
