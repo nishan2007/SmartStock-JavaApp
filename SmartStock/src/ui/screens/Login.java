@@ -58,7 +58,7 @@ public class Login extends JFrame {
         usernameField = new JTextField();
         passwordField = new JPasswordField();
 
-        formPanel.add(new JLabel("Username or Email:"));
+        formPanel.add(new JLabel("Username, Email, or Badge ID:"));
         formPanel.add(usernameField);
         formPanel.add(new JLabel("Password:"));
         formPanel.add(passwordField);
@@ -95,11 +95,11 @@ public class Login extends JFrame {
     }
 
     private void loginUser() {
-        String usernameOrEmail = usernameField.getText().trim();
+        String loginIdentifier = usernameField.getText().trim();
         String password = new String(passwordField.getPassword()).trim();
 
-        if (usernameOrEmail.isEmpty() || password.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Enter username/email and password.");
+        if (loginIdentifier.isEmpty() || password.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Enter username, email, or badge ID and password.");
             return;
         }
 
@@ -115,6 +115,7 @@ public class Login extends JFrame {
                 LEFT JOIN roles r ON u.role_id = r.role_id
                 WHERE LOWER(u.username) = LOWER(?)
                    OR LOWER(u.email) = LOWER(?)
+                   OR LOWER(u.badge_id) = LOWER(?)
                 """;
         String storesSql = """
                 SELECT l.location_id,
@@ -129,8 +130,9 @@ public class Login extends JFrame {
         try (Connection conn = DB.getConnection();
              PreparedStatement userPs = conn.prepareStatement(userSql)) {
 
-            userPs.setString(1, usernameOrEmail);
-            userPs.setString(2, usernameOrEmail);
+            userPs.setString(1, loginIdentifier);
+            userPs.setString(2, loginIdentifier);
+            userPs.setString(3, loginIdentifier);
 
             try (ResultSet userRs = userPs.executeQuery()) {
                 if (!userRs.next()) {

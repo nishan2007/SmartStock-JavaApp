@@ -16,10 +16,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public final class TimeClockManager {
 
@@ -49,24 +47,14 @@ public final class TimeClockManager {
                     location_id,
                     location_name,
                     work_date,
-                    clock_in,
-                    compensation_type,
-                    pay_period_type,
-                    hourly_wage,
-                    salary_amount,
-                    daily_salary
+                    clock_in
                 )
                 SELECT u.user_id,
                        COALESCE(u.full_name, u.username),
                        ?,
                        ?,
                        ?,
-                       CURRENT_TIMESTAMP,
-                       COALESCE(u.compensation_type, 'HOURLY'),
-                       COALESCE(u.pay_period_type, 'SEMI_MONTHLY'),
-                       COALESCE(u.hourly_wage, 0),
-                       COALESCE(u.salary_amount, 0),
-                       COALESCE(u.daily_salary, 0)
+                       CURRENT_TIMESTAMP
                 FROM users u
                 WHERE u.user_id = ?
                   AND NOT EXISTS (
@@ -116,11 +104,10 @@ public final class TimeClockManager {
                        (tc.lunch_start AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_start,
                        (tc.lunch_end AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_end,
                        (tc.clock_out AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_out,
-                       COALESCE(tc.compensation_type, u.compensation_type, 'HOURLY') AS compensation_type,
-                       COALESCE(tc.pay_period_type, u.pay_period_type, 'SEMI_MONTHLY') AS pay_period_type,
-                       COALESCE(tc.hourly_wage, u.hourly_wage, 0) AS hourly_wage,
-                       COALESCE(tc.salary_amount, u.salary_amount, 0) AS salary_amount,
-                       COALESCE(tc.daily_salary, u.daily_salary, 0) AS daily_salary,
+                       COALESCE(u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
+                       COALESCE(u.salary, 0) AS salary,
+                       tc.total_hours_worked,
+                       tc.total_earned,
                        COALESCE(tc.location_name, l.name, '') AS location_name
                 FROM employee_time_clock tc
                 LEFT JOIN users u ON u.user_id = tc.user_id
@@ -156,10 +143,9 @@ public final class TimeClockManager {
                             toLocalDateTime(rs.getTimestamp("local_lunch_end")),
                             toLocalDateTime(rs.getTimestamp("local_clock_out")),
                             rs.getString("compensation_type"),
-                            rs.getString("pay_period_type"),
-                            rs.getBigDecimal("hourly_wage"),
-                            rs.getBigDecimal("salary_amount"),
-                            rs.getBigDecimal("daily_salary"),
+                            rs.getBigDecimal("salary"),
+                            rs.getBigDecimal("total_hours_worked"),
+                            rs.getBigDecimal("total_earned"),
                             rs.getString("location_name")
                     ));
                 }
@@ -171,39 +157,27 @@ public final class TimeClockManager {
 
     private static List<TimeClockRow> buildRows(List<TimeRecord> records) {
         Map<String, BigDecimal> payPeriodHours = new HashMap<>();
-        Map<String, BigDecimal> hourlyPayPeriodPay = new HashMap<>();
-        Map<String, BigDecimal> dailyPayPeriodPay = new HashMap<>();
-        Set<String> paidDailyWorkDates = new HashSet<>();
+        Map<String, Integer> dailyPaidClockIds = new HashMap<>();
 
         for (TimeRecord record : records) {
-            PayPeriod payPeriod = payPeriodFor(record.workDate, record.payPeriodType);
+            PayPeriod payPeriod = payPeriodFor(record.workDate);
             String key = record.userId + "|" + payPeriod.start();
-            BigDecimal dailyHours = calculateHours(record);
+            BigDecimal dailyHours = sessionHours(record);
             payPeriodHours.merge(key, dailyHours, BigDecimal::add);
-            if (record.isHourly()) {
-                hourlyPayPeriodPay.merge(key, dailyHours.multiply(record.hourlyWage), BigDecimal::add);
-            } else if (record.isDaily()) {
-                String dailyKey = key + "|" + record.workDate;
-                if (paidDailyWorkDates.add(dailyKey)) {
-                    dailyPayPeriodPay.merge(key, record.dailySalary, BigDecimal::add);
-                }
+
+            if (record.isDaily() && record.clockOut != null) {
+                String dailyKey = dailyPayKey(record.userId, record.workDate);
+                dailyPaidClockIds.merge(dailyKey, record.clockId, Math::min);
             }
         }
 
         List<TimeClockRow> rows = new ArrayList<>();
         for (TimeRecord record : records) {
-            PayPeriod payPeriod = payPeriodFor(record.workDate, record.payPeriodType);
+            PayPeriod payPeriod = payPeriodFor(record.workDate);
             String key = record.userId + "|" + payPeriod.start();
-            BigDecimal dailyHours = calculateHours(record);
+            BigDecimal dailyHours = sessionHours(record);
             BigDecimal totalHours = payPeriodHours.getOrDefault(key, BigDecimal.ZERO);
-            BigDecimal totalPay;
-            if (record.isSalary()) {
-                totalPay = record.salaryAmount;
-            } else if (record.isDaily()) {
-                totalPay = dailyPayPeriodPay.getOrDefault(key, BigDecimal.ZERO);
-            } else {
-                totalPay = hourlyPayPeriodPay.getOrDefault(key, BigDecimal.ZERO);
-            }
+            BigDecimal sessionPay = sessionPay(record, dailyHours, dailyPaidClockIds);
 
             rows.add(new TimeClockRow(
                     record.clockId,
@@ -221,11 +195,8 @@ public final class TimeClockManager {
                     payPeriod.payDate(),
                     totalHours,
                     record.compensationType,
-                    record.payPeriodType,
-                    record.hourlyWage,
-                    record.salaryAmount,
-                    record.dailySalary,
-                    totalPay,
+                    record.salary,
+                    sessionPay,
                     record.locationName
             ));
         }
@@ -241,6 +212,7 @@ public final class TimeClockManager {
             for (TimeClockRow row : rows) {
                 String key = payrollKey(row.userId(), row.payPeriodStart(), row.payPeriodEnd());
                 PayrollSummary existing = summariesByKey.get(key);
+                BigDecimal payrollPay = payrollPay(row, existing == null);
                 if (existing == null) {
                     PayrollPaymentStatus paidStatus = paidStatuses.get(key);
                     summariesByKey.put(key, new PayrollSummary(
@@ -250,8 +222,8 @@ public final class TimeClockManager {
                             row.payPeriodStart(),
                             row.payPeriodEnd(),
                             row.payDate(),
-                            row.totalHours(),
-                            row.totalPay(),
+                            row.dailyHours(),
+                            payrollPay,
                             1,
                             row.compensationType(),
                             row.locationName(),
@@ -267,8 +239,8 @@ public final class TimeClockManager {
                             existing.payPeriodStart(),
                             existing.payPeriodEnd(),
                             existing.payDate(),
-                            existing.totalHours(),
-                            existing.totalPay(),
+                            existing.totalHours().add(row.dailyHours()),
+                            existing.totalPay().add(payrollPay),
                             existing.recordCount() + 1,
                             existing.compensationType(),
                             mergeLocations(existing.locationName(), row.locationName()),
@@ -403,6 +375,49 @@ public final class TimeClockManager {
         }
 
         String sql = "UPDATE employee_time_clock SET " + columnName + " = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE clock_id = ?";
+        String clockOutSql = """
+                WITH calculated AS (
+                    SELECT tc.clock_id,
+                           ROUND(
+                               GREATEST(EXTRACT(EPOCH FROM (
+                                   CURRENT_TIMESTAMP - tc.clock_in
+                                   - CASE
+                                       WHEN tc.lunch_start IS NOT NULL AND tc.lunch_end IS NOT NULL
+                                           THEN tc.lunch_end - tc.lunch_start
+                                       ELSE INTERVAL '0 seconds'
+                                     END
+                               )) / 3600, 0)::NUMERIC,
+                               2
+                           ) AS rounded_hours,
+                           COALESCE(u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
+                           COALESCE(u.salary, 0) AS salary,
+                           NOT EXISTS (
+                               SELECT 1
+                               FROM employee_time_clock paid_daily
+                               WHERE paid_daily.user_id = tc.user_id
+                                 AND paid_daily.work_date = tc.work_date
+                                 AND paid_daily.clock_out IS NOT NULL
+                                 AND paid_daily.total_earned IS NOT NULL
+                           ) AS should_pay_daily
+                    FROM employee_time_clock tc
+                    JOIN users u ON u.user_id = tc.user_id
+                    WHERE tc.clock_id = ?
+                )
+                UPDATE employee_time_clock tc
+                SET clock_out = CURRENT_TIMESTAMP,
+                    total_hours_worked = calculated.rounded_hours,
+                    total_earned = ROUND(
+                        CASE calculated.compensation_type
+                            WHEN 'DAILY' THEN CASE WHEN calculated.should_pay_daily THEN calculated.salary ELSE NULL END
+                            WHEN 'SALARY' THEN NULL
+                            ELSE calculated.salary * calculated.rounded_hours
+                        END,
+                        2
+                    ),
+                    updated_at = CURRENT_TIMESTAMP
+                FROM calculated
+                WHERE tc.clock_id = calculated.clock_id
+                """;
 
         try (Connection conn = DB.getConnection()) {
             CurrentClock current = getCurrentClock(conn);
@@ -419,7 +434,7 @@ public final class TimeClockManager {
                 throw new TimeClockException("Punch lunch end before clocking out.");
             }
 
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            try (PreparedStatement ps = conn.prepareStatement("clock_out".equals(columnName) ? clockOutSql : sql)) {
                 ps.setInt(1, current.clockId);
                 ps.executeUpdate();
             }
@@ -479,6 +494,40 @@ public final class TimeClockManager {
         return totalMinutes.divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
     }
 
+    private static BigDecimal sessionHours(TimeRecord record) {
+        if (record.clockOut != null && record.totalHoursWorked != null) {
+            return record.totalHoursWorked.setScale(2, RoundingMode.HALF_UP);
+        }
+        return calculateHours(record);
+    }
+
+    private static BigDecimal sessionPay(TimeRecord record, BigDecimal hours, Map<String, Integer> dailyPaidClockIds) {
+        if (record.isDaily()) {
+            Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, record.workDate));
+            return paidClockId != null && paidClockId == record.clockId
+                    ? record.salary.setScale(2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (record.isSalary()) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (record.clockOut != null && record.totalEarned != null) {
+            return record.totalEarned.setScale(2, RoundingMode.HALF_UP);
+        }
+        return record.salary.multiply(hours).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal payrollPay(TimeClockRow row, boolean firstRowForPeriod) {
+        if ("SALARY".equalsIgnoreCase(row.compensationType())) {
+            return firstRowForPeriod ? row.salary().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        }
+        return row.totalPay();
+    }
+
+    private static String dailyPayKey(int userId, LocalDate workDate) {
+        return userId + "|" + workDate;
+    }
+
     private static long minutesBetween(LocalDateTime start, LocalDateTime end) {
         if (start == null || end == null || end.isBefore(start)) {
             return 0;
@@ -486,13 +535,7 @@ public final class TimeClockManager {
         return Duration.between(start, end).toMinutes();
     }
 
-    private static PayPeriod payPeriodFor(LocalDate date, String payPeriodType) {
-        if ("WEEKLY".equalsIgnoreCase(payPeriodType)) {
-            LocalDate start = date.with(DayOfWeek.MONDAY);
-            LocalDate end = start.plusDays(6);
-            return new PayPeriod(start, end, adjustPayDate(end.plusDays(1)));
-        }
-
+    private static PayPeriod payPeriodFor(LocalDate date) {
         if (date.getDayOfMonth() <= 15) {
             LocalDate start = date.withDayOfMonth(1);
             LocalDate end = date.withDayOfMonth(15);
@@ -600,10 +643,7 @@ public final class TimeClockManager {
             LocalDate payDate,
             BigDecimal totalHours,
             String compensationType,
-            String payPeriodType,
-            BigDecimal hourlyWage,
-            BigDecimal salaryAmount,
-            BigDecimal dailySalary,
+            BigDecimal salary,
             BigDecimal totalPay,
             String locationName
     ) {
@@ -645,10 +685,9 @@ public final class TimeClockManager {
             LocalDateTime lunchEnd,
             LocalDateTime clockOut,
             String compensationType,
-            String payPeriodType,
-            BigDecimal hourlyWage,
-            BigDecimal salaryAmount,
-            BigDecimal dailySalary,
+            BigDecimal salary,
+            BigDecimal totalHoursWorked,
+            BigDecimal totalEarned,
             String locationName
     ) {
         private TimeRecord {
@@ -657,19 +696,8 @@ public final class TimeClockManager {
             } else {
                 compensationType = compensationType.trim().toUpperCase();
             }
-            if (payPeriodType == null || payPeriodType.isBlank()) {
-                payPeriodType = "SEMI_MONTHLY";
-            } else {
-                payPeriodType = payPeriodType.trim().toUpperCase();
-            }
-            if (hourlyWage == null) {
-                hourlyWage = BigDecimal.ZERO;
-            }
-            if (salaryAmount == null) {
-                salaryAmount = BigDecimal.ZERO;
-            }
-            if (dailySalary == null) {
-                dailySalary = BigDecimal.ZERO;
+            if (salary == null) {
+                salary = BigDecimal.ZERO;
             }
             if (employeeName == null) {
                 employeeName = "";
@@ -690,9 +718,6 @@ public final class TimeClockManager {
             return "DAILY".equalsIgnoreCase(compensationType);
         }
 
-        private boolean isHourly() {
-            return !isSalary() && !isDaily();
-        }
     }
 
     private record CurrentClock(

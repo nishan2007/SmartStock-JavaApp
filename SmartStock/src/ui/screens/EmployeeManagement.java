@@ -26,6 +26,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,18 +38,21 @@ public class EmployeeManagement extends JFrame {
     private DefaultTableModel employeeModel;
     private TableRowSorter<DefaultTableModel> employeeSorter;
     private JTextField employeeSearchField;
+    private JTable storeTable;
+    private DefaultTableModel storeModel;
+    private TableRowSorter<DefaultTableModel> storeSorter;
+    private JTextField storeSearchField;
 
     private JTextField usernameField;
     private JTextField passwordField;
-    private JTextField fullNameField;
+    private JTextField firstNameField;
+    private JTextField middleNameField;
+    private JTextField lastNameField;
     private JTextField emailField;
     private JTextField phoneField;
     private JTextField badgeIdField;
     private JComboBox<CompensationOption> compensationTypeBox;
-    private JTextField hourlyWageField;
     private JTextField salaryAmountField;
-    private JTextField dailySalaryField;
-    private JComboBox<PayPeriodOption> payPeriodTypeBox;
     private JComboBox<RoleOption> roleBox;
     private JCheckBox activeCheckBox;
 
@@ -56,12 +61,16 @@ public class EmployeeManagement extends JFrame {
     private JButton clearButton;
     private JButton refreshButton;
     private JButton deleteButton;
-    private JButton assignStoresButton;
 
     private Integer selectedUserId = null;
+    private String originalFirstName = "";
+    private String originalMiddleName = "";
+    private String originalLastName = "";
     private String originalFullName = "";
     private String originalEmail = "";
     private boolean originalIsActive = true;
+    private boolean updatingGeneratedUsername;
+    private String lastGeneratedUsername = "";
 
     private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
     private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
@@ -72,7 +81,7 @@ public class EmployeeManagement extends JFrame {
 
     public EmployeeManagement() {
         setTitle("Employee Management");
-        setSize(900, 500);
+        setSize(1100, 640);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(10, 10));
@@ -82,7 +91,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "Email", "Phone", "Badge ID", "Pay Type", "Pay Period", "Hourly Wage", "Salary", "Day Salary", "Role", "Active"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Badge ID", "Pay Type", "Salary", "Role", "Active"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -111,12 +120,15 @@ public class EmployeeManagement extends JFrame {
 
         employeeTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         employeeTable.getColumnModel().getColumn(2).setPreferredWidth(140);
-        employeeTable.getColumnModel().getColumn(3).setPreferredWidth(180);
-        employeeTable.getColumnModel().getColumn(4).setPreferredWidth(120);
-        employeeTable.getColumnModel().getColumn(5).setPreferredWidth(100);
-        employeeTable.getColumnModel().getColumn(6).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(7).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(8).setPreferredWidth(90);
+        for (int hiddenColumn = 3; hiddenColumn <= 5; hiddenColumn++) {
+            TableColumn column = employeeTable.getColumnModel().getColumn(hiddenColumn);
+            column.setMinWidth(0);
+            column.setPreferredWidth(0);
+            column.setMaxWidth(0);
+        }
+        employeeTable.getColumnModel().getColumn(6).setPreferredWidth(180);
+        employeeTable.getColumnModel().getColumn(7).setPreferredWidth(120);
+        employeeTable.getColumnModel().getColumn(8).setPreferredWidth(100);
         employeeTable.getColumnModel().getColumn(9).setPreferredWidth(90);
         employeeTable.getColumnModel().getColumn(10).setPreferredWidth(90);
         employeeTable.getColumnModel().getColumn(11).setPreferredWidth(90);
@@ -130,27 +142,42 @@ public class EmployeeManagement extends JFrame {
 
         usernameField = new JTextField();
         passwordField = new JTextField();
-        fullNameField = new JTextField();
+        firstNameField = new JTextField();
+        middleNameField = new JTextField();
+        lastNameField = new JTextField();
         emailField = new JTextField();
         phoneField = new JTextField();
         badgeIdField = new JTextField();
         compensationTypeBox = new JComboBox<>(new CompensationOption[]{
                 new CompensationOption("HOURLY", "Hourly"),
-                new CompensationOption("SALARY", "Fixed Salary"),
-                new CompensationOption("DAILY", "Day Salary")
+                new CompensationOption("SALARY", "Salary"),
+                new CompensationOption("DAILY", "Daily")
         });
         compensationTypeBox.setEditable(false);
-        hourlyWageField = new JTextField();
         salaryAmountField = new JTextField();
-        dailySalaryField = new JTextField();
-        payPeriodTypeBox = new JComboBox<>(new PayPeriodOption[]{
-                new PayPeriodOption("SEMI_MONTHLY", "Semi-Monthly"),
-                new PayPeriodOption("WEEKLY", "Weekly")
-        });
-        payPeriodTypeBox.setEditable(false);
         roleBox = new JComboBox<>();
         activeCheckBox = new JCheckBox("Active", true);
         activeCheckBox.setEnabled(true);
+        storeSearchField = new JTextField();
+        storeModel = new DefaultTableModel(new Object[]{"Assigned", "Store ID", "Store Name", "Address"}, 0) {
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                if (columnIndex == 0) {
+                    return Boolean.class;
+                }
+                return String.class;
+            }
+
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return column == 0;
+            }
+        };
+        storeSorter = new TableRowSorter<>(storeModel);
+        storeTable = new JTable(storeModel);
+        storeTable.setRowSorter(storeSorter);
+        storeTable.setRowHeight(24);
+        storeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(8, 10, 8, 10);
@@ -162,7 +189,7 @@ public class EmployeeManagement extends JFrame {
         gbc.weightx = 0;
         gbc.weighty = 0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        formPanel.add(new JLabel("Username:"), gbc);
+        formPanel.add(new JLabel("Username (auto):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -180,14 +207,32 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 2;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Full Name:"), gbc);
+        formPanel.add(new JLabel("First Name:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
-        formPanel.add(fullNameField, gbc);
+        formPanel.add(firstNameField, gbc);
 
         gbc.gridx = 0;
         gbc.gridy = 3;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Middle Name (optional):"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(middleNameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Last Name:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(lastNameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 5;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Email:"), gbc);
 
@@ -196,7 +241,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(emailField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 6;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Phone Number:"), gbc);
 
@@ -205,16 +250,16 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(phoneField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 5;
+        gbc.gridy = 7;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Badge ID:"), gbc);
+        formPanel.add(new JLabel("Badge ID (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         formPanel.add(badgeIdField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 8;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Pay Type:"), gbc);
 
@@ -223,27 +268,9 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(compensationTypeBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 7;
-        gbc.weightx = 0;
-        formPanel.add(new JLabel("Pay Period:"), gbc);
-
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        formPanel.add(payPeriodTypeBox, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 8;
-        gbc.weightx = 0;
-        formPanel.add(new JLabel("Hourly Wage:"), gbc);
-
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        formPanel.add(hourlyWageField, gbc);
-
-        gbc.gridx = 0;
         gbc.gridy = 9;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Salary / Pay Period:"), gbc);
+        formPanel.add(new JLabel("Salary:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -252,15 +279,6 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 10;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Day Salary:"), gbc);
-
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        formPanel.add(dailySalaryField, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 11;
-        gbc.weightx = 0;
         formPanel.add(new JLabel("Role:"), gbc);
 
         gbc.gridx = 1;
@@ -268,7 +286,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 12;
+        gbc.gridy = 11;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
@@ -276,6 +294,32 @@ public class EmployeeManagement extends JFrame {
         gbc.weightx = 1.0;
         formPanel.add(activeCheckBox, gbc);
 
+        JPanel storePanel = new JPanel(new BorderLayout(6, 6));
+        JPanel storeSearchPanel = new JPanel(new BorderLayout(6, 0));
+        storeSearchPanel.add(new JLabel("Assigned Stores:"), BorderLayout.WEST);
+        storeSearchPanel.add(storeSearchField, BorderLayout.CENTER);
+        storePanel.add(storeSearchPanel, BorderLayout.NORTH);
+
+        JScrollPane storeScrollPane = new JScrollPane(storeTable);
+        storeScrollPane.setPreferredSize(new Dimension(0, 135));
+        storePanel.add(storeScrollPane, BorderLayout.CENTER);
+
+        TableColumn assignedStoreColumn = storeTable.getColumnModel().getColumn(0);
+        assignedStoreColumn.setPreferredWidth(80);
+        assignedStoreColumn.setMaxWidth(100);
+        TableColumn storeIdColumn = storeTable.getColumnModel().getColumn(1);
+        storeIdColumn.setPreferredWidth(70);
+        storeIdColumn.setMaxWidth(90);
+
+        gbc.gridx = 0;
+        gbc.gridy = 12;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.weighty = 0.0;
+        gbc.fill = GridBagConstraints.BOTH;
+        formPanel.add(storePanel, gbc);
+
+        gbc.gridwidth = 1;
         gbc.gridx = 0;
         gbc.gridy = 13;
         gbc.weighty = 1.0;
@@ -289,7 +333,6 @@ public class EmployeeManagement extends JFrame {
         clearButton = new JButton("Clear");
         refreshButton = new JButton("Refresh");
         deleteButton = new JButton("Delete Employee");
-        assignStoresButton = new JButton("Assign Stores");
 
         Dimension compactButtonSize = new Dimension(145, 32);
         addButton.setPreferredSize(compactButtonSize);
@@ -297,7 +340,6 @@ public class EmployeeManagement extends JFrame {
         deleteButton.setPreferredSize(compactButtonSize);
 
         Dimension smallButtonSize = new Dimension(125, 32);
-        assignStoresButton.setPreferredSize(new Dimension(135, 32));
         clearButton.setPreferredSize(smallButtonSize);
         refreshButton.setPreferredSize(smallButtonSize);
 
@@ -305,7 +347,6 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(updateButton);
         topButtonPanel.add(deleteButton);
 
-        bottomButtonPanel.add(assignStoresButton);
         bottomButtonPanel.add(clearButton);
         bottomButtonPanel.add(refreshButton);
 
@@ -341,13 +382,6 @@ public class EmployeeManagement extends JFrame {
             }
         });
 
-        assignStoresButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                openAssignStoresDialog();
-            }
-        });
-
         clearButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -359,6 +393,7 @@ public class EmployeeManagement extends JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 loadRoles();
+                loadStoresForUser(selectedUserId);
                 loadEmployees();
             }
         });
@@ -378,6 +413,40 @@ public class EmployeeManagement extends JFrame {
                 applyEmployeeFilter();
             }
         });
+        storeSearchField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                applyStoreFilter();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                applyStoreFilter();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                applyStoreFilter();
+            }
+        });
+        DocumentListener generatedUsernameListener = new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateGeneratedUsername();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateGeneratedUsername();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateGeneratedUsername();
+            }
+        };
+        firstNameField.getDocument().addDocumentListener(generatedUsernameListener);
+        lastNameField.getDocument().addDocumentListener(generatedUsernameListener);
 
         employeeTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -385,9 +454,9 @@ public class EmployeeManagement extends JFrame {
             }
         });
 
-        assignStoresButton.setEnabled(false);
         deleteButton.setEnabled(false);
         loadRoles();
+        loadStoresForUser(null);
         loadEmployees();
         WindowHelper.showPosWindow(this);
     }
@@ -424,14 +493,14 @@ public class EmployeeManagement extends JFrame {
                 SELECT u.user_id,
                        u.username,
                        u.full_name,
+                       u.first_name,
+                       u.middle_name,
+                       u.last_name,
                        u.email,
                        u.phone,
                        u.badge_id,
                        COALESCE(u.compensation_type, 'HOURLY') AS compensation_type,
-                       COALESCE(u.pay_period_type, 'SEMI_MONTHLY') AS pay_period_type,
-                       COALESCE(u.hourly_wage, 0) AS hourly_wage,
-                       COALESCE(u.salary_amount, 0) AS salary_amount,
-                       COALESCE(u.daily_salary, 0) AS daily_salary,
+                       COALESCE(u.salary, 0) AS salary,
                        COALESCE(r.role_name, 'USER') AS role,
                        COALESCE(u.is_active, TRUE) AS is_active
                 FROM users u
@@ -448,14 +517,14 @@ public class EmployeeManagement extends JFrame {
                         rs.getInt("user_id"),
                         rs.getString("username"),
                         rs.getString("full_name"),
+                        rs.getString("first_name"),
+                        rs.getString("middle_name"),
+                        rs.getString("last_name"),
                         rs.getString("email"),
                         rs.getString("phone"),
                         rs.getString("badge_id"),
                         rs.getString("compensation_type"),
-                        rs.getString("pay_period_type"),
-                        rs.getBigDecimal("hourly_wage"),
-                        rs.getBigDecimal("salary_amount"),
-                        rs.getBigDecimal("daily_salary"),
+                        rs.getBigDecimal("salary"),
                         rs.getString("role"),
                         rs.getBoolean("is_active")
                 });
@@ -466,6 +535,43 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
+    private void loadStoresForUser(Integer userId) {
+        storeModel.setRowCount(0);
+
+        String sql = """
+                SELECT l.location_id,
+                       l.name,
+                       l.address,
+                       CASE WHEN ul.user_id IS NULL THEN FALSE ELSE TRUE END AS assigned
+                FROM locations l
+                LEFT JOIN user_locations ul
+                    ON l.location_id = ul.location_id AND ul.user_id = ?
+                ORDER BY l.name
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, userId == null ? -1 : userId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    storeModel.addRow(new Object[]{
+                            rs.getBoolean("assigned"),
+                            String.valueOf(rs.getInt("location_id")),
+                            rs.getString("name"),
+                            rs.getString("address") == null ? "" : rs.getString("address")
+                    });
+                }
+            }
+
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage());
+        }
+
+        applyStoreFilter();
+    }
+
     private void loadSelectedEmployee() {
         int selectedRow = employeeTable.getSelectedRow();
         if (selectedRow == -1) {
@@ -474,55 +580,74 @@ public class EmployeeManagement extends JFrame {
         selectedRow = employeeTable.convertRowIndexToModel(selectedRow);
 
         selectedUserId = Integer.parseInt(employeeModel.getValueAt(selectedRow, 0).toString());
-        usernameField.setText(employeeModel.getValueAt(selectedRow, 1).toString());
-        fullNameField.setText(employeeModel.getValueAt(selectedRow, 2) == null ? "" : employeeModel.getValueAt(selectedRow, 2).toString());
-        emailField.setText(employeeModel.getValueAt(selectedRow, 3) == null ? "" : employeeModel.getValueAt(selectedRow, 3).toString());
-        phoneField.setText(employeeModel.getValueAt(selectedRow, 4) == null ? "" : employeeModel.getValueAt(selectedRow, 4).toString());
-        badgeIdField.setText(employeeModel.getValueAt(selectedRow, 5) == null ? "" : employeeModel.getValueAt(selectedRow, 5).toString());
-        selectCompensationType(employeeModel.getValueAt(selectedRow, 6) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 6).toString());
-        selectPayPeriodType(employeeModel.getValueAt(selectedRow, 7) == null ? "SEMI_MONTHLY" : employeeModel.getValueAt(selectedRow, 7).toString());
-        hourlyWageField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
-        salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
-        dailySalaryField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
+        usernameField.setText(employeeModel.getValueAt(selectedRow, 1) == null ? "" : employeeModel.getValueAt(selectedRow, 1).toString());
+        String selectedFullName = employeeModel.getValueAt(selectedRow, 2) == null ? "" : employeeModel.getValueAt(selectedRow, 2).toString();
+        String selectedFirstName = employeeModel.getValueAt(selectedRow, 3) == null ? "" : employeeModel.getValueAt(selectedRow, 3).toString();
+        String selectedMiddleName = employeeModel.getValueAt(selectedRow, 4) == null ? "" : employeeModel.getValueAt(selectedRow, 4).toString();
+        String selectedLastName = employeeModel.getValueAt(selectedRow, 5) == null ? "" : employeeModel.getValueAt(selectedRow, 5).toString();
+        updatingGeneratedUsername = true;
+        firstNameField.setText(selectedFirstName);
+        middleNameField.setText(selectedMiddleName);
+        lastNameField.setText(selectedLastName);
+        updatingGeneratedUsername = false;
+        emailField.setText(employeeModel.getValueAt(selectedRow, 6) == null ? "" : employeeModel.getValueAt(selectedRow, 6).toString());
+        phoneField.setText(employeeModel.getValueAt(selectedRow, 7) == null ? "" : employeeModel.getValueAt(selectedRow, 7).toString());
+        badgeIdField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
+        selectCompensationType(employeeModel.getValueAt(selectedRow, 9) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 9).toString());
+        salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
         selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 11)));
 
         Object activeValue = employeeModel.getValueAt(selectedRow, 12);
         activeCheckBox.setSelected(activeValue instanceof Boolean ? (Boolean) activeValue : true);
-        originalFullName = fullNameField.getText().trim();
+        originalFirstName = firstNameField.getText().trim();
+        originalMiddleName = middleNameField.getText().trim();
+        originalLastName = lastNameField.getText().trim();
+        originalFullName = selectedFullName;
         originalEmail = emailField.getText().trim();
         originalIsActive = activeCheckBox.isSelected();
+        lastGeneratedUsername = generateUsername(originalFirstName, originalLastName);
 
         passwordField.setText("");
-        assignStoresButton.setEnabled(true);
+        loadStoresForUser(selectedUserId);
         deleteButton.setEnabled(true);
     }
 
     private void addEmployee() {
         String username = usernameField.getText().trim();
         String password = passwordField.getText().trim();
-        String fullName = fullNameField.getText().trim();
+        String firstName = firstNameField.getText().trim();
+        String middleName = middleNameField.getText().trim();
+        String lastName = lastNameField.getText().trim();
+        String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
         String compensationType = getSelectedCompensationType();
-        String payPeriodType = getSelectedPayPeriodType();
-        BigDecimal hourlyWage = parseMoneyAmount(hourlyWageField, "Hourly wage");
-        if (hourlyWage == null) {
-            return;
-        }
-        BigDecimal salaryAmount = parseMoneyAmount(salaryAmountField, "Salary amount");
-        if (salaryAmount == null) {
-            return;
-        }
-        BigDecimal dailySalary = parseMoneyAmount(dailySalaryField, "Day salary");
-        if (dailySalary == null) {
+        BigDecimal salary = parseMoneyAmount(salaryAmountField, "Salary");
+        if (salary == null) {
             return;
         }
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
-        if (username.isEmpty() || password.isEmpty() || email.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Username, email, and password are required.");
+        if (password.isEmpty()
+                || firstName.isEmpty()
+                || lastName.isEmpty()
+                || email.isEmpty()
+                || phoneNumber.isEmpty()
+                || salaryAmountField.getText().trim().isEmpty()
+                || role.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "All employee fields are required.");
+            return;
+        }
+        if (username.isEmpty()) {
+            username = generateUsername(firstName, lastName);
+            usernameField.setText(username);
+        }
+
+        List<Integer> selectedLocationIds = getSelectedLocationIds();
+        if (selectedLocationIds.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
 
@@ -533,41 +658,49 @@ public class EmployeeManagement extends JFrame {
                 String authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
 
                 String sql = """
-                        INSERT INTO users (username, password_hash, full_name, email, phone, badge_id, compensation_type, pay_period_type, hourly_wage, salary_amount, daily_salary, role_id, auth_user_id, is_active)
-                        VALUES (?, NULL, ?, ?, ?, ?, ?::compensation_type_enum, ?::pay_period_type_enum, ?, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
+                        INSERT INTO users (username, password_hash, first_name, middle_name, last_name, full_name, email, phone, badge_id, compensation_type, salary, role_id, auth_user_id, is_active)
+                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
+                        RETURNING user_id
                         """;
 
+                int newUserId;
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
                     ps.setString(1, username);
-                    ps.setString(2, fullName.isEmpty() ? null : fullName);
-                    ps.setString(3, email.isEmpty() ? null : email);
-                    ps.setString(4, phoneNumber.isEmpty() ? null : phoneNumber);
-                    ps.setString(5, badgeId.isEmpty() ? null : badgeId);
-                    ps.setString(6, compensationType);
-                    ps.setString(7, payPeriodType);
-                    ps.setBigDecimal(8, hourlyWage);
-                    ps.setBigDecimal(9, salaryAmount);
-                    ps.setBigDecimal(10, dailySalary);
+                    ps.setString(2, firstName);
+                    ps.setString(3, middleName.isEmpty() ? null : middleName);
+                    ps.setString(4, lastName);
+                    ps.setString(5, fullName);
+                    ps.setString(6, email);
+                    ps.setString(7, phoneNumber);
+                    ps.setString(8, badgeId.isEmpty() ? null : badgeId);
+                    ps.setObject(9, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(10, salary);
                     ps.setString(11, role);
                     ps.setString(12, normalizeUuid(authUserId));
                     ps.setBoolean(13, isActive);
-                    ps.executeUpdate();
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new SQLException("Employee was not created.");
+                        }
+                        newUserId = rs.getInt("user_id");
+                    }
                 }
 
+                saveStoreAssignments(conn, newUserId, selectedLocationIds);
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Employee added successfully.");
-                clearFields();
                 loadEmployees();
+                selectEmployeeInTable(newUserId);
 
             } catch (Exception ex) {
                 conn.rollback();
-                JOptionPane.showMessageDialog(this, "Failed to add employee: " + ex.getMessage());
+                JOptionPane.showMessageDialog(this, "Failed to add employee: " + getFriendlyEmployeeError(ex));
             } finally {
                 conn.setAutoCommit(true);
             }
 
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to add employee: " + ex.getMessage());
+            JOptionPane.showMessageDialog(this, "Failed to add employee: " + getFriendlyEmployeeError(ex));
         }
     }
 
@@ -579,29 +712,38 @@ public class EmployeeManagement extends JFrame {
 
         String username = usernameField.getText().trim();
         String password = passwordField.getText().trim();
-        String fullName = fullNameField.getText().trim();
+        String firstName = firstNameField.getText().trim();
+        String middleName = middleNameField.getText().trim();
+        String lastName = lastNameField.getText().trim();
+        String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String badgeId = badgeIdField.getText().trim();
         String compensationType = getSelectedCompensationType();
-        String payPeriodType = getSelectedPayPeriodType();
-        BigDecimal hourlyWage = parseMoneyAmount(hourlyWageField, "Hourly wage");
-        if (hourlyWage == null) {
-            return;
-        }
-        BigDecimal salaryAmount = parseMoneyAmount(salaryAmountField, "Salary amount");
-        if (salaryAmount == null) {
-            return;
-        }
-        BigDecimal dailySalary = parseMoneyAmount(dailySalaryField, "Day salary");
-        if (dailySalary == null) {
+        BigDecimal salary = parseMoneyAmount(salaryAmountField, "Salary");
+        if (salary == null) {
             return;
         }
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
-        if (username.isEmpty() || email.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Username and email are required.");
+        if (firstName.isEmpty()
+                || lastName.isEmpty()
+                || email.isEmpty()
+                || phoneNumber.isEmpty()
+                || salaryAmountField.getText().trim().isEmpty()
+                || role.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "All employee fields except password are required.");
+            return;
+        }
+        if (username.isEmpty()) {
+            username = generateUsername(firstName, lastName);
+            usernameField.setText(username);
+        }
+
+        List<Integer> selectedLocationIds = getSelectedLocationIds();
+        if (selectedLocationIds.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
 
@@ -622,7 +764,17 @@ public class EmployeeManagement extends JFrame {
                         }
                         authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
                     } else {
-                        updateSupabaseAuthUser(authUserId, email, password, fullName, isActive);
+                        try {
+                            updateSupabaseAuthUser(authUserId, email, password, fullName, isActive);
+                        } catch (IllegalStateException ex) {
+                            if (!isSupabaseAuthUserNotFound(ex)) {
+                                throw ex;
+                            }
+                            if (password.isEmpty()) {
+                                throw new IllegalStateException("This employee's linked Supabase auth account was not found. Enter a new password so the auth account can be recreated.");
+                            }
+                            authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
+                        }
                     }
                 }
 
@@ -630,15 +782,15 @@ public class EmployeeManagement extends JFrame {
                         UPDATE users
                         SET username = ?,
                             password_hash = NULL,
+                            first_name = ?,
+                            middle_name = ?,
+                            last_name = ?,
                             full_name = ?,
                             email = ?,
                             phone = ?,
                             badge_id = ?,
-                            compensation_type = ?::compensation_type_enum,
-                            pay_period_type = ?::pay_period_type_enum,
-                            hourly_wage = ?,
-                            salary_amount = ?,
-                            daily_salary = ?,
+                            compensation_type = ?,
+                            salary = ?,
                             role_id = (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)),
                             auth_user_id = ?::uuid,
                             is_active = ?
@@ -647,15 +799,15 @@ public class EmployeeManagement extends JFrame {
 
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
                     ps.setString(1, username);
-                    ps.setString(2, fullName.isEmpty() ? null : fullName);
-                    ps.setString(3, email.isEmpty() ? null : email);
-                    ps.setString(4, phoneNumber.isEmpty() ? null : phoneNumber);
-                    ps.setString(5, badgeId.isEmpty() ? null : badgeId);
-                    ps.setString(6, compensationType);
-                    ps.setString(7, payPeriodType);
-                    ps.setBigDecimal(8, hourlyWage);
-                    ps.setBigDecimal(9, salaryAmount);
-                    ps.setBigDecimal(10, dailySalary);
+                    ps.setString(2, firstName);
+                    ps.setString(3, middleName.isEmpty() ? null : middleName);
+                    ps.setString(4, lastName);
+                    ps.setString(5, fullName);
+                    ps.setString(6, email);
+                    ps.setString(7, phoneNumber);
+                    ps.setString(8, badgeId.isEmpty() ? null : badgeId);
+                    ps.setObject(9, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(10, salary);
                     ps.setString(11, role);
                     ps.setString(12, normalizeUuid(authUserId));
                     ps.setBoolean(13, isActive);
@@ -663,6 +815,7 @@ public class EmployeeManagement extends JFrame {
                     ps.executeUpdate();
                 }
 
+                saveStoreAssignments(conn, selectedUserId, selectedLocationIds);
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Employee updated successfully.");
                 clearFields();
@@ -670,13 +823,13 @@ public class EmployeeManagement extends JFrame {
 
             } catch (Exception ex) {
                 conn.rollback();
-                JOptionPane.showMessageDialog(this, "Failed to update employee: " + ex.getMessage());
+                JOptionPane.showMessageDialog(this, "Failed to update employee: " + getFriendlyEmployeeError(ex));
             } finally {
                 conn.setAutoCommit(true);
             }
 
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to update employee: " + ex.getMessage());
+            JOptionPane.showMessageDialog(this, "Failed to update employee: " + getFriendlyEmployeeError(ex));
         }
     }
 
@@ -684,31 +837,167 @@ public class EmployeeManagement extends JFrame {
         selectedUserId = null;
         usernameField.setText("");
         passwordField.setText("");
-        fullNameField.setText("");
+        updatingGeneratedUsername = true;
+        firstNameField.setText("");
+        middleNameField.setText("");
+        lastNameField.setText("");
+        updatingGeneratedUsername = false;
         emailField.setText("");
         phoneField.setText("");
         badgeIdField.setText("");
         selectCompensationType("HOURLY");
-        selectPayPeriodType("SEMI_MONTHLY");
-        hourlyWageField.setText("");
         salaryAmountField.setText("");
-        dailySalaryField.setText("");
         roleBox.setSelectedIndex(0);
         activeCheckBox.setSelected(true);
         activeCheckBox.setEnabled(true);
+        originalFirstName = "";
+        originalMiddleName = "";
+        originalLastName = "";
         originalFullName = "";
         originalEmail = "";
         originalIsActive = true;
+        lastGeneratedUsername = "";
         employeeTable.clearSelection();
-        assignStoresButton.setEnabled(false);
+        storeSearchField.setText("");
+        loadStoresForUser(null);
         deleteButton.setEnabled(false);
         usernameField.requestFocusInWindow();
+    }
+
+    private void updateGeneratedUsername() {
+        if (updatingGeneratedUsername) {
+            return;
+        }
+
+        String currentUsername = usernameField.getText().trim();
+        if (!currentUsername.isEmpty() && !currentUsername.equalsIgnoreCase(lastGeneratedUsername)) {
+            return;
+        }
+
+        String generatedUsername = generateUsername(firstNameField.getText().trim(), lastNameField.getText().trim());
+        updatingGeneratedUsername = true;
+        usernameField.setText(generatedUsername);
+        updatingGeneratedUsername = false;
+        lastGeneratedUsername = generatedUsername;
+    }
+
+    private static String generateUsername(String firstName, String lastName) {
+        if (firstName == null || firstName.isBlank() || lastName == null || lastName.isBlank()) {
+            return "";
+        }
+        String firstInitial = firstName.trim().substring(0, 1).toUpperCase();
+        return firstInitial + "-" + toDisplayNamePart(lastName);
+    }
+
+    private static String composeFullName(String firstName, String middleName, String lastName) {
+        StringBuilder fullName = new StringBuilder();
+        appendNamePart(fullName, firstName);
+        appendNamePart(fullName, middleName);
+        appendNamePart(fullName, lastName);
+        return fullName.toString();
+    }
+
+    private static void appendNamePart(StringBuilder builder, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append(" ");
+        }
+        builder.append(value.trim());
+    }
+
+    private static String toDisplayNamePart(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() == 1) {
+            return trimmed.toUpperCase();
+        }
+        return trimmed.substring(0, 1).toUpperCase() + trimmed.substring(1);
     }
 
     private static boolean sameText(String left, String right) {
         String normalizedLeft = left == null ? "" : left.trim();
         String normalizedRight = right == null ? "" : right.trim();
         return normalizedLeft.equals(normalizedRight);
+    }
+
+    private void selectEmployeeInTable(int userId) {
+        for (int modelRow = 0; modelRow < employeeModel.getRowCount(); modelRow++) {
+            Object value = employeeModel.getValueAt(modelRow, 0);
+            if (value != null && Integer.parseInt(value.toString()) == userId) {
+                int viewRow = employeeTable.convertRowIndexToView(modelRow);
+                if (viewRow >= 0) {
+                    employeeTable.setRowSelectionInterval(viewRow, viewRow);
+                    employeeTable.scrollRectToVisible(employeeTable.getCellRect(viewRow, 0, true));
+                    loadSelectedEmployee();
+                }
+                return;
+            }
+        }
+    }
+
+    private List<Integer> getSelectedLocationIds() {
+        List<Integer> locationIds = new ArrayList<>();
+        for (int row = 0; row < storeModel.getRowCount(); row++) {
+            Object assignedValue = storeModel.getValueAt(row, 0);
+            boolean assigned = assignedValue instanceof Boolean && (Boolean) assignedValue;
+            if (assigned) {
+                locationIds.add(Integer.parseInt(storeModel.getValueAt(row, 1).toString()));
+            }
+        }
+        return locationIds;
+    }
+
+    private void saveStoreAssignments(Connection conn, int userId, List<Integer> locationIds) throws SQLException {
+        String deleteSql = "DELETE FROM user_locations WHERE user_id = ?";
+        String insertSql = "INSERT INTO user_locations (user_id, location_id) VALUES (?, ?)";
+
+        try (PreparedStatement deletePs = conn.prepareStatement(deleteSql);
+             PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
+
+            deletePs.setInt(1, userId);
+            deletePs.executeUpdate();
+
+            for (Integer locationId : locationIds) {
+                insertPs.setInt(1, userId);
+                insertPs.setInt(2, locationId);
+                insertPs.addBatch();
+            }
+
+            insertPs.executeBatch();
+        }
+    }
+
+    private static String getFriendlyEmployeeError(Exception ex) {
+        if (isDuplicateBadgeError(ex)) {
+            return "That badge ID is already assigned to another employee.";
+        }
+        return ex.getMessage();
+    }
+
+    private static boolean isDuplicateBadgeError(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (current instanceof SQLException sqlException
+                    && "23505".equals(sqlException.getSQLState())
+                    && message != null
+                    && message.toLowerCase().contains("badge")) {
+                return true;
+            }
+            if (message != null) {
+                String normalized = message.toLowerCase();
+                if (normalized.contains("duplicate")
+                        && normalized.contains("badge")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String getSelectedRole() {
@@ -727,14 +1016,6 @@ public class EmployeeManagement extends JFrame {
         return "HOURLY";
     }
 
-    private String getSelectedPayPeriodType() {
-        Object selected = payPeriodTypeBox.getSelectedItem();
-        if (selected instanceof PayPeriodOption option) {
-            return option.key;
-        }
-        return "SEMI_MONTHLY";
-    }
-
     private void selectCompensationType(String compensationType) {
         String key = compensationType == null || compensationType.isBlank()
                 ? "HOURLY"
@@ -748,21 +1029,6 @@ public class EmployeeManagement extends JFrame {
             }
         }
         compensationTypeBox.setSelectedIndex(0);
-    }
-
-    private void selectPayPeriodType(String payPeriodType) {
-        String key = payPeriodType == null || payPeriodType.isBlank()
-                ? "SEMI_MONTHLY"
-                : payPeriodType.trim().toUpperCase();
-
-        for (int i = 0; i < payPeriodTypeBox.getItemCount(); i++) {
-            PayPeriodOption option = payPeriodTypeBox.getItemAt(i);
-            if (option.key.equalsIgnoreCase(key)) {
-                payPeriodTypeBox.setSelectedIndex(i);
-                return;
-            }
-        }
-        payPeriodTypeBox.setSelectedIndex(0);
     }
 
     private BigDecimal parseMoneyAmount(JTextField field, String label) {
@@ -839,21 +1105,6 @@ public class EmployeeManagement extends JFrame {
         private final String label;
 
         private CompensationOption(String key, String label) {
-            this.key = key;
-            this.label = label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private static class PayPeriodOption {
-        private final String key;
-        private final String label;
-
-        private PayPeriodOption(String key, String label) {
             this.key = key;
             this.label = label;
         }
@@ -1137,6 +1388,16 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
+    private static boolean isSupabaseAuthUserNotFound(Exception ex) {
+        String message = ex.getMessage();
+        if (message == null) {
+            return false;
+        }
+        String normalized = message.trim().toLowerCase();
+        return normalized.contains("user not found")
+                || normalized.contains("user from sub claim in jwt does not exist");
+    }
+
     private static void ensureSupabaseConfig() {
         if (SUPABASE_URL == null || SUPABASE_URL.isBlank()) {
             throw new IllegalStateException("Missing SUPABASE_URL configuration.");
@@ -1243,9 +1504,17 @@ public class EmployeeManagement extends JFrame {
                     deleteSupabaseAuthUser(authUserId);
                 }
 
-                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM users WHERE user_id = ?")) {
+                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM user_locations WHERE user_id = ?")) {
                     ps.setInt(1, selectedUserId);
                     ps.executeUpdate();
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM users WHERE user_id = ?")) {
+                    ps.setInt(1, selectedUserId);
+                    int deletedRows = ps.executeUpdate();
+                    if (deletedRows == 0) {
+                        throw new IllegalStateException("Employee record was not found.");
+                    }
                 }
 
                 conn.commit();
@@ -1275,6 +1544,19 @@ public class EmployeeManagement extends JFrame {
             employeeSorter.setRowFilter(null);
         } else {
             employeeSorter.setRowFilter(RowFilter.regexFilter("(?i)" + Pattern.quote(text)));
+        }
+    }
+
+    private void applyStoreFilter() {
+        if (storeSorter == null) {
+            return;
+        }
+
+        String text = storeSearchField == null ? "" : storeSearchField.getText().trim();
+        if (text.isEmpty()) {
+            storeSorter.setRowFilter(null);
+        } else {
+            storeSorter.setRowFilter(RowFilter.regexFilter("(?i)" + Pattern.quote(text)));
         }
     }
 }

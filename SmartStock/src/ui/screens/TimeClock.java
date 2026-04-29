@@ -563,16 +563,7 @@ public class TimeClock extends JFrame {
             DayData dayData = dayDataMap.computeIfAbsent(date, k -> new DayData());
             dayData.rows.add(row);
             dayData.totalHours = dayData.totalHours.add(row.dailyHours());
-
-            BigDecimal dayPay = BigDecimal.ZERO;
-            if ("HOURLY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.dailyHours().multiply(row.hourlyWage());
-            } else if ("DAILY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.dailySalary();
-            } else if ("SALARY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.totalPay().divide(BigDecimal.valueOf(15), 2, RoundingMode.HALF_UP);
-            }
-            dayData.totalPay = dayData.totalPay.add(dayPay);
+            dayData.totalPay = dayData.totalPay.add(row.totalPay());
         }
     }
 
@@ -760,14 +751,7 @@ public class TimeClock extends JFrame {
         BigDecimal totalPay = BigDecimal.ZERO;
 
         for (TimeClockRow row : dayData.rows) {
-            BigDecimal dayPay = BigDecimal.ZERO;
-            if ("HOURLY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.dailyHours().multiply(row.hourlyWage());
-            } else if ("DAILY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.dailySalary();
-            } else if ("SALARY".equalsIgnoreCase(row.compensationType())) {
-                dayPay = row.totalPay().divide(BigDecimal.valueOf(15), 2, RoundingMode.HALF_UP);
-            }
+            BigDecimal dayPay = row.totalPay();
 
             totalHours = totalHours.add(row.dailyHours());
             totalPay = totalPay.add(dayPay);
@@ -786,7 +770,7 @@ public class TimeClock extends JFrame {
                     formatTime(row.lunchEnd()),
                     formatTime(row.clockOut()),
                     formatHours(row.dailyHours()),
-                    CURRENCY_FORMAT.format(dayPay),
+                    formatPay(row),
                     payType,
                     row.locationName()
             });
@@ -801,7 +785,7 @@ public class TimeClock extends JFrame {
                     "",
                     "",
                     formatHours(totalHours),
-                    CURRENCY_FORMAT.format(totalPay),
+                    formatTotalPay(dayData.rows, totalPay),
                     "",
                     ""
             });
@@ -899,6 +883,23 @@ public class TimeClock extends JFrame {
 
     private static String formatHours(BigDecimal hours) {
         return hours.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String formatPay(TimeClockRow row) {
+        if ("SALARY".equalsIgnoreCase(row.compensationType())) {
+            return "Salary";
+        }
+        if ("DAILY".equalsIgnoreCase(row.compensationType())
+                && row.totalPay().compareTo(BigDecimal.ZERO) == 0) {
+            return "";
+        }
+        return CURRENCY_FORMAT.format(row.totalPay());
+    }
+
+    private static String formatTotalPay(List<TimeClockRow> rows, BigDecimal totalPay) {
+        boolean allSalary = !rows.isEmpty()
+                && rows.stream().allMatch(row -> "SALARY".equalsIgnoreCase(row.compensationType()));
+        return allSalary ? "Salary" : CURRENCY_FORMAT.format(totalPay);
     }
 
     private static String safeText(String value) {
