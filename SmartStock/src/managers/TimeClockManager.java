@@ -16,8 +16,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class TimeClockManager {
 
@@ -208,9 +210,12 @@ public final class TimeClockManager {
             List<TimeClockRow> rows = buildRows(loadRecords(conn, true));
             Map<String, PayrollPaymentStatus> paidStatuses = loadPayrollPaymentStatuses(conn);
             Map<String, PayrollSummary> summariesByKey = new HashMap<>();
+            Map<String, Set<LocalDate>> workedDatesByKey = new HashMap<>();
 
             for (TimeClockRow row : rows) {
                 String key = payrollKey(row.userId(), row.payPeriodStart(), row.payPeriodEnd());
+                Set<LocalDate> workedDates = workedDatesByKey.computeIfAbsent(key, ignored -> new HashSet<>());
+                workedDates.add(row.workDate());
                 PayrollSummary existing = summariesByKey.get(key);
                 BigDecimal payrollPay = payrollPay(row, existing == null);
                 if (existing == null) {
@@ -222,6 +227,7 @@ public final class TimeClockManager {
                             row.payPeriodStart(),
                             row.payPeriodEnd(),
                             row.payDate(),
+                            workedDates.size(),
                             row.dailyHours(),
                             payrollPay,
                             1,
@@ -239,6 +245,7 @@ public final class TimeClockManager {
                             existing.payPeriodStart(),
                             existing.payPeriodEnd(),
                             existing.payDate(),
+                            workedDates.size(),
                             existing.totalHours().add(row.dailyHours()),
                             existing.totalPay().add(payrollPay),
                             existing.recordCount() + 1,
@@ -273,6 +280,7 @@ public final class TimeClockManager {
                     pay_period_start,
                     pay_period_end,
                     pay_date,
+                    days_worked,
                     total_hours,
                     total_pay,
                     record_count,
@@ -282,12 +290,13 @@ public final class TimeClockManager {
                     paid_by_user_id,
                     paid_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
                 ON CONFLICT (user_id, pay_period_start, pay_period_end)
                 DO UPDATE SET
                     employee_name = EXCLUDED.employee_name,
                     employee_role = EXCLUDED.employee_role,
                     pay_date = EXCLUDED.pay_date,
+                    days_worked = EXCLUDED.days_worked,
                     total_hours = EXCLUDED.total_hours,
                     total_pay = EXCLUDED.total_pay,
                     record_count = EXCLUDED.record_count,
@@ -306,13 +315,14 @@ public final class TimeClockManager {
             ps.setDate(4, java.sql.Date.valueOf(summary.payPeriodStart()));
             ps.setDate(5, java.sql.Date.valueOf(summary.payPeriodEnd()));
             ps.setDate(6, java.sql.Date.valueOf(summary.payDate()));
-            ps.setBigDecimal(7, summary.totalHours());
-            ps.setBigDecimal(8, summary.totalPay());
-            ps.setInt(9, summary.recordCount());
-            ps.setString(10, summary.compensationType());
-            ps.setString(11, summary.locationName());
-            setNullableInteger(ps, 12, SessionManager.getCurrentUserId());
-            ps.setString(13, SessionManager.getCurrentUserDisplayName());
+            ps.setInt(7, summary.daysWorked());
+            ps.setBigDecimal(8, summary.totalHours());
+            ps.setBigDecimal(9, summary.totalPay());
+            ps.setInt(10, summary.recordCount());
+            ps.setString(11, summary.compensationType());
+            ps.setString(12, summary.locationName());
+            setNullableInteger(ps, 13, SessionManager.getCurrentUserId());
+            ps.setString(14, SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
         }
     }
@@ -602,6 +612,7 @@ public final class TimeClockManager {
             LocalDate payPeriodStart,
             LocalDate payPeriodEnd,
             LocalDate payDate,
+            int daysWorked,
             BigDecimal totalHours,
             BigDecimal totalPay,
             int recordCount,

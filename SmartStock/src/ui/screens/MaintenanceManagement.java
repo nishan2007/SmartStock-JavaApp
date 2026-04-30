@@ -69,17 +69,22 @@ public class MaintenanceManagement extends JFrame {
     private Integer selectedLogId;
 
     private final JTextField ticketSearchField = new JTextField();
-    private final DefaultTableModel ticketTableModel = readOnlyModel("ID", "Opened", "Machine", "Priority", "Status", "Problem", "Assigned", "Due");
+    private final DefaultTableModel ticketTableModel = readOnlyModel("ID", "Opened", "Machine", "Created By", "Priority", "Status", "Problem", "Assigned", "Due");
     private final JTable ticketTable = new JTable(ticketTableModel);
     private final JComboBox<ItemOption> ticketMachineBox = new JComboBox<>();
     private final JComboBox<String> priorityBox = new JComboBox<>(new String[]{"LOW", "NORMAL", "HIGH", "URGENT"});
-    private final JComboBox<String> ticketStatusBox = new JComboBox<>(new String[]{"OPEN", "IN_PROGRESS", "WAITING_PARTS", "RESOLVED", "CLOSED", "CANCELED"});
+    private final JComboBox<String> ticketStatusBox = new JComboBox<>(new String[]{"OPEN", "IN_PROGRESS", "WAITING_PARTS", "RESOLVED", "CANCELED"});
+    private final JComboBox<String> ticketFilterBox = new JComboBox<>(new String[]{"Active", "Resolved", "Ticket History", "All"});
+    private final JTextField createdByField = new JTextField();
     private final JTextField assignedToField = new JTextField();
     private final JTextField dueDateField = new JTextField();
     private final JTextArea problemArea = textArea(4, 24);
     private final JTextArea resolutionArea = textArea(4, 24);
     private final JTextArea ticketNotesArea = textArea(3, 24);
+    private final JButton markResolvedButton = new JButton("Mark Resolved");
+    private final JButton closeResolvedButton = new JButton("Close Resolved");
     private Integer selectedTicketId;
+    private String selectedTicketStatus;
 
     public MaintenanceManagement() {
         setTitle("Maintenance Management");
@@ -176,10 +181,18 @@ public class MaintenanceManagement extends JFrame {
 
     private JPanel buildTicketsTab() {
         JPanel panel = tabPanel();
-        panel.add(buildSearchPanel(ticketSearchField, "Search tickets:", this::loadTickets, () -> {
+        JPanel filterPanel = buildSearchPanel(ticketSearchField, "Search tickets:", this::loadTickets, () -> {
             ticketSearchField.setText("");
+            ticketFilterBox.setSelectedItem("Active");
             loadTickets();
-        }), BorderLayout.NORTH);
+        });
+        JPanel filterControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        filterControls.setOpaque(false);
+        filterControls.add(new JLabel("View:"));
+        filterControls.add(ticketFilterBox);
+        filterPanel.add(filterControls, BorderLayout.SOUTH);
+        ticketFilterBox.addActionListener(e -> loadTickets());
+        panel.add(filterPanel, BorderLayout.NORTH);
         panel.add(new JScrollPane(ticketTable), BorderLayout.CENTER);
         panel.add(buildTicketEditor(), BorderLayout.EAST);
         return panel;
@@ -249,12 +262,36 @@ public class MaintenanceManagement extends JFrame {
         addFormRow(panel, gbc, 1, "Machine:", ticketMachineBox);
         addFormRow(panel, gbc, 2, "Priority:", priorityBox);
         addFormRow(panel, gbc, 3, "Status:", ticketStatusBox);
-        addFormRow(panel, gbc, 4, "Assigned To:", assignedToField);
-        addFormRow(panel, gbc, 5, "Due Date:", dueDateField);
-        addFormRow(panel, gbc, 6, "Problem:", new JScrollPane(problemArea));
-        addFormRow(panel, gbc, 7, "Resolution:", new JScrollPane(resolutionArea));
-        addFormRow(panel, gbc, 8, "Notes:", new JScrollPane(ticketNotesArea));
-        addButtons(panel, gbc, 9, this::clearTicketEditor, this::saveTicket);
+        createdByField.setEditable(false);
+        addFormRow(panel, gbc, 4, "Created By:", createdByField);
+        addFormRow(panel, gbc, 5, "Assigned To:", assignedToField);
+        addFormRow(panel, gbc, 6, "Due Date:", dueDateField);
+        addFormRow(panel, gbc, 7, "Problem:", new JScrollPane(problemArea));
+        addFormRow(panel, gbc, 8, "Resolution:", new JScrollPane(resolutionArea));
+        addFormRow(panel, gbc, 9, "Notes:", new JScrollPane(ticketNotesArea));
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttonPanel.setOpaque(false);
+        JButton newButton = new JButton("New");
+        JButton saveButton = new JButton("Save");
+        newButton.addActionListener(e -> clearTicketEditor());
+        saveButton.addActionListener(e -> saveTicket());
+        markResolvedButton.addActionListener(e -> markSelectedTicketResolved());
+        closeResolvedButton.addActionListener(e -> closeResolvedTicket());
+        buttonPanel.add(newButton);
+        buttonPanel.add(saveButton);
+        buttonPanel.add(markResolvedButton);
+        buttonPanel.add(closeResolvedButton);
+
+        gbc.gridx = 0;
+        gbc.gridy = 10;
+        gbc.gridwidth = 2;
+        gbc.weighty = 1;
+        gbc.anchor = GridBagConstraints.SOUTH;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(8, 0, 0, 0);
+        panel.add(buttonPanel, gbc);
+        setTicketActionState();
         return panel;
     }
 
@@ -382,27 +419,47 @@ public class MaintenanceManagement extends JFrame {
     }
 
     private void loadTickets() {
+        autoCloseResolvedTickets();
         ticketTableModel.setRowCount(0);
         String search = ticketSearchField.getText().trim();
-        String sql = """
-                SELECT t.ticket_id, t.opened_at, m.machine_name, t.priority, t.status,
-                       COALESCE(t.problem_summary, '') AS problem_summary,
-                       COALESCE(t.assigned_to_name, '') AS assigned_to_name, t.due_date
-                FROM maintenance_tickets t
-                LEFT JOIN maintenance_machines m ON m.machine_id = t.machine_id
-                """ + (search.isBlank() ? "" : """
-                WHERE COALESCE(m.machine_name, '') ILIKE ?
+        String selectedFilter = String.valueOf(ticketFilterBox.getSelectedItem());
+        String filterSql = switch (selectedFilter) {
+            case "Resolved" -> " WHERE t.status = 'RESOLVED'";
+            case "Ticket History" -> " WHERE t.status = 'CLOSED'";
+            case "All" -> "";
+            default -> " WHERE t.status IN ('OPEN', 'IN_PROGRESS', 'WAITING_PARTS')";
+        };
+        String searchSql = search.isBlank() ? "" : (filterSql.isBlank() ? " WHERE " : " AND ") + """
+                (COALESCE(m.machine_name, '') ILIKE ?
                    OR COALESCE(t.problem_summary, '') ILIKE ?
                    OR COALESCE(t.assigned_to_name, '') ILIKE ?
                    OR COALESCE(t.status, '') ILIKE ?
                    OR COALESCE(t.priority, '') ILIKE ?
-                """) + " ORDER BY t.opened_at DESC, t.ticket_id DESC";
+                   OR CASE
+                        WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
+                        WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
+                        ELSE 'User #' || t.opened_by_user_id::text
+                      END ILIKE ?)
+                """;
+        String sql = """
+                SELECT t.ticket_id, t.opened_at, m.machine_name, t.priority, t.status,
+                       COALESCE(t.problem_summary, '') AS problem_summary,
+                       COALESCE(t.assigned_to_name, '') AS assigned_to_name, t.due_date,
+                       CASE
+                           WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
+                           WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
+                           ELSE 'User #' || t.opened_by_user_id::text
+                       END AS creator_name
+                FROM maintenance_tickets t
+                LEFT JOIN maintenance_machines m ON m.machine_id = t.machine_id
+                LEFT JOIN users u ON u.user_id = t.opened_by_user_id
+                """ + filterSql + searchSql + " ORDER BY t.opened_at DESC, t.ticket_id DESC";
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             if (!search.isBlank()) {
                 String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
+                for (int i = 1; i <= 6; i++) {
                     ps.setString(i, pattern);
                 }
             }
@@ -412,6 +469,7 @@ public class MaintenanceManagement extends JFrame {
                             rs.getInt("ticket_id"),
                             formatTimestamp(rs.getTimestamp("opened_at")),
                             rs.getString("machine_name"),
+                            "Created by: " + rs.getString("creator_name"),
                             rs.getString("priority"),
                             rs.getString("status"),
                             rs.getString("problem_summary"),
@@ -422,6 +480,26 @@ public class MaintenanceManagement extends JFrame {
             }
         } catch (SQLException ex) {
             showDatabaseError("load tickets", ex);
+        }
+    }
+
+    private void autoCloseResolvedTickets() {
+        String sql = """
+                UPDATE maintenance_tickets
+                SET status = 'CLOSED',
+                    closed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'RESOLVED'
+                  AND resolved_at IS NOT NULL
+                  AND resolved_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                  AND closed_at IS NULL
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.executeUpdate();
+        } catch (SQLException ex) {
+            showDatabaseError("auto-close resolved tickets", ex);
         }
     }
 
@@ -589,21 +667,29 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         ItemOption machine = (ItemOption) ticketMachineBox.getSelectedItem();
+        String status = selected(ticketStatusBox);
+        if ("CLOSED".equals(status)) {
+            showValidation("Closed tickets are finalized history. Use Close Resolved only for resolved tickets.");
+            return;
+        }
+        String resolutionSummary = resolutionArea.getText().trim();
+        if ("RESOLVED".equals(status) && resolutionSummary.isBlank()) {
+            showValidation("A resolution summary is required before marking a ticket resolved.");
+            return;
+        }
 
         String insertSql = """
                 INSERT INTO maintenance_tickets (
                     machine_id, priority, status, assigned_to_name, due_date,
                     problem_summary, resolution_summary, notes, opened_by_user_id,
-                    resolved_at, closed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String updateSql = """
                 UPDATE maintenance_tickets
                 SET machine_id = ?, priority = ?, status = ?, assigned_to_name = ?, due_date = ?,
                     problem_summary = ?, resolution_summary = ?, notes = ?,
-                    resolved_at = CASE WHEN ? IN ('RESOLVED', 'CLOSED') AND resolved_at IS NULL THEN CURRENT_TIMESTAMP ELSE resolved_at END,
-                    closed_at = CASE WHEN ? = 'CLOSED' AND closed_at IS NULL THEN CURRENT_TIMESTAMP
-                                     WHEN ? <> 'CLOSED' THEN NULL ELSE closed_at END,
+                    resolved_at = CASE WHEN ? = 'RESOLVED' AND status <> 'RESOLVED' THEN CURRENT_TIMESTAMP ELSE resolved_at END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE ticket_id = ?
                 """;
@@ -615,31 +701,23 @@ public class MaintenanceManagement extends JFrame {
             } else {
                 ps.setInt(1, machine.id);
             }
-            String status = selected(ticketStatusBox);
             ps.setString(2, selected(priorityBox));
             ps.setString(3, status);
             ps.setString(4, nullable(assignedToField));
             setDate(ps, 5, dueDateField);
             ps.setString(6, problem);
-            ps.setString(7, nullable(resolutionArea));
+            ps.setString(7, resolutionSummary.isBlank() ? null : resolutionSummary);
             ps.setString(8, nullable(ticketNotesArea));
             if (selectedTicketId == null) {
                 setInteger(ps, 9, SessionManager.getCurrentUserId());
-                if ("RESOLVED".equals(status) || "CLOSED".equals(status)) {
+                if ("RESOLVED".equals(status)) {
                     ps.setTimestamp(10, new Timestamp(System.currentTimeMillis()));
                 } else {
                     ps.setNull(10, java.sql.Types.TIMESTAMP);
                 }
-                if ("CLOSED".equals(status)) {
-                    ps.setTimestamp(11, new Timestamp(System.currentTimeMillis()));
-                } else {
-                    ps.setNull(11, java.sql.Types.TIMESTAMP);
-                }
             } else {
                 ps.setString(9, status);
-                ps.setString(10, status);
-                ps.setString(11, status);
-                ps.setInt(12, selectedTicketId);
+                ps.setInt(10, selectedTicketId);
             }
             ps.executeUpdate();
             clearTicketEditor();
@@ -647,6 +725,58 @@ public class MaintenanceManagement extends JFrame {
         } catch (SQLException | IllegalArgumentException ex) {
             showDatabaseError("save ticket", ex);
         }
+    }
+
+    private void markSelectedTicketResolved() {
+        if (selectedTicketId == null) {
+            showValidation("Select a ticket before marking it resolved.");
+            return;
+        }
+        if (resolutionArea.getText().trim().isBlank()) {
+            showValidation("Enter a resolution summary before marking this ticket resolved.");
+            resolutionArea.requestFocusInWindow();
+            return;
+        }
+        ticketStatusBox.setSelectedItem("RESOLVED");
+        saveTicket();
+    }
+
+    private void closeResolvedTicket() {
+        if (selectedTicketId == null) {
+            showValidation("Select a resolved ticket to close.");
+            return;
+        }
+        if (!"RESOLVED".equals(selectedTicketStatus)) {
+            showValidation("Only resolved tickets can be manually closed.");
+            return;
+        }
+
+        String sql = """
+                UPDATE maintenance_tickets
+                SET status = 'CLOSED',
+                    closed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE ticket_id = ?
+                  AND status = 'RESOLVED'
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, selectedTicketId);
+            ps.executeUpdate();
+            clearTicketEditor();
+            ticketFilterBox.setSelectedItem("Ticket History");
+            loadTickets();
+        } catch (SQLException ex) {
+            showDatabaseError("close resolved ticket", ex);
+        }
+    }
+
+    private void setTicketActionState() {
+        boolean hasTicket = selectedTicketId != null;
+        boolean isResolved = "RESOLVED".equals(selectedTicketStatus);
+        markResolvedButton.setEnabled(hasTicket && !isResolved && !"CLOSED".equals(selectedTicketStatus));
+        closeResolvedButton.setEnabled(hasTicket && isResolved);
     }
 
     private void loadSelectedMachine() {
@@ -748,7 +878,17 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) ticketTableModel.getValueAt(ticketTable.convertRowIndexToModel(row), 0);
-        String sql = "SELECT * FROM maintenance_tickets WHERE ticket_id = ?";
+        String sql = """
+                SELECT t.*,
+                       CASE
+                           WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
+                           WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
+                           ELSE 'User #' || t.opened_by_user_id::text
+                       END AS creator_name
+                FROM maintenance_tickets t
+                LEFT JOIN users u ON u.user_id = t.opened_by_user_id
+                WHERE t.ticket_id = ?
+                """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, id);
@@ -762,12 +902,15 @@ public class MaintenanceManagement extends JFrame {
                         selectItem(ticketMachineBox, machineId);
                     }
                     priorityBox.setSelectedItem(rs.getString("priority"));
-                    ticketStatusBox.setSelectedItem(rs.getString("status"));
+                    selectedTicketStatus = rs.getString("status");
+                    ticketStatusBox.setSelectedItem(selectedTicketStatus);
+                    createdByField.setText(rs.getString("creator_name"));
                     assignedToField.setText(value(rs.getString("assigned_to_name")));
                     dueDateField.setText(formatDate(rs.getDate("due_date")));
                     problemArea.setText(value(rs.getString("problem_summary")));
                     resolutionArea.setText(value(rs.getString("resolution_summary")));
                     ticketNotesArea.setText(value(rs.getString("notes")));
+                    setTicketActionState();
                 }
             }
         } catch (SQLException ex) {
@@ -827,17 +970,20 @@ public class MaintenanceManagement extends JFrame {
 
     private void clearTicketEditor() {
         selectedTicketId = null;
+        selectedTicketStatus = null;
         ticketTable.clearSelection();
         if (ticketMachineBox.getItemCount() > 0) {
             ticketMachineBox.setSelectedIndex(0);
         }
         priorityBox.setSelectedItem("NORMAL");
         ticketStatusBox.setSelectedItem("OPEN");
+        createdByField.setText("");
         assignedToField.setText("");
         dueDateField.setText("");
         problemArea.setText("");
         resolutionArea.setText("");
         ticketNotesArea.setText("");
+        setTicketActionState();
     }
 
     private static DefaultTableModel readOnlyModel(Object... columns) {

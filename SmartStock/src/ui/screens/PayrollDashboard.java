@@ -128,7 +128,7 @@ public class PayrollDashboard extends JFrame {
         metricsPanel.add(totalPayLabel);
 
         summaryModel = new DefaultTableModel(
-                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Total Hours", "Total Pay", "Paid", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
+                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Total Pay", "Paid", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
                 0
         ) {
             @Override
@@ -320,6 +320,7 @@ public class PayrollDashboard extends JFrame {
                     formatRole(summary.employeeRole()),
                     formatPayPeriod(summary.payPeriodStart(), summary.payPeriodEnd()),
                     summary.payDate().format(DATE_FORMAT),
+                    summary.daysWorked(),
                     formatHours(summary.totalHours()),
                     CURRENCY_FORMAT.format(summary.totalPay()),
                     summary.paid() ? "Paid" : "Unpaid",
