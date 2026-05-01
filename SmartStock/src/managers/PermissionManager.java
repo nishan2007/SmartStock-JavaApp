@@ -102,6 +102,9 @@ public class PermissionManager {
                     || hasPermission("PROCESS_RETURNS")
                     || hasPermission("VIEW_INVENTORY")
                     || hasPermission("CUSTOMER_ACCOUNTS")
+                    || hasPermission("CUSTOM_ORDER_ITEMS")
+                    || hasPermission("CREATE_CUSTOM_ORDER")
+                    || hasPermission("MANAGE_CUSTOM_ORDERS")
                     || hasPermission("NEW_ITEM")
                     || hasPermission("RECEIVING_INVENTORY")
                     || hasPermission("VIEW_RECEIVING_HISTORY")
@@ -133,6 +136,9 @@ public class PermissionManager {
             case "ReturnSale" -> hasPermission("PROCESS_RETURNS");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
+            case "CustomOrders" -> hasPermission("CUSTOM_ORDER_ITEMS")
+                    || hasPermission("CREATE_CUSTOM_ORDER")
+                    || hasPermission("MANAGE_CUSTOM_ORDERS");
             case "TimeClock" -> hasPermission("TIME_CLOCK");
             case "PayrollDashboard" -> hasPermission("PAYROLL_DASHBOARD");
             case "NewItem" -> hasPermission("NEW_ITEM");

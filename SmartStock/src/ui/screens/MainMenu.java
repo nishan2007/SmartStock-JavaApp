@@ -30,6 +30,7 @@ public class MainMenu extends JFrame {
     private final JButton vendorListButton;
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
+    private final JButton customOrdersButton;
     private final JButton viewInventoryButton;
     private final JButton addItemButton;
     private final JButton editItemsButton;
@@ -88,6 +89,7 @@ public class MainMenu extends JFrame {
         vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/Employee.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
+        customOrdersButton = createMenuButton("Custom Orders", "Take and assign customized customer orders", loadIcon("src/ICONS/MakeASale.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
@@ -120,7 +122,8 @@ public class MainMenu extends JFrame {
                 returnSaleButton,
                 endOfDayButton,
                 viewSalesButton,
-                customerAccountsButton
+                customerAccountsButton,
+                customOrdersButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -382,6 +385,9 @@ public class MainMenu extends JFrame {
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
+        boolean canCustomOrders = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS")
+                || PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canAddItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
@@ -408,6 +414,7 @@ public class MainMenu extends JFrame {
         vendorListButton.setEnabled(canVendorManagement);
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
+        customOrdersButton.setEnabled(canCustomOrders);
         viewInventoryButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
         editItemsButton.setEnabled(canEditItem);
@@ -487,6 +494,16 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openCustomerAccounts(this);
+        });
+        customOrdersButton.addActionListener(e -> {
+            boolean canCustomOrders = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS")
+                    || PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+                    || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
+            if (!canCustomOrders) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Custom Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openCustomOrders(this);
         });
         viewInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_INVENTORY", this, "View Inventory")) {

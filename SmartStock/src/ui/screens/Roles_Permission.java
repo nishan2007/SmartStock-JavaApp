@@ -681,6 +681,9 @@ public class Roles_Permission extends JFrame {
         permissions.put("DEPARTMENT_MANAGEMENT", "Department Management");
         permissions.put("VENDOR_MANAGEMENT", "Vendor Management");
         permissions.put("CUSTOMER_ACCOUNTS", "Customer Accounts");
+        permissions.put("CUSTOM_ORDER_ITEMS", "Custom Order Items");
+        permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
+        permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("SET_CREDIT_LIMIT", "Set Credit Limit");
         permissions.put("EDIT_ACCOUNT_NUMBER", "Edit Account Number");
         permissions.put("EMPLOYEE_MANAGEMENT", "Employee Management");

@@ -6,6 +6,7 @@ import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.CompanyCustomization;
+import ui.screens.CustomOrders;
 import ui.screens.CustomerAccounts;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
@@ -76,6 +77,7 @@ public class AppMenuBar {
         JMenuItem locationManagementItem = new JMenuItem("Locations");
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
+        JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
         JMenuItem localDeviceSettingsItem = new JMenuItem("Local Device Settings");
@@ -95,6 +97,9 @@ public class AppMenuBar {
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
+        boolean canCustomOrders = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS")
+                || PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
 
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
@@ -108,7 +113,7 @@ public class AppMenuBar {
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -163,6 +168,9 @@ public class AppMenuBar {
         }
         if (!canCustomerAccounts || "CustomerAccounts".equalsIgnoreCase(screenKey)) {
             customerAccountsItem.setEnabled(false);
+        }
+        if (!canCustomOrders || "CustomOrders".equalsIgnoreCase(screenKey)) {
+            customOrdersItem.setEnabled(false);
         }
         if (!canEmployeeMgmt || "EmployeeManagement".equalsIgnoreCase(screenKey)) {
             employeeMgmtItem.setEnabled(false);
@@ -368,6 +376,19 @@ public class AppMenuBar {
             }
         });
 
+        customOrdersItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!canCustomOrders) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Custom Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(CustomOrders.class)) {
+                    return;
+                }
+                NavigationManager.openCustomOrders(parent);
+            }
+        });
+
 
 
         employeeMgmtItem.addActionListener(new ActionListener() {
@@ -509,6 +530,7 @@ public class AppMenuBar {
         pointOfSaleMenu.add(endOfDayItem);
         pointOfSaleMenu.add(ViewSalesItem);
         pointOfSaleMenu.add(customerAccountsItem);
+        pointOfSaleMenu.add(customOrdersItem);
 
         inventoryMenu.add(enterInventoryItem);
         inventoryMenu.add(receivingHistoryItem);
