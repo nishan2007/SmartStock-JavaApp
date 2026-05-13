@@ -89,7 +89,7 @@ public class EnterInventory extends JFrame {
         searchPanel.add(rightSidePanel, BorderLayout.EAST);
 
         JPanel searchRow = new JPanel(new BorderLayout(10, 10));
-        JLabel searchLabel = new JLabel("Search Product");
+        JLabel searchLabel = new JLabel("Search Product or Custom Item");
         searchField = new JTextField();
         JButton searchBtn = new JButton("Search");
         searchRow.add(searchLabel, BorderLayout.WEST);
@@ -98,17 +98,17 @@ public class EnterInventory extends JFrame {
         searchPanel.add(searchRow, BorderLayout.SOUTH);
 
         inventoryModel = new DefaultTableModel(
-                new Object[]{"ID", "Name", "Description", "SKU", "Current Stock", "Qty to Add", "New Stock"},
+                new Object[]{"Type", "ID", "Name", "Description", "SKU / Code", "Current Stock", "Qty to Add", "New Stock"},
                 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 5;
+                return column == 6;
             }
         };
         inventoryTable = new JTable(inventoryModel);
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
-        inventoryTable.getColumnModel().getColumn(5).setCellEditor(new DefaultCellEditor(new JTextField()));
+        inventoryTable.getColumnModel().getColumn(6).setCellEditor(new DefaultCellEditor(new JTextField()));
         configureInventoryTableColumns();
 
         JScrollPane inventoryScrollPane = new JScrollPane(inventoryTable);
@@ -185,7 +185,7 @@ public class EnterInventory extends JFrame {
             if (updatingInventoryRows) {
                 return;
             }
-            if (e.getColumn() == 5 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
+            if (e.getColumn() == 6 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
                 updateNewStockTotals();
             }
         });
@@ -235,28 +235,31 @@ public class EnterInventory extends JFrame {
     }
 
     private void configureInventoryTableColumns() {
-        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 7) {
+        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 8) {
             return;
         }
 
         TableColumnModel columnModel = inventoryTable.getColumnModel();
-        columnModel.getColumn(0).setMinWidth(40);
-        columnModel.getColumn(0).setMaxWidth(70);
-        columnModel.getColumn(0).setPreferredWidth(50);
-        columnModel.getColumn(1).setMinWidth(90);
-        columnModel.getColumn(1).setMaxWidth(220);
-        columnModel.getColumn(1).setPreferredWidth(140);
-        columnModel.getColumn(2).setMinWidth(220);
-        columnModel.getColumn(2).setPreferredWidth(320);
-        columnModel.getColumn(2).setCellRenderer(new MultiLineTableCellRenderer());
-        columnModel.getColumn(3).setMinWidth(90);
-        columnModel.getColumn(3).setPreferredWidth(110);
+        columnModel.getColumn(0).setMinWidth(80);
+        columnModel.getColumn(0).setMaxWidth(120);
+        columnModel.getColumn(0).setPreferredWidth(100);
+        columnModel.getColumn(1).setMinWidth(40);
+        columnModel.getColumn(1).setMaxWidth(70);
+        columnModel.getColumn(1).setPreferredWidth(50);
+        columnModel.getColumn(2).setMinWidth(90);
+        columnModel.getColumn(2).setMaxWidth(220);
+        columnModel.getColumn(2).setPreferredWidth(140);
+        columnModel.getColumn(3).setMinWidth(220);
+        columnModel.getColumn(3).setPreferredWidth(320);
+        columnModel.getColumn(3).setCellRenderer(new MultiLineTableCellRenderer());
         columnModel.getColumn(4).setMinWidth(90);
-        columnModel.getColumn(4).setMaxWidth(120);
-        columnModel.getColumn(5).setMinWidth(80);
-        columnModel.getColumn(5).setMaxWidth(110);
+        columnModel.getColumn(4).setPreferredWidth(110);
+        columnModel.getColumn(5).setMinWidth(90);
+        columnModel.getColumn(5).setMaxWidth(120);
         columnModel.getColumn(6).setMinWidth(80);
         columnModel.getColumn(6).setMaxWidth(110);
+        columnModel.getColumn(7).setMinWidth(80);
+        columnModel.getColumn(7).setMaxWidth(110);
         updateDescriptionRowHeights();
     }
 
@@ -267,13 +270,13 @@ public class EnterInventory extends JFrame {
 
         for (int row = 0; row < inventoryTable.getRowCount(); row++) {
             int rowHeight = 24;
-            Object value = inventoryTable.getValueAt(row, 2);
+            Object value = inventoryTable.getValueAt(row, 3);
             String text = value == null ? "" : value.toString();
 
-            TableCellRenderer renderer = inventoryTable.getCellRenderer(row, 2);
-            Component component = renderer.getTableCellRendererComponent(inventoryTable, text, false, false, row, 2);
+            TableCellRenderer renderer = inventoryTable.getCellRenderer(row, 3);
+            Component component = renderer.getTableCellRendererComponent(inventoryTable, text, false, false, row, 3);
             if (component instanceof JTextArea textArea) {
-                int columnWidth = inventoryTable.getColumnModel().getColumn(2).getWidth();
+                int columnWidth = inventoryTable.getColumnModel().getColumn(3).getWidth();
                 textArea.setSize(columnWidth, Short.MAX_VALUE);
                 rowHeight = Math.max(rowHeight, textArea.getPreferredSize().height + 4);
             }
@@ -320,21 +323,48 @@ public class EnterInventory extends JFrame {
         if (searchText.isEmpty()) {
             closeSearchPopup();
             if (showMessages) {
-                JOptionPane.showMessageDialog(this, "Type a product name or SKU first.");
+                JOptionPane.showMessageDialog(this, "Type a product name, SKU, or custom item name first.");
             }
             return;
         }
 
         String sql = """
-                SELECT p.product_id, p.name, p.description, p.sku,
-                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-                FROM products p
-                LEFT JOIN inventory i
-                    ON p.product_id = i.product_id
-                   AND i.location_id = ?
-                WHERE COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
-                  AND (p.name ILIKE ? OR p.sku ILIKE ?)
-                ORDER BY p.name
+                SELECT item_type, item_id, name, description, code, quantity_on_hand
+                FROM (
+                    SELECT 'Product' AS item_type,
+                           p.product_id AS item_id,
+                           p.name,
+                           p.description,
+                           p.sku AS code,
+                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
+                    FROM products p
+                    LEFT JOIN inventory i
+                        ON p.product_id = i.product_id
+                       AND i.location_id = ?
+                    WHERE COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
+                      AND (p.name ILIKE ? OR p.sku ILIKE ?)
+                    UNION ALL
+                    SELECT 'Custom Item' AS item_type,
+                           coi.custom_item_id AS item_id,
+                           coi.item_name AS name,
+                           coi.description,
+                           COALESCE(NULLIF(coi.barcode, ''), 'CUSTOM-' || coi.custom_item_id) AS code,
+                           coi.quantity_on_hand
+                    FROM custom_order_items coi
+                    WHERE coi.is_active = TRUE
+                      AND (
+                          coi.item_name ILIKE ?
+                          OR COALESCE(coi.barcode, '') ILIKE ?
+                          OR ('CUSTOM-' || coi.custom_item_id) ILIKE ?
+                          OR EXISTS (
+                              SELECT 1
+                              FROM custom_order_item_barcodes coib
+                              WHERE coib.custom_item_id = coi.custom_item_id
+                                AND coib.barcode ILIKE ?
+                          )
+                      )
+                ) matched_items
+                ORDER BY item_type, name
                 """;
 
         try (Connection conn = DB.getConnection();
@@ -343,16 +373,21 @@ public class EnterInventory extends JFrame {
             ps.setInt(1, SessionManager.getCurrentLocationId());
             ps.setString(2, "%" + searchText + "%");
             ps.setString(3, "%" + searchText + "%");
+            ps.setString(4, "%" + searchText + "%");
+            ps.setString(5, "%" + searchText + "%");
+            ps.setString(6, "%" + searchText + "%");
+            ps.setString(7, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
 
             while (rs.next()) {
                 rows.add(new Object[]{
-                        rs.getInt("product_id"),
+                        rs.getString("item_type"),
+                        rs.getInt("item_id"),
                         rs.getString("name"),
                         rs.getString("description"),
-                        rs.getString("sku"),
+                        rs.getString("code"),
                         rs.getInt("quantity_on_hand")
                 });
             }
@@ -360,7 +395,7 @@ public class EnterInventory extends JFrame {
             if (rows.isEmpty()) {
                 closeSearchPopup();
                 if (showMessages) {
-                    JOptionPane.showMessageDialog(this, "No matching products found.");
+                    JOptionPane.showMessageDialog(this, "No matching products or custom items found.");
                 }
                 return;
             }
@@ -378,7 +413,7 @@ public class EnterInventory extends JFrame {
             searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
             searchPopup.setFocusable(false);
 
-            String[] columns = {"ID", "Name", "Description", "SKU", "Stock"};
+            String[] columns = {"Type", "ID", "Name", "Description", "SKU / Code", "Stock"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -425,11 +460,12 @@ public class EnterInventory extends JFrame {
         }
 
         searchResultsScrollPane.setPreferredSize(new Dimension(Math.max(searchField.getWidth(), 500), 220));
-        searchResultsTable.getColumnModel().getColumn(0).setPreferredWidth(50);
-        searchResultsTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-        searchResultsTable.getColumnModel().getColumn(2).setPreferredWidth(240);
-        searchResultsTable.getColumnModel().getColumn(3).setPreferredWidth(110);
-        searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(70);
+        searchResultsTable.getColumnModel().getColumn(0).setPreferredWidth(90);
+        searchResultsTable.getColumnModel().getColumn(1).setPreferredWidth(50);
+        searchResultsTable.getColumnModel().getColumn(2).setPreferredWidth(140);
+        searchResultsTable.getColumnModel().getColumn(3).setPreferredWidth(220);
+        searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(110);
+        searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(70);
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);
@@ -448,11 +484,12 @@ public class EnterInventory extends JFrame {
         }
 
         int selectedRow = searchResultsTable.convertRowIndexToModel(searchResultsTable.getSelectedRow());
-        int productId = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 0)).intValue();
-        String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 1));
-        String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
-        String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
-        int currentStock = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 4)).intValue();
+        String itemType = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 0));
+        int itemId = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 1)).intValue();
+        String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
+        String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
+        String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
+        int currentStock = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 5)).intValue();
 
         String qtyText = JOptionPane.showInputDialog(this, "Enter quantity to add:", "1");
         if (qtyText == null) {
@@ -472,7 +509,7 @@ public class EnterInventory extends JFrame {
             return;
         }
 
-        addToInventoryTable(productId, name, description, sku, currentStock, qty);
+        addToInventoryTable(itemType, itemId, name, description, sku, currentStock, qty);
         closeSearchPopup();
         searchField.requestFocusInWindow();
         searchField.selectAll();
@@ -484,21 +521,22 @@ public class EnterInventory extends JFrame {
         }
     }
 
-    private void addToInventoryTable(int productId, String name, String description, String sku, int currentStock, int qty) {
+    private void addToInventoryTable(String itemType, int itemId, String name, String description, String sku, int currentStock, int qty) {
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            int existingProductId = Integer.parseInt(inventoryModel.getValueAt(i, 0).toString());
-            if (existingProductId == productId) {
-                int existingQty = Integer.parseInt(inventoryModel.getValueAt(i, 5).toString());
+            String existingType = inventoryModel.getValueAt(i, 0).toString();
+            int existingItemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
+            if (existingType.equals(itemType) && existingItemId == itemId) {
+                int existingQty = Integer.parseInt(inventoryModel.getValueAt(i, 6).toString());
                 int newQty = existingQty + qty;
-                inventoryModel.setValueAt(newQty, i, 5);
-                inventoryModel.setValueAt(currentStock + newQty, i, 6);
+                inventoryModel.setValueAt(newQty, i, 6);
+                inventoryModel.setValueAt(currentStock + newQty, i, 7);
                 updateTotalUnitsLabel();
                 configureInventoryTableColumns();
                 return;
             }
         }
 
-        inventoryModel.addRow(new Object[]{productId, name, description, sku, currentStock, qty, currentStock + qty});
+        inventoryModel.addRow(new Object[]{itemType, itemId, name, description, sku, currentStock, qty, currentStock + qty});
         updateNewStockTotals();
         configureInventoryTableColumns();
     }
@@ -507,10 +545,10 @@ public class EnterInventory extends JFrame {
         updatingInventoryRows = true;
         try {
             for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                int currentStock = parsePositiveInt(inventoryModel.getValueAt(i, 4), 0);
-                int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 5), 1);
-                inventoryModel.setValueAt(qtyToAdd, i, 5);
-                inventoryModel.setValueAt(currentStock + qtyToAdd, i, 6);
+                int currentStock = parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
+                int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 6), 1);
+                inventoryModel.setValueAt(qtyToAdd, i, 6);
+                inventoryModel.setValueAt(currentStock + qtyToAdd, i, 7);
             }
             updateTotalUnitsLabel();
             updateDescriptionRowHeights();
@@ -532,7 +570,7 @@ public class EnterInventory extends JFrame {
     private void updateTotalUnitsLabel() {
         int total = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            total += parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
+            total += parsePositiveInt(inventoryModel.getValueAt(i, 6), 0);
         }
         totalUnitsLabel.setText("Units to Add: " + total);
     }
@@ -643,6 +681,20 @@ public class EnterInventory extends JFrame {
                         """;
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
                 String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
+                String updateCustomItemSql = "UPDATE custom_order_items SET quantity_on_hand = quantity_on_hand + ?, updated_at = CURRENT_TIMESTAMP WHERE custom_item_id = ?";
+                String insertCustomItemMovementSql = """
+                        INSERT INTO custom_order_item_movements (
+                            custom_item_id,
+                            change_qty,
+                            reason,
+                            note,
+                            user_name,
+                            receive_id,
+                            receive_device_id,
+                            receive_sequence
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """;
                 String insertMovementSql = """
                         INSERT INTO inventory_movements (
                             product_id,
@@ -661,6 +713,8 @@ public class EnterInventory extends JFrame {
                 try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
                      PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
+                     PreparedStatement updateCustomItemStmt = conn.prepareStatement(updateCustomItemSql);
+                     PreparedStatement customItemMovementStmt = conn.prepareStatement(insertCustomItemMovementSql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
 
 	                    receivingBatchStmt.setString(1, receive.receiveId());
@@ -672,36 +726,55 @@ public class EnterInventory extends JFrame {
                     receivingBatchStmt.executeUpdate();
 
                     for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                        int productId = Integer.parseInt(inventoryModel.getValueAt(i, 0).toString());
-                        int qty = parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
+                        String itemType = inventoryModel.getValueAt(i, 0).toString();
+                        int itemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
+                        int qty = parsePositiveInt(inventoryModel.getValueAt(i, 6), 0);
                         if (qty <= 0) {
-                            throw new SQLException("Quantity must be greater than zero for product " + productId + ".");
+                            throw new SQLException("Quantity must be greater than zero for " + itemType + " " + itemId + ".");
                         }
 
-                        ensureInventoryStmt.setInt(1, productId);
-                        ensureInventoryStmt.setInt(2, locationId);
-                        ensureInventoryStmt.addBatch();
+                        if ("Custom Item".equals(itemType)) {
+                            updateCustomItemStmt.setInt(1, qty);
+                            updateCustomItemStmt.setInt(2, itemId);
+                            updateCustomItemStmt.addBatch();
 
-                        updateInventoryStmt.setInt(1, qty);
-                        updateInventoryStmt.setInt(2, productId);
-                        updateInventoryStmt.setInt(3, locationId);
-                        updateInventoryStmt.addBatch();
+                            customItemMovementStmt.setInt(1, itemId);
+                            customItemMovementStmt.setInt(2, qty);
+                            customItemMovementStmt.setString(3, "INVENTORY_ENTRY");
+                            customItemMovementStmt.setString(4, "entered_by_user_id=" + SessionManager.getCurrentUserId());
+                            customItemMovementStmt.setString(5, SessionManager.getCurrentUserDisplayName());
+                            customItemMovementStmt.setString(6, receive.receiveId());
+                            customItemMovementStmt.setString(7, receive.deviceId());
+                            customItemMovementStmt.setInt(8, receive.sequence());
+                            customItemMovementStmt.addBatch();
+                        } else {
+                            ensureInventoryStmt.setInt(1, itemId);
+                            ensureInventoryStmt.setInt(2, locationId);
+                            ensureInventoryStmt.addBatch();
 
-                        movementStmt.setInt(1, productId);
-                        movementStmt.setInt(2, locationId);
-	                        movementStmt.setInt(3, qty);
-	                        movementStmt.setString(4, "INVENTORY_ENTRY");
-	                        movementStmt.setString(5, "entered_by_user_id=" + SessionManager.getCurrentUserId());
-	                        movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-	                        movementStmt.setString(7, receive.receiveId());
-	                        movementStmt.setString(8, receive.deviceId());
-	                        movementStmt.setInt(9, receive.sequence());
-                        movementStmt.addBatch();
+                            updateInventoryStmt.setInt(1, qty);
+                            updateInventoryStmt.setInt(2, itemId);
+                            updateInventoryStmt.setInt(3, locationId);
+                            updateInventoryStmt.addBatch();
+
+                            movementStmt.setInt(1, itemId);
+                            movementStmt.setInt(2, locationId);
+                            movementStmt.setInt(3, qty);
+                            movementStmt.setString(4, "INVENTORY_ENTRY");
+                            movementStmt.setString(5, "entered_by_user_id=" + SessionManager.getCurrentUserId());
+                            movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+                            movementStmt.setString(7, receive.receiveId());
+                            movementStmt.setString(8, receive.deviceId());
+                            movementStmt.setInt(9, receive.sequence());
+                            movementStmt.addBatch();
+                        }
                     }
 
                     ensureInventoryStmt.executeBatch();
                     updateInventoryStmt.executeBatch();
                     movementStmt.executeBatch();
+                    updateCustomItemStmt.executeBatch();
+                    customItemMovementStmt.executeBatch();
                 }
 
                 conn.commit();

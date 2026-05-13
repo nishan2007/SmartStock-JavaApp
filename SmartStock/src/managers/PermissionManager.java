@@ -105,6 +105,7 @@ public class PermissionManager {
                     || hasPermission("CUSTOM_ORDER_ITEMS")
                     || hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")
+                    || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
                     || hasPermission("NEW_ITEM")
                     || hasPermission("RECEIVING_INVENTORY")
                     || hasPermission("VIEW_RECEIVING_HISTORY")
@@ -130,15 +131,16 @@ public class PermissionManager {
             case "EnterInventory" -> hasPermission("RECEIVING_INVENTORY");
             case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
             case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
+            case "CustomOrderItems" -> hasPermission("CUSTOM_ORDER_ITEMS");
             case "DepartmentList" -> hasPermission("DEPARTMENT_MANAGEMENT");
             case "VendorList" -> hasPermission("VENDOR_MANAGEMENT");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ReturnSale" -> hasPermission("PROCESS_RETURNS");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
-            case "CustomOrders" -> hasPermission("CUSTOM_ORDER_ITEMS")
-                    || hasPermission("CREATE_CUSTOM_ORDER")
-                    || hasPermission("MANAGE_CUSTOM_ORDERS");
+            case "CustomOrders" -> hasPermission("CREATE_CUSTOM_ORDER")
+                    || hasPermission("MANAGE_CUSTOM_ORDERS")
+                    || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
             case "TimeClock" -> hasPermission("TIME_CLOCK");
             case "PayrollDashboard" -> hasPermission("PAYROLL_DASHBOARD");
             case "NewItem" -> hasPermission("NEW_ITEM");

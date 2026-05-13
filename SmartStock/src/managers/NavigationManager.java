@@ -6,6 +6,7 @@ import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
 import ui.screens.CompanyCustomization;
+import ui.screens.CustomOrderItems;
 import ui.screens.CustomOrders;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
@@ -55,6 +56,7 @@ public final class NavigationManager {
         RECEIVING_INVENTORY,
         RECEIVING_HISTORY,
         STORE_TRANSFER,
+        CUSTOM_ORDER_ITEMS,
         DEPARTMENT_LIST,
         VENDOR_LIST,
         NEW_ITEM,
@@ -120,6 +122,10 @@ public final class NavigationManager {
 
     public static void openStoreTransfer(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.STORE_TRANSFER));
+    }
+
+    public static void openCustomOrderItems(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.CUSTOM_ORDER_ITEMS));
     }
 
     public static void openDepartmentList(JFrame parent) {
@@ -211,6 +217,7 @@ public final class NavigationManager {
             case RECEIVING_INVENTORY -> new EnterInventory();
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
+            case CUSTOM_ORDER_ITEMS -> new CustomOrderItems();
             case DEPARTMENT_LIST -> new DepartmentList();
             case VENDOR_LIST -> new VendorList();
             case NEW_ITEM -> new NewItem();
@@ -247,6 +254,7 @@ public final class NavigationManager {
             case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;
+            case "CustomOrderItems" -> ScreenType.CUSTOM_ORDER_ITEMS;
             case "DepartmentList" -> ScreenType.DEPARTMENT_LIST;
             case "VendorList" -> ScreenType.VENDOR_LIST;
             case "NewItem" -> ScreenType.NEW_ITEM;

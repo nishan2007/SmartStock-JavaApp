@@ -26,18 +26,9 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 public class CustomOrders extends JFrame {
-    private final boolean canManageItems = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS");
     private final boolean canCreateOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
     private final boolean canManageOrders = PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
-
-    private DefaultTableModel itemModel;
-    private JTable itemTable;
-    private JTextField itemNameField;
-    private JTextArea itemDescriptionArea;
-    private JComboBox<String> pricingTypeBox;
-    private JTextField fixedPriceField;
-    private JCheckBox itemActiveCheckBox;
-    private Long selectedCustomItemId;
+    private final boolean canViewAssignedOrders = PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
 
     private JComboBox<CustomerOption> customerBox;
     private JTextField customerSearchField;
@@ -60,6 +51,12 @@ public class CustomOrders extends JFrame {
     private JComboBox<String> manageStatusBox;
     private JTextArea selectedOrderDetailsArea;
     private Long selectedOrderId;
+    private DefaultTableModel myOrdersModel;
+    private JTable myOrdersTable;
+    private TableRowSorter<DefaultTableModel> myOrdersSorter;
+    private JTextField myOrderSearchField;
+    private JComboBox<String> myStatusFilterBox;
+    private JTextArea myOrderDetailsArea;
 
     public CustomOrders() {
         setTitle("Custom Orders");
@@ -73,13 +70,12 @@ public class CustomOrders extends JFrame {
         if (canCreateOrders) {
             tabs.addTab("New Order", buildOrderEntryPanel());
         }
+        if (canViewAssignedOrders || canManageOrders) {
+            tabs.addTab("My Orders", buildMyOrdersPanel());
+        }
         if (canManageOrders) {
             tabs.addTab("Manage Orders", buildManageOrdersPanel());
         }
-        if (canManageItems) {
-            tabs.addTab("Order Items", buildItemSetupPanel());
-        }
-
         if (tabs.getTabCount() == 0) {
             add(new JLabel("You do not have permission to access custom orders.", SwingConstants.CENTER), BorderLayout.CENTER);
         } else {
@@ -90,74 +86,8 @@ public class CustomOrders extends JFrame {
         loadCustomers("");
         loadEmployees();
         loadOrders();
+        loadMyOrders();
         WindowHelper.showPosWindow(this);
-    }
-
-    private JPanel buildItemSetupPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
-        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
-
-        itemModel = new DefaultTableModel(new Object[]{"ID", "Item", "Pricing", "Fixed Price", "Active", "Description"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        itemTable = new JTable(itemModel);
-        itemTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        itemTable.setRowHeight(26);
-        itemTable.getColumnModel().getColumn(0).setMaxWidth(70);
-        itemTable.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                loadSelectedItem();
-            }
-        });
-        panel.add(new JScrollPane(itemTable), BorderLayout.CENTER);
-
-        JPanel form = new JPanel(new GridBagLayout());
-        form.setPreferredSize(new Dimension(360, 0));
-        form.setBorder(BorderFactory.createTitledBorder("Item Template"));
-        GridBagConstraints gbc = formGbc();
-
-        itemNameField = new JTextField();
-        itemDescriptionArea = new JTextArea(4, 20);
-        itemDescriptionArea.setLineWrap(true);
-        itemDescriptionArea.setWrapStyleWord(true);
-        pricingTypeBox = new JComboBox<>(new String[]{"Variable", "Fixed"});
-        fixedPriceField = new JTextField();
-        itemActiveCheckBox = new JCheckBox("Active", true);
-        pricingTypeBox.addActionListener(e -> updateFixedPriceEnabled());
-
-        addField(form, gbc, 0, "Item:", itemNameField);
-        addField(form, gbc, 1, "Pricing:", pricingTypeBox);
-        addField(form, gbc, 2, "Fixed Price:", fixedPriceField);
-        addField(form, gbc, 3, "Description:", new JScrollPane(itemDescriptionArea));
-        gbc.gridx = 1;
-        gbc.gridy = 4;
-        form.add(itemActiveCheckBox, gbc);
-
-        JPanel buttons = new JPanel(new GridLayout(2, 2, 8, 8));
-        JButton saveButton = new JButton("Save Item");
-        JButton updateButton = new JButton("Update Item");
-        JButton clearButton = new JButton("Clear");
-        JButton refreshButton = new JButton("Refresh");
-        buttons.add(saveButton);
-        buttons.add(updateButton);
-        buttons.add(clearButton);
-        buttons.add(refreshButton);
-
-        saveButton.addActionListener(e -> saveCustomItem(false));
-        updateButton.addActionListener(e -> saveCustomItem(true));
-        clearButton.addActionListener(e -> clearItemForm());
-        refreshButton.addActionListener(e -> loadItems());
-
-        JPanel east = new JPanel(new BorderLayout(0, 10));
-        east.add(form, BorderLayout.CENTER);
-        east.add(buttons, BorderLayout.SOUTH);
-        panel.add(east, BorderLayout.EAST);
-
-        updateFixedPriceEnabled();
-        return panel;
     }
 
     private JPanel buildOrderEntryPanel() {
@@ -325,12 +255,63 @@ public class CustomOrders extends JFrame {
         return panel;
     }
 
+    private JPanel buildMyOrdersPanel() {
+        JPanel panel = new JPanel(new BorderLayout(12, 12));
+        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
+
+        JPanel filterPanel = new JPanel(new BorderLayout(8, 0));
+        myOrderSearchField = new JTextField();
+        myStatusFilterBox = new JComboBox<>(new String[]{"All", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "CANCELLED"});
+        JButton refreshButton = new JButton("Refresh");
+        filterPanel.add(new JLabel("Search:"), BorderLayout.WEST);
+        filterPanel.add(myOrderSearchField, BorderLayout.CENTER);
+        JPanel filterRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        filterRight.add(myStatusFilterBox);
+        filterRight.add(refreshButton);
+        filterPanel.add(filterRight, BorderLayout.EAST);
+
+        myOrdersModel = new DefaultTableModel(new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Due", "Total", "Created"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        myOrdersSorter = new TableRowSorter<>(myOrdersModel);
+        myOrdersTable = new JTable(myOrdersModel);
+        myOrdersTable.setRowSorter(myOrdersSorter);
+        myOrdersTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        myOrdersTable.setRowHeight(28);
+        myOrdersTable.getColumnModel().getColumn(0).setMaxWidth(70);
+        myOrdersTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadSelectedMyOrder();
+            }
+        });
+        myOrderSearchField.getDocument().addDocumentListener(simpleDocumentListener(this::applyMyOrderFilter));
+        myStatusFilterBox.addActionListener(e -> applyMyOrderFilter());
+        refreshButton.addActionListener(e -> loadMyOrders());
+
+        JPanel left = new JPanel(new BorderLayout(8, 8));
+        left.add(filterPanel, BorderLayout.NORTH);
+        left.add(new JScrollPane(myOrdersTable), BorderLayout.CENTER);
+
+        myOrderDetailsArea = new JTextArea();
+        myOrderDetailsArea.setEditable(false);
+        myOrderDetailsArea.setLineWrap(true);
+        myOrderDetailsArea.setWrapStyleWord(true);
+
+        JPanel right = new JPanel(new BorderLayout());
+        right.setPreferredSize(new Dimension(420, 0));
+        right.setBorder(BorderFactory.createTitledBorder("Order Details"));
+        right.add(new JScrollPane(myOrderDetailsArea), BorderLayout.CENTER);
+
+        panel.add(left, BorderLayout.CENTER);
+        panel.add(right, BorderLayout.EAST);
+        return panel;
+    }
+
     private void loadItems() {
         List<CustomItemOption> options = new ArrayList<>();
-        if (itemModel != null) {
-            itemModel.setRowCount(0);
-        }
-
         String sql = """
                 SELECT custom_item_id, item_name, description, pricing_type, fixed_price, is_active
                 FROM custom_order_items
@@ -348,9 +329,6 @@ public class CustomOrders extends JFrame {
                 String description = rs.getString("description");
                 if (active) {
                     options.add(new CustomItemOption(id, name, pricingType, fixedPrice));
-                }
-                if (itemModel != null) {
-                    itemModel.addRow(new Object[]{id, name, pricingType, formatMoney(fixedPrice), active, description});
                 }
             }
         } catch (SQLException ex) {
@@ -456,56 +434,55 @@ public class CustomOrders extends JFrame {
         applyOrderFilter();
     }
 
-    private void saveCustomItem(boolean update) {
-        String name = itemNameField.getText().trim();
-        String description = itemDescriptionArea.getText().trim();
-        String pricingType = getSelectedPricingType();
-        BigDecimal fixedPrice = null;
-        if (name.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Item name is required.");
+    private void loadMyOrders() {
+        if (myOrdersModel == null) {
             return;
         }
-        if ("FIXED".equals(pricingType)) {
-            fixedPrice = parseMoney(fixedPriceField.getText().trim(), "Fixed price");
-            if (fixedPrice == null) {
-                return;
-            }
-        }
-        if (update && selectedCustomItemId == null) {
-            JOptionPane.showMessageDialog(this, "Select an item to update.");
+        myOrdersModel.setRowCount(0);
+        myOrderDetailsArea.setText("");
+
+        if (SessionManager.getCurrentUserId() == null) {
             return;
         }
 
-        String insertSql = """
-                INSERT INTO custom_order_items (item_name, description, pricing_type, fixed_price, is_active)
-                VALUES (?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE custom_order_items
-                SET item_name = ?, description = ?, pricing_type = ?, fixed_price = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE custom_item_id = ?
+        String sql = """
+                SELECT custom_order_id, order_number, status, customer_name, customer_phone, due_date,
+                       total_amount, created_at
+                FROM custom_orders
+                WHERE assigned_to_user_id = ?
+                ORDER BY
+                    CASE status
+                        WHEN 'ASSIGNED' THEN 1
+                        WHEN 'IN_PROGRESS' THEN 2
+                        WHEN 'READY' THEN 3
+                        WHEN 'COMPLETED' THEN 4
+                        WHEN 'CANCELLED' THEN 5
+                        ELSE 6
+                    END,
+                    due_date NULLS LAST,
+                    created_at DESC
                 """;
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(update ? updateSql : insertSql)) {
-            ps.setString(1, name);
-            ps.setString(2, description.isEmpty() ? null : description);
-            ps.setString(3, pricingType);
-            if (fixedPrice == null) {
-                ps.setNull(4, Types.NUMERIC);
-            } else {
-                ps.setBigDecimal(4, fixedPrice);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, SessionManager.getCurrentUserId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    myOrdersModel.addRow(new Object[]{
+                            rs.getLong("custom_order_id"),
+                            rs.getString("order_number"),
+                            rs.getString("status"),
+                            rs.getString("customer_name"),
+                            rs.getString("customer_phone"),
+                            rs.getDate("due_date"),
+                            formatMoney(rs.getBigDecimal("total_amount")),
+                            rs.getTimestamp("created_at")
+                    });
+                }
             }
-            ps.setBoolean(5, itemActiveCheckBox.isSelected());
-            if (update) {
-                ps.setLong(6, selectedCustomItemId);
-            }
-            ps.executeUpdate();
-            clearItemForm();
-            loadItems();
-            JOptionPane.showMessageDialog(this, update ? "Custom item updated." : "Custom item saved.");
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }
+        applyMyOrderFilter();
     }
 
     private void saveCustomOrder() {
@@ -653,6 +630,7 @@ public class CustomOrders extends JFrame {
             ps.setLong(8, selectedOrderId);
             ps.executeUpdate();
             loadOrders();
+            loadMyOrders();
             JOptionPane.showMessageDialog(this, "Order updated.");
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
@@ -705,21 +683,6 @@ public class CustomOrders extends JFrame {
         updateOrderTotal();
     }
 
-    private void loadSelectedItem() {
-        int row = itemTable.getSelectedRow();
-        if (row < 0) {
-            return;
-        }
-        int modelRow = itemTable.convertRowIndexToModel(row);
-        selectedCustomItemId = Long.parseLong(itemModel.getValueAt(modelRow, 0).toString());
-        itemNameField.setText(valueAt(itemModel, modelRow, 1));
-        pricingTypeBox.setSelectedItem("FIXED".equals(valueAt(itemModel, modelRow, 2)) ? "Fixed" : "Variable");
-        fixedPriceField.setText(valueAt(itemModel, modelRow, 3));
-        itemActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(itemModel, modelRow, 4)));
-        itemDescriptionArea.setText(valueAt(itemModel, modelRow, 5));
-        updateFixedPriceEnabled();
-    }
-
     private void loadSelectedOrder() {
         int row = ordersTable.getSelectedRow();
         if (row < 0) {
@@ -731,10 +694,21 @@ public class CustomOrders extends JFrame {
         selectedOrderId = Long.parseLong(ordersModel.getValueAt(modelRow, 0).toString());
         manageStatusBox.setSelectedItem(ordersModel.getValueAt(modelRow, 2).toString());
         selectEmployeeByName(valueAt(ordersModel, modelRow, 7));
-        loadOrderDetails(selectedOrderId);
+        loadOrderDetails(selectedOrderId, selectedOrderDetailsArea);
     }
 
-    private void loadOrderDetails(Long orderId) {
+    private void loadSelectedMyOrder() {
+        int row = myOrdersTable.getSelectedRow();
+        if (row < 0) {
+            myOrderDetailsArea.setText("");
+            return;
+        }
+        int modelRow = myOrdersTable.convertRowIndexToModel(row);
+        long orderId = Long.parseLong(myOrdersModel.getValueAt(modelRow, 0).toString());
+        loadOrderDetails(orderId, myOrderDetailsArea);
+    }
+
+    private void loadOrderDetails(Long orderId, JTextArea detailsArea) {
         String sql = """
                 SELECT co.order_number, co.customer_name, co.customer_phone, co.status, co.due_date,
                        co.order_notes, co.total_amount, co.assigned_to_name,
@@ -779,8 +753,8 @@ public class CustomOrders extends JFrame {
                     }
                 }
             }
-            selectedOrderDetailsArea.setText(details.toString());
-            selectedOrderDetailsArea.setCaretPosition(0);
+            detailsArea.setText(details.toString());
+            detailsArea.setCaretPosition(0);
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }
@@ -817,25 +791,20 @@ public class CustomOrders extends JFrame {
         ordersSorter.setRowFilter(filters.isEmpty() ? null : RowFilter.andFilter(filters));
     }
 
-    private void updateFixedPriceEnabled() {
-        boolean fixed = "FIXED".equals(getSelectedPricingType());
-        fixedPriceField.setEnabled(fixed);
-        if (!fixed) {
-            fixedPriceField.setText("");
+    private void applyMyOrderFilter() {
+        if (myOrdersSorter == null) {
+            return;
         }
-    }
-
-    private void clearItemForm() {
-        selectedCustomItemId = null;
-        if (itemTable != null) {
-            itemTable.clearSelection();
+        List<RowFilter<Object, Object>> filters = new ArrayList<>();
+        String search = myOrderSearchField == null ? "" : myOrderSearchField.getText().trim();
+        if (!search.isEmpty()) {
+            filters.add(RowFilter.regexFilter("(?i)" + Pattern.quote(search)));
         }
-        itemNameField.setText("");
-        itemDescriptionArea.setText("");
-        pricingTypeBox.setSelectedItem("Variable");
-        fixedPriceField.setText("");
-        itemActiveCheckBox.setSelected(true);
-        updateFixedPriceEnabled();
+        Object status = myStatusFilterBox == null ? "All" : myStatusFilterBox.getSelectedItem();
+        if (status != null && !"All".equals(status.toString())) {
+            filters.add(RowFilter.regexFilter("^" + Pattern.quote(status.toString()) + "$", 2));
+        }
+        myOrdersSorter.setRowFilter(filters.isEmpty() ? null : RowFilter.andFilter(filters));
     }
 
     private void clearOrderEntry() {
@@ -863,11 +832,6 @@ public class CustomOrders extends JFrame {
             total = total.add(parseMoneyValue(orderLineModel.getValueAt(i, 3).toString()));
         }
         return total;
-    }
-
-    private String getSelectedPricingType() {
-        Object selected = pricingTypeBox.getSelectedItem();
-        return selected != null && "Fixed".equalsIgnoreCase(selected.toString()) ? "FIXED" : "VARIABLE";
     }
 
     private String generateOrderNumber() {

@@ -6,6 +6,7 @@ import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.CompanyCustomization;
+import ui.screens.CustomOrderItems;
 import ui.screens.CustomOrders;
 import ui.screens.CustomerAccounts;
 import ui.screens.DeviceManagement;
@@ -62,6 +63,7 @@ public class AppMenuBar {
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
+        JMenuItem customOrderItemsItem = new JMenuItem("Custom Order Items");
         JMenuItem departmentListItem = new JMenuItem("Departments");
         JMenuItem vendorListItem = new JMenuItem("Vendors");
         JMenuItem maintenanceManagementItem = new JMenuItem("Maintenance");
@@ -91,15 +93,16 @@ public class AppMenuBar {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
+        boolean canCustomOrderItems = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS");
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canCustomOrders = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS")
-                || PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
-                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
+        boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
+                || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
 
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
@@ -113,7 +116,7 @@ public class AppMenuBar {
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -135,6 +138,9 @@ public class AppMenuBar {
         }
         if (!canStoreTransfer || "StoreTransfer".equalsIgnoreCase(screenKey)) {
             storeTransferItem.setEnabled(false);
+        }
+        if (!canCustomOrderItems || "CustomOrderItems".equalsIgnoreCase(screenKey)) {
+            customOrderItemsItem.setEnabled(false);
         }
         if (!canDepartmentManagement || "DepartmentList".equalsIgnoreCase(screenKey)) {
             departmentListItem.setEnabled(false);
@@ -276,6 +282,18 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openStoreTransfer(parent);
+            }
+        });
+
+        customOrderItemsItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("CUSTOM_ORDER_ITEMS", parent, "Custom Order Items")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(CustomOrderItems.class)) {
+                    return;
+                }
+                NavigationManager.openCustomOrderItems(parent);
             }
         });
 
@@ -535,6 +553,7 @@ public class AppMenuBar {
         inventoryMenu.add(enterInventoryItem);
         inventoryMenu.add(receivingHistoryItem);
         inventoryMenu.add(storeTransferItem);
+        inventoryMenu.add(customOrderItemsItem);
         inventoryMenu.add(departmentListItem);
         inventoryMenu.add(vendorListItem);
         inventoryMenu.add(maintenanceManagementItem);
