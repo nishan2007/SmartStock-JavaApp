@@ -7,7 +7,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,6 +19,7 @@ public final class SupabaseSessionManager {
 
     private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
     private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
+    private static final Path SESSION_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "session.properties");
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .build();
@@ -30,6 +35,69 @@ public final class SupabaseSessionManager {
     public static synchronized void clearSession() {
         SessionManager.setCurrentAccessToken(null);
         SessionManager.setCurrentRefreshToken(null);
+    }
+
+    public static synchronized PersistedSession loadPersistedSession() {
+        if (!Files.exists(SESSION_PATH)) {
+            return null;
+        }
+
+        Properties properties = new Properties();
+        try (var input = Files.newInputStream(SESSION_PATH)) {
+            properties.load(input);
+            String refreshToken = blankToNull(properties.getProperty("refresh_token"));
+            Integer userId = parseInteger(properties.getProperty("user_id"));
+            Integer locationId = parseInteger(properties.getProperty("location_id"));
+
+            if (refreshToken == null || userId == null || locationId == null) {
+                clearPersistedSession();
+                return null;
+            }
+
+            return new PersistedSession(
+                    blankToNull(properties.getProperty("access_token")),
+                    refreshToken,
+                    userId,
+                    locationId
+            );
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            return null;
+        }
+    }
+
+    public static synchronized boolean hasPersistedSession() {
+        return Files.exists(SESSION_PATH) && loadPersistedSession() != null;
+    }
+
+    public static synchronized void savePersistedSession(Integer userId, Integer locationId) {
+        String refreshToken = SessionManager.getCurrentRefreshToken();
+        if (refreshToken == null || refreshToken.isBlank() || userId == null || locationId == null) {
+            return;
+        }
+
+        Properties properties = new Properties();
+        properties.setProperty("access_token", SessionManager.getCurrentAccessToken() == null ? "" : SessionManager.getCurrentAccessToken());
+        properties.setProperty("refresh_token", refreshToken);
+        properties.setProperty("user_id", String.valueOf(userId));
+        properties.setProperty("location_id", String.valueOf(locationId));
+
+        try {
+            Files.createDirectories(SESSION_PATH.getParent());
+            try (var output = Files.newOutputStream(SESSION_PATH)) {
+                properties.store(output, "SmartStock stay signed in session");
+            }
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    public static synchronized void clearPersistedSession() {
+        try {
+            Files.deleteIfExists(SESSION_PATH);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
     }
 
     public static synchronized String getAccessToken() {
@@ -81,6 +149,10 @@ public final class SupabaseSessionManager {
             throw new IllegalStateException("Session refresh failed. Please log in again.");
         }
         return SessionManager.getCurrentAccessToken();
+    }
+
+    public static synchronized String getCurrentAuthUserId() {
+        return extractJwtStringClaim(SessionManager.getCurrentAccessToken(), "sub");
     }
 
     private static void validateAccessToken(String accessToken) throws IOException, InterruptedException {
@@ -197,6 +269,35 @@ public final class SupabaseSessionManager {
         return matcher.find() ? matcher.group(1) : null;
     }
 
+    private static String extractJwtStringClaim(String jwt, String claimName) {
+        if (jwt == null || jwt.isBlank()) {
+            return null;
+        }
+
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) {
+            return null;
+        }
+
+        try {
+            String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+            return extractJsonString(payload, claimName);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static Integer parseInteger(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     private static String getConfig(String key, String fallback) {
         String value = System.getenv(key);
         if (value == null || value.isBlank()) {
@@ -206,5 +307,8 @@ public final class SupabaseSessionManager {
             value = fallback;
         }
         return value;
+    }
+
+    public record PersistedSession(String accessToken, String refreshToken, Integer userId, Integer locationId) {
     }
 }

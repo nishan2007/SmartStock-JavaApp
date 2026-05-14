@@ -32,6 +32,7 @@ public class MainMenu extends JFrame {
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton customOrdersButton;
+    private final JButton ordersButton;
     private final JButton viewInventoryButton;
     private final JButton addItemButton;
     private final JButton editItemsButton;
@@ -91,7 +92,8 @@ public class MainMenu extends JFrame {
         vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/Employee.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
-        customOrdersButton = createMenuButton("Custom Orders", "Take and assign customized customer orders", loadIcon("src/ICONS/MakeASale.png"));
+        customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MakeASale.png"));
+        ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/ViewSales.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
@@ -125,7 +127,8 @@ public class MainMenu extends JFrame {
                 endOfDayButton,
                 viewSalesButton,
                 customerAccountsButton,
-                customOrdersButton
+                customOrdersButton,
+                ordersButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -384,12 +387,13 @@ public class MainMenu extends JFrame {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
-        boolean canCustomOrderItems = PermissionManager.hasPermission("CUSTOM_ORDER_ITEMS");
+        boolean canCustomOrderItems = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+        boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
+        boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
                 || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
@@ -420,6 +424,7 @@ public class MainMenu extends JFrame {
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         customOrdersButton.setEnabled(canCustomOrders);
+        ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
         editItemsButton.setEnabled(canEditItem);
@@ -477,7 +482,7 @@ public class MainMenu extends JFrame {
             NavigationManager.openStoreTransfer(this);
         });
         customOrderItemsButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("CUSTOM_ORDER_ITEMS", this, "Custom Order Items")) {
+            if (!PermissionManager.requirePermission("MANUAL_ADJUSTMENT", this, "Custom Order Items")) {
                 return;
             }
             NavigationManager.openCustomOrderItems(this);
@@ -507,14 +512,21 @@ public class MainMenu extends JFrame {
             NavigationManager.openCustomerAccounts(this);
         });
         customOrdersButton.addActionListener(e -> {
-            boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
-                    || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
-                    || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
-            if (!canCustomOrders) {
+            if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
                 JOptionPane.showMessageDialog(this, "You do not have permission to access Custom Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             NavigationManager.openCustomOrders(this);
+        });
+        ordersButton.addActionListener(e -> {
+            boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
+                    || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
+                    || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
+            if (!canOrders) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openOrders(this);
         });
         viewInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_INVENTORY", this, "View Inventory")) {
@@ -611,6 +623,7 @@ public class MainMenu extends JFrame {
             endSessionSafely();
             SessionManager.clearSessionState();
             SupabaseSessionManager.clearSession();
+            SupabaseSessionManager.clearPersistedSession();
             NavigationManager.logoutToLogin(this);
         });
     }

@@ -134,6 +134,6 @@ public class ManagedDevice {
         if (!approved) {
             return "Pending Approval";
         }
-        return "Approved";
+        return "Stay Signed In";
     }
 }

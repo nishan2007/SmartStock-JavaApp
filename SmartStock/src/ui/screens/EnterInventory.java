@@ -352,6 +352,8 @@ public class EnterInventory extends JFrame {
                            coi.quantity_on_hand
                     FROM custom_order_items coi
                     WHERE coi.is_active = TRUE
+                      AND COALESCE(coi.product_type, 'INVENTORY') = 'INVENTORY'
+                      AND COALESCE(coi.has_variants, FALSE) = FALSE
                       AND (
                           coi.item_name ILIKE ?
                           OR COALESCE(coi.barcode, '') ILIKE ?
@@ -362,6 +364,24 @@ public class EnterInventory extends JFrame {
                               WHERE coib.custom_item_id = coi.custom_item_id
                                 AND coib.barcode ILIKE ?
                           )
+                      )
+                    UNION ALL
+                    SELECT 'Custom Variant' AS item_type,
+                           coiv.custom_variant_id AS item_id,
+                           coi.item_name || ' - ' || coiv.variant_name AS name,
+                           coi.description,
+                           COALESCE(NULLIF(coiv.barcode, ''), 'CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) AS code,
+                           coiv.quantity_on_hand
+                    FROM custom_order_item_variants coiv
+                    JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
+                    WHERE coi.is_active = TRUE
+                      AND COALESCE(coi.product_type, 'INVENTORY') = 'INVENTORY'
+                      AND coiv.is_active = TRUE
+                      AND (
+                          coi.item_name ILIKE ?
+                          OR coiv.variant_name ILIKE ?
+                          OR COALESCE(coiv.barcode, '') ILIKE ?
+                          OR ('CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) ILIKE ?
                       )
                 ) matched_items
                 ORDER BY item_type, name
@@ -377,6 +397,10 @@ public class EnterInventory extends JFrame {
             ps.setString(5, "%" + searchText + "%");
             ps.setString(6, "%" + searchText + "%");
             ps.setString(7, "%" + searchText + "%");
+            ps.setString(8, "%" + searchText + "%");
+            ps.setString(9, "%" + searchText + "%");
+            ps.setString(10, "%" + searchText + "%");
+            ps.setString(11, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
@@ -695,6 +719,24 @@ public class EnterInventory extends JFrame {
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """;
+                String updateCustomVariantSql = "UPDATE custom_order_item_variants SET quantity_on_hand = quantity_on_hand + ?, updated_at = CURRENT_TIMESTAMP WHERE custom_variant_id = ?";
+                String insertCustomVariantMovementSql = """
+                        INSERT INTO custom_order_item_movements (
+                            custom_item_id,
+                            custom_variant_id,
+                            variant_name,
+                            change_qty,
+                            reason,
+                            note,
+                            user_name,
+                            receive_id,
+                            receive_device_id,
+                            receive_sequence
+                        )
+                        SELECT custom_item_id, custom_variant_id, variant_name, ?, ?, ?, ?, ?, ?, ?
+                        FROM custom_order_item_variants
+                        WHERE custom_variant_id = ?
+                        """;
                 String insertMovementSql = """
                         INSERT INTO inventory_movements (
                             product_id,
@@ -715,6 +757,8 @@ public class EnterInventory extends JFrame {
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
                      PreparedStatement updateCustomItemStmt = conn.prepareStatement(updateCustomItemSql);
                      PreparedStatement customItemMovementStmt = conn.prepareStatement(insertCustomItemMovementSql);
+                     PreparedStatement updateCustomVariantStmt = conn.prepareStatement(updateCustomVariantSql);
+                     PreparedStatement customVariantMovementStmt = conn.prepareStatement(insertCustomVariantMovementSql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
 
 	                    receivingBatchStmt.setString(1, receive.receiveId());
@@ -747,6 +791,20 @@ public class EnterInventory extends JFrame {
                             customItemMovementStmt.setString(7, receive.deviceId());
                             customItemMovementStmt.setInt(8, receive.sequence());
                             customItemMovementStmt.addBatch();
+                        } else if ("Custom Variant".equals(itemType)) {
+                            updateCustomVariantStmt.setInt(1, qty);
+                            updateCustomVariantStmt.setInt(2, itemId);
+                            updateCustomVariantStmt.addBatch();
+
+                            customVariantMovementStmt.setInt(1, qty);
+                            customVariantMovementStmt.setString(2, "INVENTORY_ENTRY");
+                            customVariantMovementStmt.setString(3, "entered_by_user_id=" + SessionManager.getCurrentUserId());
+                            customVariantMovementStmt.setString(4, SessionManager.getCurrentUserDisplayName());
+                            customVariantMovementStmt.setString(5, receive.receiveId());
+                            customVariantMovementStmt.setString(6, receive.deviceId());
+                            customVariantMovementStmt.setInt(7, receive.sequence());
+                            customVariantMovementStmt.setInt(8, itemId);
+                            customVariantMovementStmt.addBatch();
                         } else {
                             ensureInventoryStmt.setInt(1, itemId);
                             ensureInventoryStmt.setInt(2, locationId);
@@ -775,6 +833,8 @@ public class EnterInventory extends JFrame {
                     movementStmt.executeBatch();
                     updateCustomItemStmt.executeBatch();
                     customItemMovementStmt.executeBatch();
+                    updateCustomVariantStmt.executeBatch();
+                    customVariantMovementStmt.executeBatch();
                 }
 
                 conn.commit();

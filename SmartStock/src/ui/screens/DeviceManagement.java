@@ -48,7 +48,7 @@ public class DeviceManagement extends JFrame {
     private final JComboBox<String> filterCombo = new JComboBox<>(new String[]{
             "All Devices",
             "Pending Approval",
-            "Approved",
+            "Stay Signed In",
             "Blocked"
     });
     private final JTextArea detailsArea = new JTextArea();
@@ -80,7 +80,7 @@ public class DeviceManagement extends JFrame {
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
         titleLabel.setForeground(new Color(31, 41, 55));
 
-        JLabel subtitleLabel = new JLabel("Review registered devices, inspect login history, and approve or block access.");
+        JLabel subtitleLabel = new JLabel("Review registered devices, inspect login history, and control stay-signed-in access.");
         subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
         subtitleLabel.setForeground(new Color(75, 85, 99));
 
@@ -133,7 +133,7 @@ public class DeviceManagement extends JFrame {
 
         JPanel notesPanel = new JPanel(new BorderLayout(0, 8));
         notesPanel.setOpaque(false);
-        JLabel notesLabel = new JLabel("Approval / block note");
+        JLabel notesLabel = new JLabel("Stay signed in / block note");
         notesLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         JPanel noteHeaderPanel = new JPanel();
         noteHeaderPanel.setLayout(new BoxLayout(noteHeaderPanel, BoxLayout.Y_AXIS));
@@ -250,7 +250,7 @@ public class DeviceManagement extends JFrame {
         }
         return switch (filter) {
             case "Pending Approval" -> !device.isApproved() && !device.isBlocked();
-            case "Approved" -> device.isApproved() && !device.isBlocked();
+            case "Stay Signed In" -> device.isApproved() && !device.isBlocked();
             case "Blocked" -> device.isBlocked();
             default -> true;
         };
@@ -319,8 +319,8 @@ public class DeviceManagement extends JFrame {
                 + "Latest Login: " + formatTimestamp(device.getLatestLoginTime()) + "\n"
                 + "Latest Logout: " + formatTimestamp(device.getLatestLogoutTime()) + "\n"
                 + "Latest Session Status: " + defaultText(device.getLatestSessionStatus()) + "\n"
-                + "Approved At: " + formatTimestamp(device.getApprovedAt()) + "\n"
-                + "Approved By: " + defaultText(device.getApprovedByName()) + "\n"
+                + "Stay Signed In Enabled At: " + formatTimestamp(device.getApprovedAt()) + "\n"
+                + "Stay Signed In Enabled By: " + defaultText(device.getApprovedByName()) + "\n"
                 + "Blocked At: " + formatTimestamp(device.getBlockedAt()) + "\n"
                 + "Blocked By: " + defaultText(device.getBlockedByName()) + "\n"
                 + "OS: " + defaultText(device.getOsName()) + " " + defaultText(device.getOsVersion()) + "\n"
@@ -386,6 +386,17 @@ public class DeviceManagement extends JFrame {
                     allowStaySignedIn,
                     notesArea.getText()
             );
+            if (selectedDevice.getDeviceId() != null
+                    && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())) {
+                if (allowStaySignedIn) {
+                    SupabaseSessionManager.savePersistedSession(
+                            SessionManager.getCurrentUserId(),
+                            SessionManager.getCurrentLocationId()
+                    );
+                } else {
+                    SupabaseSessionManager.clearPersistedSession();
+                }
+            }
             loadDevices();
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -429,6 +440,7 @@ public class DeviceManagement extends JFrame {
             if (isCurrentDevice) {
                 SessionManager.clearSessionState();
                 SupabaseSessionManager.clearSession();
+                SupabaseSessionManager.clearPersistedSession();
                 JOptionPane.showMessageDialog(
                         this,
                         "This device has been blocked and will now be signed out.",
@@ -453,14 +465,14 @@ public class DeviceManagement extends JFrame {
 
     private void updateSummaryLabel() {
         int pending = 0;
-        int approved = 0;
+        int staySignedIn = 0;
         int blocked = 0;
 
         for (ManagedDevice device : allDevices) {
             if (device.isBlocked()) {
                 blocked++;
             } else if (device.isApproved()) {
-                approved++;
+                staySignedIn++;
             } else {
                 pending++;
             }
@@ -468,7 +480,7 @@ public class DeviceManagement extends JFrame {
 
         summaryLabel.setText(
                 "Showing " + filteredDevices.size() + " of " + allDevices.size()
-                        + " devices   |   Approved: " + approved
+                        + " devices   |   Stay Signed In: " + staySignedIn
                         + "   Pending: " + pending
                         + "   Blocked: " + blocked
         );

@@ -92,6 +92,7 @@ public class Login extends JFrame {
         getRootPane().setDefaultButton(loginButton);
         ThemeManager.applyToWindow(this);
         setVisible(true);
+        SwingUtilities.invokeLater(this::attemptStoredSignIn);
     }
 
     private void loginUser() {
@@ -211,6 +212,7 @@ public class Login extends JFrame {
                 SessionManager.setCurrentRefreshToken(authResult.refreshToken);
                 SupabaseSessionManager.setSession(SessionManager.getCurrentAccessToken(), SessionManager.getCurrentRefreshToken());
                 DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
+                SupabaseSessionManager.savePersistedSession(SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
 
                 JOptionPane.showMessageDialog(
                         this,
@@ -219,9 +221,7 @@ public class Login extends JFrame {
                                 "\nStore: " + SessionManager.getCurrentLocationName()
                 );
 
-                MainMenu mainMenu = new MainMenu();
-                WindowHelper.showPosWindow(mainMenu, this);
-                dispose();
+                openMainMenu();
             }
 
         } catch (SQLException ex) {
@@ -231,6 +231,172 @@ public class Login extends JFrame {
             ex.printStackTrace();
             JOptionPane.showMessageDialog(this, "Login failed: " + ex.getMessage());
         }
+    }
+
+    private void attemptStoredSignIn() {
+        SupabaseSessionManager.PersistedSession persistedSession = SupabaseSessionManager.loadPersistedSession();
+        if (persistedSession == null) {
+            return;
+        }
+
+        setLoginControlsEnabled(false);
+        setTitle("SmartStock Login - signing in...");
+
+        SwingWorker<AutoSignInResult, Void> worker = new SwingWorker<>() {
+            @Override
+            protected AutoSignInResult doInBackground() throws Exception {
+                SupabaseSessionManager.setSession(persistedSession.accessToken(), persistedSession.refreshToken());
+                SupabaseSessionManager.getValidAccessToken();
+
+                String authUserId = SupabaseSessionManager.getCurrentAuthUserId();
+                if (authUserId == null || authUserId.isBlank()) {
+                    throw new IllegalStateException("Stored session did not include an auth user.");
+                }
+
+                String userSql = """
+                        SELECT u.user_id,
+                               u.username,
+                               u.full_name,
+                               u.email,
+                               u.is_active,
+                               COALESCE(r.role_name, 'USER') AS role
+                        FROM users u
+                        LEFT JOIN roles r ON u.role_id = r.role_id
+                        WHERE u.user_id = ?
+                          AND u.auth_user_id::text = ?
+                        """;
+                String storesSql = """
+                        SELECT l.location_id,
+                               l.name,
+                               COALESCE(l.timezone, '') AS timezone
+                        FROM user_locations ul
+                        JOIN locations l ON ul.location_id = l.location_id
+                        WHERE ul.user_id = ?
+                        ORDER BY l.name
+                        """;
+
+                try (Connection conn = DB.getConnection();
+                     PreparedStatement userPs = conn.prepareStatement(userSql)) {
+                    userPs.setInt(1, persistedSession.userId());
+                    userPs.setString(2, authUserId);
+
+                    try (ResultSet userRs = userPs.executeQuery()) {
+                        if (!userRs.next()) {
+                            throw new IllegalStateException("Stored session no longer matches an employee account.");
+                        }
+
+                        if (!userRs.getBoolean("is_active")) {
+                            throw new IllegalStateException("Stored employee account is inactive.");
+                        }
+
+                        List<LocationOption> locations = new ArrayList<>();
+                        try (PreparedStatement storesPs = conn.prepareStatement(storesSql)) {
+                            storesPs.setInt(1, persistedSession.userId());
+                            try (ResultSet storesRs = storesPs.executeQuery()) {
+                                while (storesRs.next()) {
+                                    locations.add(new LocationOption(
+                                            storesRs.getInt("location_id"),
+                                            storesRs.getString("name"),
+                                            storesRs.getString("timezone")
+                                    ));
+                                }
+                            }
+                        }
+
+                        LocationOption selectedLocation = findLocation(locations, persistedSession.locationId());
+                        if (selectedLocation == null && locations.size() == 1) {
+                            selectedLocation = locations.get(0);
+                        }
+                        if (selectedLocation == null) {
+                            throw new IllegalStateException("Stored store is no longer assigned to this user.");
+                        }
+
+                        AutoSignInResult result = new AutoSignInResult(
+                                userRs.getInt("user_id"),
+                                userRs.getString("username"),
+                                userRs.getString("full_name"),
+                                userRs.getString("role"),
+                                selectedLocation
+                        );
+
+                        applySession(result);
+                        DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
+                        SupabaseSessionManager.savePersistedSession(SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
+                        return result;
+                    }
+                }
+            }
+
+            @Override
+            protected void done() {
+                setTitle("SmartStock Login");
+                try {
+                    AutoSignInResult result = get();
+                    if (result != null) {
+                        openMainMenu();
+                        return;
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    SessionManager.clearSessionState();
+                    SupabaseSessionManager.clearSession();
+                    SupabaseSessionManager.clearPersistedSession();
+                    JOptionPane.showMessageDialog(
+                            Login.this,
+                            "Saved sign-in could not be restored. Please sign in again.\n\n" + getRootCauseMessage(ex),
+                            "Stay Signed In",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                }
+                setLoginControlsEnabled(true);
+            }
+        };
+
+        worker.execute();
+    }
+
+    private void applySession(AutoSignInResult result) {
+        SessionManager.setCurrentUserId(result.userId);
+        SessionManager.setCurrentUsername(result.username);
+        SessionManager.setCurrentUserDisplayName((result.fullName == null || result.fullName.isBlank()) ? result.username : result.fullName);
+        SessionManager.setCurrentRole(result.role);
+        SessionManager.setCurrentLocationId(result.location.locationId);
+        SessionManager.setCurrentLocationName(result.location.locationName);
+        SessionManager.setCurrentLocationTimezone(result.location.timezone);
+    }
+
+    private LocationOption findLocation(List<LocationOption> locations, Integer locationId) {
+        if (locationId == null) {
+            return null;
+        }
+        for (LocationOption location : locations) {
+            if (location.locationId == locationId) {
+                return location;
+            }
+        }
+        return null;
+    }
+
+    private void setLoginControlsEnabled(boolean enabled) {
+        usernameField.setEnabled(enabled);
+        passwordField.setEnabled(enabled);
+        loginButton.setEnabled(enabled);
+        clearButton.setEnabled(enabled);
+    }
+
+    private void openMainMenu() {
+        MainMenu mainMenu = new MainMenu();
+        WindowHelper.showPosWindow(mainMenu, this);
+        dispose();
+    }
+
+    private String getRootCauseMessage(Exception ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
 
     private SupabaseLoginResult authenticateWithSupabase(String email, String password) {
@@ -430,6 +596,22 @@ public class Login extends JFrame {
             this.message = message;
             this.accessToken = accessToken;
             this.refreshToken = refreshToken;
+        }
+    }
+
+    private static class AutoSignInResult {
+        private final int userId;
+        private final String username;
+        private final String fullName;
+        private final String role;
+        private final LocationOption location;
+
+        private AutoSignInResult(int userId, String username, String fullName, String role, LocationOption location) {
+            this.userId = userId;
+            this.username = username;
+            this.fullName = fullName;
+            this.role = role;
+            this.location = location;
         }
     }
 

@@ -253,7 +253,10 @@ public class NewItem extends JFrame {
         panel.setPreferredSize(new Dimension(780, 360));
         panel.add(buttonPanel, BorderLayout.SOUTH);
 
-        add(panel);
+        JTabbedPane itemTypeTabs = new JTabbedPane();
+        itemTypeTabs.addTab("Inventory Item", panel);
+        itemTypeTabs.addTab("Custom Item", new NewCustomItem(this));
+        add(itemTypeTabs);
 
         saveButton.addActionListener(new ActionListener() {
             @Override

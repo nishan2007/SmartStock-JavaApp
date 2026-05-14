@@ -17,6 +17,7 @@ import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.MachineManagement;
 import ui.screens.NewItem;
+import ui.screens.Orders;
 import ui.screens.LocationManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.PartsManagement;
@@ -65,6 +66,7 @@ public final class NavigationManager {
         VIEW_INVENTORY,
         CUSTOMER_ACCOUNTS,
         CUSTOM_ORDERS,
+        ORDERS,
         TIME_CLOCK,
         PAYROLL_DASHBOARD,
         EMPLOYEE_MANAGEMENT,
@@ -160,6 +162,10 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.CUSTOM_ORDERS));
     }
 
+    public static void openOrders(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.ORDERS));
+    }
+
     public static void openTimeClock(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.TIME_CLOCK));
     }
@@ -226,6 +232,7 @@ public final class NavigationManager {
             case VIEW_INVENTORY -> new ViewInventory();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
             case CUSTOM_ORDERS -> new CustomOrders();
+            case ORDERS -> new Orders();
             case TIME_CLOCK -> new TimeClock();
             case PAYROLL_DASHBOARD -> new PayrollDashboard();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
@@ -263,6 +270,7 @@ public final class NavigationManager {
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
             case "CustomOrders" -> ScreenType.CUSTOM_ORDERS;
+            case "Orders" -> ScreenType.ORDERS;
             case "TimeClock" -> ScreenType.TIME_CLOCK;
             case "PayrollDashboard" -> ScreenType.PAYROLL_DASHBOARD;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;

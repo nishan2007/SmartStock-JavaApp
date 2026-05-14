@@ -50,11 +50,11 @@ public class EditItem extends JFrame {
     private int selectedProductId = -1;
     private int selectedOriginalQuantity = 0;
     private String selectedProductType = "INVENTORY";
-    private final boolean canAdjustInventoryQuantity = PermissionManager.hasPermission("ADJUST_INVENTORY_QUANTITY");
+    private final boolean canManualAdjustment = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
 
     public EditItem() {
         setTitle("Edit Item");
-        setSize(980, 620);
+        setSize(1280, 780);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "EditItem"));
@@ -108,8 +108,8 @@ public class EditItem extends JFrame {
         priceField = new JTextField();
         itemTypeBox = new JComboBox<>(new String[]{"Inventory", "Service", "Non Inventory"});
         quantityField = new JTextField();
-        if (!canAdjustInventoryQuantity) {
-            quantityField.setToolTipText("Requires Adjust Inventory Quantity permission.");
+        if (!canManualAdjustment) {
+            quantityField.setToolTipText("Requires Manual Adjustment permission.");
         }
         reorderLevelField = new JTextField();
         departmentSelector = new DepartmentSelector();
@@ -285,7 +285,10 @@ public class EditItem extends JFrame {
         panel.add(buttonPanel, BorderLayout.SOUTH);
         panel.setPreferredSize(new Dimension(780, 360));
 
-        add(panel);
+        JTabbedPane editTabs = new JTabbedPane();
+        editTabs.addTab("Inventory Item", panel);
+        editTabs.addTab("Custom Item", new EditCustomItem(this));
+        add(editTabs);
 
         setFormEnabled(false);
 
@@ -624,7 +627,7 @@ public class EditItem extends JFrame {
         String productType = getSelectedProductType();
         boolean inventoryItem = "INVENTORY".equals(productType);
 
-        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (inventoryItem && canAdjustInventoryQuantity && quantityText.isEmpty()) || (inventoryItem && reorderLevelText.isEmpty())) {
+        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (inventoryItem && canManualAdjustment && quantityText.isEmpty()) || (inventoryItem && reorderLevelText.isEmpty())) {
             JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, and Price are required. Inventory items also require Quantity and Reorder Quantity.");
             return;
         }
@@ -646,7 +649,7 @@ public class EditItem extends JFrame {
         }
 
         int quantity = selectedOriginalQuantity;
-        if (inventoryItem && canAdjustInventoryQuantity) {
+        if (inventoryItem && canManualAdjustment) {
             try {
                 quantity = Integer.parseInt(quantityText);
             } catch (NumberFormatException ex) {
@@ -802,7 +805,7 @@ public class EditItem extends JFrame {
     private void updateInventoryFieldsForType() {
         boolean enabled = selectedProductId != -1;
         boolean inventoryItem = "INVENTORY".equals(getSelectedProductType());
-        quantityField.setEnabled(enabled && inventoryItem && canAdjustInventoryQuantity);
+        quantityField.setEnabled(enabled && inventoryItem && canManualAdjustment);
         reorderLevelField.setEnabled(enabled && inventoryItem);
         if (!inventoryItem) {
             quantityField.setText("0");

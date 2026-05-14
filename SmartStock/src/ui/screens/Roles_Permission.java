@@ -677,11 +677,10 @@ public class Roles_Permission extends JFrame {
         permissions.put("VIEW_COST_PRICE", "View Cost Price");
         permissions.put("VIEW_VENDOR", "View Vendor");
         permissions.put("VIEW_CREATED_BY", "View Created By");
-        permissions.put("ADJUST_INVENTORY_QUANTITY", "Adjust Inventory Quantity");
+        permissions.put("MANUAL_ADJUSTMENT", "Manual Adjustment");
         permissions.put("DEPARTMENT_MANAGEMENT", "Department Management");
         permissions.put("VENDOR_MANAGEMENT", "Vendor Management");
         permissions.put("CUSTOMER_ACCOUNTS", "Customer Accounts");
-        permissions.put("CUSTOM_ORDER_ITEMS", "Custom Order Items");
         permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
         permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "View Assigned Custom Orders");

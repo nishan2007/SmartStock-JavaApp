@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.SupabaseSessionManager;
 import ui.helpers.ThemeManager;
 
 import javax.swing.*;
@@ -59,6 +60,19 @@ public class WelcomeFrame extends JFrame {
 
         setContentPane(root);
         ThemeManager.applyToWindow(this);
+        SwingUtilities.invokeLater(this::continueIfStoredSessionExists);
+    }
+
+    private void continueIfStoredSessionExists() {
+        if (!SupabaseSessionManager.hasPersistedSession()) {
+            return;
+        }
+
+        statusLabel.setText("Status: Restoring saved sign-in...");
+        testBtn.setEnabled(false);
+        continueBtn.setEnabled(false);
+        new Login();
+        dispose();
     }
 
     private void testConnection() {
