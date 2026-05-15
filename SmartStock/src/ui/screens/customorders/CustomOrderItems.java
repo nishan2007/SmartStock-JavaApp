@@ -1,4 +1,4 @@
-package ui.screens;
+package ui.screens.customorders;
 
 import data.DB;
 import ui.components.AppMenuBar;
@@ -50,6 +50,28 @@ public class CustomOrderItems extends JFrame {
     private DefaultTableModel variantPreviewModel;
     private JTable variantPreviewTable;
     private Long selectedCustomItemId;
+    private DefaultTableModel printMaterialModel;
+    private JTable printMaterialTable;
+    private JTextField printMaterialNameField;
+    private JTextArea printMaterialDescriptionArea;
+    private JCheckBox printMaterialActiveCheckBox;
+    private Long selectedPrintMaterialId;
+    private DefaultTableModel printPresetModel;
+    private JTable printPresetTable;
+    private JTextField printPresetNameField;
+    private JComboBox<String> printPresetPricingModeBox;
+    private JTextField printPresetPriceField;
+    private JCheckBox printPresetActiveCheckBox;
+    private Long selectedPrintPresetId;
+    private DefaultTableModel designPlacementModel;
+    private JTable designPlacementTable;
+    private JTextField designPlacementNameField;
+    private JTextField designPlacementSortOrderField;
+    private JCheckBox designPlacementActiveCheckBox;
+    private Long selectedDesignPlacementId;
+    private boolean itemsLoaded;
+    private boolean printMaterialsLoaded;
+    private boolean designPlacementsLoaded;
     private final List<JComponent> pricePricingComponents = new ArrayList<>();
     private final List<JComponent> areaPricingComponents = new ArrayList<>();
     private final List<JComponent> mainImageComponents = new ArrayList<>();
@@ -62,14 +84,27 @@ public class CustomOrderItems extends JFrame {
         setLayout(new BorderLayout());
         setJMenuBar(AppMenuBar.create(this, "CustomOrderItems"));
 
-        JPanel mainPanel = new JPanel(new BorderLayout(12, 12));
-        mainPanel.setBorder(new EmptyBorder(14, 14, 14, 0));
-        mainPanel.add(buildTablePanel(), BorderLayout.CENTER);
-        mainPanel.add(buildDetailsDockPanel(), BorderLayout.EAST);
-        add(mainPanel, BorderLayout.CENTER);
+        JPanel itemsPanel = new JPanel(new BorderLayout(12, 12));
+        itemsPanel.setBorder(new EmptyBorder(14, 14, 14, 0));
+        itemsPanel.add(buildTablePanel(), BorderLayout.CENTER);
+        itemsPanel.add(buildDetailsDockPanel(), BorderLayout.EAST);
 
-        loadItems();
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Items", itemsPanel);
+        tabs.addTab("Print Materials", buildPrintMaterialsPanel());
+        tabs.addTab("Design Placements", buildDesignPlacementsPanel());
+        tabs.addChangeListener(e -> {
+            String title = tabs.getTitleAt(tabs.getSelectedIndex());
+            if ("Print Materials".equals(title) && !printMaterialsLoaded) {
+                loadPrintMaterialsAsync();
+            } else if ("Design Placements".equals(title) && !designPlacementsLoaded) {
+                loadDesignPlacementsAsync();
+            }
+        });
+        add(tabs, BorderLayout.CENTER);
+
         WindowHelper.showPosWindow(this);
+        loadItemsAsync();
     }
 
     private JPanel buildTablePanel() {
@@ -340,12 +375,648 @@ public class CustomOrderItems extends JFrame {
         return labelComponent;
     }
 
+    private JPanel buildPrintMaterialsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(12, 12));
+        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
+
+        printMaterialModel = new DefaultTableModel(new Object[]{"ID", "Material", "Active", "Description"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        printMaterialTable = new JTable(printMaterialModel);
+        printMaterialTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        printMaterialTable.setRowHeight(28);
+        printMaterialTable.getColumnModel().getColumn(0).setMaxWidth(70);
+        printMaterialTable.getColumnModel().getColumn(2).setMaxWidth(80);
+        printMaterialTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadSelectedPrintMaterial();
+            }
+        });
+
+        JPanel materialListPanel = new JPanel(new BorderLayout(8, 8));
+        materialListPanel.setBorder(BorderFactory.createTitledBorder("Print Materials"));
+        JButton refreshButton = new JButton("Refresh");
+        refreshButton.addActionListener(e -> loadPrintMaterials());
+        materialListPanel.add(refreshButton, BorderLayout.NORTH);
+        materialListPanel.add(new JScrollPane(printMaterialTable), BorderLayout.CENTER);
+
+        JPanel right = new JPanel(new BorderLayout(10, 10));
+        right.setPreferredSize(new Dimension(430, 0));
+        right.add(buildPrintMaterialForm(), BorderLayout.NORTH);
+        right.add(buildPrintPresetPanel(), BorderLayout.CENTER);
+
+        panel.add(materialListPanel, BorderLayout.CENTER);
+        panel.add(right, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JPanel buildPrintMaterialForm() {
+        JPanel wrapper = new JPanel(new BorderLayout(0, 8));
+        wrapper.setBorder(BorderFactory.createTitledBorder("Material Details"));
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 8, 6, 8);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        printMaterialNameField = new JTextField();
+        printMaterialDescriptionArea = new JTextArea(3, 18);
+        printMaterialDescriptionArea.setLineWrap(true);
+        printMaterialDescriptionArea.setWrapStyleWord(true);
+        printMaterialActiveCheckBox = new JCheckBox("Active", true);
+
+        addField(form, gbc, 0, "Material:", printMaterialNameField);
+        JScrollPane descriptionScroll = new JScrollPane(printMaterialDescriptionArea);
+        descriptionScroll.setPreferredSize(new Dimension(260, 80));
+        addField(form, gbc, 1, "Description:", descriptionScroll);
+        gbc.gridx = 1;
+        gbc.gridy = 2;
+        form.add(printMaterialActiveCheckBox, gbc);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
+        JButton saveButton = new JButton("Save Material");
+        JButton deleteButton = new JButton("Delete Material");
+        JButton clearButton = new JButton("Clear");
+        saveButton.addActionListener(e -> savePrintMaterial());
+        deleteButton.addActionListener(e -> deletePrintMaterial());
+        clearButton.addActionListener(e -> clearPrintMaterialForm());
+        buttons.add(saveButton);
+        buttons.add(deleteButton);
+        buttons.add(clearButton);
+
+        wrapper.add(form, BorderLayout.CENTER);
+        wrapper.add(buttons, BorderLayout.SOUTH);
+        return wrapper;
+    }
+
+    private JPanel buildPrintPresetPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(BorderFactory.createTitledBorder("Preset Sizes / Prices"));
+
+        printPresetModel = new DefaultTableModel(new Object[]{"ID", "Size", "Pricing", "Price", "Active"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        printPresetTable = new JTable(printPresetModel);
+        printPresetTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        printPresetTable.setRowHeight(26);
+        printPresetTable.getColumnModel().getColumn(0).setMaxWidth(70);
+        printPresetTable.getColumnModel().getColumn(4).setMaxWidth(80);
+        printPresetTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadSelectedPrintPreset();
+            }
+        });
+
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 6, 5, 6);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+        printPresetNameField = new JTextField();
+        printPresetPricingModeBox = new JComboBox<>(new String[]{"Fixed Preset", "Per Line"});
+        printPresetPriceField = new JTextField();
+        printPresetActiveCheckBox = new JCheckBox("Active", true);
+        addField(form, gbc, 0, "Size:", printPresetNameField);
+        addField(form, gbc, 1, "Pricing:", printPresetPricingModeBox);
+        addField(form, gbc, 2, "Price:", printPresetPriceField);
+        gbc.gridx = 1;
+        gbc.gridy = 3;
+        form.add(printPresetActiveCheckBox, gbc);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
+        JButton saveButton = new JButton("Save Size");
+        JButton deleteButton = new JButton("Delete Size");
+        JButton clearButton = new JButton("Clear");
+        saveButton.addActionListener(e -> savePrintPreset());
+        deleteButton.addActionListener(e -> deletePrintPreset());
+        clearButton.addActionListener(e -> clearPrintPresetForm());
+        buttons.add(saveButton);
+        buttons.add(deleteButton);
+        buttons.add(clearButton);
+
+        JPanel bottom = new JPanel(new BorderLayout(0, 8));
+        bottom.add(form, BorderLayout.CENTER);
+        bottom.add(buttons, BorderLayout.SOUTH);
+        panel.add(new JScrollPane(printPresetTable), BorderLayout.CENTER);
+        panel.add(bottom, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel buildDesignPlacementsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(12, 12));
+        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
+
+        designPlacementModel = new DefaultTableModel(new Object[]{"ID", "Placement", "Sort", "Active"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        designPlacementTable = new JTable(designPlacementModel);
+        designPlacementTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        designPlacementTable.setRowHeight(28);
+        designPlacementTable.getColumnModel().getColumn(0).setMaxWidth(70);
+        designPlacementTable.getColumnModel().getColumn(2).setMaxWidth(80);
+        designPlacementTable.getColumnModel().getColumn(3).setMaxWidth(80);
+        designPlacementTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadSelectedDesignPlacement();
+            }
+        });
+
+        JPanel listPanel = new JPanel(new BorderLayout(8, 8));
+        listPanel.setBorder(BorderFactory.createTitledBorder("Design Placements"));
+        JButton refreshButton = new JButton("Refresh");
+        refreshButton.addActionListener(e -> loadDesignPlacements());
+        listPanel.add(refreshButton, BorderLayout.NORTH);
+        listPanel.add(new JScrollPane(designPlacementTable), BorderLayout.CENTER);
+
+        JPanel formWrapper = new JPanel(new BorderLayout(0, 8));
+        formWrapper.setBorder(BorderFactory.createTitledBorder("Placement Details"));
+        formWrapper.setPreferredSize(new Dimension(430, 0));
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 8, 6, 8);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        designPlacementNameField = new JTextField();
+        designPlacementSortOrderField = new JTextField("0");
+        designPlacementActiveCheckBox = new JCheckBox("Active", true);
+        addField(form, gbc, 0, "Placement:", designPlacementNameField);
+        addField(form, gbc, 1, "Sort Order:", designPlacementSortOrderField);
+        gbc.gridx = 1;
+        gbc.gridy = 2;
+        form.add(designPlacementActiveCheckBox, gbc);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
+        JButton saveButton = new JButton("Save Placement");
+        JButton deleteButton = new JButton("Delete Placement");
+        JButton clearButton = new JButton("Clear");
+        saveButton.addActionListener(e -> saveDesignPlacement());
+        deleteButton.addActionListener(e -> deleteDesignPlacement());
+        clearButton.addActionListener(e -> clearDesignPlacementForm());
+        buttons.add(saveButton);
+        buttons.add(deleteButton);
+        buttons.add(clearButton);
+
+        formWrapper.add(form, BorderLayout.NORTH);
+        formWrapper.add(buttons, BorderLayout.SOUTH);
+        panel.add(listPanel, BorderLayout.CENTER);
+        panel.add(formWrapper, BorderLayout.EAST);
+        return panel;
+    }
+
     private void addTrackedField(List<JComponent> trackedComponents, JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
         trackedComponents.add(addField(panel, gbc, row, label, field));
         trackedComponents.add(field);
     }
 
+    private void runTableLoadAsync(DefaultTableModel model, RowLoader loader, Runnable afterLoad) {
+        if (model == null) {
+            return;
+        }
+        model.setRowCount(0);
+        model.addRow(loadingRow(model.getColumnCount()));
+        new SwingWorker<List<Object[]>, Void>() {
+            @Override
+            protected List<Object[]> doInBackground() throws Exception {
+                return loader.load();
+            }
+
+            @Override
+            protected void done() {
+                model.setRowCount(0);
+                try {
+                    for (Object[] row : get()) {
+                        model.addRow(row);
+                    }
+                    if (afterLoad != null) {
+                        afterLoad.run();
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(CustomOrderItems.this, "Failed to load custom order data: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
+    }
+
+    private Object[] loadingRow(int columnCount) {
+        Object[] row = new Object[columnCount];
+        if (columnCount > 1) {
+            row[1] = "Loading...";
+        } else if (columnCount == 1) {
+            row[0] = "Loading...";
+        }
+        return row;
+    }
+
+    @FunctionalInterface
+    private interface RowLoader {
+        List<Object[]> load() throws Exception;
+    }
+
+    private void loadPrintMaterials() {
+        if (printMaterialModel == null) {
+            return;
+        }
+        printMaterialsLoaded = true;
+        printMaterialModel.setRowCount(0);
+        String sql = """
+                SELECT print_material_id, material_name, description, is_active
+                FROM custom_order_print_materials
+                ORDER BY is_active DESC, material_name
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                printMaterialModel.addRow(new Object[]{
+                        rs.getLong("print_material_id"),
+                        rs.getString("material_name"),
+                        rs.getBoolean("is_active"),
+                        rs.getString("description")
+                });
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Run database/custom_orders_setup.sql before managing print materials.\n\n" + ex.getMessage(), "Database Setup Needed", JOptionPane.ERROR_MESSAGE);
+        }
+        if (selectedPrintMaterialId == null) {
+            loadPrintPresets(null);
+        }
+    }
+
+    private void loadPrintMaterialsAsync() {
+        runTableLoadAsync(
+                printMaterialModel,
+                () -> {
+                    List<Object[]> rows = new ArrayList<>();
+                    String sql = """
+                            SELECT print_material_id, material_name, description, is_active
+                            FROM custom_order_print_materials
+                            ORDER BY is_active DESC, material_name
+                            """;
+                    try (Connection conn = DB.getConnection();
+                         PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            rows.add(new Object[]{
+                                    rs.getLong("print_material_id"),
+                                    rs.getString("material_name"),
+                                    rs.getBoolean("is_active"),
+                                    rs.getString("description")
+                            });
+                        }
+                    }
+                    return rows;
+                },
+                () -> {
+                    printMaterialsLoaded = true;
+                    if (selectedPrintMaterialId == null) {
+                        loadPrintPresets(null);
+                    }
+                }
+        );
+    }
+
+    private void loadSelectedPrintMaterial() {
+        int row = printMaterialTable.getSelectedRow();
+        if (row < 0) {
+            return;
+        }
+        int modelRow = printMaterialTable.convertRowIndexToModel(row);
+        selectedPrintMaterialId = Long.parseLong(printMaterialModel.getValueAt(modelRow, 0).toString());
+        printMaterialNameField.setText(valueAt(printMaterialModel, modelRow, 1));
+        printMaterialActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(printMaterialModel, modelRow, 2)));
+        printMaterialDescriptionArea.setText(valueAt(printMaterialModel, modelRow, 3));
+        clearPrintPresetForm();
+        loadPrintPresets(selectedPrintMaterialId);
+    }
+
+    private void savePrintMaterial() {
+        String name = printMaterialNameField.getText().trim();
+        String description = printMaterialDescriptionArea.getText().trim();
+        if (name.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Material name is required.");
+            return;
+        }
+        String insertSql = """
+                INSERT INTO custom_order_print_materials (material_name, description, is_active)
+                VALUES (?, ?, ?)
+                """;
+        String updateSql = """
+                UPDATE custom_order_print_materials
+                SET material_name = ?, description = ?, is_active = ?
+                WHERE print_material_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+            PreparedStatement ps = conn.prepareStatement(selectedPrintMaterialId == null ? insertSql : updateSql)) {
+            ps.setString(1, name);
+            ps.setString(2, description.isBlank() ? null : description);
+            ps.setBoolean(3, printMaterialActiveCheckBox.isSelected());
+            if (selectedPrintMaterialId != null) {
+                ps.setLong(4, selectedPrintMaterialId);
+            }
+            ps.executeUpdate();
+            clearPrintMaterialForm();
+            loadPrintMaterials();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save print material: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void deletePrintMaterial() {
+        if (selectedPrintMaterialId == null) {
+            JOptionPane.showMessageDialog(this, "Select a material to delete.");
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this, "Delete this material and its preset sizes?", "Delete Print Material", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_print_materials WHERE print_material_id = ?")) {
+            ps.setLong(1, selectedPrintMaterialId);
+            ps.executeUpdate();
+            clearPrintMaterialForm();
+            loadPrintMaterials();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to delete print material: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void clearPrintMaterialForm() {
+        selectedPrintMaterialId = null;
+        if (printMaterialTable != null) {
+            printMaterialTable.clearSelection();
+        }
+        printMaterialNameField.setText("");
+        printMaterialDescriptionArea.setText("");
+        printMaterialActiveCheckBox.setSelected(true);
+        clearPrintPresetForm();
+        loadPrintPresets(null);
+    }
+
+    private void loadPrintPresets(Long materialId) {
+        if (printPresetModel == null) {
+            return;
+        }
+        printPresetModel.setRowCount(0);
+        if (materialId == null) {
+            return;
+        }
+        String sql = """
+                SELECT print_size_preset_id, preset_name, COALESCE(pricing_mode, 'FIXED_PRESET') AS pricing_mode, fixed_price, is_active
+                FROM custom_order_print_size_presets
+                WHERE print_material_id = ?
+                ORDER BY is_active DESC, preset_name
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, materialId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    printPresetModel.addRow(new Object[]{
+                            rs.getLong("print_size_preset_id"),
+                            rs.getString("preset_name"),
+                            displayPricingMode(rs.getString("pricing_mode")),
+                            formatMoney(rs.getBigDecimal("fixed_price")),
+                            rs.getBoolean("is_active")
+                    });
+                }
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load print sizes: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void loadSelectedPrintPreset() {
+        int row = printPresetTable.getSelectedRow();
+        if (row < 0) {
+            return;
+        }
+        int modelRow = printPresetTable.convertRowIndexToModel(row);
+        selectedPrintPresetId = Long.parseLong(printPresetModel.getValueAt(modelRow, 0).toString());
+        printPresetNameField.setText(valueAt(printPresetModel, modelRow, 1));
+        printPresetPricingModeBox.setSelectedItem(valueAt(printPresetModel, modelRow, 2));
+        printPresetPriceField.setText(valueAt(printPresetModel, modelRow, 3));
+        printPresetActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(printPresetModel, modelRow, 4)));
+    }
+
+    private void savePrintPreset() {
+        if (selectedPrintMaterialId == null) {
+            JOptionPane.showMessageDialog(this, "Select a print material first.");
+            return;
+        }
+        String name = printPresetNameField.getText().trim();
+        String pricingMode = pricingModeValue(printPresetPricingModeBox.getSelectedItem());
+        BigDecimal price = parseDecimal(printPresetPriceField.getText().trim(), "Preset price");
+        if (name.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Preset size name is required.");
+            return;
+        }
+        if (price == null) {
+            return;
+        }
+        String insertSql = """
+                INSERT INTO custom_order_print_size_presets (print_material_id, preset_name, pricing_mode, fixed_price, is_active)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+        String updateSql = """
+                UPDATE custom_order_print_size_presets
+                SET preset_name = ?, pricing_mode = ?, fixed_price = ?, is_active = ?
+                WHERE print_size_preset_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(selectedPrintPresetId == null ? insertSql : updateSql)) {
+            if (selectedPrintPresetId == null) {
+                ps.setLong(1, selectedPrintMaterialId);
+                ps.setString(2, name);
+                ps.setString(3, pricingMode);
+                ps.setBigDecimal(4, price);
+                ps.setBoolean(5, printPresetActiveCheckBox.isSelected());
+            } else {
+                ps.setString(1, name);
+                ps.setString(2, pricingMode);
+                ps.setBigDecimal(3, price);
+                ps.setBoolean(4, printPresetActiveCheckBox.isSelected());
+                ps.setLong(5, selectedPrintPresetId);
+            }
+            ps.executeUpdate();
+            clearPrintPresetForm();
+            loadPrintPresets(selectedPrintMaterialId);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save print size: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void deletePrintPreset() {
+        if (selectedPrintPresetId == null) {
+            JOptionPane.showMessageDialog(this, "Select a preset size to delete.");
+            return;
+        }
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_print_size_presets WHERE print_size_preset_id = ?")) {
+            ps.setLong(1, selectedPrintPresetId);
+            ps.executeUpdate();
+            clearPrintPresetForm();
+            loadPrintPresets(selectedPrintMaterialId);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to delete print size: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void clearPrintPresetForm() {
+        selectedPrintPresetId = null;
+        if (printPresetTable != null) {
+            printPresetTable.clearSelection();
+        }
+        printPresetNameField.setText("");
+        printPresetPricingModeBox.setSelectedIndex(0);
+        printPresetPriceField.setText("");
+        printPresetActiveCheckBox.setSelected(true);
+    }
+
+    private void loadDesignPlacements() {
+        if (designPlacementModel == null) {
+            return;
+        }
+        designPlacementsLoaded = true;
+        designPlacementModel.setRowCount(0);
+        String sql = """
+                SELECT design_placement_id, placement_name, sort_order, is_active
+                FROM custom_order_design_placements
+                ORDER BY is_active DESC, sort_order, placement_name
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                designPlacementModel.addRow(new Object[]{
+                        rs.getLong("design_placement_id"),
+                        rs.getString("placement_name"),
+                        rs.getInt("sort_order"),
+                        rs.getBoolean("is_active")
+                });
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Run database/custom_orders_setup.sql before managing design placements.\n\n" + ex.getMessage(), "Database Setup Needed", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void loadDesignPlacementsAsync() {
+        runTableLoadAsync(
+                designPlacementModel,
+                () -> {
+                    List<Object[]> rows = new ArrayList<>();
+                    String sql = """
+                            SELECT design_placement_id, placement_name, sort_order, is_active
+                            FROM custom_order_design_placements
+                            ORDER BY is_active DESC, sort_order, placement_name
+                            """;
+                    try (Connection conn = DB.getConnection();
+                         PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            rows.add(new Object[]{
+                                    rs.getLong("design_placement_id"),
+                                    rs.getString("placement_name"),
+                                    rs.getInt("sort_order"),
+                                    rs.getBoolean("is_active")
+                            });
+                        }
+                    }
+                    return rows;
+                },
+                () -> designPlacementsLoaded = true
+        );
+    }
+
+    private void loadSelectedDesignPlacement() {
+        int row = designPlacementTable.getSelectedRow();
+        if (row < 0) {
+            return;
+        }
+        int modelRow = designPlacementTable.convertRowIndexToModel(row);
+        selectedDesignPlacementId = Long.parseLong(valueAt(designPlacementModel, modelRow, 0));
+        designPlacementNameField.setText(valueAt(designPlacementModel, modelRow, 1));
+        designPlacementSortOrderField.setText(valueAt(designPlacementModel, modelRow, 2));
+        designPlacementActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(designPlacementModel, modelRow, 3)));
+    }
+
+    private void saveDesignPlacement() {
+        String name = designPlacementNameField.getText().trim();
+        Integer sortOrder = parseInteger(designPlacementSortOrderField.getText().trim(), "Sort order");
+        if (name.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Placement name is required.");
+            return;
+        }
+        if (sortOrder == null) {
+            return;
+        }
+        String insertSql = """
+                INSERT INTO custom_order_design_placements (placement_name, sort_order, is_active)
+                VALUES (?, ?, ?)
+                """;
+        String updateSql = """
+                UPDATE custom_order_design_placements
+                SET placement_name = ?, sort_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE design_placement_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(selectedDesignPlacementId == null ? insertSql : updateSql)) {
+            ps.setString(1, name);
+            ps.setInt(2, sortOrder);
+            ps.setBoolean(3, designPlacementActiveCheckBox.isSelected());
+            if (selectedDesignPlacementId != null) {
+                ps.setLong(4, selectedDesignPlacementId);
+            }
+            ps.executeUpdate();
+            clearDesignPlacementForm();
+            loadDesignPlacements();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save design placement: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void deleteDesignPlacement() {
+        if (selectedDesignPlacementId == null) {
+            JOptionPane.showMessageDialog(this, "Select a placement to delete.");
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this, "Delete this design placement?", "Delete Design Placement", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_design_placements WHERE design_placement_id = ?")) {
+            ps.setLong(1, selectedDesignPlacementId);
+            ps.executeUpdate();
+            clearDesignPlacementForm();
+            loadDesignPlacements();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to delete design placement: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void clearDesignPlacementForm() {
+        selectedDesignPlacementId = null;
+        if (designPlacementTable != null) {
+            designPlacementTable.clearSelection();
+        }
+        designPlacementNameField.setText("");
+        designPlacementSortOrderField.setText("0");
+        designPlacementActiveCheckBox.setSelected(true);
+    }
+
     private void loadItems() {
+        itemsLoaded = true;
         itemModel.setRowCount(0);
         String sql = """
                 SELECT custom_item_id, item_name, barcode, description, product_type, pricing_type, fixed_price,
@@ -380,6 +1051,50 @@ public class CustomOrderItems extends JFrame {
             JOptionPane.showMessageDialog(this, "Run database/custom_orders_setup.sql before using this screen.\n\n" + ex.getMessage(), "Database Setup Needed", JOptionPane.ERROR_MESSAGE);
         }
         applyFilter();
+    }
+
+    private void loadItemsAsync() {
+        runTableLoadAsync(
+                itemModel,
+                () -> {
+                    List<Object[]> rows = new ArrayList<>();
+                    String sql = """
+                            SELECT custom_item_id, item_name, barcode, description, product_type, pricing_type, fixed_price,
+                                   has_variants,
+                                   quantity_on_hand, reorder_level, is_active,
+                                   CASE
+                                       WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
+                                       ELSE 'OK'
+                                   END AS stock_status
+                            FROM custom_order_items
+                            ORDER BY is_active DESC, item_name
+                            """;
+                    try (Connection conn = DB.getConnection();
+                         PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            rows.add(new Object[]{
+                                    rs.getLong("custom_item_id"),
+                                    rs.getString("item_name"),
+                                    rs.getString("barcode"),
+                                    rs.getString("pricing_type"),
+                                    formatMoney(rs.getBigDecimal("fixed_price")),
+                                    rs.getBoolean("has_variants") ? "Yes" : "No",
+                                    rs.getBigDecimal("quantity_on_hand"),
+                                    rs.getBigDecimal("reorder_level"),
+                                    rs.getString("stock_status"),
+                                    rs.getBoolean("is_active"),
+                                    rs.getString("description")
+                            });
+                        }
+                    }
+                    return rows;
+                },
+                () -> {
+                    itemsLoaded = true;
+                    applyFilter();
+                }
+        );
     }
 
     private void saveItem(boolean update) {
@@ -864,6 +1579,15 @@ public class CustomOrderItems extends JFrame {
             return amount;
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid number.");
+            return null;
+        }
+    }
+
+    private Integer parseInteger(String value, String fieldName) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, fieldName + " must be a whole number.");
             return null;
         }
     }
@@ -1354,6 +2078,14 @@ public class CustomOrderItems extends JFrame {
             return "";
         }
         return "$" + amount.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private String displayPricingMode(String pricingMode) {
+        return "PER_LINE".equals(pricingMode) ? "Per Line" : "Fixed Preset";
+    }
+
+    private String pricingModeValue(Object displayValue) {
+        return "Per Line".equals(displayValue == null ? "" : displayValue.toString()) ? "PER_LINE" : "FIXED_PRESET";
     }
 
     private String valueAt(int row, int column) {

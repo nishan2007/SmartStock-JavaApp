@@ -1,4 +1,4 @@
-package ui.screens;
+package ui.screens.customorders;
 
 import data.DB;
 import ui.helpers.ProductImageHelper;

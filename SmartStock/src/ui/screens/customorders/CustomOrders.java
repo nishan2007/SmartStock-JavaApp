@@ -1,23 +1,30 @@
-package ui.screens;
+package ui.screens.customorders;
 
 import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
+import services.CustomOrderDataService;
+import services.CustomOrderDataService.CustomItemOption;
+import services.CustomOrderDataService.CustomerOption;
+import services.CustomOrderDataService.EmployeeOption;
+import services.CustomOrderDataService.OrderLineRequest;
+import services.CustomOrderDataService.OrderSaveRequest;
+import services.CustomOrderDataService.PrintAddonRequest;
+import services.CustomOrderDataService.PrintMaterialOption;
+import services.CustomOrderDataService.PrintSizePresetOption;
+import services.CustomOrderDataService.VariantOption;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.sql.Connection;
-import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -26,22 +33,47 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 public class CustomOrders extends JFrame {
+    private static final String[] DEFAULT_DESIGN_PLACEMENTS = {
+            "Line 1",
+            "Line 2",
+            "Line 3",
+            "Top",
+            "Middle",
+            "Bottom",
+            "Pocket",
+            "Chest",
+            "Left Chest",
+            "Right Chest",
+            "Front",
+            "Back",
+            "Left Sleeve",
+            "Right Sleeve"
+    };
+
     private final boolean canCreateOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
     private final boolean canManageOrders = PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
     private final boolean canViewAssignedOrders = PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
 
-    private JComboBox<CustomerOption> customerBox;
-    private JTextField customerSearchField;
-    private JTextField dueDateField;
-    private JTextArea orderNotesArea;
+    private CustomerInfoPanel customerInfoPanel;
+    private DatePickerField dueDateField;
     private JComboBox<CustomItemOption> orderItemBox;
     private JComboBox<VariantOption> variantBox;
     private JTextField linePriceField;
+    private JComboBox<PrintMaterialOption> printMaterialBox;
+    private JComboBox<PrintSizePresetOption> printSizePresetBox;
+    private JTextField printChargeField;
+    private JTextField printLineCountField;
+    private JTextField printDescriptionField;
+    private final List<JComponent> printAddOnComponents = new ArrayList<>();
+    private final List<JComponent> printLineComponents = new ArrayList<>();
+    private DefaultTableModel printAddonModel;
+    private JTable printAddonTable;
     private JTextField lineQuantityField;
     private JTextField widthField;
     private JTextField lengthField;
     private JLabel areaCalculationLabel;
-    private JTextArea customizationArea;
+    private JComboBox<String> designPlacementBox;
+    private JTextField designPlacementField;
     private JTextArea lineNotesArea;
     private DefaultTableModel orderLineModel;
     private JTable orderLineTable;
@@ -74,6 +106,11 @@ public class CustomOrders extends JFrame {
     private JTextField myOrderSearchField;
     private JComboBox<String> myStatusFilterBox;
     private JTextArea myOrderDetailsArea;
+    private CustomOrdersLookupTabPanel orderLookupPanel;
+    private boolean orderEntryDataLoaded;
+    private boolean orderLookupLoaded;
+    private boolean myOrdersLoaded;
+    private boolean manageOrdersLoaded;
 
     public CustomOrders() {
         this(false);
@@ -103,248 +140,93 @@ public class CustomOrders extends JFrame {
         if (tabs.getTabCount() == 0) {
             add(new JLabel("You do not have permission to access this screen.", SwingConstants.CENTER), BorderLayout.CENTER);
         } else {
+            tabs.addChangeListener(e -> loadSelectedTabData(tabs));
             add(tabs, BorderLayout.CENTER);
         }
 
-        loadItems();
-        loadCustomers("");
-        loadEmployees();
-        loadOrders();
-        loadMyOrders();
         WindowHelper.showPosWindow(this);
+        if (tabs.getTabCount() > 0) {
+            SwingUtilities.invokeLater(() -> loadSelectedTabData(tabs));
+        }
     }
 
     private JPanel buildOrderEntryPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
-        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
-
-        JPanel top = new JPanel(new GridBagLayout());
-        top.setBorder(BorderFactory.createTitledBorder("Customer"));
-        GridBagConstraints gbc = formGbc();
-        customerSearchField = new JTextField();
-        customerBox = new JComboBox<>();
-        dueDateField = new JTextField();
-        orderNotesArea = new JTextArea(3, 20);
-        orderNotesArea.setLineWrap(true);
-        orderNotesArea.setWrapStyleWord(true);
-        JButton searchCustomerButton = new JButton("Search");
-        JButton newCustomerButton = new JButton("New Customer");
-
-        addField(top, gbc, 0, "Search:", customerSearchField);
-        gbc.gridx = 2;
-        top.add(searchCustomerButton, gbc);
-        addField(top, gbc, 1, "Customer:", customerBox);
-        gbc.gridx = 2;
-        top.add(newCustomerButton, gbc);
-        addField(top, gbc, 2, "Due Date:", dueDateField);
-        addField(top, gbc, 3, "Notes:", new JScrollPane(orderNotesArea));
-
-        searchCustomerButton.addActionListener(e -> loadCustomers(customerSearchField.getText().trim()));
-        newCustomerButton.addActionListener(e -> {
-            QuickCustomerAccount frame = new QuickCustomerAccount(() -> loadCustomers(customerSearchField.getText().trim()));
-            frame.setLocationRelativeTo(this);
-            frame.setVisible(true);
+        CustomOrdersNewOrderTabPanel panel = new CustomOrdersNewOrderTabPanel(new CustomOrdersNewOrderTabPanel.Handler() {
+            @Override public void orderItemChanged() { loadVariantsForSelectedItem(); applySelectedOrderItemPrice(); }
+            @Override public void variantChanged() { applySelectedOrderItemPrice(); }
+            @Override public void printMaterialChanged() { loadPrintSizePresets(); applySelectedPrintPresetPrice(); }
+            @Override public void printPresetChanged() { applySelectedPrintPresetPrice(); }
+            @Override public Runnable printLineCountChanged() { return () -> SwingUtilities.invokeLater(CustomOrders.this::applySelectedPrintPresetPrice); }
+            @Override public void addPrintAddon() { CustomOrders.this.addPrintAddon(); }
+            @Override public void removePrintAddon() { removeSelectedPrintAddon(); }
+            @Override public Runnable areaChanged() { return CustomOrders.this::updateAreaCalculationPreview; }
+            @Override public void addPlacement() { addDesignPlacementNote(); }
+            @Override public void addOrderLine() { addOrderLine(); }
+            @Override public void removeOrderLine() { removeSelectedOrderLine(); }
+            @Override public void cartSelectionChanged() { loadSelectedCartLineIntoEditor(); }
+            @Override public void selectPaymentMethod(String method) { CustomOrders.this.selectPaymentMethod(method); }
+            @Override public Runnable upfrontChanged() { return CustomOrders.this::updatePaymentPreview; }
+            @Override public void saveOrder() { saveCustomOrder(); }
+            @Override public void clearOrder() { clearOrderEntry(); }
         });
-
-        JPanel linePanel = new JPanel(new GridBagLayout());
-        linePanel.setBorder(BorderFactory.createTitledBorder("Line Item"));
-        GridBagConstraints lineGbc = formGbc();
-        orderItemBox = new JComboBox<>();
-        variantBox = new JComboBox<>();
-        linePriceField = new JTextField();
-        lineQuantityField = new JTextField("1");
-        widthField = new JTextField();
-        lengthField = new JTextField();
-        areaCalculationLabel = new JLabel(" ");
-        customizationArea = new JTextArea(4, 20);
-        customizationArea.setLineWrap(true);
-        customizationArea.setWrapStyleWord(true);
-        lineNotesArea = new JTextArea(2, 20);
-        lineNotesArea.setLineWrap(true);
-        lineNotesArea.setWrapStyleWord(true);
-        addLineButton = new JButton("Add Line");
-        JButton removeLineButton = new JButton("Remove Selected");
-
-        addField(linePanel, lineGbc, 0, "Item:", orderItemBox);
-        addField(linePanel, lineGbc, 1, "Size / Variant:", variantBox);
-        addField(linePanel, lineGbc, 2, "Price:", linePriceField);
-        addField(linePanel, lineGbc, 3, "Quantity:", lineQuantityField);
-        addTrackedField(areaLineComponents, linePanel, lineGbc, 4, "Width:", widthField);
-        addTrackedField(areaLineComponents, linePanel, lineGbc, 5, "Length:", lengthField);
-        lineGbc.gridx = 1;
-        lineGbc.gridy = 6;
-        linePanel.add(areaCalculationLabel, lineGbc);
-        areaLineComponents.add(areaCalculationLabel);
-        addField(linePanel, lineGbc, 7, "Customization:", new JScrollPane(customizationArea));
-        addField(linePanel, lineGbc, 8, "Line Notes:", new JScrollPane(lineNotesArea));
-        lineGbc.gridx = 1;
-        lineGbc.gridy = 9;
-        JPanel lineButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        lineButtons.add(addLineButton);
-        lineButtons.add(removeLineButton);
-        linePanel.add(lineButtons, lineGbc);
-
-        orderItemBox.addActionListener(e -> {
-            loadVariantsForSelectedItem();
-            applySelectedOrderItemPrice();
-        });
-        variantBox.addActionListener(e -> applySelectedOrderItemPrice());
-        widthField.getDocument().addDocumentListener(simpleDocumentListener(this::updateAreaCalculationPreview));
-        lengthField.getDocument().addDocumentListener(simpleDocumentListener(this::updateAreaCalculationPreview));
-        addLineButton.addActionListener(e -> addOrderLine());
-        removeLineButton.addActionListener(e -> removeSelectedOrderLine());
-
-        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Price", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        orderLineTable = new JTable(orderLineModel);
-        orderLineTable.setRowHeight(28);
-        orderLineTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        orderLineTable.getColumnModel().getColumn(0).setMinWidth(0);
-        orderLineTable.getColumnModel().getColumn(0).setMaxWidth(0);
-        orderLineTable.getColumnModel().getColumn(0).setPreferredWidth(0);
-        orderLineTable.getColumnModel().getColumn(1).setMinWidth(0);
-        orderLineTable.getColumnModel().getColumn(1).setMaxWidth(0);
-        orderLineTable.getColumnModel().getColumn(1).setPreferredWidth(0);
-        for (int hiddenColumn = 8; hiddenColumn <= 13; hiddenColumn++) {
-            orderLineTable.getColumnModel().getColumn(hiddenColumn).setMinWidth(0);
-            orderLineTable.getColumnModel().getColumn(hiddenColumn).setMaxWidth(0);
-            orderLineTable.getColumnModel().getColumn(hiddenColumn).setPreferredWidth(0);
-        }
-        orderLineTable.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                loadSelectedCartLineIntoEditor();
-            }
-        });
-        orderTotalLabel = new JLabel("Total: $0.00");
-        orderTotalLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        paymentMethodGroup = new ButtonGroup();
-        cashPaymentButton = createPaymentMethodButton("Cash", "CASH");
-        cardPaymentButton = createPaymentMethodButton("Card", "CARD");
-        chequePaymentButton = createPaymentMethodButton("Cheque", "CHEQUE");
-        accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT");
-        paymentReferenceField = new JTextField();
-        upfrontPaymentField = new JTextField("0.00", 8);
-        balanceDueLabel = new JLabel("Balance Due: $0.00");
-        balanceDueLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        upfrontPaymentField.getDocument().addDocumentListener(simpleDocumentListener(this::updatePaymentPreview));
+        customerInfoPanel = panel.customerInfoPanel;
+        dueDateField = panel.dueDateField;
+        orderItemBox = panel.orderItemBox;
+        variantBox = panel.variantBox;
+        linePriceField = panel.linePriceField;
+        printMaterialBox = panel.printMaterialBox;
+        printSizePresetBox = panel.printSizePresetBox;
+        printChargeField = panel.printChargeField;
+        printLineCountField = panel.printLineCountField;
+        printDescriptionField = panel.printDescriptionField;
+        printAddOnComponents.clear();
+        printAddOnComponents.addAll(panel.printAddOnComponents);
+        printLineComponents.clear();
+        printLineComponents.addAll(panel.printLineComponents);
+        printAddonModel = panel.printAddonModel;
+        printAddonTable = panel.printAddonTable;
+        lineQuantityField = panel.lineQuantityField;
+        widthField = panel.widthField;
+        lengthField = panel.lengthField;
+        areaCalculationLabel = panel.areaCalculationLabel;
+        designPlacementBox = panel.designPlacementBox;
+        designPlacementField = panel.designPlacementField;
+        lineNotesArea = panel.lineNotesArea;
+        orderLineModel = panel.orderLineModel;
+        orderLineTable = panel.orderLineTable;
+        addLineButton = panel.addLineButton;
+        orderTotalLabel = panel.orderTotalLabel;
+        paymentMethodGroup = panel.paymentMethodGroup;
+        cashPaymentButton = panel.cashPaymentButton;
+        cardPaymentButton = panel.cardPaymentButton;
+        chequePaymentButton = panel.chequePaymentButton;
+        accountPaymentButton = panel.accountPaymentButton;
+        paymentReferenceField = panel.paymentReferenceField;
+        upfrontPaymentField = panel.upfrontPaymentField;
+        balanceDueLabel = panel.balanceDueLabel;
+        areaLineComponents.clear();
+        areaLineComponents.addAll(panel.areaLineComponents);
         updatePaymentButtonStyles();
         updatePaymentReferenceState();
-
-        JPanel center = new JPanel(new GridLayout(1, 2, 12, 0));
-        center.add(linePanel);
-        center.add(new JScrollPane(orderLineTable));
-
-        JButton saveOrderButton = new JButton("Save Custom Order");
-        JButton clearOrderButton = new JButton("Clear Order");
-        saveOrderButton.addActionListener(e -> saveCustomOrder());
-        clearOrderButton.addActionListener(e -> clearOrderEntry());
-
-        JPanel footer = new JPanel(new BorderLayout());
-        JPanel paymentPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        paymentPanel.setBorder(BorderFactory.createTitledBorder("Payment Method"));
-        paymentPanel.add(cashPaymentButton);
-        paymentPanel.add(cardPaymentButton);
-        paymentPanel.add(chequePaymentButton);
-        paymentPanel.add(accountPaymentButton);
-        paymentPanel.add(new JLabel("Upfront:"));
-        paymentPanel.add(upfrontPaymentField);
-        paymentPanel.add(new JLabel("Reference:"));
-        paymentReferenceField.setPreferredSize(new Dimension(150, 30));
-        paymentPanel.add(paymentReferenceField);
-        JPanel footerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        footerButtons.add(clearOrderButton);
-        footerButtons.add(saveOrderButton);
-        footer.add(orderTotalLabel, BorderLayout.WEST);
-        footer.add(paymentPanel, BorderLayout.CENTER);
-        footerButtons.add(balanceDueLabel);
-        footer.add(footerButtons, BorderLayout.EAST);
-
-        panel.add(top, BorderLayout.NORTH);
-        panel.add(center, BorderLayout.CENTER);
-        panel.add(footer, BorderLayout.SOUTH);
         return panel;
     }
 
     private JPanel buildManageOrdersPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
-        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
-
-        JPanel filterPanel = new JPanel(new BorderLayout(8, 0));
-        orderSearchField = new JTextField();
-        statusFilterBox = new JComboBox<>(new String[]{"All", "NEW", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "DELIVERED", "CANCELLED"});
-        filterPanel.add(new JLabel("Search:"), BorderLayout.WEST);
-        filterPanel.add(orderSearchField, BorderLayout.CENTER);
-        filterPanel.add(statusFilterBox, BorderLayout.EAST);
-
-        ordersModel = new DefaultTableModel(new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Due", "Total", "Paid", "Balance", "Payment", "Payment Reference", "Assigned To", "Taken By", "Created"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        ordersSorter = new TableRowSorter<>(ordersModel);
-        ordersTable = new JTable(ordersModel);
-        ordersTable.setRowSorter(ordersSorter);
-        ordersTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        ordersTable.setRowHeight(28);
-        ordersTable.getColumnModel().getColumn(0).setMaxWidth(70);
-        ordersTable.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                loadSelectedOrder();
-            }
+        CustomOrdersManageTabPanel panel = new CustomOrdersManageTabPanel(new CustomOrdersManageTabPanel.Handler() {
+            @Override public void loadSelectedOrder() { CustomOrders.this.loadSelectedOrder(); }
+            @Override public Runnable applyFilter() { return CustomOrders.this::applyOrderFilter; }
+            @Override public void saveAssignment() { CustomOrders.this.saveAssignment(); }
+            @Override public void refreshOrders() { CustomOrders.this.loadOrders(); }
         });
-        orderSearchField.getDocument().addDocumentListener(simpleDocumentListener(this::applyOrderFilter));
-        statusFilterBox.addActionListener(e -> applyOrderFilter());
-
-        JPanel left = new JPanel(new BorderLayout(8, 8));
-        left.add(filterPanel, BorderLayout.NORTH);
-        left.add(new JScrollPane(ordersTable), BorderLayout.CENTER);
-
-        JPanel right = new JPanel(new BorderLayout(8, 8));
-        right.setPreferredSize(new Dimension(420, 0));
-        right.setBorder(BorderFactory.createTitledBorder("Assignment"));
-        JPanel assignPanel = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = formGbc();
-        assignEmployeeBox = new JComboBox<>();
-        manageStatusBox = new JComboBox<>(new String[]{"NEW", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "DELIVERED", "CANCELLED"});
-        selectedOrderDetailsArea = new JTextArea();
-        selectedOrderDetailsArea.setEditable(false);
-        selectedOrderDetailsArea.setLineWrap(true);
-        selectedOrderDetailsArea.setWrapStyleWord(true);
-
-        addField(assignPanel, gbc, 0, "Assign To:", assignEmployeeBox);
-        addField(assignPanel, gbc, 1, "Status:", manageStatusBox);
-        JButton assignButton = new JButton("Save Assignment");
-        JButton refreshButton = new JButton("Refresh");
-        gbc.gridx = 1;
-        gbc.gridy = 2;
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        buttons.add(assignButton);
-        buttons.add(refreshButton);
-        assignPanel.add(buttons, gbc);
-        assignButton.addActionListener(e -> saveAssignment());
-        refreshButton.addActionListener(e -> loadOrders());
-
-        right.add(assignPanel, BorderLayout.NORTH);
-        right.add(new JScrollPane(selectedOrderDetailsArea), BorderLayout.CENTER);
-
-        panel.add(left, BorderLayout.CENTER);
-        panel.add(right, BorderLayout.EAST);
+        ordersModel = panel.ordersModel;
+        ordersTable = panel.ordersTable;
+        ordersSorter = panel.ordersSorter;
+        orderSearchField = panel.orderSearchField;
+        statusFilterBox = panel.statusFilterBox;
+        assignEmployeeBox = panel.assignEmployeeBox;
+        manageStatusBox = panel.manageStatusBox;
+        selectedOrderDetailsArea = panel.selectedOrderDetailsArea;
         return panel;
-    }
-
-    private JToggleButton createPaymentMethodButton(String label, String method) {
-        JToggleButton button = new JToggleButton(label);
-        button.setFont(new Font("SansSerif", Font.BOLD, 14));
-        button.setFocusPainted(false);
-        button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 120 : 96, 42));
-        button.addActionListener(e -> selectPaymentMethod(method));
-        paymentMethodGroup.add(button);
-        return button;
     }
 
     private void selectPaymentMethod(String method) {
@@ -391,115 +273,123 @@ public class CustomOrders extends JFrame {
         paymentReferenceField.setToolTipText(needsReference ? "Enter check number, card transaction ID, or account reference." : "Reference is only used for non-cash payments.");
     }
 
-    private void styleDialogButton(JButton button) {
-        button.setBackground(new Color(64, 64, 64));
-        button.setForeground(Color.WHITE);
-        button.setBorder(BorderFactory.createLineBorder(new Color(120, 120, 120), 1));
-        button.setFocusPainted(false);
-        button.setOpaque(true);
+    private void addDesignPlacementNote() {
+        String placement = designPlacementBox.getSelectedItem() == null ? "" : designPlacementBox.getSelectedItem().toString();
+        String instruction = designPlacementField.getText().trim();
+        if (instruction.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Enter the design/text needed for the selected placement.");
+            return;
+        }
+        String entry = placement + ": " + instruction;
+        if (lineNotesArea.getText().trim().isEmpty()) {
+            lineNotesArea.setText(entry);
+        } else {
+            lineNotesArea.append("\n" + entry);
+        }
+        designPlacementField.setText("");
+        designPlacementField.requestFocusInWindow();
     }
 
     private JPanel buildMyOrdersPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
-        panel.setBorder(new EmptyBorder(14, 14, 14, 14));
-
-        JPanel filterPanel = new JPanel(new BorderLayout(8, 0));
-        myOrderSearchField = new JTextField();
-        myStatusFilterBox = new JComboBox<>(new String[]{"All", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "DELIVERED", "CANCELLED"});
-        JButton refreshButton = new JButton("Refresh");
-        filterPanel.add(new JLabel("Search:"), BorderLayout.WEST);
-        filterPanel.add(myOrderSearchField, BorderLayout.CENTER);
-        JPanel filterRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        filterRight.add(myStatusFilterBox);
-        filterRight.add(refreshButton);
-        filterPanel.add(filterRight, BorderLayout.EAST);
-
-        myOrdersModel = new DefaultTableModel(new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Due", "Total", "Paid", "Balance", "Payment", "Payment Reference", "Created"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        myOrdersSorter = new TableRowSorter<>(myOrdersModel);
-        myOrdersTable = new JTable(myOrdersModel);
-        myOrdersTable.setRowSorter(myOrdersSorter);
-        myOrdersTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        myOrdersTable.setRowHeight(28);
-        myOrdersTable.getColumnModel().getColumn(0).setMaxWidth(70);
-        myOrdersTable.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                loadSelectedMyOrder();
-            }
+        CustomOrdersMyOrdersTabPanel panel = new CustomOrdersMyOrdersTabPanel(new CustomOrdersMyOrdersTabPanel.Handler() {
+            @Override public void loadSelectedMyOrder() { CustomOrders.this.loadSelectedMyOrder(); }
+            @Override public Runnable applyFilter() { return CustomOrders.this::applyMyOrderFilter; }
+            @Override public void refreshMyOrders() { CustomOrders.this.loadMyOrders(); }
         });
-        myOrderSearchField.getDocument().addDocumentListener(simpleDocumentListener(this::applyMyOrderFilter));
-        myStatusFilterBox.addActionListener(e -> applyMyOrderFilter());
-        refreshButton.addActionListener(e -> loadMyOrders());
-
-        JPanel left = new JPanel(new BorderLayout(8, 8));
-        left.add(filterPanel, BorderLayout.NORTH);
-        left.add(new JScrollPane(myOrdersTable), BorderLayout.CENTER);
-
-        myOrderDetailsArea = new JTextArea();
-        myOrderDetailsArea.setEditable(false);
-        myOrderDetailsArea.setLineWrap(true);
-        myOrderDetailsArea.setWrapStyleWord(true);
-
-        JPanel right = new JPanel(new BorderLayout());
-        right.setPreferredSize(new Dimension(420, 0));
-        right.setBorder(BorderFactory.createTitledBorder("Order Details"));
-        right.add(new JScrollPane(myOrderDetailsArea), BorderLayout.CENTER);
-
-        panel.add(left, BorderLayout.CENTER);
-        panel.add(right, BorderLayout.EAST);
+        myOrdersModel = panel.myOrdersModel;
+        myOrdersTable = panel.myOrdersTable;
+        myOrdersSorter = panel.myOrdersSorter;
+        myOrderSearchField = panel.myOrderSearchField;
+        myStatusFilterBox = panel.myStatusFilterBox;
+        myOrderDetailsArea = panel.myOrderDetailsArea;
         return panel;
     }
 
-    private void loadItems() {
-        List<CustomItemOption> options = new ArrayList<>();
-        String sql = """
-                SELECT custom_item_id, item_name, description, product_type, pricing_type, fixed_price,
-                       area_price, area_price_unit, dimension_unit, max_width, max_length,
-                       COALESCE(has_variants, FALSE) AS has_variants,
-                       is_active
-                FROM custom_order_items
-                ORDER BY is_active DESC, item_name
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                Long id = rs.getLong("custom_item_id");
-                String name = rs.getString("item_name");
-                String productType = rs.getString("product_type");
-                String pricingType = rs.getString("pricing_type");
-                BigDecimal fixedPrice = rs.getBigDecimal("fixed_price");
-                BigDecimal areaPrice = fixedPrice;
-                BigDecimal legacyAreaPrice = rs.getBigDecimal("area_price");
-                if (areaPrice == null) {
-                    areaPrice = legacyAreaPrice;
-                }
-                if (fixedPrice == null && "AREA".equals(pricingType)) {
-                    fixedPrice = areaPrice;
-                }
-                String areaPriceUnit = rs.getString("area_price_unit");
-                String dimensionUnit = rs.getString("dimension_unit");
-                BigDecimal maxWidth = rs.getBigDecimal("max_width");
-                BigDecimal maxLength = rs.getBigDecimal("max_length");
-                boolean hasVariants = rs.getBoolean("has_variants");
-                boolean active = rs.getBoolean("is_active");
-                String description = rs.getString("description");
-                if (active) {
-                    options.add(new CustomItemOption(id, name, productType, pricingType, fixedPrice, hasVariants, areaPrice, areaPriceUnit, dimensionUnit, maxWidth, maxLength));
+    private void loadSelectedTabData(JTabbedPane tabs) {
+        if (tabs == null || tabs.getTabCount() == 0) {
+            return;
+        }
+        String title = tabs.getTitleAt(tabs.getSelectedIndex());
+        if ("New Order".equals(title) && !orderEntryDataLoaded) {
+            loadOrderEntryDataAsync();
+        } else if ("Order Lookup".equals(title) && !orderLookupLoaded) {
+            if (orderLookupPanel != null) {
+                orderLookupPanel.load(createLookupHandler());
+            }
+            orderLookupLoaded = true;
+        } else if ("My Orders".equals(title) && !myOrdersLoaded) {
+            loadMyOrdersAsync(() -> myOrdersLoaded = true);
+        } else if ("Manage Orders".equals(title) && !manageOrdersLoaded) {
+            loadEmployees();
+            loadOrdersAsync(() -> manageOrdersLoaded = true);
+        }
+    }
+
+    private void loadOrderEntryDataAsync() {
+        if (orderItemBox == null) {
+            return;
+        }
+        orderItemBox.removeAllItems();
+        printMaterialBox.removeAllItems();
+        designPlacementBox.removeAllItems();
+        orderItemBox.addItem(new CustomItemOption(null, "Loading...", "INVENTORY", "VARIABLE", null, false, null, null, null, null, null));
+        printMaterialBox.addItem(new PrintMaterialOption(null, "Loading..."));
+        designPlacementBox.addItem("Loading...");
+        new SwingWorker<OrderEntryData, Void>() {
+            @Override
+            protected OrderEntryData doInBackground() throws Exception {
+                return new OrderEntryData(
+                        CustomOrderDataService.listActiveItems(),
+                        CustomOrderDataService.listActivePrintMaterials(),
+                        CustomOrderDataService.listActiveDesignPlacements()
+                );
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    OrderEntryData data = get();
+                    orderItemBox.removeAllItems();
+                    for (CustomItemOption option : data.items()) {
+                        orderItemBox.addItem(option);
+                    }
+                    printMaterialBox.removeAllItems();
+                    printMaterialBox.addItem(new PrintMaterialOption(null, "No Print"));
+                    for (PrintMaterialOption material : data.printMaterials()) {
+                        printMaterialBox.addItem(material);
+                    }
+                    designPlacementBox.removeAllItems();
+                    for (String placement : data.designPlacements()) {
+                        designPlacementBox.addItem(placement);
+                    }
+                    if (designPlacementBox.getItemCount() == 0) {
+                        addDefaultDesignPlacements();
+                    }
+                    orderEntryDataLoaded = true;
+                    loadVariantsForSelectedItem();
+                    loadPrintSizePresets();
+                    applySelectedOrderItemPrice();
+                } catch (Exception ex) {
+                    orderItemBox.removeAllItems();
+                    printMaterialBox.removeAllItems();
+                    designPlacementBox.removeAllItems();
+                    printMaterialBox.addItem(new PrintMaterialOption(null, "No Print"));
+                    addDefaultDesignPlacements();
+                    JOptionPane.showMessageDialog(CustomOrders.this, "Failed to load custom order setup data: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
-        } catch (SQLException ex) {
-            showDatabaseSetupMessage(ex);
-        }
+        }.execute();
+    }
 
+    private void loadItems() {
         if (orderItemBox != null) {
             orderItemBox.removeAllItems();
-            for (CustomItemOption option : options) {
-                orderItemBox.addItem(option);
+            try {
+                for (CustomItemOption option : CustomOrderDataService.listActiveItems()) {
+                    orderItemBox.addItem(option);
+                }
+            } catch (SQLException ex) {
+                showDatabaseSetupMessage(ex);
             }
             loadVariantsForSelectedItem();
             applySelectedOrderItemPrice();
@@ -516,57 +406,283 @@ public class CustomOrders extends JFrame {
         if (item == null || item.customItemId() == null) {
             return;
         }
-
-        String sql = """
-                SELECT custom_variant_id, variant_name, fixed_price
-                FROM custom_order_item_variants
-                WHERE custom_item_id = ?
-                  AND is_active = TRUE
-                ORDER BY variant_name
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, item.customItemId());
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    variantBox.addItem(new VariantOption(rs.getLong("custom_variant_id"), rs.getString("variant_name"), rs.getBigDecimal("fixed_price")));
-                }
+        try {
+            for (VariantOption variant : CustomOrderDataService.listActiveVariants(item.customItemId())) {
+                variantBox.addItem(variant);
             }
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }
     }
 
-    private void loadCustomers(String search) {
-        if (customerBox == null) {
+    private void loadPrintMaterials() {
+        if (printMaterialBox == null) {
             return;
         }
-        customerBox.removeAllItems();
-        String sql = """
-                SELECT customer_id, name, phone
-                FROM customer_accounts
-                WHERE is_active = TRUE
-                  AND (? = '' OR LOWER(name) LIKE LOWER(?) OR COALESCE(phone, '') LIKE ?)
-                ORDER BY name
-                LIMIT 100
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            String pattern = "%" + search + "%";
-            ps.setString(1, search);
-            ps.setString(2, pattern);
-            ps.setString(3, pattern);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    customerBox.addItem(new CustomerOption(
-                            rs.getInt("customer_id"),
-                            rs.getString("name"),
-                            rs.getString("phone")
-                    ));
-                }
+        printMaterialBox.removeAllItems();
+        printMaterialBox.addItem(new PrintMaterialOption(null, "No Print"));
+        try {
+            for (PrintMaterialOption material : CustomOrderDataService.listActivePrintMaterials()) {
+                printMaterialBox.addItem(material);
             }
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            showDatabaseSetupMessage(ex);
+        }
+        loadPrintSizePresets();
+    }
+
+    private void loadDesignPlacements() {
+        if (designPlacementBox == null) {
+            return;
+        }
+        designPlacementBox.removeAllItems();
+        try {
+            for (String placement : CustomOrderDataService.listActiveDesignPlacements()) {
+                designPlacementBox.addItem(placement);
+            }
+        } catch (SQLException ex) {
+            addDefaultDesignPlacements();
+            showDatabaseSetupMessage(ex);
+            return;
+        }
+        if (designPlacementBox.getItemCount() == 0) {
+            addDefaultDesignPlacements();
+        }
+    }
+
+    private void addDefaultDesignPlacements() {
+        if (designPlacementBox == null || designPlacementBox.getItemCount() > 0) {
+            return;
+        }
+        for (String placement : DEFAULT_DESIGN_PLACEMENTS) {
+            designPlacementBox.addItem(placement);
+        }
+    }
+
+    private void loadPrintSizePresets() {
+        if (printSizePresetBox == null) {
+            return;
+        }
+        PrintMaterialOption material = printMaterialBox == null ? null : (PrintMaterialOption) printMaterialBox.getSelectedItem();
+        printSizePresetBox.removeAllItems();
+        printSizePresetBox.addItem(new PrintSizePresetOption(null, null, "Custom Print Price", "FIXED_PRESET", null));
+        boolean hasMaterial = material != null && material.printMaterialId() != null;
+        boolean hasAddedPrintAddons = printAddonModel != null && printAddonModel.getRowCount() > 0;
+        setPrintAddOnFieldsVisible(hasMaterial || hasAddedPrintAddons);
+        printSizePresetBox.setEnabled(hasMaterial);
+        printChargeField.setEnabled(hasMaterial);
+        printLineCountField.setEnabled(false);
+        if (!hasMaterial) {
+            printChargeField.setText("0.00");
+            printLineCountField.setText("1");
+            return;
+        }
+        try {
+            for (PrintSizePresetOption preset : CustomOrderDataService.listActivePrintSizePresets(material.printMaterialId())) {
+                printSizePresetBox.addItem(preset);
+            }
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+        }
+    }
+
+    private void setPrintAddOnFieldsVisible(boolean visible) {
+        for (JComponent component : printAddOnComponents) {
+            component.setVisible(visible);
+        }
+        if (!visible) {
+            setPrintLineFieldsVisible(false);
+        }
+        revalidate();
+        repaint();
+    }
+
+    private void setPrintLineFieldsVisible(boolean visible) {
+        for (JComponent component : printLineComponents) {
+            component.setVisible(visible);
+        }
+        revalidate();
+        repaint();
+    }
+
+    private void applySelectedPrintPresetPrice() {
+        if (printChargeField == null || printSizePresetBox == null) {
+            return;
+        }
+        PrintMaterialOption material = printMaterialBox == null ? null : (PrintMaterialOption) printMaterialBox.getSelectedItem();
+        if (material == null || material.printMaterialId() == null) {
+            setTextIfDifferent(printChargeField, "0.00");
+            printChargeField.setEnabled(false);
+            return;
+        }
+        printChargeField.setEnabled(true);
+        PrintSizePresetOption preset = (PrintSizePresetOption) printSizePresetBox.getSelectedItem();
+        boolean perLine = preset != null && "PER_LINE".equals(preset.pricingMode());
+        setPrintLineFieldsVisible(perLine);
+        printLineCountField.setEnabled(perLine);
+        if (!perLine) {
+            setTextIfDifferent(printLineCountField, "1");
+        }
+        if (preset != null && preset.printSizePresetId() != null && preset.fixedPrice() != null) {
+            BigDecimal price = preset.fixedPrice();
+            if (perLine) {
+                int lineCount = parsePositiveInt(printLineCountField == null ? "1" : printLineCountField.getText().trim(), 1);
+                price = price.multiply(new BigDecimal(lineCount));
+            }
+            setTextIfDifferent(printChargeField, formatMoney(price));
+        }
+    }
+
+    private void addPrintAddon() {
+        PrintAddonLine addon = currentPrintAddonLine(true);
+        if (addon == null) {
+            return;
+        }
+        printAddonModel.addRow(new Object[]{
+                addon.printMaterialId(),
+                addon.materialName(),
+                addon.printSizePresetId(),
+                addon.printSizeName(),
+                addon.pricingMode(),
+                addon.printDescription(),
+                addon.printLineCount(),
+                formatMoney(addon.printCharge())
+        });
+        if (printMaterialBox != null) {
+            printMaterialBox.setSelectedIndex(0);
+        }
+        if (printSizePresetBox != null) {
+            printSizePresetBox.setSelectedIndex(0);
+        }
+        printChargeField.setText("0.00");
+        printLineCountField.setText("1");
+        printDescriptionField.setText("");
+        updateOrderTotal();
+    }
+
+    private PrintAddonLine currentPrintAddonLine(boolean showMessages) {
+        PrintMaterialOption material = printMaterialBox == null ? null : (PrintMaterialOption) printMaterialBox.getSelectedItem();
+        if (material == null || material.printMaterialId() == null) {
+            if (showMessages) {
+                JOptionPane.showMessageDialog(this, "Select a print add on first.");
+            }
+            return null;
+        }
+        PrintSizePresetOption preset = printSizePresetBox == null ? null : (PrintSizePresetOption) printSizePresetBox.getSelectedItem();
+        int lineCount = preset != null && "PER_LINE".equals(preset.pricingMode())
+                ? parsePositiveInt(printLineCountField.getText().trim(), -1)
+                : 1;
+        if (lineCount <= 0) {
+            if (showMessages) {
+                JOptionPane.showMessageDialog(this, "Print lines must be at least 1.");
+            }
+            return null;
+        }
+        BigDecimal charge = parseMoney(printChargeField.getText().trim().isEmpty() ? "0" : printChargeField.getText().trim(), "Print price");
+        if (charge == null) {
+            return null;
+        }
+        String description = printDescriptionField == null ? "" : printDescriptionField.getText().trim();
+        if ((preset == null || preset.printSizePresetId() == null) && description.isBlank()) {
+            if (showMessages) {
+                JOptionPane.showMessageDialog(this, "Enter a print description for custom print price.");
+            }
+            return null;
+        }
+        return new PrintAddonLine(
+                material.printMaterialId(),
+                material.materialName(),
+                preset == null ? null : preset.printSizePresetId(),
+                preset == null || preset.printSizePresetId() == null ? "Custom" : preset.presetName(),
+                preset == null ? "FIXED_PRESET" : preset.pricingMode(),
+                description,
+                lineCount,
+                charge
+        );
+    }
+
+    private void removeSelectedPrintAddon() {
+        int selectedRow = printAddonTable == null ? -1 : printAddonTable.getSelectedRow();
+        if (selectedRow < 0) {
+            return;
+        }
+        printAddonModel.removeRow(printAddonTable.convertRowIndexToModel(selectedRow));
+        updateOrderTotal();
+    }
+
+    private List<PrintAddonLine> collectPrintAddonsFromEditor() {
+        List<PrintAddonLine> addons = new ArrayList<>();
+        if (printAddonModel == null) {
+            return addons;
+        }
+        for (int i = 0; i < printAddonModel.getRowCount(); i++) {
+            addons.add(new PrintAddonLine(
+                    parseLongValue(printAddonModel.getValueAt(i, 0)),
+                    valueAt(printAddonModel, i, 1),
+                    parseLongValue(printAddonModel.getValueAt(i, 2)),
+                    valueAt(printAddonModel, i, 3),
+                    valueAt(printAddonModel, i, 4),
+                    valueAt(printAddonModel, i, 5),
+                    parsePositiveInt(valueAt(printAddonModel, i, 6), 1),
+                    parseMoneyValue(valueAt(printAddonModel, i, 7))
+            ));
+        }
+        return addons;
+    }
+
+    private BigDecimal sumPrintAddons(List<PrintAddonLine> addons) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (PrintAddonLine addon : addons) {
+            total = total.add(addon.printCharge());
+        }
+        return total;
+    }
+
+    private String printAddonSummary(List<PrintAddonLine> addons) {
+        if (addons == null || addons.isEmpty()) {
+            return "";
+        }
+        StringBuilder summary = new StringBuilder();
+        for (PrintAddonLine addon : addons) {
+            if (summary.length() > 0) {
+                summary.append("; ");
+            }
+            summary.append(addon.materialName()).append(" / ").append(addon.printSizeName());
+            if ("PER_LINE".equals(addon.pricingMode())) {
+                summary.append(" x ").append(addon.printLineCount()).append(" lines");
+            }
+            if (!addon.printDescription().isBlank()) {
+                summary.append(" - ").append(addon.printDescription());
+            }
+            summary.append(" ").append(formatMoney(addon.printCharge()));
+        }
+        return summary.toString();
+    }
+
+    private String printAddonDetails(List<PrintAddonLine> addons, BigDecimal basePrice) {
+        if (addons == null || addons.isEmpty()) {
+            return "";
+        }
+        StringBuilder details = new StringBuilder();
+        details.append("Base Item: ").append(formatMoney(basePrice));
+        int index = 1;
+        for (PrintAddonLine addon : addons) {
+            details.append("\nPrint Add On ").append(index++).append(": ").append(addon.materialName())
+                    .append(" / ").append(addon.printSizeName());
+            if ("PER_LINE".equals(addon.pricingMode())) {
+                details.append(" / ").append(addon.printLineCount()).append(" lines");
+            }
+            if (!addon.printDescription().isBlank()) {
+                details.append(" / ").append(addon.printDescription());
+            }
+            details.append(" - ").append(formatMoney(addon.printCharge()));
+        }
+        return details.toString();
+    }
+
+    private void setTextIfDifferent(JTextField field, String value) {
+        if (field != null && !field.getText().equals(value)) {
+            field.setText(value);
         }
     }
 
@@ -576,17 +692,9 @@ public class CustomOrders extends JFrame {
         }
         assignEmployeeBox.removeAllItems();
         assignEmployeeBox.addItem(new EmployeeOption(null, "Unassigned"));
-        String sql = """
-                SELECT u.user_id, COALESCE(NULLIF(u.full_name, ''), u.username) AS employee_name
-                FROM users u
-                WHERE COALESCE(u.is_active, TRUE) = TRUE
-                ORDER BY employee_name
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                assignEmployeeBox.addItem(new EmployeeOption(rs.getInt("user_id"), rs.getString("employee_name")));
+        try {
+            for (EmployeeOption employee : CustomOrderDataService.listActiveEmployees()) {
+                assignEmployeeBox.addItem(employee);
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load employees: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -597,6 +705,8 @@ public class CustomOrders extends JFrame {
         if (ordersModel == null) {
             return;
         }
+        orderLookupLoaded = true;
+        manageOrdersLoaded = true;
         ordersModel.setRowCount(0);
         String sql = """
                 SELECT custom_order_id, order_number, status, customer_name, customer_phone, due_date,
@@ -632,10 +742,59 @@ public class CustomOrders extends JFrame {
         applyOrderFilter();
     }
 
+    private void loadOrdersAsync(Runnable afterLoad) {
+        if (ordersModel == null) {
+            return;
+        }
+        runTableLoadAsync(
+                ordersModel,
+                () -> {
+                    List<Object[]> rows = new ArrayList<>();
+                    String sql = """
+                            SELECT custom_order_id, order_number, status, customer_name, customer_phone, due_date,
+                                   total_amount, amount_paid, balance_due, payment_method, payment_reference,
+                                   payment_status, assigned_to_name, taken_by_name, created_at
+                            FROM custom_orders
+                            ORDER BY created_at DESC
+                            """;
+                    try (Connection conn = DB.getConnection();
+                         PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            rows.add(new Object[]{
+                                    rs.getLong("custom_order_id"),
+                                    rs.getString("order_number"),
+                                    rs.getString("status"),
+                                    rs.getString("customer_name"),
+                                    rs.getString("customer_phone"),
+                                    rs.getDate("due_date"),
+                                    formatMoney(rs.getBigDecimal("total_amount")),
+                                    formatMoney(rs.getBigDecimal("amount_paid")),
+                                    formatMoney(rs.getBigDecimal("balance_due")),
+                                    formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
+                                    rs.getString("payment_reference"),
+                                    rs.getString("assigned_to_name"),
+                                    rs.getString("taken_by_name"),
+                                    rs.getTimestamp("created_at")
+                            });
+                        }
+                    }
+                    return rows;
+                },
+                () -> {
+                    if (afterLoad != null) {
+                        afterLoad.run();
+                    }
+                    applyOrderFilter();
+                }
+        );
+    }
+
     private void loadMyOrders() {
         if (myOrdersModel == null) {
             return;
         }
+        myOrdersLoaded = true;
         myOrdersModel.setRowCount(0);
         myOrderDetailsArea.setText("");
 
@@ -689,29 +848,98 @@ public class CustomOrders extends JFrame {
         applyMyOrderFilter();
     }
 
-    private void saveCustomOrder() {
-        CustomerOption customer = (CustomerOption) customerBox.getSelectedItem();
-        if (customer == null) {
-            JOptionPane.showMessageDialog(this, "Select a customer account before saving the order.");
+    private void loadMyOrdersAsync(Runnable afterLoad) {
+        if (myOrdersModel == null) {
             return;
         }
-        if (customer.phone() == null || customer.phone().isBlank()) {
-            JOptionPane.showMessageDialog(this, "The customer account needs a phone number for custom orders.");
+        myOrdersModel.setRowCount(0);
+        myOrderDetailsArea.setText("");
+
+        if (SessionManager.getCurrentUserId() == null) {
+            if (afterLoad != null) {
+                afterLoad.run();
+            }
+            return;
+        }
+
+        runTableLoadAsync(
+                myOrdersModel,
+                () -> {
+                    List<Object[]> rows = new ArrayList<>();
+                    String sql = """
+                            SELECT custom_order_id, order_number, status, customer_name, customer_phone, due_date,
+                                   total_amount, amount_paid, balance_due, payment_method, payment_reference,
+                                   payment_status, created_at
+                            FROM custom_orders
+                            WHERE assigned_to_user_id = ?
+                            ORDER BY
+                                CASE status
+                                    WHEN 'ASSIGNED' THEN 1
+                                    WHEN 'IN_PROGRESS' THEN 2
+                                    WHEN 'READY' THEN 3
+                                    WHEN 'COMPLETED' THEN 4
+                                    WHEN 'DELIVERED' THEN 5
+                                    WHEN 'CANCELLED' THEN 6
+                                    ELSE 6
+                                END,
+                                due_date NULLS LAST,
+                                created_at DESC
+                            """;
+                    try (Connection conn = DB.getConnection();
+                         PreparedStatement ps = conn.prepareStatement(sql)) {
+                        ps.setInt(1, SessionManager.getCurrentUserId());
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) {
+                                rows.add(new Object[]{
+                                        rs.getLong("custom_order_id"),
+                                        rs.getString("order_number"),
+                                        rs.getString("status"),
+                                        rs.getString("customer_name"),
+                                        rs.getString("customer_phone"),
+                                        rs.getDate("due_date"),
+                                        formatMoney(rs.getBigDecimal("total_amount")),
+                                        formatMoney(rs.getBigDecimal("amount_paid")),
+                                        formatMoney(rs.getBigDecimal("balance_due")),
+                                        formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
+                                        rs.getString("payment_reference"),
+                                        rs.getTimestamp("created_at")
+                                });
+                            }
+                        }
+                    }
+                    return rows;
+                },
+                () -> {
+                    if (afterLoad != null) {
+                        afterLoad.run();
+                    }
+                    applyMyOrderFilter();
+                }
+        );
+    }
+
+    private void saveCustomOrder() {
+        CustomerOption customer = customerInfoPanel == null ? null : customerInfoPanel.getSelectedCustomer();
+        String customerName = customerInfoPanel == null ? "" : customerInfoPanel.getCustomerName();
+        String customerPhone = customerInfoPanel == null ? "" : customerInfoPanel.getCustomerPhone();
+        if (customerName.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Customer name is required.");
+            return;
+        }
+        if (customerPhone.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Customer phone number is required.");
             return;
         }
         if (orderLineModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Add at least one customized line item.");
             return;
         }
-        LocalDate dueDate = null;
-        String dueDateText = dueDateField.getText().trim();
-        if (!dueDateText.isEmpty()) {
-            try {
-                dueDate = LocalDate.parse(dueDateText);
-            } catch (DateTimeParseException ex) {
-                JOptionPane.showMessageDialog(this, "Due date must use YYYY-MM-DD.");
-                return;
-            }
+        LocalDate dueDate;
+        try {
+            dueDate = dueDateField == null ? null : dueDateField.getSelectedDate();
+        } catch (DateTimeParseException ex) {
+            JOptionPane.showMessageDialog(this, "Due date must use YYYY-MM-DD.");
+            return;
         }
 
         BigDecimal total = calculateOrderTotal();
@@ -738,165 +966,76 @@ public class CustomOrders extends JFrame {
         String paymentStatus = upfrontPaid.compareTo(BigDecimal.ZERO) == 0
                 ? "UNPAID"
                 : balanceDue.compareTo(BigDecimal.ZERO) == 0 ? "PAID" : "PARTIAL";
-        String orderNumber = generateOrderNumber();
-        String orderSql = """
-                INSERT INTO custom_orders (
-                    order_number, customer_id, customer_name, customer_phone, status, due_date,
-                    order_notes, total_amount, amount_paid, balance_due, payment_method,
-                    payment_reference, payment_status, taken_by_user_id, taken_by_name
-                )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String lineSql = """
-                INSERT INTO custom_order_lines (
-                    custom_order_id, custom_item_id, item_name, pricing_type, unit_price,
-                    line_total, customization_details, line_notes, sort_order,
-                    custom_variant_id, variant_name,
-                    width_value, length_value, dimension_unit, area_value, area_unit, area_price
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateCustomItemSoldSql = """
-                UPDATE custom_order_items
-                SET sold_quantity = COALESCE(sold_quantity, 0) + 1,
-                    quantity_on_hand = CASE WHEN COALESCE(product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(has_variants, FALSE) = FALSE THEN quantity_on_hand - 1 ELSE quantity_on_hand END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE custom_item_id = ?
-                """;
-        String updateCustomVariantSoldSql = """
-                UPDATE custom_order_item_variants v
-                SET sold_quantity = COALESCE(v.sold_quantity, 0) + 1,
-                    quantity_on_hand = CASE WHEN COALESCE(i.product_type, 'INVENTORY') = 'INVENTORY' THEN v.quantity_on_hand - 1 ELSE v.quantity_on_hand END,
-                    updated_at = CURRENT_TIMESTAMP
-                FROM custom_order_items i
-                WHERE v.custom_item_id = i.custom_item_id
-                  AND v.custom_variant_id = ?
-                """;
-        String refreshVariantParentSql = """
-                UPDATE custom_order_items i
-                SET quantity_on_hand = COALESCE((SELECT SUM(quantity_on_hand) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id AND is_active = TRUE), 0),
-                    sold_quantity = COALESCE((SELECT SUM(sold_quantity) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id), 0),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE custom_item_id = ?
-                  AND has_variants = TRUE
-                """;
-        String paymentSql = """
-                INSERT INTO custom_order_payments (
-                    custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """;
-
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try (PreparedStatement orderPs = conn.prepareStatement(orderSql, Statement.RETURN_GENERATED_KEYS);
-                 PreparedStatement linePs = conn.prepareStatement(lineSql);
-                 PreparedStatement itemSoldPs = conn.prepareStatement(updateCustomItemSoldSql);
-                 PreparedStatement variantSoldPs = conn.prepareStatement(updateCustomVariantSoldSql);
-                 PreparedStatement refreshParentPs = conn.prepareStatement(refreshVariantParentSql);
-                 PreparedStatement paymentPs = conn.prepareStatement(paymentSql)) {
-                orderPs.setString(1, orderNumber);
-                orderPs.setInt(2, customer.customerId());
-                orderPs.setString(3, customer.name());
-                orderPs.setString(4, customer.phone());
-                if (dueDate == null) {
-                    orderPs.setNull(5, Types.DATE);
-                } else {
-                    orderPs.setDate(5, Date.valueOf(dueDate));
-                }
-                String notes = orderNotesArea.getText().trim();
-                orderPs.setString(6, notes.isEmpty() ? null : notes);
-                orderPs.setBigDecimal(7, total);
-                orderPs.setBigDecimal(8, upfrontPaid);
-                orderPs.setBigDecimal(9, balanceDue);
-                orderPs.setString(10, selectedPaymentMethod);
-                orderPs.setString(11, paymentReference.isBlank() ? null : paymentReference);
-                orderPs.setString(12, paymentStatus);
-                setNullableInteger(orderPs, 13, SessionManager.getCurrentUserId());
-                orderPs.setString(14, SessionManager.getCurrentUserDisplayName());
-                orderPs.executeUpdate();
-
-                long orderId;
-                try (ResultSet rs = orderPs.getGeneratedKeys()) {
-                    if (!rs.next()) {
-                        throw new SQLException("Failed to get custom order ID.");
-                    }
-                    orderId = rs.getLong(1);
-                }
-
-                if (upfrontPaid.compareTo(BigDecimal.ZERO) > 0) {
-                    paymentPs.setLong(1, orderId);
-                    paymentPs.setBigDecimal(2, upfrontPaid);
-                    paymentPs.setString(3, selectedPaymentMethod);
-                    paymentPs.setString(4, paymentReference.isBlank() ? null : paymentReference);
-                    setNullableInteger(paymentPs, 5, SessionManager.getCurrentUserId());
-                    paymentPs.setString(6, SessionManager.getCurrentUserDisplayName());
-                    paymentPs.executeUpdate();
-                }
-
-                for (int i = 0; i < orderLineModel.getRowCount(); i++) {
-                    Object itemIdValue = orderLineModel.getValueAt(i, 0);
-                    Object variantIdValue = orderLineModel.getValueAt(i, 1);
-                    if (itemIdValue == null) {
-                        linePs.setNull(2, Types.BIGINT);
-                    } else {
-                        linePs.setLong(2, Long.parseLong(itemIdValue.toString()));
-                    }
-                    BigDecimal unitPrice = parseMoneyValue(orderLineModel.getValueAt(i, 5).toString());
-                    linePs.setLong(1, orderId);
-                    linePs.setString(3, orderLineModel.getValueAt(i, 2).toString());
-                    linePs.setString(4, orderLineModel.getValueAt(i, 4).toString());
-                    linePs.setBigDecimal(5, unitPrice);
-                    linePs.setBigDecimal(6, unitPrice);
-                    linePs.setString(7, orderLineModel.getValueAt(i, 6).toString());
-                    Object lineNotes = orderLineModel.getValueAt(i, 7);
-                    linePs.setString(8, lineNotes == null || lineNotes.toString().isBlank() ? null : lineNotes.toString());
-                    linePs.setInt(9, i + 1);
-                    if (variantIdValue == null || variantIdValue.toString().isBlank()) {
-                        linePs.setNull(10, Types.BIGINT);
-                    } else {
-                        linePs.setLong(10, Long.parseLong(variantIdValue.toString()));
-                    }
-                    Object variantName = orderLineModel.getValueAt(i, 3);
-                    linePs.setString(11, variantName == null || variantName.toString().isBlank() ? null : variantName.toString());
-                    setNullableBigDecimal(linePs, 12, parseNullableMoneyValue(orderLineModel.getValueAt(i, 8)));
-                    setNullableBigDecimal(linePs, 13, parseNullableMoneyValue(orderLineModel.getValueAt(i, 9)));
-                    linePs.setString(14, blankToNull(orderLineModel.getValueAt(i, 10)));
-                    setNullableBigDecimal(linePs, 15, parseNullableMoneyValue(orderLineModel.getValueAt(i, 11)));
-                    linePs.setString(16, blankToNull(orderLineModel.getValueAt(i, 12)));
-                    setNullableBigDecimal(linePs, 17, parseNullableMoneyValue(orderLineModel.getValueAt(i, 13)));
-                    linePs.addBatch();
-                    if (itemIdValue != null) {
-                        long itemId = Long.parseLong(itemIdValue.toString());
-                        if (variantIdValue == null || variantIdValue.toString().isBlank()) {
-                            itemSoldPs.setLong(1, itemId);
-                            itemSoldPs.addBatch();
-                        } else {
-                            variantSoldPs.setLong(1, Long.parseLong(variantIdValue.toString()));
-                            variantSoldPs.addBatch();
-                            refreshParentPs.setLong(1, itemId);
-                            refreshParentPs.addBatch();
-                        }
-                    }
-                }
-                linePs.executeBatch();
-                itemSoldPs.executeBatch();
-                variantSoldPs.executeBatch();
-                refreshParentPs.executeBatch();
-                conn.commit();
+        try {
+            String orderNumber = CustomOrderDataService.saveCustomOrder(new OrderSaveRequest(
+                    customer,
+                    customerName,
+                    customerPhone,
+                    dueDate,
+                    total,
+                    upfrontPaid,
+                    balanceDue,
+                    selectedPaymentMethod,
+                    paymentReference,
+                    paymentStatus,
+                    SessionManager.getCurrentUserId(),
+                    SessionManager.getCurrentUserDisplayName(),
+                    buildOrderLineRequests()
+            ));
                 JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved.");
                 clearOrderEntry();
                 loadOrders();
-            } catch (SQLException ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
-            }
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }
+    }
+
+    private List<OrderLineRequest> buildOrderLineRequests() {
+        List<OrderLineRequest> lines = new ArrayList<>();
+        for (int i = 0; i < orderLineModel.getRowCount(); i++) {
+            lines.add(new OrderLineRequest(
+                    parseLongValue(orderLineModel.getValueAt(i, 0)),
+                    parseLongValue(orderLineModel.getValueAt(i, 1)),
+                    valueAt(orderLineModel, i, 2),
+                    valueAt(orderLineModel, i, 3),
+                    valueAt(orderLineModel, i, 4),
+                    parseMoneyValue(valueAt(orderLineModel, i, 5)),
+                    valueAt(orderLineModel, i, 6),
+                    valueAt(orderLineModel, i, 7),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 8)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 9)),
+                    blankToNull(orderLineModel.getValueAt(i, 10)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 11)),
+                    blankToNull(orderLineModel.getValueAt(i, 12)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 13)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 19)),
+                    parseLongValue(orderLineModel.getValueAt(i, 14)),
+                    blankToNull(orderLineModel.getValueAt(i, 15)),
+                    parseLongValue(orderLineModel.getValueAt(i, 16)),
+                    blankToNull(orderLineModel.getValueAt(i, 17)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 18)),
+                    parsePositiveInt(valueAt(orderLineModel, i, 20), 1),
+                    buildPrintAddonRequests(printAddonsForModelRow(i))
+            ));
+        }
+        return lines;
+    }
+
+    private List<PrintAddonRequest> buildPrintAddonRequests(List<PrintAddonLine> addons) {
+        List<PrintAddonRequest> requests = new ArrayList<>();
+        for (PrintAddonLine addon : addons) {
+            requests.add(new PrintAddonRequest(
+                    addon.printMaterialId(),
+                    addon.materialName(),
+                    addon.printSizePresetId(),
+                    addon.printSizeName(),
+                    addon.pricingMode(),
+                    addon.printDescription(),
+                    addon.printLineCount(),
+                    addon.printCharge()
+            ));
+        }
+        return requests;
     }
 
     private void saveAssignment() {
@@ -951,126 +1090,27 @@ public class CustomOrders extends JFrame {
         JDialog dialog = new JDialog(this, "Order Lookup", true);
         dialog.setSize(980, 620);
         dialog.setLocationRelativeTo(this);
-        dialog.add(buildOrderLookupPanel(), BorderLayout.CENTER);
+        CustomOrdersLookupTabPanel lookupPanel = new CustomOrdersLookupTabPanel(createLookupHandler());
+        lookupPanel.load(createLookupHandler());
+        dialog.add(lookupPanel, BorderLayout.CENTER);
         dialog.setVisible(true);
     }
 
     private JPanel buildOrderLookupPanel() {
-        JPanel root = new JPanel(new BorderLayout(10, 10));
-        root.setBorder(new EmptyBorder(12, 12, 12, 12));
+        orderLookupPanel = new CustomOrdersLookupTabPanel(createLookupHandler());
+        return orderLookupPanel;
+    }
 
-        JTextField searchField = new JTextField();
-        JButton searchButton = new JButton("Search");
-        JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
-        searchPanel.add(new JLabel("Search:"), BorderLayout.WEST);
-        searchPanel.add(searchField, BorderLayout.CENTER);
-        searchPanel.add(searchButton, BorderLayout.EAST);
-
-        DefaultTableModel model = new DefaultTableModel(
-                new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Total", "Paid", "Balance", "Payment", "Reference", "Created"},
-                0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+    private CustomOrdersLookupTabPanel.Handler createLookupHandler() {
+        return new CustomOrdersLookupTabPanel.Handler() {
+            @Override public void loadLookupOrders(DefaultTableModel model, String search) { CustomOrders.this.loadLookupOrders(model, search); }
+            @Override public Long selectedLookupOrderId(JTable table, DefaultTableModel model) { return CustomOrders.this.selectedLookupOrderId(table, model); }
+            @Override public void loadOrderDetails(Long orderId, JTextArea detailsArea) { CustomOrders.this.loadOrderDetails(orderId, detailsArea); }
+            @Override public BigDecimal parseNullableMoneyValue(Object value) { return CustomOrders.this.parseNullableMoneyValue(value); }
+            @Override public boolean applyLookupPayment(Long orderId, String amountText, String method, String reference, Component parent) { return CustomOrders.this.applyLookupPayment(orderId, amountText, method, reference, parent); }
+            @Override public boolean markLookupOrderDelivered(Long orderId, Component parent) { return CustomOrders.this.markLookupOrderDelivered(orderId, parent); }
+            @Override public void refreshRelatedOrders() { loadOrders(); loadMyOrders(); }
         };
-        JTable table = new JTable(model);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.setRowHeight(28);
-        table.getColumnModel().getColumn(0).setMaxWidth(70);
-
-        JTextArea detailsArea = new JTextArea();
-        detailsArea.setEditable(false);
-        detailsArea.setLineWrap(true);
-        detailsArea.setWrapStyleWord(true);
-
-        JPanel center = new JPanel(new GridLayout(1, 2, 10, 0));
-        center.add(new JScrollPane(table));
-        center.add(new JScrollPane(detailsArea));
-
-        JComboBox<String> methodBox = new JComboBox<>(new String[]{"Cash", "Card", "Cheque", "Account"});
-        JTextField amountField = new JTextField(8);
-        JTextField referenceField = new JTextField(14);
-        JButton payButton = new JButton("Apply Payment");
-        JButton deliveredButton = new JButton("Mark Delivered");
-        JButton closeButton = new JButton("Close");
-        styleDialogButton(searchButton);
-        styleDialogButton(payButton);
-        styleDialogButton(deliveredButton);
-        styleDialogButton(closeButton);
-
-        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        actionPanel.add(new JLabel("Amount:"));
-        actionPanel.add(amountField);
-        actionPanel.add(new JLabel("Method:"));
-        actionPanel.add(methodBox);
-        actionPanel.add(new JLabel("Reference:"));
-        actionPanel.add(referenceField);
-        actionPanel.add(payButton);
-        actionPanel.add(deliveredButton);
-        actionPanel.add(closeButton);
-
-        Runnable loadLookupOrders = () -> loadLookupOrders(model, searchField.getText().trim());
-        searchButton.addActionListener(e -> loadLookupOrders.run());
-        searchField.addActionListener(e -> loadLookupOrders.run());
-        table.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                Long orderId = selectedLookupOrderId(table, model);
-                if (orderId != null) {
-                    loadOrderDetails(orderId, detailsArea);
-                    BigDecimal balance = parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), 7));
-                    amountField.setText(balance == null ? "" : balance.toPlainString());
-                }
-            }
-        });
-        methodBox.addActionListener(e -> {
-            boolean needsReference = !"Cash".equals(methodBox.getSelectedItem());
-            referenceField.setEnabled(needsReference);
-            if (!needsReference) {
-                referenceField.setText("");
-            }
-        });
-        payButton.addActionListener(e -> {
-            Long orderId = selectedLookupOrderId(table, model);
-            if (orderId == null) {
-                JOptionPane.showMessageDialog(root, "Select an order first.");
-                return;
-            }
-            if (applyLookupPayment(orderId, amountField.getText().trim(), methodBox.getSelectedItem().toString(), referenceField.getText().trim(), root)) {
-                loadLookupOrders.run();
-                loadOrders();
-                loadMyOrders();
-                loadOrderDetails(orderId, detailsArea);
-            }
-        });
-        deliveredButton.addActionListener(e -> {
-            Long orderId = selectedLookupOrderId(table, model);
-            if (orderId == null) {
-                JOptionPane.showMessageDialog(root, "Select an order first.");
-                return;
-            }
-            if (markLookupOrderDelivered(orderId, root)) {
-                loadLookupOrders.run();
-                loadOrders();
-                loadMyOrders();
-                loadOrderDetails(orderId, detailsArea);
-            }
-        });
-        closeButton.addActionListener(e -> {
-            Window window = SwingUtilities.getWindowAncestor(root);
-            if (window != null) {
-                window.dispose();
-            }
-        });
-        methodBox.setSelectedItem("Cash");
-        referenceField.setEnabled(false);
-
-        root.add(searchPanel, BorderLayout.NORTH);
-        root.add(center, BorderLayout.CENTER);
-        root.add(actionPanel, BorderLayout.SOUTH);
-        loadLookupOrders.run();
-        return root;
     }
 
     private void loadLookupOrders(DefaultTableModel model, String search) {
@@ -1248,39 +1288,44 @@ public class CustomOrders extends JFrame {
         }
         AreaCalculation areaCalculation = null;
         BigDecimal configuredPrice = configuredLinePrice(item, variant);
-        BigDecimal price;
+        BigDecimal basePrice;
         if ("AREA".equals(item.pricingType())) {
             areaCalculation = calculateAreaPrice(item, configuredPrice, true);
             if (areaCalculation == null) {
                 return;
             }
-            price = areaCalculation.totalPrice();
-            linePriceField.setText(formatMoney(price));
+            basePrice = areaCalculation.totalPrice();
+            linePriceField.setText(formatMoney(basePrice));
         } else {
-            price = parseMoney(linePriceField.getText().trim(), "Price");
-            if (price == null) {
+            basePrice = parseMoney(linePriceField.getText().trim(), "Base price");
+            if (basePrice == null) {
                 return;
             }
         }
-        if ("FIXED".equals(item.pricingType()) && configuredPrice != null && price.compareTo(configuredPrice) != 0) {
+        if ("FIXED".equals(item.pricingType()) && configuredPrice != null && basePrice.compareTo(configuredPrice) != 0) {
             JOptionPane.showMessageDialog(this, "This selection has a fixed price of " + formatMoney(configuredPrice) + ".");
             linePriceField.setText(formatMoney(configuredPrice));
             return;
         }
-        String details = customizationArea.getText().trim();
-        if (areaCalculation != null) {
-            String areaDetails = "Size: " + stripTrailingZeros(areaCalculation.width()) + " x " + stripTrailingZeros(areaCalculation.length()) + " " + displayDimensionUnit(areaCalculation.dimensionUnit())
-                    + "\nArea: " + stripTrailingZeros(areaCalculation.area()) + " " + displayAreaUnit(areaCalculation.areaUnit())
-                    + "\nRate: " + formatMoney(areaCalculation.areaPrice()) + " / " + displayAreaUnit(areaCalculation.areaUnit());
-            details = details.isBlank() ? areaDetails : areaDetails + "\n" + details;
+        List<PrintAddonLine> printAddons = collectPrintAddonsFromEditor();
+        PrintAddonLine pendingAddon = currentPrintAddonLine(false);
+        if (pendingAddon != null) {
+            printAddons.add(pendingAddon);
         }
-        if (details.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Customization details are required for each item.");
-            return;
+        BigDecimal printCharge = sumPrintAddons(printAddons);
+        BigDecimal lineTotal = basePrice.add(printCharge);
+        String details = "";
+        if (!printAddons.isEmpty()) {
+            String printDetails = printAddonDetails(printAddons, basePrice);
+            details = printDetails;
         }
         String notes = lineNotesArea.getText().trim();
+        if (details.isEmpty() && notes.isEmpty() && areaCalculation == null && printAddons.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Enter order instructions, placement notes, size details, or a print add on.");
+            return;
+        }
         if (selectedOrderLineModelRow >= 0) {
-            Object[] updatedRow = buildOrderLineRow(item, variant, item.pricingType(), price, details, notes, areaCalculation);
+            Object[] updatedRow = buildOrderLineRow(item, variant, item.pricingType(), lineTotal, details, notes, areaCalculation, printAddons, basePrice);
             for (int column = 0; column < updatedRow.length; column++) {
                 orderLineModel.setValueAt(updatedRow[column], selectedOrderLineModelRow, column);
             }
@@ -1288,7 +1333,7 @@ public class CustomOrders extends JFrame {
         } else {
             for (int i = 0; i < quantity; i++) {
                 String lineDetails = quantity == 1 ? details : details + "\nCopy " + (i + 1) + " of " + quantity;
-                orderLineModel.addRow(buildOrderLineRow(item, variant, item.pricingType(), price, lineDetails, notes, areaCalculation));
+                orderLineModel.addRow(buildOrderLineRow(item, variant, item.pricingType(), lineTotal, lineDetails, notes, areaCalculation, printAddons, basePrice));
             }
         }
         clearLineEditor();
@@ -1296,7 +1341,10 @@ public class CustomOrders extends JFrame {
         updateOrderTotal();
     }
 
-    private Object[] buildOrderLineRow(CustomItemOption item, VariantOption variant, String pricingType, BigDecimal price, String details, String notes, AreaCalculation areaCalculation) {
+    private Object[] buildOrderLineRow(CustomItemOption item, VariantOption variant, String pricingType, BigDecimal price, String details, String notes, AreaCalculation areaCalculation, List<PrintAddonLine> printAddons, BigDecimal basePrice) {
+        PrintAddonLine firstAddon = printAddons == null || printAddons.isEmpty() ? null : printAddons.get(0);
+        BigDecimal totalPrintCharge = sumPrintAddons(printAddons == null ? List.of() : printAddons);
+        List<PrintAddonLine> addonCopy = printAddons == null ? new ArrayList<>() : new ArrayList<>(printAddons);
         return new Object[]{
                 item.customItemId(),
                 variant == null ? null : variant.variantId(),
@@ -1311,19 +1359,38 @@ public class CustomOrders extends JFrame {
                     areaCalculation == null ? "" : areaCalculation.dimensionUnit(),
                 areaCalculation == null ? "" : areaCalculation.area(),
                 areaCalculation == null ? "" : areaCalculation.areaUnit(),
-                areaCalculation == null ? "" : areaCalculation.areaPrice()
+                areaCalculation == null ? "" : areaCalculation.areaPrice(),
+                firstAddon == null ? null : firstAddon.printMaterialId(),
+                firstAddon == null ? "" : firstAddon.materialName(),
+                firstAddon == null ? null : firstAddon.printSizePresetId(),
+                firstAddon == null ? "" : firstAddon.printSizeName(),
+                totalPrintCharge,
+                basePrice == null ? "" : basePrice,
+                firstAddon == null ? 1 : firstAddon.printLineCount(),
+                printAddonSummary(addonCopy),
+                addonCopy
         };
     }
 
     private void clearLineEditor() {
         selectedOrderLineModelRow = -1;
         if (addLineButton != null) {
-            addLineButton.setText("Add Line");
+            addLineButton.setText("Add to Order");
         }
-        customizationArea.setText("");
+        designPlacementField.setText("");
         lineNotesArea.setText("");
         lineQuantityField.setText("1");
         lineQuantityField.setEnabled(true);
+        if (printMaterialBox != null) {
+            printMaterialBox.setSelectedIndex(0);
+        }
+        if (printSizePresetBox != null) {
+            printSizePresetBox.setSelectedIndex(0);
+        }
+        printChargeField.setText("0.00");
+        printLineCountField.setText("1");
+        printLineCountField.setEnabled(false);
+        printDescriptionField.setText("");
         widthField.setText("");
         lengthField.setText("");
         CustomItemOption item = orderItemBox == null ? null : (CustomItemOption) orderItemBox.getSelectedItem();
@@ -1372,13 +1439,10 @@ public class CustomOrders extends JFrame {
         selectedOrderLineModelRow = orderLineTable.convertRowIndexToModel(viewRow);
         selectOrderItemById(parseLongValue(orderLineModel.getValueAt(selectedOrderLineModelRow, 0)));
         selectVariantById(parseLongValue(orderLineModel.getValueAt(selectedOrderLineModelRow, 1)));
-        linePriceField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 5));
+        linePriceField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 19).isBlank() ? valueAt(orderLineModel, selectedOrderLineModelRow, 5) : valueAt(orderLineModel, selectedOrderLineModelRow, 19));
+        loadPrintAddonsIntoEditor(printAddonsForModelRow(selectedOrderLineModelRow));
         lineQuantityField.setText("1");
         lineQuantityField.setEnabled(false);
-        customizationArea.setText(stripGeneratedAreaDetails(
-                valueAt(orderLineModel, selectedOrderLineModelRow, 4),
-                valueAt(orderLineModel, selectedOrderLineModelRow, 6)
-        ));
         lineNotesArea.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 7));
         widthField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 8));
         lengthField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 9));
@@ -1386,6 +1450,46 @@ public class CustomOrders extends JFrame {
             addLineButton.setText("Update Item");
         }
         updateAreaCalculationPreview();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<PrintAddonLine> printAddonsForModelRow(int modelRow) {
+        if (modelRow < 0 || orderLineModel.getColumnCount() <= 22) {
+            return new ArrayList<>();
+        }
+        Object value = orderLineModel.getValueAt(modelRow, 22);
+        if (value instanceof List<?>) {
+            return new ArrayList<>((List<PrintAddonLine>) value);
+        }
+        return new ArrayList<>();
+    }
+
+    private void loadPrintAddonsIntoEditor(List<PrintAddonLine> addons) {
+        if (printAddonModel == null) {
+            return;
+        }
+        printAddonModel.setRowCount(0);
+        for (PrintAddonLine addon : addons) {
+            printAddonModel.addRow(new Object[]{
+                    addon.printMaterialId(),
+                    addon.materialName(),
+                addon.printSizePresetId(),
+                addon.printSizeName(),
+                addon.pricingMode(),
+                addon.printDescription(),
+                addon.printLineCount(),
+                formatMoney(addon.printCharge())
+            });
+        }
+        if (printMaterialBox != null) {
+            printMaterialBox.setSelectedIndex(0);
+        }
+        if (printSizePresetBox != null) {
+            printSizePresetBox.setSelectedIndex(0);
+        }
+        printChargeField.setText("0.00");
+        printLineCountField.setText("1");
+        printDescriptionField.setText("");
     }
 
     private void selectOrderItemById(Long itemId) {
@@ -1414,11 +1518,49 @@ public class CustomOrders extends JFrame {
         }
     }
 
+    private void selectPrintMaterialById(Long materialId) {
+        if (printMaterialBox == null) {
+            return;
+        }
+        for (int i = 0; i < printMaterialBox.getItemCount(); i++) {
+            PrintMaterialOption option = printMaterialBox.getItemAt(i);
+            if ((materialId == null && option.printMaterialId() == null) || (materialId != null && materialId.equals(option.printMaterialId()))) {
+                printMaterialBox.setSelectedIndex(i);
+                return;
+            }
+        }
+    }
+
+    private void selectPrintPresetById(Long presetId) {
+        if (printSizePresetBox == null) {
+            return;
+        }
+        for (int i = 0; i < printSizePresetBox.getItemCount(); i++) {
+            PrintSizePresetOption option = printSizePresetBox.getItemAt(i);
+            if ((presetId == null && option.printSizePresetId() == null) || (presetId != null && presetId.equals(option.printSizePresetId()))) {
+                printSizePresetBox.setSelectedIndex(i);
+                return;
+            }
+        }
+    }
+
     private Long parseLongValue(Object value) {
         if (value == null || value.toString().isBlank()) {
             return null;
         }
         return Long.parseLong(value.toString());
+    }
+
+    private int parsePositiveInt(String value, int defaultValue) {
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : defaultValue;
+        } catch (NumberFormatException ex) {
+            return defaultValue;
+        }
     }
 
     private String stripGeneratedAreaDetails(String pricingType, String details) {
@@ -1429,6 +1571,48 @@ public class CustomOrders extends JFrame {
         if (lines.length >= 3 && lines[0].startsWith("Size:") && lines[1].startsWith("Area:") && lines[2].startsWith("Rate:")) {
             StringBuilder remaining = new StringBuilder();
             for (int i = 3; i < lines.length; i++) {
+                if (remaining.length() > 0) {
+                    remaining.append("\n");
+                }
+                remaining.append(lines[i]);
+            }
+            return stripGeneratedPrintDetails(remaining.toString().trim());
+        }
+        return stripGeneratedPrintDetails(details);
+    }
+
+    private String stripGeneratedPrintDetails(String details) {
+        if (details == null) {
+            return "";
+        }
+        String[] lines = details.split("\\R", -1);
+        if (lines.length >= 2 && lines[0].startsWith("Base Item:") && lines[1].startsWith("Print Add On")) {
+            int firstCustomLine = 1;
+            while (firstCustomLine < lines.length && lines[firstCustomLine].startsWith("Print Add On")) {
+                firstCustomLine++;
+            }
+            StringBuilder remaining = new StringBuilder();
+            for (int i = firstCustomLine; i < lines.length; i++) {
+                if (remaining.length() > 0) {
+                    remaining.append("\n");
+                }
+                remaining.append(lines[i]);
+            }
+            return remaining.toString().trim();
+        }
+        int baseIndex = -1;
+        int priceIndex = -1;
+        for (int i = 0; i < Math.min(lines.length, 5); i++) {
+            if (lines[i].startsWith("Base Item:")) {
+                baseIndex = i;
+            }
+            if (lines[i].startsWith("Print Price:")) {
+                priceIndex = i;
+            }
+        }
+        if (lines.length >= 4 && lines[0].startsWith("Print Material:") && lines[1].startsWith("Print Size:") && baseIndex >= 0 && priceIndex >= baseIndex) {
+            StringBuilder remaining = new StringBuilder();
+            for (int i = priceIndex + 1; i < lines.length; i++) {
                 if (remaining.length() > 0) {
                     remaining.append("\n");
                 }
@@ -1469,7 +1653,10 @@ public class CustomOrders extends JFrame {
                 SELECT co.order_number, co.customer_name, co.customer_phone, co.status, co.due_date,
                        co.order_notes, co.total_amount, co.amount_paid, co.balance_due,
                        co.payment_method, co.payment_reference, co.payment_status, co.assigned_to_name,
-                       col.item_name, col.variant_name, col.unit_price, col.customization_details, col.line_notes
+                       col.custom_order_line_id, col.item_name, col.variant_name, col.unit_price,
+                       col.customization_details, col.order_instructions,
+                       col.width_value, col.length_value, col.dimension_unit,
+                       col.area_value, col.area_unit, col.area_price
                 FROM custom_orders co
                 LEFT JOIN custom_order_lines col ON col.custom_order_id = co.custom_order_id
                 WHERE co.custom_order_id = ?
@@ -1506,12 +1693,26 @@ public class CustomOrders extends JFrame {
                     }
                     String itemName = rs.getString("item_name");
                     if (itemName != null) {
+                        long lineId = rs.getLong("custom_order_line_id");
                         String variantName = rs.getString("variant_name");
                         details.append(lineNumber++).append(". ").append(itemName)
                                 .append(variantName == null || variantName.isBlank() ? "" : " / " + variantName)
-                                .append(" - ").append(formatMoney(rs.getBigDecimal("unit_price"))).append("\n")
-                                .append(rs.getString("customization_details")).append("\n");
-                        String lineNotes = rs.getString("line_notes");
+                                .append(" - ").append(formatMoney(rs.getBigDecimal("unit_price"))).append("\n");
+                        String areaDetails = structuredAreaDetails(rs);
+                        if (!areaDetails.isBlank()) {
+                            details.append(areaDetails);
+                        }
+                        String customizationDetails = rs.getString("customization_details");
+                        if (customizationDetails != null && !customizationDetails.isBlank()) {
+                            details.append(customizationDetails).append("\n");
+                        }
+                        String addOns = customizationDetails != null && customizationDetails.contains("Print Add On")
+                                ? ""
+                                : loadPrintAddonsForOrderLine(conn, lineId);
+                        if (!addOns.isBlank()) {
+                            details.append(addOns);
+                        }
+                        String lineNotes = rs.getString("order_instructions");
                         if (lineNotes != null && !lineNotes.isBlank()) {
                             details.append("Notes: ").append(lineNotes).append("\n");
                         }
@@ -1525,6 +1726,74 @@ public class CustomOrders extends JFrame {
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }
+    }
+
+    private String structuredAreaDetails(ResultSet rs) throws SQLException {
+        BigDecimal width = rs.getBigDecimal("width_value");
+        BigDecimal length = rs.getBigDecimal("length_value");
+        BigDecimal area = rs.getBigDecimal("area_value");
+        BigDecimal areaPrice = rs.getBigDecimal("area_price");
+        String dimensionUnit = rs.getString("dimension_unit");
+        String areaUnit = rs.getString("area_unit");
+        if (width == null && length == null && area == null && areaPrice == null) {
+            return "";
+        }
+        StringBuilder details = new StringBuilder();
+        if (width != null && length != null) {
+            details.append("Size: ")
+                    .append(stripTrailingZeros(width))
+                    .append(" x ")
+                    .append(stripTrailingZeros(length))
+                    .append(" ")
+                    .append(displayDimensionUnit(dimensionUnit))
+                    .append("\n");
+        }
+        if (area != null) {
+            details.append("Area: ")
+                    .append(stripTrailingZeros(area))
+                    .append(" ")
+                    .append(displayAreaUnit(areaUnit))
+                    .append("\n");
+        }
+        if (areaPrice != null) {
+            details.append("Rate: ")
+                    .append(formatMoney(areaPrice))
+                    .append(" / ")
+                    .append(displayAreaUnit(areaUnit))
+                    .append("\n");
+        }
+        return details.toString();
+    }
+
+    private String loadPrintAddonsForOrderLine(Connection conn, long lineId) throws SQLException {
+        String sql = """
+                SELECT print_material_name, print_size_name, pricing_mode, print_description, print_charge, print_line_count
+                FROM custom_order_line_print_addons
+                WHERE custom_order_line_id = ?
+                ORDER BY sort_order
+                """;
+        StringBuilder addOns = new StringBuilder();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, lineId);
+            try (ResultSet rs = ps.executeQuery()) {
+                int index = 1;
+                while (rs.next()) {
+                    addOns.append("Print Add On ").append(index++).append(": ")
+                            .append(rs.getString("print_material_name"))
+                            .append(" / ")
+                            .append(rs.getString("print_size_name") == null ? "Custom" : rs.getString("print_size_name"));
+                    if ("PER_LINE".equals(rs.getString("pricing_mode"))) {
+                        addOns.append(" / ").append(rs.getInt("print_line_count")).append(" lines");
+                    }
+                    String description = rs.getString("print_description");
+                    if (description != null && !description.isBlank()) {
+                        addOns.append(" / ").append(description);
+                    }
+                    addOns.append(" - ").append(formatMoney(rs.getBigDecimal("print_charge"))).append("\n");
+                }
+            }
+        }
+        return addOns.toString();
     }
 
     private void appendPaymentHistory(Long orderId, JTextArea detailsArea) {
@@ -1737,15 +2006,30 @@ public class CustomOrders extends JFrame {
         if (orderLineModel != null) {
             orderLineModel.setRowCount(0);
         }
+        if (customerInfoPanel != null) {
+            customerInfoPanel.clear();
+        }
         selectedOrderLineModelRow = -1;
         if (addLineButton != null) {
-            addLineButton.setText("Add Line");
+            addLineButton.setText("Add to Order");
         }
-        dueDateField.setText("");
-        orderNotesArea.setText("");
-        customizationArea.setText("");
+        if (dueDateField != null) {
+            dueDateField.clearDate();
+        }
+        designPlacementField.setText("");
         lineNotesArea.setText("");
         lineQuantityField.setText("1");
+        lineQuantityField.setEnabled(true);
+        if (printMaterialBox != null && printMaterialBox.getItemCount() > 0) {
+            printMaterialBox.setSelectedIndex(0);
+        }
+        if (printAddonModel != null) {
+            printAddonModel.setRowCount(0);
+        }
+        printChargeField.setText("0.00");
+        printLineCountField.setText("1");
+        printLineCountField.setEnabled(false);
+        printDescriptionField.setText("");
         widthField.setText("");
         lengthField.setText("");
         upfrontPaymentField.setText("0.00");
@@ -1794,10 +2078,6 @@ public class CustomOrders extends JFrame {
         return total;
     }
 
-    private String generateOrderNumber() {
-        return "CO-" + System.currentTimeMillis();
-    }
-
     private void selectEmployeeByName(String name) {
         if (assignEmployeeBox == null) {
             return;
@@ -1815,48 +2095,43 @@ public class CustomOrders extends JFrame {
         }
     }
 
-    private GridBagConstraints formGbc() {
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(6, 6, 6, 6);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.anchor = GridBagConstraints.WEST;
-        return gbc;
-    }
-
-    private JLabel addField(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
-        gbc.gridx = 0;
-        gbc.gridy = row;
-        gbc.weightx = 0;
-        JLabel labelComponent = new JLabel(label);
-        panel.add(labelComponent, gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1;
-        panel.add(field, gbc);
-        return labelComponent;
-    }
-
-    private void addTrackedField(List<JComponent> trackedComponents, JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
-        trackedComponents.add(addField(panel, gbc, row, label, field));
-        trackedComponents.add(field);
-    }
-
-    private javax.swing.event.DocumentListener simpleDocumentListener(Runnable callback) {
-        return new javax.swing.event.DocumentListener() {
+    private void runTableLoadAsync(DefaultTableModel model, RowLoader loader, Runnable afterLoad) {
+        if (model == null) {
+            return;
+        }
+        model.setRowCount(0);
+        model.addRow(loadingRow(model.getColumnCount()));
+        new SwingWorker<List<Object[]>, Void>() {
             @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                callback.run();
+            protected List<Object[]> doInBackground() throws Exception {
+                return loader.load();
             }
 
             @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                callback.run();
+            protected void done() {
+                model.setRowCount(0);
+                try {
+                    for (Object[] row : get()) {
+                        model.addRow(row);
+                    }
+                    if (afterLoad != null) {
+                        afterLoad.run();
+                    }
+                } catch (Exception ex) {
+                    showDatabaseSetupMessage(new SQLException(ex));
+                }
             }
+        }.execute();
+    }
 
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                callback.run();
-            }
-        };
+    private Object[] loadingRow(int columnCount) {
+        Object[] row = new Object[columnCount];
+        if (columnCount > 1) {
+            row[1] = "Loading...";
+        } else if (columnCount == 1) {
+            row[0] = "Loading...";
+        }
+        return row;
     }
 
     private BigDecimal parseMoney(String value, String fieldName) {
@@ -1882,14 +2157,6 @@ public class CustomOrders extends JFrame {
             return null;
         }
         return parseMoneyValue(value.toString());
-    }
-
-    private void setNullableBigDecimal(PreparedStatement ps, int index, BigDecimal value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, Types.NUMERIC);
-        } else {
-            ps.setBigDecimal(index, value);
-        }
     }
 
     private String blankToNull(Object value) {
@@ -1969,40 +2236,27 @@ public class CustomOrders extends JFrame {
     private record AreaCalculation(BigDecimal width, BigDecimal length, String dimensionUnit, BigDecimal area, String areaUnit, BigDecimal areaPrice, BigDecimal totalPrice) {
     }
 
-    private record CustomItemOption(Long customItemId, String name, String productType, String pricingType, BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice, String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth, BigDecimal maxLength) {
-        @Override
-        public String toString() {
-            if (hasVariants) {
-                return name + " (variants)";
-            }
-            if ("FIXED".equals(pricingType)) {
-                return name + " ($" + fixedPrice + ")";
-            }
-            if ("AREA".equals(pricingType)) {
-                return name + " (area)";
-            }
-            return name + " (variable)";
-        }
+    private record PrintAddonLine(
+            Long printMaterialId,
+            String materialName,
+            Long printSizePresetId,
+            String printSizeName,
+            String pricingMode,
+            String printDescription,
+            int printLineCount,
+            BigDecimal printCharge
+    ) {
     }
 
-    private record VariantOption(Long variantId, String name, BigDecimal fixedPrice) {
-        @Override
-        public String toString() {
-            return fixedPrice == null ? name : name + " ($" + fixedPrice + ")";
-        }
+    private record OrderEntryData(
+            List<CustomItemOption> items,
+            List<PrintMaterialOption> printMaterials,
+            List<String> designPlacements
+    ) {
     }
 
-    private record CustomerOption(int customerId, String name, String phone) {
-        @Override
-        public String toString() {
-            return name + (phone == null || phone.isBlank() ? " (no phone)" : " - " + phone);
-        }
-    }
-
-    private record EmployeeOption(Integer userId, String name) {
-        @Override
-        public String toString() {
-            return name;
-        }
+    @FunctionalInterface
+    private interface RowLoader {
+        List<Object[]> load() throws Exception;
     }
 }
