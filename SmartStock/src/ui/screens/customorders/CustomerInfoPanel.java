@@ -10,6 +10,8 @@ import java.sql.SQLException;
 public class CustomerInfoPanel extends JPanel {
     private final JTextField nameField = new JTextField();
     private final JTextField phoneField = new JTextField();
+    private JComponent trailingField;
+    private String trailingLabel;
     private final JPopupMenu searchPopup = new JPopupMenu();
     private final DefaultListModel<CustomerOption> searchModel = new DefaultListModel<>();
     private final JList<CustomerOption> searchList = new JList<>(searchModel);
@@ -18,6 +20,14 @@ public class CustomerInfoPanel extends JPanel {
 
     public CustomerInfoPanel() {
         super(new GridBagLayout());
+        buildLayout();
+        setupSearch();
+    }
+
+    public CustomerInfoPanel(String trailingLabel, JComponent trailingField) {
+        super(new GridBagLayout());
+        this.trailingLabel = trailingLabel;
+        this.trailingField = trailingField;
         buildLayout();
         setupSearch();
     }
@@ -60,8 +70,17 @@ public class CustomerInfoPanel extends JPanel {
         gbc.weightx = 0;
         add(new JLabel("Phone:"), gbc);
         gbc.gridx = 3;
-        gbc.weightx = 1;
+        gbc.weightx = 0;
+        phoneField.setColumns(16);
         add(phoneField, gbc);
+        if (trailingField != null) {
+            gbc.gridx = 4;
+            gbc.weightx = 0;
+            add(new JLabel(trailingLabel == null ? "" : trailingLabel), gbc);
+            gbc.gridx = 5;
+            gbc.weightx = 0;
+            add(trailingField, gbc);
+        }
     }
 
     private void setupSearch() {

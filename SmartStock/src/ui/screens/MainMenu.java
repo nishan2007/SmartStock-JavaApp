@@ -16,6 +16,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 
 public class MainMenu extends JFrame {
@@ -31,6 +34,7 @@ public class MainMenu extends JFrame {
     private final JButton vendorListButton;
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
+    private final JButton customerTransactionHistoryButton;
     private final JButton customOrdersButton;
     private final JButton ordersButton;
     private final JButton viewInventoryButton;
@@ -92,6 +96,7 @@ public class MainMenu extends JFrame {
         vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/Employee.png"));
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
+        customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/ViewSales.png"));
         customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MakeASale.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/ViewSales.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
@@ -127,6 +132,7 @@ public class MainMenu extends JFrame {
                 endOfDayButton,
                 viewSalesButton,
                 customerAccountsButton,
+                customerTransactionHistoryButton,
                 customOrdersButton,
                 ordersButton
         ));
@@ -423,6 +429,7 @@ public class MainMenu extends JFrame {
         vendorListButton.setEnabled(canVendorManagement);
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
+        customerTransactionHistoryButton.setEnabled(canCustomerAccounts);
         customOrdersButton.setEnabled(canCustomOrders);
         ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
@@ -510,6 +517,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openCustomerAccounts(this);
+        });
+        customerTransactionHistoryButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("CUSTOMER_ACCOUNTS", this, "Customer Transaction History")) {
+                return;
+            }
+            openCustomerTransactionHistory();
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
@@ -645,6 +658,111 @@ public class MainMenu extends JFrame {
         }
     }
 
+    private void openCustomerTransactionHistory() {
+        DefaultListModel<CustomerHistoryOption> model = new DefaultListModel<>();
+        JList<CustomerHistoryOption> customerList = new JList<>(model);
+        customerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        customerList.setVisibleRowCount(12);
+        JTextField searchField = new JTextField();
+        JButton openButton = new JButton("Open History");
+        JButton cancelButton = new JButton("Cancel");
+
+        Runnable loadCustomers = () -> loadCustomerHistoryOptions(model, searchField.getText().trim());
+        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                loadCustomers.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                loadCustomers.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                loadCustomers.run();
+            }
+        });
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
+        searchPanel.add(new JLabel("Customer:"), BorderLayout.WEST);
+        searchPanel.add(searchField, BorderLayout.CENTER);
+        panel.add(searchPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(customerList), BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.add(cancelButton);
+        buttons.add(openButton);
+        panel.add(buttons, BorderLayout.SOUTH);
+
+        JDialog dialog = new JDialog(this, "Customer Transaction History", true);
+        dialog.setSize(560, 420);
+        dialog.setLocationRelativeTo(this);
+        dialog.add(panel);
+
+        Runnable openSelected = () -> {
+            CustomerHistoryOption selected = customerList.getSelectedValue();
+            if (selected == null) {
+                JOptionPane.showMessageDialog(dialog, "Select a customer first.");
+                return;
+            }
+            dialog.dispose();
+            CustomerTransactionHistory history = new CustomerTransactionHistory(selected.customerId(), selected.label());
+            WindowHelper.showPosWindow(history, this);
+        };
+        openButton.addActionListener(e -> openSelected.run());
+        cancelButton.addActionListener(e -> dialog.dispose());
+        customerList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    openSelected.run();
+                }
+            }
+        });
+        searchField.addActionListener(e -> openSelected.run());
+
+        loadCustomers.run();
+        dialog.setVisible(true);
+    }
+
+    private void loadCustomerHistoryOptions(DefaultListModel<CustomerHistoryOption> model, String search) {
+        model.clear();
+        String sql = """
+                SELECT customer_id, account_number, name, phone
+                FROM customer_accounts
+                WHERE is_active = TRUE
+                  AND (? = ''
+                       OR LOWER(COALESCE(account_number, '')) LIKE LOWER(?)
+                       OR LOWER(name) LIKE LOWER(?)
+                       OR COALESCE(phone, '') LIKE ?)
+                ORDER BY name
+                LIMIT 100
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            String pattern = "%" + search + "%";
+            ps.setString(1, search);
+            ps.setString(2, pattern);
+            ps.setString(3, pattern);
+            ps.setString(4, pattern);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    model.addElement(new CustomerHistoryOption(
+                            rs.getInt("customer_id"),
+                            rs.getString("account_number"),
+                            rs.getString("name"),
+                            rs.getString("phone")
+                    ));
+                }
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private JButton createMenuButton(String title, String description, Icon icon) {
         JButton button = new JButton();
         button.setLayout(new BorderLayout(10, 10));
@@ -724,6 +842,19 @@ public class MainMenu extends JFrame {
 
     public JButton getCustomerAccountsButton() {
         return customerAccountsButton;
+    }
+
+    private record CustomerHistoryOption(int customerId, String accountNumber, String name, String phone) {
+        private String label() {
+            String account = accountNumber == null || accountNumber.isBlank() ? "" : accountNumber + " - ";
+            String phoneText = phone == null || phone.isBlank() ? "" : " (" + phone + ")";
+            return account + name + phoneText;
+        }
+
+        @Override
+        public String toString() {
+            return label();
+        }
     }
 
     public JButton getViewInventoryButton() {

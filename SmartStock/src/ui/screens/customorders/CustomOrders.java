@@ -161,7 +161,7 @@ public class CustomOrders extends JFrame {
             @Override public void removePrintAddon() { removeSelectedPrintAddon(); }
             @Override public Runnable areaChanged() { return CustomOrders.this::updateAreaCalculationPreview; }
             @Override public void addPlacement() { addDesignPlacementNote(); }
-            @Override public void addOrderLine() { addOrderLine(); }
+            @Override public void addOrderLine() { CustomOrders.this.addOrderLine(); }
             @Override public void removeOrderLine() { removeSelectedOrderLine(); }
             @Override public void cartSelectionChanged() { loadSelectedCartLineIntoEditor(); }
             @Override public void selectPaymentMethod(String method) { CustomOrders.this.selectPaymentMethod(method); }
@@ -953,6 +953,10 @@ public class CustomOrders extends JFrame {
         }
         if (upfrontPaid.compareTo(BigDecimal.ZERO) > 0 && (selectedPaymentMethod == null || selectedPaymentMethod.isBlank())) {
             JOptionPane.showMessageDialog(this, "Select a payment method for the upfront payment.");
+            return;
+        }
+        if ("ACCOUNT".equals(selectedPaymentMethod) && upfrontPaid.compareTo(BigDecimal.ZERO) > 0) {
+            JOptionPane.showMessageDialog(this, "Account charges use the unpaid balance. Leave upfront payment at 0.00, or choose Cash/Card/Cheque for an upfront payment.");
             return;
         }
         String paymentReference = paymentReferenceField.getText().trim();

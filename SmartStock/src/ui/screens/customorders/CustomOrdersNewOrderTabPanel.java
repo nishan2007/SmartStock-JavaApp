@@ -54,8 +54,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
         JPanel top = new JPanel(new BorderLayout());
         top.setBorder(BorderFactory.createTitledBorder("Customer"));
-        customerInfoPanel = new CustomerInfoPanel();
         dueDateField = new DatePickerField();
+        customerInfoPanel = new CustomerInfoPanel("Due Date:", dueDateField);
         top.add(customerInfoPanel, BorderLayout.CENTER);
 
         JPanel linePanel = new JPanel(new BorderLayout(12, 8));
@@ -191,8 +191,6 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         JPanel footer = new JPanel(new BorderLayout());
         JPanel paymentPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         paymentPanel.setBorder(BorderFactory.createTitledBorder("Payment Method"));
-        paymentPanel.add(new JLabel("Due:"));
-        paymentPanel.add(dueDateField);
         paymentPanel.add(cashPaymentButton);
         paymentPanel.add(cardPaymentButton);
         paymentPanel.add(chequePaymentButton);
@@ -202,13 +200,19 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         paymentPanel.add(new JLabel("Reference:"));
         paymentReferenceField.setPreferredSize(new Dimension(150, 30));
         paymentPanel.add(paymentReferenceField);
+
+        JPanel totalsPanel = new JPanel(new GridLayout(2, 1, 0, 6));
+        JPanel totalLine = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        totalLine.add(orderTotalLabel);
+        totalLine.add(balanceDueLabel);
         JPanel footerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         footerButtons.add(clearOrderButton);
         footerButtons.add(saveOrderButton);
-        footer.add(orderTotalLabel, BorderLayout.WEST);
+        totalsPanel.add(totalLine);
+        totalsPanel.add(footerButtons);
+
         footer.add(paymentPanel, BorderLayout.CENTER);
-        footerButtons.add(balanceDueLabel);
-        footer.add(footerButtons, BorderLayout.EAST);
+        footer.add(totalsPanel, BorderLayout.EAST);
 
         add(top, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);

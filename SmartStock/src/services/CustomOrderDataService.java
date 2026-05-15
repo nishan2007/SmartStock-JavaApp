@@ -274,6 +274,12 @@ public final class CustomOrderDataService {
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """;
+        String accountTransactionSql = """
+                INSERT INTO customer_account_transactions (
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """;
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -283,8 +289,13 @@ public final class CustomOrderDataService {
                  PreparedStatement itemSoldPs = conn.prepareStatement(updateCustomItemSoldSql);
                  PreparedStatement variantSoldPs = conn.prepareStatement(updateCustomVariantSoldSql);
                  PreparedStatement refreshParentPs = conn.prepareStatement(refreshVariantParentSql);
-                 PreparedStatement paymentPs = conn.prepareStatement(paymentSql)) {
+                 PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
+                 PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
                 int customerId = resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
+                boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
+                if (hasAccountBalanceDue) {
+                    validateAndChargeCustomerAccount(conn, customerId, request.balanceDue());
+                }
                 orderPs.setString(1, orderNumber);
                 orderPs.setInt(2, customerId);
                 orderPs.setString(3, request.customerName());
@@ -322,6 +333,25 @@ public final class CustomOrderDataService {
                     paymentPs.setString(6, request.takenByName());
                     paymentPs.executeUpdate();
                 }
+                BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
+                String accountHistoryType = hasAccountBalanceDue ? "CUSTOM_ORDER_CREDIT" : "CUSTOM_ORDER_PAID";
+                String accountHistoryNote = hasAccountBalanceDue
+                        ? "Custom order balance charged to account. payment_method=" + blankToNull(request.paymentMethod())
+                        + ", amount_paid=" + request.amountPaid()
+                        + ", balance_due=" + request.balanceDue()
+                        + ", custom_order_id=" + orderId
+                        + ", order_number=" + orderNumber
+                        : "Custom order recorded. payment_method=" + blankToNull(request.paymentMethod())
+                        + ", payment_status=" + request.paymentStatus()
+                        + ", custom_order_id=" + orderId
+                        + ", order_number=" + orderNumber;
+                accountTransactionPs.setInt(1, customerId);
+                accountTransactionPs.setLong(2, orderId);
+                accountTransactionPs.setBigDecimal(3, accountHistoryAmount);
+                accountTransactionPs.setString(4, accountHistoryType);
+                accountTransactionPs.setString(5, accountHistoryNote);
+                accountTransactionPs.setString(6, request.takenByName());
+                accountTransactionPs.executeUpdate();
 
                 int sortOrder = 1;
                 for (OrderLineRequest line : request.lines()) {
@@ -458,6 +488,48 @@ public final class CustomOrderDataService {
                 return rs.getInt("customer_id");
             }
         }
+    }
+
+    private static void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal chargeAmount) throws SQLException {
+        String lockSql = """
+                SELECT current_balance, credit_limit, is_active
+                FROM customer_accounts
+                WHERE customer_id = ?
+                FOR UPDATE
+                """;
+        BigDecimal currentBalance;
+        BigDecimal creditLimit;
+        boolean active;
+        try (PreparedStatement ps = conn.prepareStatement(lockSql)) {
+            ps.setInt(1, customerId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Customer account was not found.");
+                }
+                currentBalance = defaultZero(rs.getBigDecimal("current_balance"));
+                creditLimit = defaultZero(rs.getBigDecimal("credit_limit"));
+                active = rs.getBoolean("is_active");
+            }
+        }
+
+        if (!active) {
+            throw new SQLException("Customer account is inactive.");
+        }
+
+        BigDecimal newBalance = currentBalance.add(chargeAmount);
+        if (newBalance.compareTo(creditLimit) > 0) {
+            throw new SQLException("Account payment exceeds customer credit limit. Available credit: $" + creditLimit.subtract(currentBalance));
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
+            ps.setBigDecimal(1, newBalance);
+            ps.setInt(2, customerId);
+            ps.executeUpdate();
+        }
+    }
+
+    private static BigDecimal defaultZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private static Integer findCustomerTypeId(Connection conn, String name) throws SQLException {

@@ -518,7 +518,7 @@ public class CustomerAccounts extends JFrame {
                         null
                 );
                 if (!addCharge) {
-                    String allocationNote = applyPaymentToUnpaidSales(conn, selectedCustomerId, amount, transaction.transactionId());
+                    String allocationNote = applyPaymentToUnpaidAccountCharges(conn, selectedCustomerId, amount, transaction.transactionId());
                     updateTransactionNote(conn, transaction.transactionId(), allocationNote);
                 }
                 conn.commit();
@@ -606,6 +606,194 @@ public class CustomerAccounts extends JFrame {
                     .append(money(remainingPayment));
         }
         return "Customer payment applied to " + appliedSales;
+    }
+
+    private String applyPaymentToUnpaidAccountCharges(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId) throws SQLException {
+        BigDecimal remainingPayment = paymentAmount;
+        StringBuilder appliedCharges = new StringBuilder();
+
+        remainingPayment = applyPaymentToUnpaidSales(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges);
+        remainingPayment = applyPaymentToUnpaidCustomOrders(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges);
+
+        if (appliedCharges.isEmpty()) {
+            return "Customer payment. No unpaid account sales or custom orders were available to apply this payment to.";
+        }
+        if (remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
+            appliedCharges.append("; unapplied ")
+                    .append(money(remainingPayment));
+        }
+        return "Customer payment applied to " + appliedCharges;
+    }
+
+    private BigDecimal applyPaymentToUnpaidSales(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId, StringBuilder appliedCharges) throws SQLException {
+        BigDecimal remainingPayment = paymentAmount;
+        String selectSql = """
+                SELECT sale_id,
+                       GREATEST(COALESCE(total_amount, 0) - COALESCE(returned_amount, 0), 0) AS total_amount,
+                       COALESCE(amount_paid, 0) AS amount_paid
+                FROM sales
+                WHERE customer_id = ?
+                  AND payment_method = 'ACCOUNT'
+                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
+                ORDER BY created_at ASC, sale_id ASC
+                FOR UPDATE
+                """;
+        String updateSql = """
+                UPDATE sales
+                SET amount_paid = ?,
+                    payment_status = ?
+                WHERE sale_id = ?
+                """;
+        String allocationSql = """
+                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, sale_id, amount)
+                VALUES (?, ?, ?, ?)
+                """;
+
+        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
+             PreparedStatement updatePs = conn.prepareStatement(updateSql);
+             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
+            selectPs.setInt(1, customerId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
+                    int saleId = rs.getInt("sale_id");
+                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    BigDecimal amountDue = totalAmount.subtract(amountPaid);
+
+                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
+                        updateSalePaymentStatus(updatePs, saleId, totalAmount, "PAID");
+                        continue;
+                    }
+
+                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
+                    BigDecimal newAmountPaid = amountPaid.add(appliedAmount);
+                    String paymentStatus = newAmountPaid.compareTo(totalAmount) >= 0 ? "PAID" : "UNPAID";
+                    updateSalePaymentStatus(updatePs, saleId, newAmountPaid, paymentStatus);
+                    insertPaymentAllocation(allocationPs, paymentTransactionId, customerId, saleId, appliedAmount);
+                    appendAppliedCharge(appliedCharges, "sale #" + saleId + " " + money(appliedAmount));
+                    remainingPayment = remainingPayment.subtract(appliedAmount);
+                }
+            }
+        }
+        return remainingPayment;
+    }
+
+    private BigDecimal applyPaymentToUnpaidCustomOrders(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId, StringBuilder appliedCharges) throws SQLException {
+        BigDecimal remainingPayment = paymentAmount;
+        String selectSql = """
+                SELECT custom_order_id, order_number,
+                       COALESCE(total_amount, 0) AS total_amount,
+                       COALESCE(amount_paid, 0) AS amount_paid,
+                       COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) AS balance_due
+                FROM custom_orders
+                WHERE customer_id = ?
+                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
+                  AND COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) > 0
+                ORDER BY created_at ASC, custom_order_id ASC
+                FOR UPDATE
+                """;
+        String updateSql = """
+                UPDATE custom_orders
+                SET amount_paid = COALESCE(amount_paid, 0) + ?,
+                    balance_due = GREATEST(
+                        COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) - ?,
+                        0
+                    ),
+                    payment_status = CASE
+                        WHEN GREATEST(
+                            COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) - ?,
+                            0
+                        ) <= 0 THEN 'PAID'
+                        ELSE 'PARTIAL'
+                    END
+                WHERE custom_order_id = ?
+                """;
+        String markPaidSql = """
+                UPDATE custom_orders
+                SET amount_paid = COALESCE(total_amount, amount_paid, 0),
+                    balance_due = 0,
+                    payment_status = 'PAID'
+                WHERE custom_order_id = ?
+                """;
+        String paymentSql = """
+                INSERT INTO custom_order_payments (
+                    custom_order_id, payment_amount, payment_method, payment_reference,
+                    taken_by_user_id, taken_by_name
+                )
+                VALUES (?, ?, 'ACCOUNT', ?, ?, ?)
+                """;
+        String allocationSql = """
+                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, custom_order_id, amount)
+                VALUES (?, ?, ?, ?)
+                """;
+
+        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
+             PreparedStatement updatePs = conn.prepareStatement(updateSql);
+             PreparedStatement markPaidPs = conn.prepareStatement(markPaidSql);
+             PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
+             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
+            selectPs.setInt(1, customerId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
+                    long orderId = rs.getLong("custom_order_id");
+                    String orderNumber = rs.getString("order_number");
+                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    BigDecimal balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
+                    BigDecimal amountDue = balanceDue.compareTo(BigDecimal.ZERO) > 0 ? balanceDue : totalAmount.subtract(amountPaid);
+
+                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
+                        markCustomOrderPaid(markPaidPs, orderId);
+                        continue;
+                    }
+
+                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
+                    applyCustomOrderPayment(updatePs, orderId, appliedAmount);
+                    insertCustomOrderAccountPayment(paymentPs, orderId, appliedAmount, paymentTransactionId);
+                    insertCustomOrderPaymentAllocation(allocationPs, paymentTransactionId, customerId, orderId, appliedAmount);
+                    appendAppliedCharge(appliedCharges, "custom order " + orderNumber + " " + money(appliedAmount));
+                    remainingPayment = remainingPayment.subtract(appliedAmount);
+                }
+            }
+        }
+        return remainingPayment;
+    }
+
+    private void applyCustomOrderPayment(PreparedStatement ps, long orderId, BigDecimal amount) throws SQLException {
+        ps.setBigDecimal(1, amount);
+        ps.setBigDecimal(2, amount);
+        ps.setBigDecimal(3, amount);
+        ps.setLong(4, orderId);
+        ps.executeUpdate();
+    }
+
+    private void markCustomOrderPaid(PreparedStatement ps, long orderId) throws SQLException {
+        ps.setLong(1, orderId);
+        ps.executeUpdate();
+    }
+
+    private void insertCustomOrderAccountPayment(PreparedStatement ps, long orderId, BigDecimal amount, int paymentTransactionId) throws SQLException {
+        ps.setLong(1, orderId);
+        ps.setBigDecimal(2, amount);
+        ps.setString(3, "Account payment transaction #" + paymentTransactionId);
+        setNullableInteger(ps, 4, managers.SessionManager.getCurrentUserId());
+        ps.setString(5, managers.SessionManager.getCurrentUserDisplayName());
+        ps.executeUpdate();
+    }
+
+    private void insertCustomOrderPaymentAllocation(PreparedStatement ps, int paymentTransactionId, int customerId, long orderId, BigDecimal amount) throws SQLException {
+        ps.setInt(1, paymentTransactionId);
+        ps.setInt(2, customerId);
+        ps.setLong(3, orderId);
+        ps.setBigDecimal(4, amount);
+        ps.executeUpdate();
+    }
+
+    private void appendAppliedCharge(StringBuilder appliedCharges, String text) {
+        if (!appliedCharges.isEmpty()) {
+            appliedCharges.append("; ");
+        }
+        appliedCharges.append(text);
     }
 
     private void updateSalePaymentStatus(PreparedStatement ps, int saleId, BigDecimal amountPaid, String paymentStatus) throws SQLException {

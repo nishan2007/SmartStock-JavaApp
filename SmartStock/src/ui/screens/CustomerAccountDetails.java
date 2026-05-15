@@ -170,7 +170,7 @@ public class CustomerAccountDetails extends JFrame {
         panel.setBorder(BorderFactory.createTitledBorder("Transaction History"));
 
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
                 0
         ) {
             @Override
@@ -189,10 +189,11 @@ public class CustomerAccountDetails extends JFrame {
         transactionTable.getColumnModel().getColumn(3).setPreferredWidth(150);
         transactionTable.getColumnModel().getColumn(4).setPreferredWidth(130);
         transactionTable.getColumnModel().getColumn(5).setPreferredWidth(90);
-        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(100);
-        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(260);
+        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(120);
+        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(10).setPreferredWidth(260);
 
         transactionSummaryLabel = new JLabel("Transactions: 0");
         transactionSummaryLabel.setBorder(new EmptyBorder(4, 2, 0, 2));
@@ -274,12 +275,20 @@ public class CustomerAccountDetails extends JFrame {
 	                       COALESCE(t.user_name, '') AS user_name,
 	                       COALESCE(t.transaction_type, '') AS transaction_type,
                        t.sale_id,
-                       COALESCE(t.amount, 0) AS amount,
+                       t.custom_order_id,
+                       COALESCE(t.amount, 0) AS ledger_amount,
+                       CASE
+                           WHEN t.custom_order_id IS NOT NULL
+                                AND COALESCE(t.transaction_type, '') IN ('CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_CREDIT')
+                               THEN COALESCE(co.amount_paid, 0)
+                           ELSE COALESCE(t.amount, 0)
+                       END AS display_amount,
                        COALESCE(t.note, '') AS note,
-                       COALESCE(s.payment_status, '') AS payment_status,
-                       COALESCE(s.total_amount, 0) AS sale_total
+                       COALESCE(s.payment_status, co.payment_status, '') AS payment_status,
+                       COALESCE(s.total_amount, co.total_amount, 0) AS sale_total
                 FROM customer_account_transactions t
                 LEFT JOIN sales s ON t.sale_id = s.sale_id
+                LEFT JOIN custom_orders co ON t.custom_order_id = co.custom_order_id
                 WHERE t.customer_id = ?
                 ORDER BY t.created_at DESC, t.transaction_id DESC
                 """;
@@ -295,11 +304,12 @@ public class CustomerAccountDetails extends JFrame {
             ps.setInt(2, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
-                    if (amount.compareTo(BigDecimal.ZERO) >= 0) {
-                        totalCharges = totalCharges.add(amount);
+                    BigDecimal ledgerAmount = defaultZero(rs.getBigDecimal("ledger_amount"));
+                    BigDecimal displayAmount = defaultZero(rs.getBigDecimal("display_amount"));
+                    if (ledgerAmount.compareTo(BigDecimal.ZERO) >= 0) {
+                        totalCharges = totalCharges.add(ledgerAmount);
                     } else {
-                        totalPayments = totalPayments.add(amount.abs());
+                        totalPayments = totalPayments.add(ledgerAmount.abs());
                     }
 
                     transactionModel.addRow(new Object[]{
@@ -309,7 +319,8 @@ public class CustomerAccountDetails extends JFrame {
 	                            rs.getString("user_name"),
 	                            formatType(rs.getString("transaction_type")),
                             nullableInt(rs, "sale_id"),
-                            currencyFormat.format(amount),
+                            nullableLong(rs, "custom_order_id"),
+                            currencyFormat.format(displayAmount),
                             formatStatus(rs.getString("payment_status")),
                             currencyFormat.format(defaultZero(rs.getBigDecimal("sale_total"))),
                             rs.getString("note")
@@ -425,6 +436,11 @@ public class CustomerAccountDetails extends JFrame {
         return rs.wasNull() ? "" : value;
     }
 
+    private Object nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? "" : value;
+    }
+
     private String formatTimestamp(Timestamp timestamp) {
         if (timestamp == null) {
             return "";
@@ -451,6 +467,7 @@ public class CustomerAccountDetails extends JFrame {
         }
         return switch (status.toUpperCase()) {
             case "PAID" -> "Paid";
+            case "PARTIAL" -> "Partial Paid";
             case "UNPAID" -> "Unpaid";
             default -> status.substring(0, 1).toUpperCase() + status.substring(1).toLowerCase();
         };
