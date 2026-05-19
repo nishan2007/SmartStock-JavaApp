@@ -28,6 +28,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     DefaultTableModel printAddonModel;
     JTable printAddonTable;
     final JTextField lineQuantityField;
+    final JTextField lineDiscountPercentField;
+    final JTextField lineDiscountReasonField;
+    final JTextField priceOverrideReasonField;
     final JTextField widthField;
     final JTextField lengthField;
     final JLabel areaCalculationLabel;
@@ -42,6 +45,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final JToggleButton cashPaymentButton;
     final JToggleButton cardPaymentButton;
     final JToggleButton chequePaymentButton;
+    final JToggleButton mmgPaymentButton;
     final JToggleButton accountPaymentButton;
     final JTextField paymentReferenceField;
     final JTextField upfrontPaymentField;
@@ -73,6 +77,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         printLineCountField = new JTextField("1");
         printDescriptionField = new JTextField();
         lineQuantityField = new JTextField("1");
+        lineDiscountPercentField = new JTextField("0", 6);
+        lineDiscountReasonField = new JTextField();
+        priceOverrideReasonField = new JTextField();
         widthField = new JTextField();
         lengthField = new JTextField();
         areaCalculationLabel = new JLabel(" ");
@@ -90,16 +97,17 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addField(leftLinePanel, leftLineGbc, 0, "Item:", orderItemBox);
         addField(leftLinePanel, leftLineGbc, 1, "Size / Variant:", variantBox);
         addField(leftLinePanel, leftLineGbc, 2, "Base Price:", linePriceField);
-        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 3, "Width:", widthField);
-        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 4, "Length:", lengthField);
+        addField(leftLinePanel, leftLineGbc, 3, "Price Reason:", priceOverrideReasonField);
+        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 4, "Width:", widthField);
+        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 5, "Length:", lengthField);
         leftLineGbc.gridx = 1;
-        leftLineGbc.gridy = 5;
+        leftLineGbc.gridy = 6;
         leftLinePanel.add(areaCalculationLabel, leftLineGbc);
         areaLineComponents.add(areaCalculationLabel);
         JScrollPane lineNotesScroll = new JScrollPane(lineNotesArea);
         lineNotesScroll.setPreferredSize(new Dimension(300, 120));
-        addField(leftLinePanel, leftLineGbc, 6, "Order Instructions:", lineNotesScroll);
-        addVerticalFormSpacer(leftLinePanel, leftLineGbc, 7);
+        addField(leftLinePanel, leftLineGbc, 7, "Order Instructions:", lineNotesScroll);
+        addVerticalFormSpacer(leftLinePanel, leftLineGbc, 8);
 
         addField(rightLinePanel, rightLineGbc, 0, "Print Add On:", printMaterialBox);
         addTrackedField(printAddOnComponents, rightLinePanel, rightLineGbc, 1, "Print Size:", printSizePresetBox);
@@ -113,13 +121,15 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addTrackedField(printAddOnComponents, rightLinePanel, rightLineGbc, 5, "Print Add Ons:", buildPrintAddonsPanel(printAddonButtons));
         addField(rightLinePanel, rightLineGbc, 6, "Design Placement:", buildDesignPlacementPanel(addPlacementButton));
         addField(rightLinePanel, rightLineGbc, 7, "Quantity:", lineQuantityField);
+        addField(rightLinePanel, rightLineGbc, 8, "Line Discount %:", lineDiscountPercentField);
+        addField(rightLinePanel, rightLineGbc, 9, "Discount Reason:", lineDiscountReasonField);
         rightLineGbc.gridx = 1;
-        rightLineGbc.gridy = 8;
+        rightLineGbc.gridy = 10;
         JPanel lineButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         lineButtons.add(addLineButton);
         lineButtons.add(removeLineButton);
         rightLinePanel.add(lineButtons, rightLineGbc);
-        addVerticalFormSpacer(rightLinePanel, rightLineGbc, 9);
+        addVerticalFormSpacer(rightLinePanel, rightLineGbc, 11);
 
         JPanel lineColumns = new JPanel(new GridLayout(1, 2, 14, 0));
         lineColumns.add(leftLinePanel);
@@ -139,7 +149,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addLineButton.addActionListener(e -> handler.addOrderLine());
         removeLineButton.addActionListener(e -> handler.removeOrderLine());
 
-        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Price", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data"}, 0) {
+        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Price", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -154,6 +164,11 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
             hideColumn(orderLineTable, hiddenColumn);
         }
         hideColumn(orderLineTable, 22);
+        hideColumn(orderLineTable, 23);
+        hideColumn(orderLineTable, 24);
+        for (int hiddenColumn = 25; hiddenColumn <= 30; hiddenColumn++) {
+            hideColumn(orderLineTable, hiddenColumn);
+        }
         orderLineTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 handler.cartSelectionChanged();
@@ -166,6 +181,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         cashPaymentButton = createPaymentMethodButton("Cash", "CASH", handler);
         cardPaymentButton = createPaymentMethodButton("Card", "CARD", handler);
         chequePaymentButton = createPaymentMethodButton("Cheque", "CHEQUE", handler);
+        mmgPaymentButton = createPaymentMethodButton("MMG", "MMG", handler);
         accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT", handler);
         paymentReferenceField = new JTextField();
         upfrontPaymentField = new JTextField("0.00", 8);
@@ -194,6 +210,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         paymentPanel.add(cashPaymentButton);
         paymentPanel.add(cardPaymentButton);
         paymentPanel.add(chequePaymentButton);
+        paymentPanel.add(mmgPaymentButton);
         paymentPanel.add(accountPaymentButton);
         paymentPanel.add(new JLabel("Upfront:"));
         paymentPanel.add(upfrontPaymentField);

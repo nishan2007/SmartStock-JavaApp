@@ -35,7 +35,7 @@ import java.util.Locale;
 public class ReturnSale extends JFrame {
     private final JTextField saleSearchField = new JTextField();
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
-    private final JComboBox<String> refundMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "ACCOUNT"});
+    private final JComboBox<String> refundMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
     private final JTextArea reasonArea = new JTextArea(3, 30);
     private final JLabel totalReturnLabel = new JLabel("Return Total: $0.00");
     private final DefaultTableModel itemModel;

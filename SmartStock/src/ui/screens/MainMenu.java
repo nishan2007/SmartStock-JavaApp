@@ -25,7 +25,9 @@ public class MainMenu extends JFrame {
 
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
+    private final JButton ordersManagerDashboardButton;
     private final JButton endOfDayButton;
+    private final JButton ordersEndOfDayButton;
     private final JButton enterInventoryButton;
     private final JButton receivingHistoryButton;
     private final JButton storeTransferButton;
@@ -87,7 +89,9 @@ public class MainMenu extends JFrame {
 
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
         returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/ViewSales.png"));
+        ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/ViewSales.png"));
         endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/ViewSales.png"));
+        ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/ViewSales.png"));
         enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
         receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/ViewSales.png"));
         storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/ViewInventory.png"));
@@ -132,9 +136,17 @@ public class MainMenu extends JFrame {
                 endOfDayButton,
                 viewSalesButton,
                 customerAccountsButton,
-                customerTransactionHistoryButton,
+                customerTransactionHistoryButton
+        ));
+        sectionStackPanel.add(Box.createVerticalStrut(18));
+        sectionStackPanel.add(createSectionPanel(
+                "Orders",
+                new Color(14, 116, 144),
+                ordersManagerDashboardButton,
                 customOrdersButton,
-                ordersButton
+                ordersButton,
+                ordersEndOfDayButton,
+                customOrderItemsButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -143,7 +155,6 @@ public class MainMenu extends JFrame {
                 enterInventoryButton,
                 receivingHistoryButton,
                 storeTransferButton,
-                customOrderItemsButton,
                 departmentListButton,
                 vendorListButton,
                 viewInventoryButton,
@@ -389,7 +400,11 @@ public class MainMenu extends JFrame {
     public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
+                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
+        boolean canOrdersEndOfDay = PermissionManager.hasPermission("ORDERS_END_OF_DAY")
+                || PermissionManager.hasPermission("END_OF_DAY");
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
@@ -420,7 +435,9 @@ public class MainMenu extends JFrame {
 
         makeSaleButton.setEnabled(canMakeSale);
         returnSaleButton.setEnabled(canProcessReturns);
+        ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
         endOfDayButton.setEnabled(canEndOfDay);
+        ordersEndOfDayButton.setEnabled(canOrdersEndOfDay);
         enterInventoryButton.setEnabled(canEnterInventory);
         receivingHistoryButton.setEnabled(canReceivingHistory);
         storeTransferButton.setEnabled(canStoreTransfer);
@@ -464,11 +481,25 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openReturnSale(this);
         });
+        ordersManagerDashboardButton.addActionListener(e -> {
+            if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders Manager Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openOrdersManagerDashboard(this);
+        });
         endOfDayButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("END_OF_DAY", this, "End of Day")) {
                 return;
             }
             NavigationManager.openEndOfDay(this);
+        });
+        ordersEndOfDayButton.addActionListener(e -> {
+            if (!PermissionManager.hasPermission("ORDERS_END_OF_DAY") && !PermissionManager.hasPermission("END_OF_DAY")) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders End Of Day.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openOrdersEndOfDay(this);
         });
         enterInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", this, "Receiving Inventory")) {

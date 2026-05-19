@@ -220,9 +220,12 @@ public final class CustomOrderDataService {
                 INSERT INTO custom_orders (
                     order_number, customer_id, customer_name, customer_phone, status, due_date,
                     order_notes, total_amount, amount_paid, balance_due, payment_method,
-                    payment_reference, payment_status, taken_by_user_id, taken_by_name
+                    payment_reference, payment_status, taken_by_user_id, taken_by_name,
+                    location_id, location_name, device_id, device_name,
+                    minimum_deposit_required, deposit_override_reason,
+                    deposit_override_by_user_id, deposit_override_by_name
                 )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String lineSql = """
                 INSERT INTO custom_order_lines (
@@ -231,9 +234,13 @@ public final class CustomOrderDataService {
                     custom_variant_id, variant_name,
                     width_value, length_value, dimension_unit, area_value, area_unit, area_price,
                     base_item_price, print_material_id, print_material_name,
-                    print_size_preset_id, print_size_name, print_charge, print_line_count
+                    print_size_preset_id, print_size_name, print_charge, print_line_count,
+                    original_line_total, line_discount_percent, line_discount_amount,
+                    line_discount_by_user_id, line_discount_by_name, line_discount_reason,
+                    minimum_deposit_percent, original_base_price, price_override_price,
+                    price_override_reason, price_override_by_user_id, price_override_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String addonSql = """
                 INSERT INTO custom_order_line_print_addons (
@@ -270,15 +277,15 @@ public final class CustomOrderDataService {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?)
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection()) {
@@ -314,6 +321,14 @@ public final class CustomOrderDataService {
                 orderPs.setString(12, request.paymentStatus());
                 setNullableInteger(orderPs, 13, request.takenByUserId());
                 orderPs.setString(14, request.takenByName());
+                setNullableInteger(orderPs, 15, request.locationId());
+                orderPs.setString(16, blankToNull(request.locationName()));
+                orderPs.setString(17, blankToNull(request.deviceId()));
+                orderPs.setString(18, blankToNull(request.deviceName()));
+                orderPs.setBigDecimal(19, defaultZero(request.minimumDepositRequired()));
+                orderPs.setString(20, blankToNull(request.depositOverrideReason()));
+                setNullableInteger(orderPs, 21, request.depositOverrideByUserId());
+                orderPs.setString(22, blankToNull(request.depositOverrideByName()));
                 orderPs.executeUpdate();
 
                 long orderId;
@@ -331,6 +346,8 @@ public final class CustomOrderDataService {
                     paymentPs.setString(4, blankToNull(request.paymentReference()));
                     setNullableInteger(paymentPs, 5, request.takenByUserId());
                     paymentPs.setString(6, request.takenByName());
+                    paymentPs.setString(7, blankToNull(request.deviceId()));
+                    paymentPs.setString(8, blankToNull(request.deviceName()));
                     paymentPs.executeUpdate();
                 }
                 BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
@@ -351,7 +368,11 @@ public final class CustomOrderDataService {
                 accountTransactionPs.setString(4, accountHistoryType);
                 accountTransactionPs.setString(5, accountHistoryNote);
                 accountTransactionPs.setString(6, request.takenByName());
+                accountTransactionPs.setString(7, blankToNull(request.deviceId()));
+                accountTransactionPs.setString(8, blankToNull(request.deviceName()));
                 accountTransactionPs.executeUpdate();
+                CustomOrderAuditService.recordAudit(conn, orderId, "CREATE", "order", null, orderNumber, null);
+                CustomOrderAuditService.recordStatus(conn, orderId, null, "NEW", "Order created");
 
                 int sortOrder = 1;
                 for (OrderLineRequest line : request.lines()) {
@@ -379,6 +400,18 @@ public final class CustomOrderDataService {
                     linePs.setString(22, blankToNull(line.printSizeName()));
                     setNullableBigDecimal(linePs, 23, line.printCharge());
                     linePs.setInt(24, line.printLineCount());
+                    setNullableBigDecimal(linePs, 25, line.originalLineTotal());
+                    setNullableBigDecimal(linePs, 26, line.lineDiscountPercent());
+                    setNullableBigDecimal(linePs, 27, line.lineDiscountAmount());
+                    setNullableInteger(linePs, 28, line.lineDiscountByUserId());
+                    linePs.setString(29, blankToNull(line.lineDiscountByName()));
+                    linePs.setString(30, blankToNull(line.lineDiscountReason()));
+                    setNullableBigDecimal(linePs, 31, line.minimumDepositPercent());
+                    setNullableBigDecimal(linePs, 32, line.originalBasePrice());
+                    setNullableBigDecimal(linePs, 33, line.priceOverridePrice());
+                    linePs.setString(34, blankToNull(line.priceOverrideReason()));
+                    setNullableInteger(linePs, 35, line.priceOverrideByUserId());
+                    linePs.setString(36, blankToNull(line.priceOverrideByName()));
                     linePs.executeUpdate();
 
                     long lineId;
@@ -388,6 +421,7 @@ public final class CustomOrderDataService {
                         }
                         lineId = lineKeys.getLong(1);
                     }
+                    insertReservationIfInventory(conn, orderId, lineId, line);
 
                     int addonSortOrder = 1;
                     for (PrintAddonRequest addon : line.printAddons()) {
@@ -456,6 +490,31 @@ public final class CustomOrderDataService {
             ps.setNull(index, Types.NUMERIC);
         } else {
             ps.setBigDecimal(index, value);
+        }
+    }
+
+    private static void insertReservationIfInventory(Connection conn, long orderId, long lineId, OrderLineRequest line) throws SQLException {
+        if (line.customItemId() == null) {
+            return;
+        }
+        String sql = """
+                INSERT INTO custom_order_inventory_reservations (
+                    custom_order_id, custom_order_line_id, custom_item_id, custom_variant_id,
+                    item_name, variant_name, reserved_qty, status
+                )
+                SELECT ?, ?, coi.custom_item_id, ?, ?, ?, 1, 'RESERVED'
+                FROM custom_order_items coi
+                WHERE coi.custom_item_id = ?
+                  AND COALESCE(coi.product_type, 'INVENTORY') = 'INVENTORY'
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            ps.setLong(2, lineId);
+            setNullableLong(ps, 3, line.customVariantId());
+            ps.setString(4, line.itemName());
+            ps.setString(5, blankToNull(line.variantName()));
+            ps.setLong(6, line.customItemId());
+            ps.executeUpdate();
         }
     }
 
@@ -619,6 +678,14 @@ public final class CustomOrderDataService {
             String paymentStatus,
             Integer takenByUserId,
             String takenByName,
+            Integer locationId,
+            String locationName,
+            String deviceId,
+            String deviceName,
+            BigDecimal minimumDepositRequired,
+            String depositOverrideReason,
+            Integer depositOverrideByUserId,
+            String depositOverrideByName,
             List<OrderLineRequest> lines
     ) {
     }
@@ -645,6 +712,18 @@ public final class CustomOrderDataService {
             String printSizeName,
             BigDecimal printCharge,
             int printLineCount,
+            BigDecimal originalLineTotal,
+            BigDecimal lineDiscountPercent,
+            BigDecimal lineDiscountAmount,
+            Integer lineDiscountByUserId,
+            String lineDiscountByName,
+            String lineDiscountReason,
+            BigDecimal minimumDepositPercent,
+            BigDecimal originalBasePrice,
+            BigDecimal priceOverridePrice,
+            String priceOverrideReason,
+            Integer priceOverrideByUserId,
+            String priceOverrideByName,
             List<PrintAddonRequest> printAddons
     ) {
     }

@@ -3,10 +3,12 @@ package ui.screens.customorders;
 import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
+import managers.CompanyCustomizationManager;
+import services.CustomOrderAuditService;
 import services.CustomOrderDataService;
+import services.DeviceContextService;
 import services.CustomOrderDataService.CustomItemOption;
 import services.CustomOrderDataService.CustomerOption;
-import services.CustomOrderDataService.EmployeeOption;
 import services.CustomOrderDataService.OrderLineRequest;
 import services.CustomOrderDataService.OrderSaveRequest;
 import services.CustomOrderDataService.PrintAddonRequest;
@@ -79,11 +81,15 @@ public class CustomOrders extends JFrame {
     private JTable orderLineTable;
     private JButton addLineButton;
     private int selectedOrderLineModelRow = -1;
+    private JTextField lineDiscountPercentField;
+    private JTextField lineDiscountReasonField;
+    private JTextField priceOverrideReasonField;
     private JLabel orderTotalLabel;
     private ButtonGroup paymentMethodGroup;
     private JToggleButton cashPaymentButton;
     private JToggleButton cardPaymentButton;
     private JToggleButton chequePaymentButton;
+    private JToggleButton mmgPaymentButton;
     private JToggleButton accountPaymentButton;
     private String selectedPaymentMethod;
     private JTextField paymentReferenceField;
@@ -96,8 +102,6 @@ public class CustomOrders extends JFrame {
     private TableRowSorter<DefaultTableModel> ordersSorter;
     private JTextField orderSearchField;
     private JComboBox<String> statusFilterBox;
-    private JComboBox<EmployeeOption> assignEmployeeBox;
-    private JComboBox<String> manageStatusBox;
     private JTextArea selectedOrderDetailsArea;
     private Long selectedOrderId;
     private DefaultTableModel myOrdersModel;
@@ -135,7 +139,7 @@ public class CustomOrders extends JFrame {
             tabs.addTab("My Orders", buildMyOrdersPanel());
         }
         if (orderManagementMode && canManageOrders) {
-            tabs.addTab("Manage Orders", buildManageOrdersPanel());
+            tabs.addTab("All Orders", buildManageOrdersPanel());
         }
         if (tabs.getTabCount() == 0) {
             add(new JLabel("You do not have permission to access this screen.", SwingConstants.CENTER), BorderLayout.CENTER);
@@ -195,11 +199,19 @@ public class CustomOrders extends JFrame {
         orderLineModel = panel.orderLineModel;
         orderLineTable = panel.orderLineTable;
         addLineButton = panel.addLineButton;
+        lineDiscountPercentField = panel.lineDiscountPercentField;
+        lineDiscountReasonField = panel.lineDiscountReasonField;
+        priceOverrideReasonField = panel.priceOverrideReasonField;
+        lineDiscountPercentField.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
+        lineDiscountPercentField.setToolTipText(lineDiscountPercentField.isEnabled() ? "Enter a percentage discount for this order line." : "Requires Custom Order Line Discount permission.");
+        lineDiscountReasonField.setEnabled(lineDiscountPercentField.isEnabled());
+        lineDiscountReasonField.setToolTipText(lineDiscountReasonField.isEnabled() ? "Required when a line discount is used." : "Requires Custom Order Line Discount permission.");
         orderTotalLabel = panel.orderTotalLabel;
         paymentMethodGroup = panel.paymentMethodGroup;
         cashPaymentButton = panel.cashPaymentButton;
         cardPaymentButton = panel.cardPaymentButton;
         chequePaymentButton = panel.chequePaymentButton;
+        mmgPaymentButton = panel.mmgPaymentButton;
         accountPaymentButton = panel.accountPaymentButton;
         paymentReferenceField = panel.paymentReferenceField;
         upfrontPaymentField = panel.upfrontPaymentField;
@@ -215,7 +227,6 @@ public class CustomOrders extends JFrame {
         CustomOrdersManageTabPanel panel = new CustomOrdersManageTabPanel(new CustomOrdersManageTabPanel.Handler() {
             @Override public void loadSelectedOrder() { CustomOrders.this.loadSelectedOrder(); }
             @Override public Runnable applyFilter() { return CustomOrders.this::applyOrderFilter; }
-            @Override public void saveAssignment() { CustomOrders.this.saveAssignment(); }
             @Override public void refreshOrders() { CustomOrders.this.loadOrders(); }
         });
         ordersModel = panel.ordersModel;
@@ -223,8 +234,6 @@ public class CustomOrders extends JFrame {
         ordersSorter = panel.ordersSorter;
         orderSearchField = panel.orderSearchField;
         statusFilterBox = panel.statusFilterBox;
-        assignEmployeeBox = panel.assignEmployeeBox;
-        manageStatusBox = panel.manageStatusBox;
         selectedOrderDetailsArea = panel.selectedOrderDetailsArea;
         return panel;
     }
@@ -237,6 +246,8 @@ public class CustomOrders extends JFrame {
             cardPaymentButton.setSelected(true);
         } else if ("CHEQUE".equals(method) && chequePaymentButton != null) {
             chequePaymentButton.setSelected(true);
+        } else if ("MMG".equals(method) && mmgPaymentButton != null) {
+            mmgPaymentButton.setSelected(true);
         } else if ("ACCOUNT".equals(method) && accountPaymentButton != null) {
             accountPaymentButton.setSelected(true);
         }
@@ -248,6 +259,7 @@ public class CustomOrders extends JFrame {
         stylePaymentButton(cashPaymentButton, "CASH".equals(selectedPaymentMethod));
         stylePaymentButton(cardPaymentButton, "CARD".equals(selectedPaymentMethod));
         stylePaymentButton(chequePaymentButton, "CHEQUE".equals(selectedPaymentMethod));
+        stylePaymentButton(mmgPaymentButton, "MMG".equals(selectedPaymentMethod));
         stylePaymentButton(accountPaymentButton, "ACCOUNT".equals(selectedPaymentMethod));
     }
 
@@ -270,7 +282,7 @@ public class CustomOrders extends JFrame {
         if (!needsReference) {
             paymentReferenceField.setText("");
         }
-        paymentReferenceField.setToolTipText(needsReference ? "Enter check number, card transaction ID, or account reference." : "Reference is only used for non-cash payments.");
+        paymentReferenceField.setToolTipText(needsReference ? "Enter check number, card transaction ID, MMG reference, or account reference." : "Reference is only used for non-cash payments.");
     }
 
     private void addDesignPlacementNote() {
@@ -319,8 +331,7 @@ public class CustomOrders extends JFrame {
             orderLookupLoaded = true;
         } else if ("My Orders".equals(title) && !myOrdersLoaded) {
             loadMyOrdersAsync(() -> myOrdersLoaded = true);
-        } else if ("Manage Orders".equals(title) && !manageOrdersLoaded) {
-            loadEmployees();
+        } else if ("All Orders".equals(title) && !manageOrdersLoaded) {
             loadOrdersAsync(() -> manageOrdersLoaded = true);
         }
     }
@@ -686,21 +697,6 @@ public class CustomOrders extends JFrame {
         }
     }
 
-    private void loadEmployees() {
-        if (assignEmployeeBox == null) {
-            return;
-        }
-        assignEmployeeBox.removeAllItems();
-        assignEmployeeBox.addItem(new EmployeeOption(null, "Unassigned"));
-        try {
-            for (EmployeeOption employee : CustomOrderDataService.listActiveEmployees()) {
-                assignEmployeeBox.addItem(employee);
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load employees: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
     private void loadOrders() {
         if (ordersModel == null) {
             return;
@@ -713,28 +709,32 @@ public class CustomOrders extends JFrame {
                        total_amount, amount_paid, balance_due, payment_method, payment_reference,
                        payment_status, assigned_to_name, taken_by_name, created_at
                 FROM custom_orders
+                WHERE (? IS NULL OR location_id = ?)
                 ORDER BY created_at DESC
                 """;
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                ordersModel.addRow(new Object[]{
-                        rs.getLong("custom_order_id"),
-                        rs.getString("order_number"),
-                        rs.getString("status"),
-                        rs.getString("customer_name"),
-                        rs.getString("customer_phone"),
-                        rs.getDate("due_date"),
-                        formatMoney(rs.getBigDecimal("total_amount")),
-                        formatMoney(rs.getBigDecimal("amount_paid")),
-                        formatMoney(rs.getBigDecimal("balance_due")),
-                        formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
-                        rs.getString("payment_reference"),
-                        rs.getString("assigned_to_name"),
-                        rs.getString("taken_by_name"),
-                        rs.getTimestamp("created_at")
-                });
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            bindCurrentLocation(ps, 1);
+            bindCurrentLocation(ps, 2);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    ordersModel.addRow(new Object[]{
+                            rs.getLong("custom_order_id"),
+                            rs.getString("order_number"),
+                            rs.getString("status"),
+                            rs.getString("customer_name"),
+                            rs.getString("customer_phone"),
+                            rs.getDate("due_date"),
+                            formatMoney(rs.getBigDecimal("total_amount")),
+                            formatMoney(rs.getBigDecimal("amount_paid")),
+                            formatMoney(rs.getBigDecimal("balance_due")),
+                            formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
+                            rs.getString("payment_reference"),
+                            rs.getString("assigned_to_name"),
+                            rs.getString("taken_by_name"),
+                            rs.getTimestamp("created_at")
+                    });
+                }
             }
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
@@ -755,28 +755,32 @@ public class CustomOrders extends JFrame {
                                    total_amount, amount_paid, balance_due, payment_method, payment_reference,
                                    payment_status, assigned_to_name, taken_by_name, created_at
                             FROM custom_orders
+                            WHERE (? IS NULL OR location_id = ?)
                             ORDER BY created_at DESC
                             """;
                     try (Connection conn = DB.getConnection();
-                         PreparedStatement ps = conn.prepareStatement(sql);
-                         ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            rows.add(new Object[]{
-                                    rs.getLong("custom_order_id"),
-                                    rs.getString("order_number"),
-                                    rs.getString("status"),
-                                    rs.getString("customer_name"),
-                                    rs.getString("customer_phone"),
-                                    rs.getDate("due_date"),
-                                    formatMoney(rs.getBigDecimal("total_amount")),
-                                    formatMoney(rs.getBigDecimal("amount_paid")),
-                                    formatMoney(rs.getBigDecimal("balance_due")),
-                                    formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
-                                    rs.getString("payment_reference"),
-                                    rs.getString("assigned_to_name"),
-                                    rs.getString("taken_by_name"),
-                                    rs.getTimestamp("created_at")
-                            });
+                         PreparedStatement ps = conn.prepareStatement(sql)) {
+                        bindCurrentLocation(ps, 1);
+                        bindCurrentLocation(ps, 2);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) {
+                                rows.add(new Object[]{
+                                        rs.getLong("custom_order_id"),
+                                        rs.getString("order_number"),
+                                        rs.getString("status"),
+                                        rs.getString("customer_name"),
+                                        rs.getString("customer_phone"),
+                                        rs.getDate("due_date"),
+                                        formatMoney(rs.getBigDecimal("total_amount")),
+                                        formatMoney(rs.getBigDecimal("amount_paid")),
+                                        formatMoney(rs.getBigDecimal("balance_due")),
+                                        formatPayment(rs.getString("payment_method"), rs.getString("payment_status")),
+                                        rs.getString("payment_reference"),
+                                        rs.getString("assigned_to_name"),
+                                        rs.getString("taken_by_name"),
+                                        rs.getTimestamp("created_at")
+                                });
+                            }
                         }
                     }
                     return rows;
@@ -808,6 +812,7 @@ public class CustomOrders extends JFrame {
                        payment_status, created_at
                 FROM custom_orders
                 WHERE assigned_to_user_id = ?
+                  AND (? IS NULL OR location_id = ?)
                 ORDER BY
                     CASE status
                         WHEN 'ASSIGNED' THEN 1
@@ -824,6 +829,8 @@ public class CustomOrders extends JFrame {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, SessionManager.getCurrentUserId());
+            bindCurrentLocation(ps, 2);
+            bindCurrentLocation(ps, 3);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     myOrdersModel.addRow(new Object[]{
@@ -872,6 +879,7 @@ public class CustomOrders extends JFrame {
                                    payment_status, created_at
                             FROM custom_orders
                             WHERE assigned_to_user_id = ?
+                              AND (? IS NULL OR location_id = ?)
                             ORDER BY
                                 CASE status
                                     WHEN 'ASSIGNED' THEN 1
@@ -888,6 +896,8 @@ public class CustomOrders extends JFrame {
                     try (Connection conn = DB.getConnection();
                          PreparedStatement ps = conn.prepareStatement(sql)) {
                         ps.setInt(1, SessionManager.getCurrentUserId());
+                        bindCurrentLocation(ps, 2);
+                        bindCurrentLocation(ps, 3);
                         try (ResultSet rs = ps.executeQuery()) {
                             while (rs.next()) {
                                 rows.add(new Object[]{
@@ -934,6 +944,10 @@ public class CustomOrders extends JFrame {
             JOptionPane.showMessageDialog(this, "Add at least one customized line item.");
             return;
         }
+        if (SessionManager.getCurrentLocationId() == null) {
+            JOptionPane.showMessageDialog(this, "Select a store before saving a custom order.");
+            return;
+        }
         LocalDate dueDate;
         try {
             dueDate = dueDateField == null ? null : dueDateField.getSelectedDate();
@@ -956,17 +970,21 @@ public class CustomOrders extends JFrame {
             return;
         }
         if ("ACCOUNT".equals(selectedPaymentMethod) && upfrontPaid.compareTo(BigDecimal.ZERO) > 0) {
-            JOptionPane.showMessageDialog(this, "Account charges use the unpaid balance. Leave upfront payment at 0.00, or choose Cash/Card/Cheque for an upfront payment.");
+            JOptionPane.showMessageDialog(this, "Account charges use the unpaid balance. Leave upfront payment at 0.00, or choose Cash/Card/Cheque/MMG for an upfront payment.");
             return;
         }
         String paymentReference = paymentReferenceField.getText().trim();
         if (upfrontPaid.compareTo(BigDecimal.ZERO) > 0
-                && ("CARD".equals(selectedPaymentMethod) || "CHEQUE".equals(selectedPaymentMethod))
+                && ("CARD".equals(selectedPaymentMethod) || "CHEQUE".equals(selectedPaymentMethod) || "MMG".equals(selectedPaymentMethod))
                 && paymentReference.isBlank()) {
-            JOptionPane.showMessageDialog(this, "Enter a payment reference for card or cheque payments.");
+            JOptionPane.showMessageDialog(this, "Enter a payment reference for card, cheque, or MMG payments.");
             return;
         }
         BigDecimal balanceDue = total.subtract(upfrontPaid);
+        DepositOverride depositOverride = resolveDepositOverride(total, upfrontPaid);
+        if (depositOverride == null) {
+            return;
+        }
         String paymentStatus = upfrontPaid.compareTo(BigDecimal.ZERO) == 0
                 ? "UNPAID"
                 : balanceDue.compareTo(BigDecimal.ZERO) == 0 ? "PAID" : "PARTIAL";
@@ -984,6 +1002,14 @@ public class CustomOrders extends JFrame {
                     paymentStatus,
                     SessionManager.getCurrentUserId(),
                     SessionManager.getCurrentUserDisplayName(),
+                    SessionManager.getCurrentLocationId(),
+                    SessionManager.getCurrentLocationName(),
+                    DeviceContextService.currentDeviceId(),
+                    DeviceContextService.currentDeviceName(),
+                    depositOverride.requiredDeposit(),
+                    depositOverride.overrideReason(),
+                    depositOverride.overrideByUserId(),
+                    depositOverride.overrideByName(),
                     buildOrderLineRequests()
             ));
                 JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved.");
@@ -1019,10 +1045,84 @@ public class CustomOrders extends JFrame {
                     blankToNull(orderLineModel.getValueAt(i, 17)),
                     parseNullableMoneyValue(orderLineModel.getValueAt(i, 18)),
                     parsePositiveInt(valueAt(orderLineModel, i, 20), 1),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 23)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 24)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 25)),
+                    discountUserIdForLine(i),
+                    discountUserNameForLine(i),
+                    blankToNull(orderLineModel.getValueAt(i, 26)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 27)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 28)),
+                    parseNullableMoneyValue(orderLineModel.getValueAt(i, 29)),
+                    blankToNull(orderLineModel.getValueAt(i, 30)),
+                    priceOverrideUserIdForLine(i),
+                    priceOverrideUserNameForLine(i),
                     buildPrintAddonRequests(printAddonsForModelRow(i))
             ));
         }
         return lines;
+    }
+
+    private DepositOverride resolveDepositOverride(BigDecimal total, BigDecimal upfrontPaid) {
+        BigDecimal requiredDeposit = calculateMinimumDepositRequired();
+        if (total.compareTo(BigDecimal.ZERO) <= 0 || requiredDeposit.compareTo(BigDecimal.ZERO) <= 0
+                || upfrontPaid.compareTo(requiredDeposit) >= 0) {
+            return new DepositOverride(requiredDeposit, null, null, null);
+        }
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_OVERRIDE")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(this,
+                    "This order requires at least " + formatMoney(requiredDeposit) + " upfront.",
+                    "Deposit Required",
+                    JOptionPane.WARNING_MESSAGE);
+            return null;
+        }
+        String reason = JOptionPane.showInputDialog(this,
+                "Required deposit is " + formatMoney(requiredDeposit) + ". Enter manager override reason:");
+        if (reason == null) {
+            return null;
+        }
+        reason = reason.trim();
+        if (reason.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Deposit override reason is required.");
+            return null;
+        }
+        return new DepositOverride(requiredDeposit, reason, SessionManager.getCurrentUserId(), SessionManager.getCurrentUserDisplayName());
+    }
+
+    private BigDecimal calculateMinimumDepositRequired() {
+        BigDecimal percent = CompanyCustomizationManager.loadCustomOrderSettings().minimumDepositPercent();
+        if (percent == null || percent.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return calculateOrderTotal().multiply(percent)
+                .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private Integer discountUserIdForLine(int row) {
+        BigDecimal discount = parseNullableMoneyValue(orderLineModel.getValueAt(row, 25));
+        if (discount == null || discount.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return SessionManager.getCurrentUserId();
+    }
+
+    private String discountUserNameForLine(int row) {
+        BigDecimal discount = parseNullableMoneyValue(orderLineModel.getValueAt(row, 25));
+        if (discount == null || discount.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return SessionManager.getCurrentUserDisplayName();
+    }
+
+    private Integer priceOverrideUserIdForLine(int row) {
+        String reason = valueAt(orderLineModel, row, 30);
+        return reason.isBlank() ? null : SessionManager.getCurrentUserId();
+    }
+
+    private String priceOverrideUserNameForLine(int row) {
+        String reason = valueAt(orderLineModel, row, 30);
+        return reason.isBlank() ? null : SessionManager.getCurrentUserDisplayName();
     }
 
     private List<PrintAddonRequest> buildPrintAddonRequests(List<PrintAddonLine> addons) {
@@ -1040,54 +1140,6 @@ public class CustomOrders extends JFrame {
             ));
         }
         return requests;
-    }
-
-    private void saveAssignment() {
-        if (selectedOrderId == null) {
-            JOptionPane.showMessageDialog(this, "Select an order first.");
-            return;
-        }
-        EmployeeOption employee = (EmployeeOption) assignEmployeeBox.getSelectedItem();
-        String status = manageStatusBox.getSelectedItem() == null ? "NEW" : manageStatusBox.getSelectedItem().toString();
-        boolean assigned = employee != null && employee.userId() != null;
-        if (assigned && "NEW".equals(status)) {
-            status = "ASSIGNED";
-        }
-
-        String sql = """
-                UPDATE custom_orders
-                SET assigned_to_user_id = ?, assigned_to_name = ?,
-                    assigned_by_user_id = ?, assigned_by_name = ?,
-                    assigned_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE assigned_at END,
-                    status = ?,
-                    completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP ELSE completed_at END,
-                    delivered_at = CASE WHEN ? = 'DELIVERED' THEN CURRENT_TIMESTAMP ELSE delivered_at END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE custom_order_id = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (assigned) {
-                ps.setInt(1, employee.userId());
-                ps.setString(2, employee.name());
-            } else {
-                ps.setNull(1, Types.INTEGER);
-                ps.setNull(2, Types.VARCHAR);
-            }
-            setNullableInteger(ps, 3, SessionManager.getCurrentUserId());
-            ps.setString(4, SessionManager.getCurrentUserDisplayName());
-            ps.setBoolean(5, assigned);
-            ps.setString(6, status);
-            ps.setString(7, status);
-            ps.setString(8, status);
-            ps.setLong(9, selectedOrderId);
-            ps.executeUpdate();
-            loadOrders();
-            loadMyOrders();
-            JOptionPane.showMessageDialog(this, "Order updated.");
-        } catch (SQLException ex) {
-            showDatabaseSetupMessage(ex);
-        }
     }
 
     private void openOrderLookupDialog() {
@@ -1110,9 +1162,19 @@ public class CustomOrders extends JFrame {
             @Override public void loadLookupOrders(DefaultTableModel model, String search) { CustomOrders.this.loadLookupOrders(model, search); }
             @Override public Long selectedLookupOrderId(JTable table, DefaultTableModel model) { return CustomOrders.this.selectedLookupOrderId(table, model); }
             @Override public void loadOrderDetails(Long orderId, JTextArea detailsArea) { CustomOrders.this.loadOrderDetails(orderId, detailsArea); }
+            @Override public List<CustomOrdersLookupTabPanel.LineReturnOption> loadReturnableLines(Long orderId) { return CustomOrders.this.loadReturnableLines(orderId); }
+            @Override public List<CustomOrdersLookupTabPanel.LineDeliveryOption> loadDeliverableLines(Long orderId) { return CustomOrders.this.loadDeliverableLines(orderId); }
             @Override public BigDecimal parseNullableMoneyValue(Object value) { return CustomOrders.this.parseNullableMoneyValue(value); }
             @Override public boolean applyLookupPayment(Long orderId, String amountText, String method, String reference, Component parent) { return CustomOrders.this.applyLookupPayment(orderId, amountText, method, reference, parent); }
+            @Override public boolean applyLookupRefund(Long orderId, String amountText, String method, String reference, String reason, Component parent) { return CustomOrders.this.applyLookupRefund(orderId, amountText, method, reference, reason, parent); }
+            @Override public boolean applyLookupLineRefund(Long orderId, List<CustomOrdersLookupTabPanel.LineReturnRequest> lines, String method, String reference, String reason, Component parent) { return CustomOrders.this.applyLookupLineRefund(orderId, lines, method, reference, reason, parent); }
             @Override public boolean markLookupOrderDelivered(Long orderId, Component parent) { return CustomOrders.this.markLookupOrderDelivered(orderId, parent); }
+            @Override public boolean markLookupLinesDelivered(Long orderId, List<Long> lineIds, String notes, Component parent) { return CustomOrders.this.markLookupLinesDelivered(orderId, lineIds, notes, parent); }
+            @Override public List<CustomOrdersLookupTabPanel.ProductionLineOption> loadProductionLines(Long orderId) { return CustomOrders.this.loadProductionLines(orderId); }
+            @Override public boolean updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus, String notes, Component parent) { return CustomOrders.this.updateProductionLines(orderId, lineIds, productionStatus, notes, parent); }
+            @Override public boolean canRefundPayments() { return PermissionManager.hasPermission("CUSTOM_ORDER_REFUNDS") || PermissionManager.hasPermission("CUSTOM_ORDER_LINE_RETURNS") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"); }
+            @Override public boolean canDeliverOrderLines() { return PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DELIVERY") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"); }
+            @Override public boolean canUpdateProduction() { return PermissionManager.hasPermission("CUSTOM_ORDER_PRODUCTION_STEPS") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"); }
             @Override public void refreshRelatedOrders() { loadOrders(); loadMyOrders(); }
         };
     }
@@ -1168,6 +1230,108 @@ public class CustomOrders extends JFrame {
         return Long.parseLong(model.getValueAt(table.convertRowIndexToModel(row), 0).toString());
     }
 
+    private List<CustomOrdersLookupTabPanel.LineReturnOption> loadReturnableLines(Long orderId) {
+        List<CustomOrdersLookupTabPanel.LineReturnOption> rows = new ArrayList<>();
+        String sql = """
+                SELECT custom_order_line_id,
+                       item_name,
+                       variant_name,
+                       COALESCE(line_total, unit_price, 0) AS line_total,
+                       COALESCE(returned_amount, 0) AS returned_amount,
+                       GREATEST(COALESCE(line_total, unit_price, 0) - COALESCE(returned_amount, 0), 0) AS remaining_amount
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND GREATEST(COALESCE(line_total, unit_price, 0) - COALESCE(returned_amount, 0), 0) > 0
+                ORDER BY sort_order, custom_order_line_id
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(new CustomOrdersLookupTabPanel.LineReturnOption(
+                            rs.getLong("custom_order_line_id"),
+                            rs.getString("item_name"),
+                            rs.getString("variant_name"),
+                            defaultZero(rs.getBigDecimal("line_total")),
+                            defaultZero(rs.getBigDecimal("returned_amount")),
+                            defaultZero(rs.getBigDecimal("remaining_amount"))
+                    ));
+                }
+            }
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+        }
+        return rows;
+    }
+
+    private List<CustomOrdersLookupTabPanel.LineDeliveryOption> loadDeliverableLines(Long orderId) {
+        List<CustomOrdersLookupTabPanel.LineDeliveryOption> rows = new ArrayList<>();
+        String sql = """
+                SELECT custom_order_line_id,
+                       item_name,
+                       variant_name,
+                       COALESCE(delivery_status, 'PENDING') AS delivery_status,
+                       COALESCE(return_status, 'NONE') AS return_status
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND COALESCE(delivery_status, 'PENDING') <> 'DELIVERED'
+                  AND COALESCE(return_status, 'NONE') <> 'FULL'
+                ORDER BY sort_order, custom_order_line_id
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(new CustomOrdersLookupTabPanel.LineDeliveryOption(
+                            rs.getLong("custom_order_line_id"),
+                            rs.getString("item_name"),
+                            rs.getString("variant_name"),
+                            rs.getString("delivery_status"),
+                            rs.getString("return_status")
+                    ));
+                }
+            }
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+        }
+        return rows;
+    }
+
+    private List<CustomOrdersLookupTabPanel.ProductionLineOption> loadProductionLines(Long orderId) {
+        List<CustomOrdersLookupTabPanel.ProductionLineOption> rows = new ArrayList<>();
+        String sql = """
+                SELECT custom_order_line_id,
+                       item_name,
+                       variant_name,
+                       COALESCE(production_status, 'NOT_STARTED') AS production_status,
+                       COALESCE(delivery_status, 'PENDING') AS delivery_status
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND COALESCE(return_status, 'NONE') <> 'FULL'
+                ORDER BY sort_order, custom_order_line_id
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(new CustomOrdersLookupTabPanel.ProductionLineOption(
+                            rs.getLong("custom_order_line_id"),
+                            rs.getString("item_name"),
+                            rs.getString("variant_name"),
+                            displayProductionStatus(rs.getString("production_status")),
+                            rs.getString("delivery_status")
+                    ));
+                }
+            }
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+        }
+        return rows;
+    }
+
     private boolean applyLookupPayment(Long orderId, String amountText, String methodLabel, String reference, Component parent) {
         BigDecimal amount = parseMoney(amountText, "Payment amount");
         if (amount == null) {
@@ -1178,11 +1342,17 @@ public class CustomOrders extends JFrame {
             return false;
         }
         String method = methodLabel.toUpperCase().replace(" ", "_");
-        if (("CARD".equals(method) || "CHEQUE".equals(method)) && reference.isBlank()) {
-            JOptionPane.showMessageDialog(parent, "Enter a payment reference for card or cheque payments.");
+        if (requiresPaymentReference(method) && reference.isBlank()) {
+            JOptionPane.showMessageDialog(parent, "Enter a payment reference for card, cheque, or MMG payments.");
             return false;
         }
-        String lockSql = "SELECT COALESCE(balance_due, total_amount) AS balance_due FROM custom_orders WHERE custom_order_id = ? FOR UPDATE";
+        String lockSql = """
+                SELECT custom_order_id, order_number, customer_id,
+                       COALESCE(balance_due, total_amount) AS balance_due
+                FROM custom_orders
+                WHERE custom_order_id = ?
+                FOR UPDATE
+                """;
         String updateSql = """
                 UPDATE custom_orders
                 SET amount_paid = COALESCE(amount_paid, 0) + ?,
@@ -1196,17 +1366,32 @@ public class CustomOrders extends JFrame {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?)
+                """;
+        String accountUpdateSql = """
+                UPDATE customer_accounts
+                SET current_balance = GREATEST(COALESCE(current_balance, 0) - ?, 0)
+                WHERE customer_id = ?
+                """;
+        String accountTransactionSql = """
+                INSERT INTO customer_account_transactions (
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, ?)
                 """;
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
             try (PreparedStatement lockPs = conn.prepareStatement(lockSql);
                  PreparedStatement updatePs = conn.prepareStatement(updateSql);
-                 PreparedStatement paymentPs = conn.prepareStatement(paymentSql)) {
+                 PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
+                 PreparedStatement accountUpdatePs = conn.prepareStatement(accountUpdateSql);
+                 PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
                 lockPs.setLong(1, orderId);
                 BigDecimal balanceDue;
+                int customerId;
+                String orderNumber;
                 try (ResultSet rs = lockPs.executeQuery()) {
                     if (!rs.next()) {
                         JOptionPane.showMessageDialog(parent, "Order was not found.");
@@ -1214,6 +1399,8 @@ public class CustomOrders extends JFrame {
                         return false;
                     }
                     balanceDue = rs.getBigDecimal("balance_due");
+                    customerId = rs.getInt("customer_id");
+                    orderNumber = rs.getString("order_number");
                 }
                 if (amount.compareTo(balanceDue) > 0) {
                     JOptionPane.showMessageDialog(parent, "Payment cannot be more than the balance due.");
@@ -1234,7 +1421,21 @@ public class CustomOrders extends JFrame {
                 paymentPs.setString(4, reference.isBlank() ? null : reference);
                 setNullableInteger(paymentPs, 5, SessionManager.getCurrentUserId());
                 paymentPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                paymentPs.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
+                paymentPs.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
                 paymentPs.executeUpdate();
+                accountUpdatePs.setBigDecimal(1, amount);
+                accountUpdatePs.setInt(2, customerId);
+                accountUpdatePs.executeUpdate();
+                accountTransactionPs.setInt(1, customerId);
+                accountTransactionPs.setLong(2, orderId);
+                accountTransactionPs.setBigDecimal(3, amount.negate());
+                accountTransactionPs.setString(4, "Custom order payment applied. order_number=" + orderNumber + ", method=" + method);
+                accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
+                accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
+                accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.executeUpdate();
+                CustomOrderAuditService.recordAudit(conn, orderId, "PAYMENT", "amount_paid", null, amount, "Payment applied by order lookup");
                 conn.commit();
             } catch (SQLException ex) {
                 conn.rollback();
@@ -1250,7 +1451,533 @@ public class CustomOrders extends JFrame {
         }
     }
 
+    private boolean applyLookupRefund(Long orderId, String amountText, String methodLabel, String reference, String reason, Component parent) {
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_REFUNDS") && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(parent, "You do not have permission to refund custom order payments.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        BigDecimal amount = parseMoney(amountText, "Refund amount");
+        if (amount == null) {
+            return false;
+        }
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            JOptionPane.showMessageDialog(parent, "Refund amount must be greater than zero.");
+            return false;
+        }
+        String method = methodLabel.toUpperCase().replace(" ", "_");
+        if (requiresPaymentReference(method) && reference.isBlank()) {
+            JOptionPane.showMessageDialog(parent, "Enter a refund reference for card, cheque, or MMG refunds.");
+            return false;
+        }
+        if (reason == null || reason.isBlank()) {
+            JOptionPane.showMessageDialog(parent, "A refund reason is required.");
+            return false;
+        }
+        if (!approveLargeRefund(amount, parent)) {
+            return false;
+        }
+        boolean paymentMistakeRefund = isPaymentMistakeRefund(reason);
+
+        String lockSql = """
+                SELECT custom_order_id, order_number, customer_id,
+                       COALESCE(total_amount, 0) AS total_amount,
+                       COALESCE(amount_paid, 0) AS amount_paid,
+                       COALESCE(balance_due, 0) AS balance_due
+                FROM custom_orders
+                WHERE custom_order_id = ?
+                FOR UPDATE
+                """;
+        String paymentMistakeUpdateSql = """
+                UPDATE custom_orders
+                SET amount_paid = GREATEST(COALESCE(amount_paid, 0) - ?, 0),
+                    balance_due = GREATEST(COALESCE(balance_due, 0) + ?, 0),
+                    payment_method = ?,
+                    payment_reference = ?,
+                    payment_status = CASE
+                        WHEN GREATEST(COALESCE(amount_paid, 0) - ?, 0) <= 0 THEN 'UNPAID'
+                        WHEN GREATEST(COALESCE(balance_due, 0) + ?, 0) <= 0 THEN 'PAID'
+                        ELSE 'PARTIAL'
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_order_id = ?
+                """;
+        String orderAdjustmentUpdateSql = """
+                UPDATE custom_orders
+                SET total_amount = ?,
+                    amount_paid = ?,
+                    balance_due = ?,
+                    payment_method = ?,
+                    payment_reference = ?,
+                    payment_status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_order_id = ?
+                """;
+        String refundSql = """
+                INSERT INTO custom_order_payments (
+                    custom_order_id, payment_amount, payment_method, payment_reference,
+                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?)
+                """;
+        String accountUpdateSql = """
+                UPDATE customer_accounts
+                SET current_balance = COALESCE(current_balance, 0) + ?
+                WHERE customer_id = ?
+                """;
+        String accountTransactionSql = """
+                INSERT INTO customer_account_transactions (
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?)
+                """;
+
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement lockPs = conn.prepareStatement(lockSql);
+                 PreparedStatement paymentMistakeUpdatePs = conn.prepareStatement(paymentMistakeUpdateSql);
+                 PreparedStatement orderAdjustmentUpdatePs = conn.prepareStatement(orderAdjustmentUpdateSql);
+                 PreparedStatement refundPs = conn.prepareStatement(refundSql);
+                 PreparedStatement accountUpdatePs = conn.prepareStatement(accountUpdateSql);
+                 PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
+                lockPs.setLong(1, orderId);
+                BigDecimal totalAmount;
+                BigDecimal amountPaid;
+                BigDecimal balanceDue;
+                int customerId;
+                String orderNumber;
+                try (ResultSet rs = lockPs.executeQuery()) {
+                    if (!rs.next()) {
+                        JOptionPane.showMessageDialog(parent, "Order was not found.");
+                        conn.rollback();
+                        return false;
+                    }
+                    totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
+                    customerId = rs.getInt("customer_id");
+                    orderNumber = rs.getString("order_number");
+                }
+                if (paymentMistakeRefund && amount.compareTo(amountPaid) > 0) {
+                    JOptionPane.showMessageDialog(parent, "Payment mistake refund cannot be more than the amount paid on this order.");
+                    conn.rollback();
+                    return false;
+                }
+                if (!paymentMistakeRefund && amount.compareTo(totalAmount) > 0) {
+                    JOptionPane.showMessageDialog(parent, "Order adjustment refund cannot be more than the order total.");
+                    conn.rollback();
+                    return false;
+                }
+
+                BigDecimal balanceReduction = BigDecimal.ZERO;
+                BigDecimal actualRefundAmount = amount;
+                BigDecimal accountLedgerAmount = amount;
+                if (paymentMistakeRefund) {
+                    paymentMistakeUpdatePs.setBigDecimal(1, amount);
+                    paymentMistakeUpdatePs.setBigDecimal(2, amount);
+                    paymentMistakeUpdatePs.setString(3, method);
+                    paymentMistakeUpdatePs.setString(4, reference.isBlank() ? null : reference);
+                    paymentMistakeUpdatePs.setBigDecimal(5, amount);
+                    paymentMistakeUpdatePs.setBigDecimal(6, amount);
+                    paymentMistakeUpdatePs.setLong(7, orderId);
+                    paymentMistakeUpdatePs.executeUpdate();
+                } else {
+                    balanceReduction = amount.min(balanceDue);
+                    actualRefundAmount = amount.subtract(balanceReduction);
+                    accountLedgerAmount = balanceReduction.negate();
+                    BigDecimal newTotal = totalAmount.subtract(amount).max(BigDecimal.ZERO);
+                    BigDecimal newAmountPaid = amountPaid.subtract(actualRefundAmount).max(BigDecimal.ZERO);
+                    BigDecimal newBalanceDue = balanceDue.subtract(balanceReduction).max(BigDecimal.ZERO);
+                    String newPaymentStatus = paymentStatusFor(newAmountPaid, newBalanceDue);
+                    orderAdjustmentUpdatePs.setBigDecimal(1, newTotal);
+                    orderAdjustmentUpdatePs.setBigDecimal(2, newAmountPaid);
+                    orderAdjustmentUpdatePs.setBigDecimal(3, newBalanceDue);
+                    orderAdjustmentUpdatePs.setString(4, method);
+                    orderAdjustmentUpdatePs.setString(5, reference.isBlank() ? null : reference);
+                    orderAdjustmentUpdatePs.setString(6, newPaymentStatus);
+                    orderAdjustmentUpdatePs.setLong(7, orderId);
+                    orderAdjustmentUpdatePs.executeUpdate();
+                }
+
+                if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
+                    refundPs.setLong(1, orderId);
+                    refundPs.setBigDecimal(2, actualRefundAmount);
+                    refundPs.setString(3, method);
+                    refundPs.setString(4, reference.isBlank() ? null : reference);
+                    setNullableInteger(refundPs, 5, SessionManager.getCurrentUserId());
+                    refundPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                    refundPs.setString(7, reason);
+                    refundPs.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
+                    refundPs.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+                    refundPs.executeUpdate();
+                }
+
+                if (paymentMistakeRefund) {
+                    accountUpdatePs.setBigDecimal(1, amount);
+                    accountUpdatePs.setInt(2, customerId);
+                    accountUpdatePs.executeUpdate();
+                } else if (balanceReduction.compareTo(BigDecimal.ZERO) > 0) {
+                    try (PreparedStatement accountCreditPs = conn.prepareStatement("""
+                            UPDATE customer_accounts
+                            SET current_balance = GREATEST(COALESCE(current_balance, 0) - ?, 0)
+                            WHERE customer_id = ?
+                            """)) {
+                        accountCreditPs.setBigDecimal(1, balanceReduction);
+                        accountCreditPs.setInt(2, customerId);
+                        accountCreditPs.executeUpdate();
+                    }
+                }
+
+                String note = "Custom order refund. order_number=" + orderNumber
+                        + ", method=" + method
+                        + ", reason=" + reason
+                        + ", order_adjustment=" + amount
+                        + ", balance_reduction=" + balanceReduction
+                        + ", cash_refund=" + actualRefundAmount
+                        + (paymentMistakeRefund ? ", balance_reopened=true" : ", order_total_adjusted=true");
+                accountTransactionPs.setInt(1, customerId);
+                accountTransactionPs.setLong(2, orderId);
+                accountTransactionPs.setBigDecimal(3, accountLedgerAmount);
+                accountTransactionPs.setString(4, note);
+                accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
+                accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
+                accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.executeUpdate();
+
+                CustomOrderAuditService.recordAudit(conn, orderId, "REFUND", "amount_paid", amountPaid, amountPaid.subtract(actualRefundAmount), reason);
+                if (!paymentMistakeRefund) {
+                    CustomOrderAuditService.recordAudit(conn, orderId, "REFUND", "total_amount", totalAmount, totalAmount.subtract(amount).max(BigDecimal.ZERO), reason);
+                    if (balanceReduction.compareTo(BigDecimal.ZERO) > 0) {
+                        CustomOrderAuditService.recordAudit(conn, orderId, "REFUND", "balance_due", balanceDue, balanceDue.subtract(balanceReduction).max(BigDecimal.ZERO), reason);
+                    }
+                }
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+            JOptionPane.showMessageDialog(parent, "Refund recorded.");
+            return true;
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+            return false;
+        }
+    }
+
+    private boolean applyLookupLineRefund(Long orderId, List<CustomOrdersLookupTabPanel.LineReturnRequest> requests, String methodLabel, String reference, String reason, Component parent) {
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_LINE_RETURNS")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_REFUNDS")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(parent, "You do not have permission to process custom order line returns.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        if (requests == null || requests.isEmpty()) {
+            JOptionPane.showMessageDialog(parent, "Select at least one order line to refund.");
+            return false;
+        }
+        String method = methodLabel.toUpperCase().replace(" ", "_");
+        if (requiresPaymentReference(method) && reference.isBlank()) {
+            JOptionPane.showMessageDialog(parent, "Enter a refund reference for card, cheque, or MMG refunds.");
+            return false;
+        }
+        if (reason == null || reason.isBlank()) {
+            JOptionPane.showMessageDialog(parent, "A refund reason is required.");
+            return false;
+        }
+
+        BigDecimal amount = BigDecimal.ZERO;
+        for (CustomOrdersLookupTabPanel.LineReturnRequest request : requests) {
+            if (request.refundAmount() == null || request.refundAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                JOptionPane.showMessageDialog(parent, "Refund amount must be greater than zero for every selected line.");
+                return false;
+            }
+            amount = amount.add(request.refundAmount());
+        }
+
+        boolean paymentMistakeRefund = isPaymentMistakeRefund(reason);
+        if (!approveLargeRefund(amount, parent)) {
+            return false;
+        }
+        String lockSql = """
+                SELECT custom_order_id, order_number, customer_id,
+                       COALESCE(total_amount, 0) AS total_amount,
+                       COALESCE(amount_paid, 0) AS amount_paid,
+                       COALESCE(balance_due, 0) AS balance_due
+                FROM custom_orders
+                WHERE custom_order_id = ?
+                FOR UPDATE
+                """;
+        String lineSql = """
+                SELECT l.custom_order_line_id, l.custom_item_id, l.custom_variant_id,
+                       l.item_name, l.variant_name,
+                       COALESCE(l.line_total, l.unit_price, 0) AS line_total,
+                       COALESCE(l.returned_amount, 0) AS returned_amount,
+                       GREATEST(COALESCE(l.line_total, l.unit_price, 0) - COALESCE(l.returned_amount, 0), 0) AS remaining_amount
+                FROM custom_order_lines l
+                WHERE l.custom_order_id = ?
+                  AND l.custom_order_line_id = ?
+                FOR UPDATE
+                """;
+        String paymentMistakeUpdateSql = """
+                UPDATE custom_orders
+                SET amount_paid = GREATEST(COALESCE(amount_paid, 0) - ?, 0),
+                    balance_due = GREATEST(COALESCE(balance_due, 0) + ?, 0),
+                    payment_method = ?,
+                    payment_reference = ?,
+                    payment_status = CASE
+                        WHEN GREATEST(COALESCE(amount_paid, 0) - ?, 0) <= 0 THEN 'UNPAID'
+                        WHEN GREATEST(COALESCE(balance_due, 0) + ?, 0) <= 0 THEN 'PAID'
+                        ELSE 'PARTIAL'
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_order_id = ?
+                """;
+        String orderAdjustmentUpdateSql = """
+                UPDATE custom_orders
+                SET total_amount = ?,
+                    amount_paid = ?,
+                    balance_due = ?,
+                    payment_method = ?,
+                    payment_reference = ?,
+                    payment_status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_order_id = ?
+                """;
+        String refundSql = """
+                INSERT INTO custom_order_payments (
+                    custom_order_id, payment_amount, payment_method, payment_reference,
+                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?)
+                """;
+        String lineReturnSql = """
+                INSERT INTO custom_order_line_returns (
+                    custom_order_id, custom_order_line_id, custom_item_id, custom_variant_id,
+                    item_name, variant_name, return_type, restock_action,
+                    refund_amount, balance_reduction, payout_amount, reason,
+                    created_by_user_id, created_by_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        String lineUpdateSql = """
+                UPDATE custom_order_lines
+                SET returned_amount = LEAST(COALESCE(line_total, unit_price, 0), COALESCE(returned_amount, 0) + ?),
+                    return_status = CASE
+                        WHEN LEAST(COALESCE(line_total, unit_price, 0), COALESCE(returned_amount, 0) + ?) >= COALESCE(line_total, unit_price, 0) THEN 'FULL'
+                        WHEN LEAST(COALESCE(line_total, unit_price, 0), COALESCE(returned_amount, 0) + ?) > 0 THEN 'PARTIAL'
+                        ELSE 'NONE'
+                    END
+                WHERE custom_order_line_id = ?
+                """;
+        String accountTransactionSql = """
+                INSERT INTO customer_account_transactions (
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?)
+                """;
+
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement lockPs = conn.prepareStatement(lockSql);
+                 PreparedStatement linePs = conn.prepareStatement(lineSql);
+                 PreparedStatement paymentMistakeUpdatePs = conn.prepareStatement(paymentMistakeUpdateSql);
+                 PreparedStatement orderAdjustmentUpdatePs = conn.prepareStatement(orderAdjustmentUpdateSql);
+                 PreparedStatement refundPs = conn.prepareStatement(refundSql);
+                 PreparedStatement lineReturnPs = conn.prepareStatement(lineReturnSql);
+                 PreparedStatement lineUpdatePs = conn.prepareStatement(lineUpdateSql);
+                 PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
+                lockPs.setLong(1, orderId);
+                BigDecimal totalAmount;
+                BigDecimal amountPaid;
+                BigDecimal balanceDue;
+                int customerId;
+                String orderNumber;
+                try (ResultSet rs = lockPs.executeQuery()) {
+                    if (!rs.next()) {
+                        JOptionPane.showMessageDialog(parent, "Order was not found.");
+                        conn.rollback();
+                        return false;
+                    }
+                    totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
+                    balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
+                    customerId = rs.getInt("customer_id");
+                    orderNumber = rs.getString("order_number");
+                }
+
+                List<LineReturnRow> returnRows = new ArrayList<>();
+                for (CustomOrdersLookupTabPanel.LineReturnRequest request : requests) {
+                    linePs.setLong(1, orderId);
+                    linePs.setLong(2, request.lineId());
+                    try (ResultSet rs = linePs.executeQuery()) {
+                        if (!rs.next()) {
+                            JOptionPane.showMessageDialog(parent, "One of the selected order lines was not found.");
+                            conn.rollback();
+                            return false;
+                        }
+                        BigDecimal remaining = defaultZero(rs.getBigDecimal("remaining_amount"));
+                        if (request.refundAmount().compareTo(remaining) > 0) {
+                            JOptionPane.showMessageDialog(parent, "Refund amount cannot be more than the remaining refundable amount for " + rs.getString("item_name") + ".");
+                            conn.rollback();
+                            return false;
+                        }
+                        returnRows.add(new LineReturnRow(
+                                rs.getLong("custom_order_line_id"),
+                                rs.getLong("custom_item_id"),
+                                nullableLong(rs, "custom_variant_id"),
+                                rs.getString("item_name"),
+                                rs.getString("variant_name"),
+                                defaultZero(rs.getBigDecimal("line_total")),
+                                defaultZero(rs.getBigDecimal("returned_amount")),
+                                request.refundAmount(),
+                                request.partial(),
+                                normalizeRestockAction(request.restockAction())
+                        ));
+                    }
+                }
+
+                if (paymentMistakeRefund && amount.compareTo(amountPaid) > 0) {
+                    JOptionPane.showMessageDialog(parent, "Payment mistake refund cannot be more than the amount paid on this order.");
+                    conn.rollback();
+                    return false;
+                }
+                if (!paymentMistakeRefund && amount.compareTo(totalAmount) > 0) {
+                    JOptionPane.showMessageDialog(parent, "Line return cannot be more than the order total.");
+                    conn.rollback();
+                    return false;
+                }
+
+                BigDecimal balanceReduction = BigDecimal.ZERO;
+                BigDecimal actualRefundAmount = amount;
+                if (paymentMistakeRefund) {
+                    paymentMistakeUpdatePs.setBigDecimal(1, amount);
+                    paymentMistakeUpdatePs.setBigDecimal(2, amount);
+                    paymentMistakeUpdatePs.setString(3, method);
+                    paymentMistakeUpdatePs.setString(4, reference.isBlank() ? null : reference);
+                    paymentMistakeUpdatePs.setBigDecimal(5, amount);
+                    paymentMistakeUpdatePs.setBigDecimal(6, amount);
+                    paymentMistakeUpdatePs.setLong(7, orderId);
+                    paymentMistakeUpdatePs.executeUpdate();
+                } else {
+                    balanceReduction = amount.min(balanceDue);
+                    actualRefundAmount = amount.subtract(balanceReduction);
+                    BigDecimal newTotal = totalAmount.subtract(amount).max(BigDecimal.ZERO);
+                    BigDecimal newAmountPaid = amountPaid.subtract(actualRefundAmount).max(BigDecimal.ZERO);
+                    BigDecimal newBalanceDue = balanceDue.subtract(balanceReduction).max(BigDecimal.ZERO);
+                    String newPaymentStatus = paymentStatusFor(newAmountPaid, newBalanceDue);
+                    orderAdjustmentUpdatePs.setBigDecimal(1, newTotal);
+                    orderAdjustmentUpdatePs.setBigDecimal(2, newAmountPaid);
+                    orderAdjustmentUpdatePs.setBigDecimal(3, newBalanceDue);
+                    orderAdjustmentUpdatePs.setString(4, method);
+                    orderAdjustmentUpdatePs.setString(5, reference.isBlank() ? null : reference);
+                    orderAdjustmentUpdatePs.setString(6, newPaymentStatus);
+                    orderAdjustmentUpdatePs.setLong(7, orderId);
+                    orderAdjustmentUpdatePs.executeUpdate();
+                }
+
+                if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
+                    refundPs.setLong(1, orderId);
+                    refundPs.setBigDecimal(2, actualRefundAmount);
+                    refundPs.setString(3, method);
+                    refundPs.setString(4, reference.isBlank() ? null : reference);
+                    setNullableInteger(refundPs, 5, SessionManager.getCurrentUserId());
+                    refundPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                    refundPs.setString(7, reason);
+                    refundPs.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
+                    refundPs.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+                    refundPs.executeUpdate();
+                }
+
+                if (paymentMistakeRefund) {
+                    try (PreparedStatement accountDebitPs = conn.prepareStatement("""
+                            UPDATE customer_accounts
+                            SET current_balance = COALESCE(current_balance, 0) + ?
+                            WHERE customer_id = ?
+                            """)) {
+                        accountDebitPs.setBigDecimal(1, amount);
+                        accountDebitPs.setInt(2, customerId);
+                        accountDebitPs.executeUpdate();
+                    }
+                } else if (balanceReduction.compareTo(BigDecimal.ZERO) > 0) {
+                    try (PreparedStatement accountCreditPs = conn.prepareStatement("""
+                            UPDATE customer_accounts
+                            SET current_balance = GREATEST(COALESCE(current_balance, 0) - ?, 0)
+                            WHERE customer_id = ?
+                            """)) {
+                        accountCreditPs.setBigDecimal(1, balanceReduction);
+                        accountCreditPs.setInt(2, customerId);
+                        accountCreditPs.executeUpdate();
+                    }
+                }
+
+                BigDecimal balanceLeft = balanceReduction;
+                for (LineReturnRow row : returnRows) {
+                    BigDecimal lineBalanceReduction = paymentMistakeRefund ? BigDecimal.ZERO : row.refundAmount().min(balanceLeft);
+                    BigDecimal linePayout = row.refundAmount().subtract(lineBalanceReduction);
+                    balanceLeft = balanceLeft.subtract(lineBalanceReduction).max(BigDecimal.ZERO);
+                    lineReturnPs.setLong(1, orderId);
+                    lineReturnPs.setLong(2, row.lineId());
+                    lineReturnPs.setLong(3, row.itemId());
+                    setNullableLong(lineReturnPs, 4, row.variantId());
+                    lineReturnPs.setString(5, row.itemName());
+                    lineReturnPs.setString(6, row.variantName());
+                    lineReturnPs.setString(7, row.partial() || row.returnedAmount().add(row.refundAmount()).compareTo(row.lineTotal()) < 0 ? "PARTIAL" : "FULL");
+                    lineReturnPs.setString(8, row.restockAction());
+                    lineReturnPs.setBigDecimal(9, row.refundAmount());
+                    lineReturnPs.setBigDecimal(10, lineBalanceReduction);
+                    lineReturnPs.setBigDecimal(11, linePayout);
+                    lineReturnPs.setString(12, reason);
+                    setNullableInteger(lineReturnPs, 13, SessionManager.getCurrentUserId());
+                    lineReturnPs.setString(14, SessionManager.getCurrentUserDisplayName());
+                    lineReturnPs.setString(15, blankToNull(DeviceContextService.currentDeviceId()));
+                    lineReturnPs.setString(16, blankToNull(DeviceContextService.currentDeviceName()));
+                    lineReturnPs.executeUpdate();
+
+                    if (!paymentMistakeRefund) {
+                        lineUpdatePs.setBigDecimal(1, row.refundAmount());
+                        lineUpdatePs.setBigDecimal(2, row.refundAmount());
+                        lineUpdatePs.setBigDecimal(3, row.refundAmount());
+                        lineUpdatePs.setLong(4, row.lineId());
+                        lineUpdatePs.executeUpdate();
+                        restockReturnedLine(conn, row);
+                    }
+                }
+
+                String note = "Custom order line return. order_number=" + orderNumber
+                        + ", method=" + method
+                        + ", reason=" + reason
+                        + ", line_adjustment=" + amount
+                        + ", balance_reduction=" + balanceReduction
+                        + ", cash_refund=" + actualRefundAmount
+                        + (paymentMistakeRefund ? ", balance_reopened=true" : ", order_total_adjusted=true");
+                accountTransactionPs.setInt(1, customerId);
+                accountTransactionPs.setLong(2, orderId);
+                accountTransactionPs.setBigDecimal(3, paymentMistakeRefund ? amount : amount.negate());
+                accountTransactionPs.setString(4, note);
+                accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
+                accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
+                accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.executeUpdate();
+
+                CustomOrderAuditService.recordAudit(conn, orderId, "LINE_RETURN", "line_return_amount", null, amount, reason);
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+            JOptionPane.showMessageDialog(parent, "Line return recorded.");
+            return true;
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+            return false;
+        }
+    }
+
     private boolean markLookupOrderDelivered(Long orderId, Component parent) {
+        String lockSql = "SELECT status FROM custom_orders WHERE custom_order_id = ? FOR UPDATE";
         String sql = """
                 UPDATE custom_orders
                 SET status = 'DELIVERED',
@@ -1259,19 +1986,357 @@ public class CustomOrders extends JFrame {
                 WHERE custom_order_id = ?
                   AND COALESCE(balance_due, 0) <= 0
                 """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, orderId);
-            int updated = ps.executeUpdate();
-            if (updated == 0) {
-                JOptionPane.showMessageDialog(parent, "This order still has a balance due. Complete payment before marking it delivered.");
-                return false;
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement lockPs = conn.prepareStatement(lockSql);
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                lockPs.setLong(1, orderId);
+                String oldStatus = null;
+                try (ResultSet rs = lockPs.executeQuery()) {
+                    if (rs.next()) {
+                        oldStatus = rs.getString("status");
+                    }
+                }
+                ps.setLong(1, orderId);
+                int updated = ps.executeUpdate();
+                if (updated == 0) {
+                    JOptionPane.showMessageDialog(parent, "This order still has a balance due. Complete payment before marking it delivered.");
+                    conn.rollback();
+                    return false;
+                }
+                if (!"DELIVERED".equals(oldStatus)) {
+                    CustomOrderAuditService.recordStatus(conn, orderId, oldStatus, "DELIVERED", "Delivered from order lookup");
+                }
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
             }
             JOptionPane.showMessageDialog(parent, "Order marked delivered.");
             return true;
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
             return false;
+        }
+    }
+
+    private boolean updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus, String notes, Component parent) {
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_PRODUCTION_STEPS")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(parent, "You do not have permission to update custom order production steps.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        if (lineIds == null || lineIds.isEmpty()) {
+            JOptionPane.showMessageDialog(parent, "Select at least one order line to update.");
+            return false;
+        }
+        String normalizedStatus = normalizeProductionStatus(productionStatus);
+        String lineSql = """
+                SELECT custom_order_line_id, custom_item_id, custom_variant_id, item_name, variant_name,
+                       COALESCE(production_status, 'NOT_STARTED') AS production_status
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND custom_order_line_id = ?
+                FOR UPDATE
+                """;
+        String updateSql = """
+                UPDATE custom_order_lines
+                SET production_status = ?,
+                    production_updated_at = CURRENT_TIMESTAMP,
+                    production_updated_by_user_id = ?,
+                    production_updated_by_name = ?
+                WHERE custom_order_line_id = ?
+                """;
+        String historySql = """
+                INSERT INTO custom_order_line_production_history (
+                    custom_order_id, custom_order_line_id, custom_item_id, custom_variant_id,
+                    item_name, variant_name, old_status, new_status, notes,
+                    updated_by_user_id, updated_by_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement linePs = conn.prepareStatement(lineSql);
+                 PreparedStatement updatePs = conn.prepareStatement(updateSql);
+                 PreparedStatement historyPs = conn.prepareStatement(historySql)) {
+                for (Long lineId : lineIds) {
+                    linePs.setLong(1, orderId);
+                    linePs.setLong(2, lineId);
+                    try (ResultSet rs = linePs.executeQuery()) {
+                        if (!rs.next()) {
+                            JOptionPane.showMessageDialog(parent, "One of the selected order lines was not found.");
+                            conn.rollback();
+                            return false;
+                        }
+                        String oldStatus = rs.getString("production_status");
+                        updatePs.setString(1, normalizedStatus);
+                        setNullableInteger(updatePs, 2, SessionManager.getCurrentUserId());
+                        updatePs.setString(3, SessionManager.getCurrentUserDisplayName());
+                        updatePs.setLong(4, lineId);
+                        updatePs.executeUpdate();
+
+                        historyPs.setLong(1, orderId);
+                        historyPs.setLong(2, lineId);
+                        setNullableLong(historyPs, 3, nullableLong(rs, "custom_item_id"));
+                        setNullableLong(historyPs, 4, nullableLong(rs, "custom_variant_id"));
+                        historyPs.setString(5, rs.getString("item_name"));
+                        historyPs.setString(6, rs.getString("variant_name"));
+                        historyPs.setString(7, oldStatus);
+                        historyPs.setString(8, normalizedStatus);
+                        historyPs.setString(9, blankToNull(notes));
+                        setNullableInteger(historyPs, 10, SessionManager.getCurrentUserId());
+                        historyPs.setString(11, SessionManager.getCurrentUserDisplayName());
+                        historyPs.setString(12, blankToNull(DeviceContextService.currentDeviceId()));
+                        historyPs.setString(13, blankToNull(DeviceContextService.currentDeviceName()));
+                        historyPs.executeUpdate();
+                    }
+                }
+                CustomOrderAuditService.recordAudit(conn, orderId, "PRODUCTION_STEP", "production_status", null, normalizedStatus, notes == null || notes.isBlank() ? "Production updated" : notes);
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+            JOptionPane.showMessageDialog(parent, "Production checklist updated.");
+            return true;
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+            return false;
+        }
+    }
+
+    private boolean markLookupLinesDelivered(Long orderId, List<Long> lineIds, String notes, Component parent) {
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DELIVERY")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(parent, "You do not have permission to deliver individual order lines.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        if (lineIds == null || lineIds.isEmpty()) {
+            JOptionPane.showMessageDialog(parent, "Select at least one order line to deliver.");
+            return false;
+        }
+        String orderLockSql = """
+                SELECT status, COALESCE(balance_due, 0) AS balance_due
+                FROM custom_orders
+                WHERE custom_order_id = ?
+                FOR UPDATE
+                """;
+        String lineSql = """
+                SELECT custom_order_line_id, custom_item_id, custom_variant_id, item_name, variant_name,
+                       COALESCE(delivery_status, 'PENDING') AS delivery_status,
+                       COALESCE(return_status, 'NONE') AS return_status
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND custom_order_line_id = ?
+                FOR UPDATE
+                """;
+        String lineUpdateSql = """
+                UPDATE custom_order_lines
+                SET delivery_status = 'DELIVERED',
+                    delivered_at = CURRENT_TIMESTAMP,
+                    delivered_by_user_id = ?,
+                    delivered_by_name = ?
+                WHERE custom_order_line_id = ?
+                """;
+        String deliverySql = """
+                INSERT INTO custom_order_line_deliveries (
+                    custom_order_id, custom_order_line_id, custom_item_id, custom_variant_id,
+                    item_name, variant_name, delivered_by_user_id, delivered_by_name,
+                    delivery_notes, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        String remainingLinesSql = """
+                SELECT COUNT(*) AS remaining_lines
+                FROM custom_order_lines
+                WHERE custom_order_id = ?
+                  AND COALESCE(delivery_status, 'PENDING') <> 'DELIVERED'
+                  AND COALESCE(return_status, 'NONE') <> 'FULL'
+                """;
+        String orderDeliveredSql = """
+                UPDATE custom_orders
+                SET status = 'DELIVERED',
+                    delivered_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_order_id = ?
+                  AND COALESCE(balance_due, 0) <= 0
+                """;
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement orderLockPs = conn.prepareStatement(orderLockSql);
+                 PreparedStatement linePs = conn.prepareStatement(lineSql);
+                 PreparedStatement lineUpdatePs = conn.prepareStatement(lineUpdateSql);
+                 PreparedStatement deliveryPs = conn.prepareStatement(deliverySql);
+                 PreparedStatement remainingLinesPs = conn.prepareStatement(remainingLinesSql);
+                 PreparedStatement orderDeliveredPs = conn.prepareStatement(orderDeliveredSql)) {
+                orderLockPs.setLong(1, orderId);
+                String oldStatus;
+                BigDecimal balanceDue;
+                try (ResultSet rs = orderLockPs.executeQuery()) {
+                    if (!rs.next()) {
+                        JOptionPane.showMessageDialog(parent, "Order was not found.");
+                        conn.rollback();
+                        return false;
+                    }
+                    oldStatus = rs.getString("status");
+                    balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
+                }
+
+                for (Long lineId : lineIds) {
+                    linePs.setLong(1, orderId);
+                    linePs.setLong(2, lineId);
+                    try (ResultSet rs = linePs.executeQuery()) {
+                        if (!rs.next()) {
+                            JOptionPane.showMessageDialog(parent, "One of the selected order lines was not found.");
+                            conn.rollback();
+                            return false;
+                        }
+                        if ("DELIVERED".equals(rs.getString("delivery_status"))) {
+                            continue;
+                        }
+                        if ("FULL".equals(rs.getString("return_status"))) {
+                            continue;
+                        }
+
+                        setNullableInteger(lineUpdatePs, 1, SessionManager.getCurrentUserId());
+                        lineUpdatePs.setString(2, SessionManager.getCurrentUserDisplayName());
+                        lineUpdatePs.setLong(3, lineId);
+                        lineUpdatePs.executeUpdate();
+
+                        deliveryPs.setLong(1, orderId);
+                        deliveryPs.setLong(2, lineId);
+                        setNullableLong(deliveryPs, 3, nullableLong(rs, "custom_item_id"));
+                        setNullableLong(deliveryPs, 4, nullableLong(rs, "custom_variant_id"));
+                        deliveryPs.setString(5, rs.getString("item_name"));
+                        deliveryPs.setString(6, rs.getString("variant_name"));
+                        setNullableInteger(deliveryPs, 7, SessionManager.getCurrentUserId());
+                        deliveryPs.setString(8, SessionManager.getCurrentUserDisplayName());
+                        deliveryPs.setString(9, blankToNull(notes));
+                        deliveryPs.setString(10, blankToNull(DeviceContextService.currentDeviceId()));
+                        deliveryPs.setString(11, blankToNull(DeviceContextService.currentDeviceName()));
+                        deliveryPs.executeUpdate();
+                    }
+                }
+
+                remainingLinesPs.setLong(1, orderId);
+                int remainingLines = 0;
+                try (ResultSet rs = remainingLinesPs.executeQuery()) {
+                    if (rs.next()) {
+                        remainingLines = rs.getInt("remaining_lines");
+                    }
+                }
+                if (remainingLines == 0) {
+                    if (balanceDue.compareTo(BigDecimal.ZERO) > 0) {
+                        JOptionPane.showMessageDialog(parent, "All lines were delivered, but the order still has a balance due. Complete payment before the order becomes delivered.");
+                    } else {
+                        orderDeliveredPs.setLong(1, orderId);
+                        if (orderDeliveredPs.executeUpdate() > 0 && !"DELIVERED".equals(oldStatus)) {
+                            CustomOrderAuditService.recordStatus(conn, orderId, oldStatus, "DELIVERED", "All order lines delivered");
+                        }
+                    }
+                }
+                CustomOrderAuditService.recordAudit(conn, orderId, "LINE_DELIVERY", "delivery_status", null, "DELIVERED", notes == null || notes.isBlank() ? "Order lines delivered" : notes);
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+            JOptionPane.showMessageDialog(parent, "Selected order lines marked delivered.");
+            return true;
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+            return false;
+        }
+    }
+
+    private boolean isPaymentMistakeRefund(String reason) {
+        if (reason == null) {
+            return false;
+        }
+        String normalized = reason.trim().toLowerCase();
+        return normalized.equals("payment mistake") || normalized.startsWith("payment mistake:");
+    }
+
+    private String normalizeProductionStatus(String status) {
+        String normalized = status == null ? "" : status.trim().toUpperCase().replace(" ", "_");
+        return switch (normalized) {
+            case "DESIGN_APPROVED", "PRINTED", "FINISHED", "QUALITY_CHECKED", "READY" -> normalized;
+            default -> "DESIGN_APPROVED";
+        };
+    }
+
+    private String displayProductionStatus(String status) {
+        String normalized = status == null ? "NOT_STARTED" : status.trim().toUpperCase().replace(" ", "_");
+        return switch (normalized) {
+            case "DESIGN_APPROVED" -> "Design Approved";
+            case "PRINTED" -> "Printed";
+            case "FINISHED" -> "Finished";
+            case "QUALITY_CHECKED" -> "Quality Checked";
+            case "READY" -> "Ready";
+            default -> "Not Started";
+        };
+    }
+
+    private String paymentStatusFor(BigDecimal amountPaid, BigDecimal balanceDue) {
+        BigDecimal paid = defaultZero(amountPaid);
+        BigDecimal balance = defaultZero(balanceDue);
+        if (balance.compareTo(BigDecimal.ZERO) <= 0) {
+            return "PAID";
+        }
+        return paid.compareTo(BigDecimal.ZERO) <= 0 ? "UNPAID" : "PARTIAL";
+    }
+
+    private boolean approveLargeRefund(BigDecimal amount, Component parent) {
+        BigDecimal limit = CompanyCustomizationManager.loadCustomOrderSettings().refundApprovalLimit();
+        if (limit == null || limit.compareTo(BigDecimal.ZERO) <= 0 || amount.compareTo(limit) <= 0) {
+            return true;
+        }
+        if (PermissionManager.hasPermission("CUSTOM_ORDER_REFUND_APPROVAL")
+                || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(parent,
+                "Refunds over " + formatMoney(limit) + " require Custom Order Refund Approval permission.",
+                "Refund Approval Required",
+                JOptionPane.WARNING_MESSAGE);
+        return false;
+    }
+
+    private boolean requiresPaymentReference(String method) {
+        return "CARD".equals(method) || "CHEQUE".equals(method) || "MMG".equals(method);
+    }
+
+    private BigDecimal parseLineDiscountPercent() {
+        if (lineDiscountPercentField == null) {
+            return BigDecimal.ZERO;
+        }
+        String value = lineDiscountPercentField.getText() == null ? "" : lineDiscountPercentField.getText().trim();
+        if (value.isBlank()) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            BigDecimal percent = new BigDecimal(value.replace("%", "").trim());
+            if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+                JOptionPane.showMessageDialog(this, "Line discount percent must be between 0 and 100.");
+                return null;
+            }
+            if (percent.compareTo(BigDecimal.ZERO) > 0
+                    && !PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
+                    && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to apply custom order line discounts.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return null;
+            }
+            return percent;
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Line discount percent must be a valid percentage.");
+            return null;
         }
     }
 
@@ -1317,7 +2382,23 @@ public class CustomOrders extends JFrame {
             printAddons.add(pendingAddon);
         }
         BigDecimal printCharge = sumPrintAddons(printAddons);
-        BigDecimal lineTotal = basePrice.add(printCharge);
+        BigDecimal originalLineTotal = basePrice.add(printCharge);
+        BigDecimal discountPercent = parseLineDiscountPercent();
+        if (discountPercent == null) {
+            return;
+        }
+        String discountReason = lineDiscountReasonField == null ? "" : lineDiscountReasonField.getText().trim();
+        if (discountPercent.compareTo(BigDecimal.ZERO) > 0 && discountReason.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Discount reason is required when a line discount is used.");
+            return;
+        }
+        PriceOverrideAudit priceOverride = resolvePriceOverrideAudit(item, configuredPrice, basePrice);
+        if (priceOverride == null) {
+            return;
+        }
+        BigDecimal discountAmount = originalLineTotal.multiply(discountPercent)
+                .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        BigDecimal lineTotal = originalLineTotal.subtract(discountAmount).max(BigDecimal.ZERO);
         String details = "";
         if (!printAddons.isEmpty()) {
             String printDetails = printAddonDetails(printAddons, basePrice);
@@ -1329,7 +2410,7 @@ public class CustomOrders extends JFrame {
             return;
         }
         if (selectedOrderLineModelRow >= 0) {
-            Object[] updatedRow = buildOrderLineRow(item, variant, item.pricingType(), lineTotal, details, notes, areaCalculation, printAddons, basePrice);
+            Object[] updatedRow = buildOrderLineRow(item, variant, item.pricingType(), lineTotal, details, notes, areaCalculation, printAddons, basePrice, originalLineTotal, discountPercent, discountAmount, discountReason, priceOverride);
             for (int column = 0; column < updatedRow.length; column++) {
                 orderLineModel.setValueAt(updatedRow[column], selectedOrderLineModelRow, column);
             }
@@ -1337,7 +2418,7 @@ public class CustomOrders extends JFrame {
         } else {
             for (int i = 0; i < quantity; i++) {
                 String lineDetails = quantity == 1 ? details : details + "\nCopy " + (i + 1) + " of " + quantity;
-                orderLineModel.addRow(buildOrderLineRow(item, variant, item.pricingType(), lineTotal, lineDetails, notes, areaCalculation, printAddons, basePrice));
+                orderLineModel.addRow(buildOrderLineRow(item, variant, item.pricingType(), lineTotal, lineDetails, notes, areaCalculation, printAddons, basePrice, originalLineTotal, discountPercent, discountAmount, discountReason, priceOverride));
             }
         }
         clearLineEditor();
@@ -1345,10 +2426,28 @@ public class CustomOrders extends JFrame {
         updateOrderTotal();
     }
 
-    private Object[] buildOrderLineRow(CustomItemOption item, VariantOption variant, String pricingType, BigDecimal price, String details, String notes, AreaCalculation areaCalculation, List<PrintAddonLine> printAddons, BigDecimal basePrice) {
+    private PriceOverrideAudit resolvePriceOverrideAudit(CustomItemOption item, BigDecimal configuredPrice, BigDecimal basePrice) {
+        if (item == null || basePrice == null || "AREA".equals(item.pricingType()) || "FIXED".equals(item.pricingType())) {
+            return new PriceOverrideAudit(null, null, null);
+        }
+        boolean manualVariablePrice = "VARIABLE".equals(item.pricingType());
+        boolean changedFromConfigured = configuredPrice != null && basePrice.compareTo(configuredPrice) != 0;
+        if (!manualVariablePrice && !changedFromConfigured) {
+            return new PriceOverrideAudit(null, null, null);
+        }
+        String reason = priceOverrideReasonField == null ? "" : priceOverrideReasonField.getText().trim();
+        if (reason.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Price reason is required for variable or manually changed pricing.");
+            return null;
+        }
+        return new PriceOverrideAudit(configuredPrice, basePrice, reason);
+    }
+
+    private Object[] buildOrderLineRow(CustomItemOption item, VariantOption variant, String pricingType, BigDecimal price, String details, String notes, AreaCalculation areaCalculation, List<PrintAddonLine> printAddons, BigDecimal basePrice, BigDecimal originalLineTotal, BigDecimal discountPercent, BigDecimal discountAmount, String discountReason, PriceOverrideAudit priceOverride) {
         PrintAddonLine firstAddon = printAddons == null || printAddons.isEmpty() ? null : printAddons.get(0);
         BigDecimal totalPrintCharge = sumPrintAddons(printAddons == null ? List.of() : printAddons);
         List<PrintAddonLine> addonCopy = printAddons == null ? new ArrayList<>() : new ArrayList<>(printAddons);
+        BigDecimal minimumDepositPercent = CompanyCustomizationManager.loadCustomOrderSettings().minimumDepositPercent();
         return new Object[]{
                 item.customItemId(),
                 variant == null ? null : variant.variantId(),
@@ -1372,7 +2471,15 @@ public class CustomOrders extends JFrame {
                 basePrice == null ? "" : basePrice,
                 firstAddon == null ? 1 : firstAddon.printLineCount(),
                 printAddonSummary(addonCopy),
-                addonCopy
+                addonCopy,
+                originalLineTotal,
+                discountPercent,
+                discountAmount,
+                discountReason,
+                minimumDepositPercent,
+                priceOverride == null ? null : priceOverride.originalBasePrice(),
+                priceOverride == null ? null : priceOverride.overridePrice(),
+                priceOverride == null ? "" : priceOverride.reason()
         };
     }
 
@@ -1385,6 +2492,15 @@ public class CustomOrders extends JFrame {
         lineNotesArea.setText("");
         lineQuantityField.setText("1");
         lineQuantityField.setEnabled(true);
+        if (lineDiscountPercentField != null) {
+            lineDiscountPercentField.setText("0");
+        }
+        if (lineDiscountReasonField != null) {
+            lineDiscountReasonField.setText("");
+        }
+        if (priceOverrideReasonField != null) {
+            priceOverrideReasonField.setText("");
+        }
         if (printMaterialBox != null) {
             printMaterialBox.setSelectedIndex(0);
         }
@@ -1444,6 +2560,15 @@ public class CustomOrders extends JFrame {
         selectOrderItemById(parseLongValue(orderLineModel.getValueAt(selectedOrderLineModelRow, 0)));
         selectVariantById(parseLongValue(orderLineModel.getValueAt(selectedOrderLineModelRow, 1)));
         linePriceField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 19).isBlank() ? valueAt(orderLineModel, selectedOrderLineModelRow, 5) : valueAt(orderLineModel, selectedOrderLineModelRow, 19));
+        if (lineDiscountPercentField != null) {
+            lineDiscountPercentField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 24).isBlank() ? "0" : valueAt(orderLineModel, selectedOrderLineModelRow, 24));
+        }
+        if (lineDiscountReasonField != null) {
+            lineDiscountReasonField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 26));
+        }
+        if (priceOverrideReasonField != null) {
+            priceOverrideReasonField.setText(valueAt(orderLineModel, selectedOrderLineModelRow, 30));
+        }
         loadPrintAddonsIntoEditor(printAddonsForModelRow(selectedOrderLineModelRow));
         lineQuantityField.setText("1");
         lineQuantityField.setEnabled(false);
@@ -1636,8 +2761,6 @@ public class CustomOrders extends JFrame {
         }
         int modelRow = ordersTable.convertRowIndexToModel(row);
         selectedOrderId = Long.parseLong(ordersModel.getValueAt(modelRow, 0).toString());
-        manageStatusBox.setSelectedItem(ordersModel.getValueAt(modelRow, 2).toString());
-        selectEmployeeByName(valueAt(ordersModel, modelRow, 11));
         loadOrderDetails(selectedOrderId, selectedOrderDetailsArea);
     }
 
@@ -1657,7 +2780,13 @@ public class CustomOrders extends JFrame {
                 SELECT co.order_number, co.customer_name, co.customer_phone, co.status, co.due_date,
                        co.order_notes, co.total_amount, co.amount_paid, co.balance_due,
                        co.payment_method, co.payment_reference, co.payment_status, co.assigned_to_name,
-                       col.custom_order_line_id, col.item_name, col.variant_name, col.unit_price,
+                       col.custom_order_line_id, col.item_name, col.variant_name, col.unit_price, col.line_total,
+                       col.original_line_total, col.line_discount_percent, col.line_discount_amount, col.line_discount_by_name,
+                       col.line_discount_reason, col.original_base_price, col.price_override_price,
+                       col.price_override_reason, col.price_override_by_name,
+                       COALESCE(col.production_status, 'NOT_STARTED') AS production_status,
+                       col.production_updated_at, col.production_updated_by_name,
+                       col.returned_amount, col.return_status, col.delivery_status, col.delivered_at, col.delivered_by_name,
                        col.customization_details, col.order_instructions,
                        col.width_value, col.length_value, col.dimension_unit,
                        col.area_value, col.area_unit, col.area_price
@@ -1701,7 +2830,76 @@ public class CustomOrders extends JFrame {
                         String variantName = rs.getString("variant_name");
                         details.append(lineNumber++).append(". ").append(itemName)
                                 .append(variantName == null || variantName.isBlank() ? "" : " / " + variantName)
-                                .append(" - ").append(formatMoney(rs.getBigDecimal("unit_price"))).append("\n");
+                                .append(" - ").append(formatMoney(rs.getBigDecimal("line_total")));
+                        BigDecimal discountAmount = defaultZero(rs.getBigDecimal("line_discount_amount"));
+                        if (discountAmount.compareTo(BigDecimal.ZERO) > 0) {
+                            details.append(" [Discount ")
+                                    .append(stripTrailingZeros(rs.getBigDecimal("line_discount_percent")))
+                                    .append("%: -")
+                                    .append(formatMoney(discountAmount))
+                                    .append(" from ")
+                                    .append(formatMoney(rs.getBigDecimal("original_line_total")));
+                            String discountBy = rs.getString("line_discount_by_name");
+                            if (discountBy != null && !discountBy.isBlank()) {
+                                details.append(" by ").append(discountBy);
+                            }
+                            String discountReason = rs.getString("line_discount_reason");
+                            if (discountReason != null && !discountReason.isBlank()) {
+                                details.append(" reason: ").append(discountReason);
+                            }
+                            details.append("]");
+                        }
+                        String priceOverrideReason = rs.getString("price_override_reason");
+                        if (priceOverrideReason != null && !priceOverrideReason.isBlank()) {
+                            details.append(" [Price Reason: ").append(priceOverrideReason);
+                            BigDecimal originalBase = rs.getBigDecimal("original_base_price");
+                            BigDecimal overridePrice = rs.getBigDecimal("price_override_price");
+                            if (originalBase != null || overridePrice != null) {
+                                details.append(" (")
+                                        .append(originalBase == null ? "manual" : formatMoney(originalBase))
+                                        .append(" -> ")
+                                        .append(overridePrice == null ? formatMoney(rs.getBigDecimal("unit_price")) : formatMoney(overridePrice))
+                                        .append(")");
+                            }
+                            String overrideBy = rs.getString("price_override_by_name");
+                            if (overrideBy != null && !overrideBy.isBlank()) {
+                                details.append(" by ").append(overrideBy);
+                            }
+                            details.append("]");
+                        }
+                        BigDecimal returnedAmount = defaultZero(rs.getBigDecimal("returned_amount"));
+                        String returnStatus = rs.getString("return_status");
+                        if (returnedAmount.compareTo(BigDecimal.ZERO) > 0) {
+                            details.append(" [")
+                                    .append("FULL".equals(returnStatus) ? "Returned" : "Partial Return")
+                                    .append(": ")
+                                    .append(formatMoney(returnedAmount))
+                                    .append("]");
+                        }
+                        if ("DELIVERED".equals(rs.getString("delivery_status"))) {
+                            details.append(" [Delivered");
+                            String deliveredBy = rs.getString("delivered_by_name");
+                            if (deliveredBy != null && !deliveredBy.isBlank()) {
+                                details.append(" by ").append(deliveredBy);
+                            }
+                            if (rs.getTimestamp("delivered_at") != null) {
+                                details.append(" at ").append(rs.getTimestamp("delivered_at"));
+                            }
+                            details.append("]");
+                        }
+                        String productionStatus = displayProductionStatus(rs.getString("production_status"));
+                        if (!"Not Started".equals(productionStatus)) {
+                            details.append(" [Production: ").append(productionStatus);
+                            String productionBy = rs.getString("production_updated_by_name");
+                            if (productionBy != null && !productionBy.isBlank()) {
+                                details.append(" by ").append(productionBy);
+                            }
+                            if (rs.getTimestamp("production_updated_at") != null) {
+                                details.append(" at ").append(rs.getTimestamp("production_updated_at"));
+                            }
+                            details.append("]");
+                        }
+                        details.append("\n");
                         String areaDetails = structuredAreaDetails(rs);
                         if (!areaDetails.isBlank()) {
                             details.append(areaDetails);
@@ -1726,6 +2924,10 @@ public class CustomOrders extends JFrame {
             }
             detailsArea.setText(details.toString());
             appendPaymentHistory(orderId, detailsArea);
+            appendLineReturnHistory(orderId, detailsArea);
+            appendLineDeliveryHistory(orderId, detailsArea);
+            appendProductionHistory(orderId, detailsArea);
+            appendAuditHistory(orderId, detailsArea);
             detailsArea.setCaretPosition(0);
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
@@ -1802,12 +3004,75 @@ public class CustomOrders extends JFrame {
 
     private void appendPaymentHistory(Long orderId, JTextArea detailsArea) {
         String sql = """
-                SELECT payment_amount, payment_method, payment_reference, taken_by_name, created_at
+                SELECT payment_amount, payment_method, payment_reference, taken_by_name,
+                       COALESCE(payment_action, 'PAYMENT') AS payment_action,
+                       void_reason,
+                       created_at
                 FROM custom_order_payments
                 WHERE custom_order_id = ?
                 ORDER BY created_at
                 """;
         StringBuilder payments = new StringBuilder(detailsArea.getText());
+        StringBuilder paymentRows = new StringBuilder();
+        StringBuilder refundRows = new StringBuilder();
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String action = rs.getString("payment_action");
+                    BigDecimal amount = defaultZero(rs.getBigDecimal("payment_amount"));
+                    StringBuilder row = new StringBuilder();
+                    if ("REFUND".equals(action) || "REVERSAL".equals(action)) {
+                        row.append(formatMoney(amount.negate()));
+                    } else {
+                        row.append(formatMoney(amount));
+                    }
+                    row.append(" - ")
+                            .append(formatPayment(rs.getString("payment_method"), null));
+                    String reference = rs.getString("payment_reference");
+                    if (reference != null && !reference.isBlank()) {
+                        row.append(" Ref: ").append(reference);
+                    }
+                    String takenBy = rs.getString("taken_by_name");
+                    if (takenBy != null && !takenBy.isBlank()) {
+                        row.append(" By: ").append(takenBy);
+                    }
+                    String reason = rs.getString("void_reason");
+                    if (reason != null && !reason.isBlank()) {
+                        row.append(" Reason: ").append(reason);
+                    }
+                    row.append(" At: ").append(rs.getTimestamp("created_at")).append("\n");
+                    if ("REFUND".equals(action) || "REVERSAL".equals(action)) {
+                        refundRows.append(row);
+                    } else {
+                        paymentRows.append(row);
+                    }
+                }
+            }
+            if (paymentRows.length() > 0) {
+                payments.append("\nPayments\n").append(paymentRows);
+            }
+            if (refundRows.length() > 0) {
+                payments.append("\nRefund Payments\n").append(refundRows);
+            }
+            detailsArea.setText(payments.toString());
+        } catch (SQLException ex) {
+            if (!"42P01".equals(ex.getSQLState())) {
+                showDatabaseSetupMessage(ex);
+            }
+        }
+    }
+
+    private void appendLineReturnHistory(Long orderId, JTextArea detailsArea) {
+        String sql = """
+                SELECT item_name, variant_name, return_type, restock_action,
+                       refund_amount, balance_reduction, payout_amount, reason, created_by_name, created_at
+                FROM custom_order_line_returns
+                WHERE custom_order_id = ?
+                ORDER BY created_at, custom_order_line_return_id
+                """;
+        StringBuilder returns = new StringBuilder(detailsArea.getText());
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, orderId);
@@ -1815,26 +3080,184 @@ public class CustomOrders extends JFrame {
                 boolean headerWritten = false;
                 while (rs.next()) {
                     if (!headerWritten) {
-                        payments.append("\nPayments\n");
+                        returns.append("\nLine Returns\n");
                         headerWritten = true;
                     }
-                    payments.append(formatMoney(rs.getBigDecimal("payment_amount")))
-                            .append(" - ")
-                            .append(formatPayment(rs.getString("payment_method"), null));
-                    String reference = rs.getString("payment_reference");
-                    if (reference != null && !reference.isBlank()) {
-                        payments.append(" Ref: ").append(reference);
+                    returns.append(rs.getString("item_name"));
+                    String variantName = rs.getString("variant_name");
+                    if (variantName != null && !variantName.isBlank()) {
+                        returns.append(" / ").append(variantName);
                     }
-                    String takenBy = rs.getString("taken_by_name");
-                    if (takenBy != null && !takenBy.isBlank()) {
-                        payments.append(" By: ").append(takenBy);
+                    returns.append(" - ")
+                            .append(rs.getString("return_type"))
+                            .append(" - Adjustment: ").append(formatMoney(rs.getBigDecimal("refund_amount")))
+                            .append(" Balance Reduced: ").append(formatMoney(rs.getBigDecimal("balance_reduction")))
+                            .append(" Payout: ").append(formatMoney(rs.getBigDecimal("payout_amount")))
+                            .append(" Restock: ").append(rs.getString("restock_action"))
+                            .append(" Reason: ").append(rs.getString("reason"));
+                    String createdBy = rs.getString("created_by_name");
+                    if (createdBy != null && !createdBy.isBlank()) {
+                        returns.append(" By: ").append(createdBy);
                     }
-                    payments.append(" At: ").append(rs.getTimestamp("created_at")).append("\n");
+                    returns.append(" At: ").append(rs.getTimestamp("created_at")).append("\n");
                 }
             }
-            detailsArea.setText(payments.toString());
+            detailsArea.setText(returns.toString());
         } catch (SQLException ex) {
-            if (!"42P01".equals(ex.getSQLState())) {
+            if (!"42P01".equals(ex.getSQLState()) && !"42703".equals(ex.getSQLState())) {
+                showDatabaseSetupMessage(ex);
+            }
+        }
+    }
+
+    private void appendLineDeliveryHistory(Long orderId, JTextArea detailsArea) {
+        String sql = """
+                SELECT item_name, variant_name, delivered_by_name, delivery_notes, device_name, delivered_at
+                FROM custom_order_line_deliveries
+                WHERE custom_order_id = ?
+                ORDER BY delivered_at, custom_order_line_delivery_id
+                """;
+        StringBuilder deliveries = new StringBuilder(detailsArea.getText());
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean headerWritten = false;
+                while (rs.next()) {
+                    if (!headerWritten) {
+                        deliveries.append("\nLine Deliveries\n");
+                        headerWritten = true;
+                    }
+                    deliveries.append(rs.getString("item_name"));
+                    String variantName = rs.getString("variant_name");
+                    if (variantName != null && !variantName.isBlank()) {
+                        deliveries.append(" / ").append(variantName);
+                    }
+                    String deliveredBy = rs.getString("delivered_by_name");
+                    if (deliveredBy != null && !deliveredBy.isBlank()) {
+                        deliveries.append(" By: ").append(deliveredBy);
+                    }
+                    String deviceName = rs.getString("device_name");
+                    if (deviceName != null && !deviceName.isBlank()) {
+                        deliveries.append(" Device: ").append(deviceName);
+                    }
+                    String notes = rs.getString("delivery_notes");
+                    if (notes != null && !notes.isBlank()) {
+                        deliveries.append(" Notes: ").append(notes);
+                    }
+                    deliveries.append(" At: ").append(rs.getTimestamp("delivered_at")).append("\n");
+                }
+            }
+            detailsArea.setText(deliveries.toString());
+        } catch (SQLException ex) {
+            if (!"42P01".equals(ex.getSQLState()) && !"42703".equals(ex.getSQLState())) {
+                showDatabaseSetupMessage(ex);
+            }
+        }
+    }
+
+    private void appendProductionHistory(Long orderId, JTextArea detailsArea) {
+        String sql = """
+                SELECT item_name, variant_name, old_status, new_status, notes, updated_by_name, device_name, created_at
+                FROM custom_order_line_production_history
+                WHERE custom_order_id = ?
+                ORDER BY created_at, custom_order_line_production_history_id
+                """;
+        StringBuilder history = new StringBuilder(detailsArea.getText());
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean headerWritten = false;
+                while (rs.next()) {
+                    if (!headerWritten) {
+                        history.append("\nProduction History\n");
+                        headerWritten = true;
+                    }
+                    history.append(rs.getString("item_name"));
+                    String variantName = rs.getString("variant_name");
+                    if (variantName != null && !variantName.isBlank()) {
+                        history.append(" / ").append(variantName);
+                    }
+                    history.append(" - ")
+                            .append(displayProductionStatus(rs.getString("old_status")))
+                            .append(" -> ")
+                            .append(displayProductionStatus(rs.getString("new_status")));
+                    String updatedBy = rs.getString("updated_by_name");
+                    if (updatedBy != null && !updatedBy.isBlank()) {
+                        history.append(" By: ").append(updatedBy);
+                    }
+                    String deviceName = rs.getString("device_name");
+                    if (deviceName != null && !deviceName.isBlank()) {
+                        history.append(" Device: ").append(deviceName);
+                    }
+                    String notes = rs.getString("notes");
+                    if (notes != null && !notes.isBlank()) {
+                        history.append(" Notes: ").append(notes);
+                    }
+                    history.append(" At: ").append(rs.getTimestamp("created_at")).append("\n");
+                }
+            }
+            detailsArea.setText(history.toString());
+        } catch (SQLException ex) {
+            if (!"42P01".equals(ex.getSQLState()) && !"42703".equals(ex.getSQLState())) {
+                showDatabaseSetupMessage(ex);
+            }
+        }
+    }
+
+    private void appendAuditHistory(Long orderId, JTextArea detailsArea) {
+        String sql = """
+                SELECT action_type, field_name, old_value, new_value, reason, user_name, device_name, created_at
+                FROM custom_order_audit_log
+                WHERE custom_order_id = ?
+                ORDER BY created_at DESC, custom_order_audit_id DESC
+                LIMIT 50
+                """;
+        StringBuilder audit = new StringBuilder(detailsArea.getText());
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean headerWritten = false;
+                while (rs.next()) {
+                    if (!headerWritten) {
+                        audit.append("\nAudit History\n");
+                        headerWritten = true;
+                    }
+                    audit.append(rs.getTimestamp("created_at"))
+                            .append(" - ")
+                            .append(rs.getString("action_type"));
+                    String fieldName = rs.getString("field_name");
+                    if (fieldName != null && !fieldName.isBlank()) {
+                        audit.append(" ").append(fieldName);
+                    }
+                    String oldValue = rs.getString("old_value");
+                    String newValue = rs.getString("new_value");
+                    if ((oldValue != null && !oldValue.isBlank()) || (newValue != null && !newValue.isBlank())) {
+                        audit.append(": ")
+                                .append(oldValue == null ? "" : oldValue)
+                                .append(" -> ")
+                                .append(newValue == null ? "" : newValue);
+                    }
+                    String userName = rs.getString("user_name");
+                    if (userName != null && !userName.isBlank()) {
+                        audit.append(" By: ").append(userName);
+                    }
+                    String deviceName = rs.getString("device_name");
+                    if (deviceName != null && !deviceName.isBlank()) {
+                        audit.append(" Device: ").append(deviceName);
+                    }
+                    String reason = rs.getString("reason");
+                    if (reason != null && !reason.isBlank()) {
+                        audit.append(" Reason: ").append(reason);
+                    }
+                    audit.append("\n");
+                }
+            }
+            detailsArea.setText(audit.toString());
+        } catch (SQLException ex) {
+            if (!"42P01".equals(ex.getSQLState()) && !"42703".equals(ex.getSQLState())) {
                 showDatabaseSetupMessage(ex);
             }
         }
@@ -2082,23 +3505,6 @@ public class CustomOrders extends JFrame {
         return total;
     }
 
-    private void selectEmployeeByName(String name) {
-        if (assignEmployeeBox == null) {
-            return;
-        }
-        for (int i = 0; i < assignEmployeeBox.getItemCount(); i++) {
-            EmployeeOption option = assignEmployeeBox.getItemAt(i);
-            if ((name == null || name.isBlank()) && option.userId() == null) {
-                assignEmployeeBox.setSelectedIndex(i);
-                return;
-            }
-            if (name != null && name.equals(option.name())) {
-                assignEmployeeBox.setSelectedIndex(i);
-                return;
-            }
-        }
-    }
-
     private void runTableLoadAsync(DefaultTableModel model, RowLoader loader, Runnable afterLoad) {
         if (model == null) {
             return;
@@ -2228,6 +3634,172 @@ public class CustomOrders extends JFrame {
         }
     }
 
+    private void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
+        }
+    }
+
+    private Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
+    private String normalizeRestockAction(String value) {
+        return switch (value == null ? "" : value) {
+            case "RESTOCK", "DAMAGED", "CUSTOMER_KEPT", "WASTE" -> value;
+            default -> "NO_RESTOCK";
+        };
+    }
+
+    private void restockReturnedLine(Connection conn, LineReturnRow row) throws SQLException {
+        if (!"RESTOCK".equals(row.restockAction())) {
+            return;
+        }
+        BigDecimal restockQty = BigDecimal.ONE;
+        String itemSql = """
+                UPDATE custom_order_items
+                SET quantity_on_hand = COALESCE(quantity_on_hand, 0) + ?,
+                    sold_quantity = GREATEST(COALESCE(sold_quantity, 0) - ?, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_item_id = ?
+                  AND COALESCE(product_type, 'INVENTORY') = 'INVENTORY'
+                """;
+        String variantSql = """
+                UPDATE custom_order_item_variants v
+                SET quantity_on_hand = COALESCE(v.quantity_on_hand, 0) + ?,
+                    sold_quantity = GREATEST(COALESCE(v.sold_quantity, 0) - ?, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                FROM custom_order_items i
+                WHERE v.custom_variant_id = ?
+                  AND i.custom_item_id = v.custom_item_id
+                  AND COALESCE(i.product_type, 'INVENTORY') = 'INVENTORY'
+                """;
+        String parentSql = """
+                UPDATE custom_order_items i
+                SET quantity_on_hand = COALESCE((SELECT SUM(quantity_on_hand) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id AND is_active = TRUE), 0),
+                    sold_quantity = COALESCE((SELECT SUM(sold_quantity) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id), 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_item_id = ?
+                  AND has_variants = TRUE
+                """;
+        if (row.variantId() != null) {
+            try (PreparedStatement variantPs = conn.prepareStatement(variantSql);
+                 PreparedStatement parentPs = conn.prepareStatement(parentSql)) {
+                variantPs.setBigDecimal(1, restockQty);
+                variantPs.setBigDecimal(2, restockQty);
+                variantPs.setLong(3, row.variantId());
+                variantPs.executeUpdate();
+                parentPs.setLong(1, row.itemId());
+                parentPs.executeUpdate();
+            }
+        } else {
+            try (PreparedStatement itemPs = conn.prepareStatement(itemSql)) {
+                itemPs.setBigDecimal(1, restockQty);
+                itemPs.setBigDecimal(2, restockQty);
+                itemPs.setLong(3, row.itemId());
+                itemPs.executeUpdate();
+            }
+        }
+    }
+
+    private void bindCurrentLocation(PreparedStatement ps, int index) throws SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId == null) {
+            ps.setNull(index, Types.INTEGER);
+        } else {
+            ps.setInt(index, locationId);
+        }
+    }
+
+    private void releaseCustomOrderReservations(Connection conn, long orderId, String reason) throws SQLException {
+        String selectSql = """
+                SELECT custom_order_inventory_reservation_id, custom_item_id, custom_variant_id,
+                       COALESCE(reserved_qty, 0) - COALESCE(released_qty, 0) AS open_qty
+                FROM custom_order_inventory_reservations
+                WHERE custom_order_id = ?
+                  AND status = 'RESERVED'
+                  AND COALESCE(reserved_qty, 0) > COALESCE(released_qty, 0)
+                FOR UPDATE
+                """;
+        String releaseSql = """
+                UPDATE custom_order_inventory_reservations
+                SET released_qty = COALESCE(released_qty, 0) + ?,
+                    status = 'RELEASED',
+                    released_at = CURRENT_TIMESTAMP,
+                    release_reason = ?
+                WHERE custom_order_inventory_reservation_id = ?
+                """;
+        String itemSql = """
+                UPDATE custom_order_items
+                SET quantity_on_hand = quantity_on_hand + ?,
+                    sold_quantity = GREATEST(COALESCE(sold_quantity, 0) - ?, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_item_id = ?
+                """;
+        String variantSql = """
+                UPDATE custom_order_item_variants
+                SET quantity_on_hand = quantity_on_hand + ?,
+                    sold_quantity = GREATEST(COALESCE(sold_quantity, 0) - ?, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_variant_id = ?
+                """;
+        String parentSql = """
+                UPDATE custom_order_items i
+                SET quantity_on_hand = COALESCE((SELECT SUM(quantity_on_hand) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id AND is_active = TRUE), 0),
+                    sold_quantity = COALESCE((SELECT SUM(sold_quantity) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id), 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE custom_item_id = ?
+                  AND has_variants = TRUE
+                """;
+        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
+             PreparedStatement releasePs = conn.prepareStatement(releaseSql);
+             PreparedStatement itemPs = conn.prepareStatement(itemSql);
+             PreparedStatement variantPs = conn.prepareStatement(variantSql);
+             PreparedStatement parentPs = conn.prepareStatement(parentSql)) {
+            selectPs.setLong(1, orderId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                while (rs.next()) {
+                    long reservationId = rs.getLong("custom_order_inventory_reservation_id");
+                    long itemId = rs.getLong("custom_item_id");
+                    long variantId = rs.getLong("custom_variant_id");
+                    boolean hasVariant = !rs.wasNull();
+                    BigDecimal openQty = defaultZero(rs.getBigDecimal("open_qty"));
+                    if (openQty.compareTo(BigDecimal.ZERO) <= 0) {
+                        continue;
+                    }
+                    if (hasVariant) {
+                        variantPs.setBigDecimal(1, openQty);
+                        variantPs.setBigDecimal(2, openQty);
+                        variantPs.setLong(3, variantId);
+                        variantPs.executeUpdate();
+                        parentPs.setLong(1, itemId);
+                        parentPs.executeUpdate();
+                    } else {
+                        itemPs.setBigDecimal(1, openQty);
+                        itemPs.setBigDecimal(2, openQty);
+                        itemPs.setLong(3, itemId);
+                        itemPs.executeUpdate();
+                    }
+                    releasePs.setBigDecimal(1, openQty);
+                    releasePs.setString(2, reason);
+                    releasePs.setLong(3, reservationId);
+                    releasePs.executeUpdate();
+                }
+            }
+        }
+    }
+
+    private BigDecimal defaultZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private String safeText(String value) {
+        return value == null ? "" : value;
+    }
+
     private void showDatabaseSetupMessage(SQLException ex) {
         JOptionPane.showMessageDialog(
                 this,
@@ -2249,6 +3821,35 @@ public class CustomOrders extends JFrame {
             String printDescription,
             int printLineCount,
             BigDecimal printCharge
+    ) {
+    }
+
+    private record DepositOverride(
+            BigDecimal requiredDeposit,
+            String overrideReason,
+            Integer overrideByUserId,
+            String overrideByName
+    ) {
+    }
+
+    private record PriceOverrideAudit(
+            BigDecimal originalBasePrice,
+            BigDecimal overridePrice,
+            String reason
+    ) {
+    }
+
+    private record LineReturnRow(
+            long lineId,
+            long itemId,
+            Long variantId,
+            String itemName,
+            String variantName,
+            BigDecimal lineTotal,
+            BigDecimal returnedAmount,
+            BigDecimal refundAmount,
+            boolean partial,
+            String restockAction
     ) {
     }
 

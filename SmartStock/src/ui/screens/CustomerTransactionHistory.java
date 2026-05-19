@@ -78,7 +78,7 @@ public class CustomerTransactionHistory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Device", "Type", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
                 0
         ) {
             @Override
@@ -95,13 +95,14 @@ public class CustomerTransactionHistory extends JFrame {
         transactionTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         transactionTable.getColumnModel().getColumn(2).setPreferredWidth(160);
         transactionTable.getColumnModel().getColumn(3).setPreferredWidth(150);
-        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(130);
-        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(90);
-        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(120);
-        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(100);
-        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(10).setPreferredWidth(240);
+        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(130);
+        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(90);
+        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(120);
+        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(10).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(11).setPreferredWidth(240);
 
         return new JScrollPane(transactionTable);
     }
@@ -121,6 +122,7 @@ public class CustomerTransactionHistory extends JFrame {
                        COALESCE(t.payment_id, '') AS payment_id,
 	                       (t.created_at AT TIME ZONE ?) AS local_created_at,
 	                       COALESCE(t.user_name, '') AS user_name,
+                       COALESCE(t.device_name, t.device_id, '') AS device_name,
 	                       COALESCE(t.transaction_type, '') AS transaction_type,
                        t.sale_id,
                        t.custom_order_id,
@@ -165,6 +167,7 @@ public class CustomerTransactionHistory extends JFrame {
 	                            rs.getString("payment_id"),
 	                            formatTimestamp(rs.getTimestamp("local_created_at")),
 	                            rs.getString("user_name"),
+                            rs.getString("device_name"),
 	                            formatType(rs.getString("transaction_type")),
                             nullableInt(rs, "sale_id"),
                             nullableLong(rs, "custom_order_id"),
@@ -214,6 +217,7 @@ public class CustomerTransactionHistory extends JFrame {
         return switch (type) {
             case "SALE_CREDIT" -> "Sale Credit";
             case "SALE_PAID" -> "Sale Paid";
+            case "CUSTOM_ORDER_REFUND" -> "Custom Order Refund";
             case "MANUAL_CHARGE" -> "Manual Charge";
             case "PAYMENT" -> "Payment";
             default -> type.replace('_', ' ');

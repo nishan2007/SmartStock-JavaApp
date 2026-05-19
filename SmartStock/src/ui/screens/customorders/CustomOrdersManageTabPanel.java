@@ -1,7 +1,5 @@
 package ui.screens.customorders;
 
-import services.CustomOrderDataService.EmployeeOption;
-
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
@@ -14,8 +12,6 @@ class CustomOrdersManageTabPanel extends JPanel {
     final TableRowSorter<DefaultTableModel> ordersSorter;
     final JTextField orderSearchField;
     final JComboBox<String> statusFilterBox;
-    final JComboBox<EmployeeOption> assignEmployeeBox;
-    final JComboBox<String> manageStatusBox;
     final JTextArea selectedOrderDetailsArea;
 
     CustomOrdersManageTabPanel(Handler handler) {
@@ -25,9 +21,13 @@ class CustomOrdersManageTabPanel extends JPanel {
         JPanel filterPanel = new JPanel(new BorderLayout(8, 0));
         orderSearchField = new JTextField();
         statusFilterBox = new JComboBox<>(new String[]{"All", "NEW", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "DELIVERED", "CANCELLED"});
+        JButton refreshButton = new JButton("Refresh");
         filterPanel.add(new JLabel("Search:"), BorderLayout.WEST);
         filterPanel.add(orderSearchField, BorderLayout.CENTER);
-        filterPanel.add(statusFilterBox, BorderLayout.EAST);
+        JPanel filterActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        filterActions.add(statusFilterBox);
+        filterActions.add(refreshButton);
+        filterPanel.add(filterActions, BorderLayout.EAST);
 
         ordersModel = new DefaultTableModel(new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Due", "Total", "Paid", "Balance", "Payment", "Payment Reference", "Assigned To", "Taken By", "Created"}, 0) {
             @Override
@@ -55,54 +55,17 @@ class CustomOrdersManageTabPanel extends JPanel {
 
         JPanel right = new JPanel(new BorderLayout(8, 8));
         right.setPreferredSize(new Dimension(420, 0));
-        right.setBorder(BorderFactory.createTitledBorder("Assignment"));
-        JPanel assignPanel = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = formGbc();
-        assignEmployeeBox = new JComboBox<>();
-        manageStatusBox = new JComboBox<>(new String[]{"NEW", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED", "DELIVERED", "CANCELLED"});
+        right.setBorder(BorderFactory.createTitledBorder("Order Details"));
         selectedOrderDetailsArea = new JTextArea();
         selectedOrderDetailsArea.setEditable(false);
         selectedOrderDetailsArea.setLineWrap(true);
         selectedOrderDetailsArea.setWrapStyleWord(true);
-
-        addField(assignPanel, gbc, 0, "Assign To:", assignEmployeeBox);
-        addField(assignPanel, gbc, 1, "Status:", manageStatusBox);
-        JButton assignButton = new JButton("Save Assignment");
-        JButton refreshButton = new JButton("Refresh");
-        gbc.gridx = 1;
-        gbc.gridy = 2;
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        buttons.add(assignButton);
-        buttons.add(refreshButton);
-        assignPanel.add(buttons, gbc);
-        assignButton.addActionListener(e -> handler.saveAssignment());
         refreshButton.addActionListener(e -> handler.refreshOrders());
 
-        right.add(assignPanel, BorderLayout.NORTH);
         right.add(new JScrollPane(selectedOrderDetailsArea), BorderLayout.CENTER);
 
         add(left, BorderLayout.CENTER);
         add(right, BorderLayout.EAST);
-    }
-
-    private JLabel addField(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
-        gbc.gridx = 0;
-        gbc.gridy = row;
-        gbc.weightx = 0;
-        JLabel labelComponent = new JLabel(label);
-        panel.add(labelComponent, gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1;
-        panel.add(field, gbc);
-        return labelComponent;
-    }
-
-    private GridBagConstraints formGbc() {
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(6, 6, 6, 6);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.anchor = GridBagConstraints.WEST;
-        return gbc;
     }
 
     private javax.swing.event.DocumentListener simpleDocumentListener(Runnable callback) {
@@ -116,7 +79,6 @@ class CustomOrdersManageTabPanel extends JPanel {
     interface Handler {
         void loadSelectedOrder();
         Runnable applyFilter();
-        void saveAssignment();
         void refreshOrders();
     }
 }

@@ -684,6 +684,18 @@ public class Roles_Permission extends JFrame {
         permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
         permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "View Assigned Custom Orders");
+        permissions.put("ORDERS_MANAGER_DASHBOARD", "Orders Manager Dashboard");
+        permissions.put("ORDERS_END_OF_DAY", "Orders End Of Day");
+        permissions.put("CUSTOM_ORDER_REFUNDS", "Custom Order Refunds");
+        permissions.put("CUSTOM_ORDER_LINE_RETURNS", "Custom Order Line Returns");
+        permissions.put("CUSTOM_ORDER_LINE_DELIVERY", "Custom Order Line Delivery");
+        permissions.put("CUSTOM_ORDER_LINE_DISCOUNT", "Custom Order Line Discount");
+        permissions.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Custom Order Deposit Override");
+        permissions.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Custom Order Deposit Settings");
+        permissions.put("CUSTOM_ORDER_REFUND_APPROVAL", "Custom Order Refund Approval");
+        permissions.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Custom Order Refund Approval Settings");
+        permissions.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Custom Order Production Steps");
+        permissions.put("CUSTOM_ORDER_CANCEL", "Cancel Custom Orders");
         permissions.put("SET_CREDIT_LIMIT", "Set Credit Limit");
         permissions.put("EDIT_ACCOUNT_NUMBER", "Edit Account Number");
         permissions.put("EMPLOYEE_MANAGEMENT", "Employee Management");

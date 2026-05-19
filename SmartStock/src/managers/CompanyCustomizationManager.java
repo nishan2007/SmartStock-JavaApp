@@ -96,6 +96,40 @@ public class CompanyCustomizationManager {
         cachedReceiptSettings = settings;
     }
 
+    public static CustomOrderSettings loadCustomOrderSettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (Objects.equals(locationId, cachedCustomOrderLocationId) && cachedCustomOrderSettings != null) {
+            return cachedCustomOrderSettings;
+        }
+        if (locationId != null) {
+            try {
+                CustomOrderSettings dbSettings = loadCustomOrderSettingsFromDb(locationId);
+                if (dbSettings != null) {
+                    saveLocalCustomOrderSettings(dbSettings);
+                    cachedCustomOrderLocationId = locationId;
+                    cachedCustomOrderSettings = dbSettings;
+                    return dbSettings;
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+        CustomOrderSettings localSettings = loadLocalCustomOrderSettings();
+        cachedCustomOrderLocationId = locationId;
+        cachedCustomOrderSettings = localSettings;
+        return localSettings;
+    }
+
+    public static void saveCustomOrderSettings(CustomOrderSettings settings) throws IOException, SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            saveCustomOrderSettingsToDb(locationId, settings);
+        }
+        saveLocalCustomOrderSettings(settings);
+        cachedCustomOrderLocationId = locationId;
+        cachedCustomOrderSettings = settings;
+    }
+
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT company_name,
@@ -189,6 +223,52 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static CustomOrderSettings loadCustomOrderSettingsFromDb(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(custom_order_minimum_deposit_percent, 0) AS custom_order_minimum_deposit_percent,
+                       COALESCE(custom_order_refund_approval_limit, 0) AS custom_order_refund_approval_limit
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new CustomOrderSettings(
+                        rs.getBigDecimal("custom_order_minimum_deposit_percent"),
+                        rs.getBigDecimal("custom_order_refund_approval_limit")
+                );
+            }
+        }
+    }
+
+    private static void saveCustomOrderSettingsToDb(int locationId, CustomOrderSettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    custom_order_minimum_deposit_percent,
+                    custom_order_refund_approval_limit,
+                    updated_at
+                )
+                VALUES (?, 'SmartStock', ?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    custom_order_minimum_deposit_percent = EXCLUDED.custom_order_minimum_deposit_percent,
+                    custom_order_refund_approval_limit = EXCLUDED.custom_order_refund_approval_limit,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setBigDecimal(2, settings.minimumDepositPercent());
+            ps.setBigDecimal(3, settings.refundApprovalLimit());
+            ps.executeUpdate();
+        }
+    }
+
     private static ReceiptSettings loadLocalReceiptSettings() {
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
@@ -214,6 +294,21 @@ public class CompanyCustomizationManager {
         );
     }
 
+    private static CustomOrderSettings loadLocalCustomOrderSettings() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        return new CustomOrderSettings(
+                parsePercent(properties.getProperty("custom_orders.minimum_deposit_percent", "0")),
+                parseMoney(properties.getProperty("custom_orders.refund_approval_limit", "0"))
+        );
+    }
+
     private static void saveLocalReceiptSettings(ReceiptSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
         Properties properties = new Properties();
@@ -231,6 +326,42 @@ public class CompanyCustomizationManager {
 
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
+    private static void saveLocalCustomOrderSettings(CustomOrderSettings settings) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
+        properties.setProperty("custom_orders.minimum_deposit_percent", settings.minimumDepositPercent().toPlainString());
+        properties.setProperty("custom_orders.refund_approval_limit", settings.refundApprovalLimit().toPlainString());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
+    private static java.math.BigDecimal parsePercent(String value) {
+        try {
+            java.math.BigDecimal percent = new java.math.BigDecimal(value == null || value.isBlank() ? "0" : value.trim());
+            if (percent.compareTo(java.math.BigDecimal.ZERO) < 0 || percent.compareTo(java.math.BigDecimal.valueOf(100)) > 0) {
+                return java.math.BigDecimal.ZERO;
+            }
+            return percent;
+        } catch (NumberFormatException ex) {
+            return java.math.BigDecimal.ZERO;
+        }
+    }
+
+    private static java.math.BigDecimal parseMoney(String value) {
+        try {
+            java.math.BigDecimal amount = new java.math.BigDecimal(value == null || value.isBlank() ? "0" : value.trim());
+            return amount.compareTo(java.math.BigDecimal.ZERO) < 0 ? java.math.BigDecimal.ZERO : amount;
+        } catch (NumberFormatException ex) {
+            return java.math.BigDecimal.ZERO;
         }
     }
 
@@ -291,6 +422,8 @@ public class CompanyCustomizationManager {
     private static ReceiptSettings previewOverrideSettings;
     private static Integer cachedLocationId;
     private static ReceiptSettings cachedReceiptSettings;
+    private static Integer cachedCustomOrderLocationId;
+    private static CustomOrderSettings cachedCustomOrderSettings;
 
     private static String getExtension(String fileName) {
         int dotIndex = fileName == null ? -1 : fileName.lastIndexOf('.');
@@ -415,6 +548,13 @@ public class CompanyCustomizationManager {
         private static String clean(String value, String fallback) {
             String cleaned = Objects.requireNonNullElse(value, "").trim();
             return cleaned.isBlank() ? fallback : cleaned;
+        }
+    }
+
+    public record CustomOrderSettings(java.math.BigDecimal minimumDepositPercent, java.math.BigDecimal refundApprovalLimit) {
+        public CustomOrderSettings {
+            minimumDepositPercent = minimumDepositPercent == null ? java.math.BigDecimal.ZERO : minimumDepositPercent;
+            refundApprovalLimit = refundApprovalLimit == null ? java.math.BigDecimal.ZERO : refundApprovalLimit;
         }
     }
 }

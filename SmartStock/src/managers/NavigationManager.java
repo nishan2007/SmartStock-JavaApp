@@ -15,9 +15,11 @@ import ui.screens.EndOfDay;
 import ui.screens.HardwareSetup;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
+import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
 import ui.screens.NewItem;
 import ui.screens.Orders;
+import ui.screens.OrdersEndOfDay;
 import ui.screens.LocationManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.PartsManagement;
@@ -53,7 +55,9 @@ public final class NavigationManager {
         MAIN_MENU,
         MAKE_SALE,
         RETURN_SALE,
+        ORDERS_MANAGER_DASHBOARD,
         END_OF_DAY,
+        ORDERS_END_OF_DAY,
         RECEIVING_INVENTORY,
         RECEIVING_HISTORY,
         STORE_TRANSFER,
@@ -110,8 +114,16 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.RETURN_SALE));
     }
 
+    public static void openOrdersManagerDashboard(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.ORDERS_MANAGER_DASHBOARD));
+    }
+
     public static void openEndOfDay(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.END_OF_DAY));
+    }
+
+    public static void openOrdersEndOfDay(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.ORDERS_END_OF_DAY));
     }
 
     public static void openEnterInventory(JFrame parent) {
@@ -219,7 +231,9 @@ public final class NavigationManager {
             case MAIN_MENU -> new MainMenu();
             case MAKE_SALE -> new MakeASale();
             case RETURN_SALE -> new ReturnSale();
+            case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
             case END_OF_DAY -> new EndOfDay();
+            case ORDERS_END_OF_DAY -> new OrdersEndOfDay();
             case RECEIVING_INVENTORY -> new EnterInventory();
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
@@ -257,7 +271,9 @@ public final class NavigationManager {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
             case "ReturnSale" -> ScreenType.RETURN_SALE;
+            case "OrdersManagerDashboard" -> ScreenType.ORDERS_MANAGER_DASHBOARD;
             case "EndOfDay" -> ScreenType.END_OF_DAY;
+            case "OrdersEndOfDay" -> ScreenType.ORDERS_END_OF_DAY;
             case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;

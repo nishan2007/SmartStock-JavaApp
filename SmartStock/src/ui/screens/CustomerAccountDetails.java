@@ -455,6 +455,7 @@ public class CustomerAccountDetails extends JFrame {
         return switch (type) {
             case "SALE_CREDIT" -> "Sale Credit";
             case "SALE_PAID" -> "Sale Paid";
+            case "CUSTOM_ORDER_REFUND" -> "Custom Order Refund";
             case "MANUAL_CHARGE" -> "Manual Charge";
             case "PAYMENT" -> "Payment";
             default -> type.replace('_', ' ');

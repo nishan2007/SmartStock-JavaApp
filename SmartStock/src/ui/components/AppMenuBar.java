@@ -20,9 +20,11 @@ import ui.screens.LocationManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
+import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
 import ui.screens.NewItem;
 import ui.screens.Orders;
+import ui.screens.OrdersEndOfDay;
 import ui.screens.PartsManagement;
 import ui.screens.PayrollDashboard;
 import ui.screens.ReceivingHistory;
@@ -52,6 +54,7 @@ public class AppMenuBar {
         JMenuBar menuBar = new JMenuBar();
 
         JMenu pointOfSaleMenu = new JMenu("Point of Sale");
+        JMenu ordersMenu = new JMenu("Orders");
         JMenu inventoryMenu = new JMenu("Inventory");
         JMenu employeeMenu = new JMenu("Employee");
         JMenu adminMenu = new JMenu("Admin");
@@ -59,7 +62,9 @@ public class AppMenuBar {
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
         JMenuItem returnSaleItem = new JMenuItem("Returns");
+        JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Manager Dashboard");
         JMenuItem endOfDayItem = new JMenuItem("End of Day");
+        JMenuItem ordersEndOfDayItem = new JMenuItem("Orders End Of Day");
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
@@ -88,7 +93,11 @@ public class AppMenuBar {
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
+                || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
+        boolean canOrdersEndOfDay = PermissionManager.hasPermission("ORDERS_END_OF_DAY")
+                || PermissionManager.hasPermission("END_OF_DAY");
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
@@ -118,7 +127,7 @@ public class AppMenuBar {
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
         boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
         boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -129,8 +138,14 @@ public class AppMenuBar {
         if (!canProcessReturns || "ReturnSale".equalsIgnoreCase(screenKey)) {
             returnSaleItem.setEnabled(false);
         }
+        if (!canOrdersManagerDashboard || "OrdersManagerDashboard".equalsIgnoreCase(screenKey)) {
+            ordersManagerDashboardItem.setEnabled(false);
+        }
         if (!canEndOfDay || "EndOfDay".equalsIgnoreCase(screenKey)) {
             endOfDayItem.setEnabled(false);
+        }
+        if (!canOrdersEndOfDay || "OrdersEndOfDay".equalsIgnoreCase(screenKey)) {
+            ordersEndOfDayItem.setEnabled(false);
         }
         if (!canEnterInventory || "EnterInventory".equalsIgnoreCase(screenKey)) {
             enterInventoryItem.setEnabled(false);
@@ -242,6 +257,19 @@ public class AppMenuBar {
             }
         });
 
+        ordersManagerDashboardItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Orders Manager Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(OrdersManagerDashboard.class)) {
+                    return;
+                }
+                NavigationManager.openOrdersManagerDashboard(parent);
+            }
+        });
+
         endOfDayItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("END_OF_DAY", parent, "End of Day")) {
@@ -251,6 +279,19 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openEndOfDay(parent);
+            }
+        });
+
+        ordersEndOfDayItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.hasPermission("ORDERS_END_OF_DAY") && !PermissionManager.hasPermission("END_OF_DAY")) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Orders End Of Day.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(OrdersEndOfDay.class)) {
+                    return;
+                }
+                NavigationManager.openOrdersEndOfDay(parent);
             }
         });
 
@@ -563,13 +604,16 @@ public class AppMenuBar {
         pointOfSaleMenu.add(endOfDayItem);
         pointOfSaleMenu.add(ViewSalesItem);
         pointOfSaleMenu.add(customerAccountsItem);
-        pointOfSaleMenu.add(customOrdersItem);
-        pointOfSaleMenu.add(ordersItem);
+
+        ordersMenu.add(ordersManagerDashboardItem);
+        ordersMenu.add(customOrdersItem);
+        ordersMenu.add(ordersItem);
+        ordersMenu.add(ordersEndOfDayItem);
+        ordersMenu.add(customOrderItemsItem);
 
         inventoryMenu.add(enterInventoryItem);
         inventoryMenu.add(receivingHistoryItem);
         inventoryMenu.add(storeTransferItem);
-        inventoryMenu.add(customOrderItemsItem);
         inventoryMenu.add(departmentListItem);
         inventoryMenu.add(vendorListItem);
         inventoryMenu.add(maintenanceManagementItem);
@@ -635,6 +679,7 @@ public class AppMenuBar {
 
 
         menuBar.add(pointOfSaleMenu);
+        menuBar.add(ordersMenu);
         menuBar.add(inventoryMenu);
         menuBar.add(employeeMenu);
         menuBar.add(adminMenu);

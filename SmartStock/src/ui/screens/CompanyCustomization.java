@@ -5,6 +5,7 @@ import Receipt.ReceiptFormatter;
 import Receipt.ReceiptItem;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
+import managers.PermissionManager;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -37,6 +38,8 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
+    private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
+    private final JTextField customOrderRefundApprovalLimitField = new JTextField("0.00", 8);
     private final JLabel logoPreviewLabel = new JLabel("No Logo", SwingConstants.CENTER);
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
     private boolean loadingSettings = false;
@@ -91,6 +94,8 @@ public class CompanyCustomization extends JFrame {
         panel.add(buildCompanyIdentityPanel());
         panel.add(Box.createVerticalStrut(16));
         panel.add(buildReceiptFormattingPanel());
+        panel.add(Box.createVerticalStrut(16));
+        panel.add(buildCustomOrdersPanel());
         return panel;
     }
 
@@ -110,6 +115,43 @@ public class CompanyCustomization extends JFrame {
         logoPathField.setEditable(false);
         addRow(panel, 1, "Company Name", companyNameField);
         addRow(panel, 2, "Company Logo", buildLogoFilePanel());
+
+        return panel;
+    }
+
+    private JPanel buildCustomOrdersPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(18, 18, 18, 18)
+        ));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel sectionLabel = new JLabel("Custom Orders");
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        addWide(panel, sectionLabel, 0);
+
+        JPanel percentPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        percentPanel.setOpaque(false);
+        customOrderMinimumDepositPercentField.setPreferredSize(new Dimension(90, 30));
+        percentPanel.add(customOrderMinimumDepositPercentField);
+        percentPanel.add(new JLabel("%"));
+        addRow(panel, 1, "Minimum Deposit", percentPanel);
+        addRow(panel, 2, "Refund Approval Over", customOrderRefundApprovalLimitField);
+
+        boolean canEditDeposit = PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_SETTINGS")
+                || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES");
+        boolean canEditRefundLimit = PermissionManager.hasPermission("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS")
+                || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES");
+        customOrderMinimumDepositPercentField.setEnabled(canEditDeposit);
+        customOrderRefundApprovalLimitField.setEnabled(canEditRefundLimit);
+        customOrderMinimumDepositPercentField.setToolTipText(canEditDeposit
+                ? "Default percentage required upfront for custom orders."
+                : "Requires Custom Order Deposit Settings permission.");
+        customOrderRefundApprovalLimitField.setToolTipText(canEditRefundLimit
+                ? "Refunds above this amount require approval permission. Use 0.00 to disable."
+                : "Requires Custom Order Refund Approval Settings permission.");
 
         return panel;
     }
@@ -246,6 +288,9 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.setSelected(settings.showSku());
         showItemDiscountBox.setSelected(settings.showItemDiscount());
         showPaymentStatusBox.setSelected(settings.showPaymentStatus());
+        CompanyCustomizationManager.CustomOrderSettings customOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
+        customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
+        customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
@@ -255,10 +300,30 @@ public class CompanyCustomization extends JFrame {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
+            CompanyCustomizationManager.CustomOrderSettings existingCustomOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
+            if (customOrderMinimumDepositPercentField.isEnabled() || customOrderRefundApprovalLimitField.isEnabled()) {
+                CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
+            }
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private CompanyCustomizationManager.CustomOrderSettings getCustomOrderSettingsFromFields(CompanyCustomizationManager.CustomOrderSettings existingSettings) {
+        String percentValue = customOrderMinimumDepositPercentField.getText() == null ? "" : customOrderMinimumDepositPercentField.getText().trim();
+        BigDecimal percent = percentValue.isBlank() ? BigDecimal.ZERO : new BigDecimal(percentValue.replace("%", "").trim());
+        if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+            throw new IllegalArgumentException("Custom order minimum deposit percent must be between 0 and 100.");
+        }
+        String limitValue = customOrderRefundApprovalLimitField.getText() == null ? "" : customOrderRefundApprovalLimitField.getText().trim();
+        BigDecimal refundApprovalLimit = limitValue.isBlank() ? BigDecimal.ZERO : new BigDecimal(limitValue.replace("$", "").replace(",", "").trim());
+        if (refundApprovalLimit.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Custom order refund approval limit cannot be negative.");
+        }
+        BigDecimal savedPercent = customOrderMinimumDepositPercentField.isEnabled() ? percent : existingSettings.minimumDepositPercent();
+        BigDecimal savedRefundLimit = customOrderRefundApprovalLimitField.isEnabled() ? refundApprovalLimit : existingSettings.refundApprovalLimit();
+        return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit);
     }
 
     private CompanyCustomizationManager.ReceiptSettings getSettingsFromFields() {

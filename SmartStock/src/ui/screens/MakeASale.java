@@ -59,7 +59,9 @@ public class MakeASale extends JFrame {
     private JToggleButton cashPaymentButton;
     private JToggleButton cardPaymentButton;
     private JToggleButton chequePaymentButton;
+    private JToggleButton mmgPaymentButton;
     private JToggleButton accountPaymentButton;
+    private JTextField paymentReferenceField;
     private String selectedPaymentMethod;
     private JComboBox<CustomerAccountOption> customerAccountBox;
     private JButton addCustomerAccountButton;
@@ -262,7 +264,12 @@ public class MakeASale extends JFrame {
        cashPaymentButton = createPaymentMethodButton("Cash", "CASH");
        cardPaymentButton = createPaymentMethodButton("Card", "CARD");
        chequePaymentButton = createPaymentMethodButton("Cheque", "CHEQUE");
+       mmgPaymentButton = createPaymentMethodButton("MMG", "MMG");
        accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT");
+       paymentReferenceField = new JTextField(14);
+       paymentReferenceField.setToolTipText("Required for MMG transaction reference.");
+       paymentReferenceField.setEnabled(false);
+       setFixedControlHeight(paymentReferenceField, 170);
 	       discountPercentField = new JTextField("0", 5);
        discountPercentField.setForeground(new Color(15, 23, 42));
        discountPercentField.setCaretColor(new Color(15, 23, 42));
@@ -294,7 +301,9 @@ public class MakeASale extends JFrame {
        transactionPanel.add(cashPaymentButton);
        transactionPanel.add(cardPaymentButton);
        transactionPanel.add(chequePaymentButton);
+       transactionPanel.add(mmgPaymentButton);
        transactionPanel.add(accountPaymentButton);
+       transactionPanel.add(buildLabeledControl("Reference", paymentReferenceField));
        totalsPanel.add(buildLabeledControl("Discount %", discountPercentField));
 	       subtotalLabel = createTotalLabel("Subtotal: $0.00", false);
 	       totalsPanel.add(subtotalLabel);
@@ -554,9 +563,12 @@ public class MakeASale extends JFrame {
             cardPaymentButton.setSelected(true);
         } else if ("CHEQUE".equals(method) && chequePaymentButton != null) {
             chequePaymentButton.setSelected(true);
+        } else if ("MMG".equals(method) && mmgPaymentButton != null) {
+            mmgPaymentButton.setSelected(true);
         } else if ("ACCOUNT".equals(method) && accountPaymentButton != null) {
             accountPaymentButton.setSelected(true);
         }
+        updatePaymentReferenceEnabled();
         updatePaymentButtonStyles();
         updateCheckoutAvailability();
         updateCustomerAccountEnabled();
@@ -566,7 +578,19 @@ public class MakeASale extends JFrame {
         stylePaymentButton(cashPaymentButton, "CASH".equals(selectedPaymentMethod));
         stylePaymentButton(cardPaymentButton, "CARD".equals(selectedPaymentMethod));
         stylePaymentButton(chequePaymentButton, "CHEQUE".equals(selectedPaymentMethod));
+        stylePaymentButton(mmgPaymentButton, "MMG".equals(selectedPaymentMethod));
         stylePaymentButton(accountPaymentButton, "ACCOUNT".equals(selectedPaymentMethod));
+    }
+
+    private void updatePaymentReferenceEnabled() {
+        if (paymentReferenceField == null) {
+            return;
+        }
+        boolean enabled = "MMG".equals(selectedPaymentMethod);
+        paymentReferenceField.setEnabled(enabled);
+        if (!enabled) {
+            paymentReferenceField.setText("");
+        }
     }
 
     private void stylePaymentButton(JToggleButton button, boolean selected) {
@@ -1738,9 +1762,14 @@ public class MakeASale extends JFrame {
 
         boolean chargeCustomerAccount = "ACCOUNT".equals(paymentMethod);
         boolean cashPayment = "CASH".equals(paymentMethod);
+        String paymentReference = paymentReferenceField == null ? "" : paymentReferenceField.getText().trim();
 
         if (chargeCustomerAccount && selectedCustomer == null) {
             JOptionPane.showMessageDialog(this, "Select a customer account for account payment.");
+            return;
+        }
+        if ("MMG".equals(paymentMethod) && paymentReference.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Enter the MMG transaction reference number.");
             return;
         }
 
@@ -1803,9 +1832,10 @@ public class MakeASale extends JFrame {
 	                            subtotal_amount,
 	                            discount_percent,
 	                            discount_amount,
+                                payment_reference,
 	                            transaction_source
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                        """;
                 int saleId;
 
@@ -1829,7 +1859,8 @@ public class MakeASale extends JFrame {
 		                    saleStmt.setBigDecimal(13, subtotalAmount);
 		                    saleStmt.setBigDecimal(14, discountPercent);
 		                    saleStmt.setBigDecimal(15, discountAmount);
-		                    saleStmt.setString(16, "Java_app");
+                            saleStmt.setString(16, paymentReference.isBlank() ? null : paymentReference);
+		                    saleStmt.setString(17, "Java_app");
 	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -1959,6 +1990,9 @@ public class MakeASale extends JFrame {
 	                cartModel.setRowCount(0);
 	                discountPercentField.setText("0");
 	                clearHeldCartSelection();
+                    if (paymentReferenceField != null) {
+                        paymentReferenceField.setText("");
+                    }
                 configureCartTableColumns();
                 searchField.setText("");
                 loadCustomerAccounts();
@@ -2329,6 +2363,7 @@ public class MakeASale extends JFrame {
         if (paymentMethodGroup != null) {
             paymentMethodGroup.clearSelection();
         }
+        updatePaymentReferenceEnabled();
         updatePaymentButtonStyles();
         updateCheckoutAvailability();
         if (discountPercentField != null) {

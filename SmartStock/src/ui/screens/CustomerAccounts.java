@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.PermissionManager;
+import services.DeviceContextService;
 import ui.components.AppMenuBar;
 import ui.components.CustomerTypeSelector;
 import ui.helpers.WindowHelper;
@@ -718,9 +719,9 @@ public class CustomerAccounts extends JFrame {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
                 )
-                VALUES (?, ?, 'ACCOUNT', ?, ?, ?)
+                VALUES (?, ?, 'ACCOUNT', ?, ?, ?, 'PAYMENT', ?, ?)
                 """;
         String allocationSql = """
                 INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, custom_order_id, amount)
@@ -778,6 +779,8 @@ public class CustomerAccounts extends JFrame {
         ps.setString(3, "Account payment transaction #" + paymentTransactionId);
         setNullableInteger(ps, 4, managers.SessionManager.getCurrentUserId());
         ps.setString(5, managers.SessionManager.getCurrentUserDisplayName());
+        ps.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
+        ps.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
         ps.executeUpdate();
     }
 
@@ -794,6 +797,10 @@ public class CustomerAccounts extends JFrame {
             appliedCharges.append("; ");
         }
         appliedCharges.append(text);
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private void updateSalePaymentStatus(PreparedStatement ps, int saleId, BigDecimal amountPaid, String paymentStatus) throws SQLException {
@@ -852,8 +859,8 @@ public class CustomerAccounts extends JFrame {
 
     private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note, Integer saleId) throws SQLException {
         String sql = """
-                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, customerId);
@@ -866,6 +873,8 @@ public class CustomerAccounts extends JFrame {
             ps.setString(4, type);
             ps.setString(5, note);
             ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
+            ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
+            ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {

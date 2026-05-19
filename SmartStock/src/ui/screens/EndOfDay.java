@@ -33,6 +33,7 @@ public class EndOfDay extends JFrame {
     private final JTextField toField = new JTextField();
     private final JComboBox<FilterOption> employeeBox = new JComboBox<>();
     private final JComboBox<FilterOption> deviceBox = new JComboBox<>();
+    private final JComboBox<FilterOption> paymentBox = new JComboBox<>();
     private final JLabel storeLabel = new JLabel();
     private final JLabel transactionsLabel = metricLabel();
     private final JLabel totalSalesLabel = metricLabel();
@@ -43,6 +44,7 @@ public class EndOfDay extends JFrame {
     private final JLabel unpaidLabel = metricLabel();
     private final JLabel cashLabel = metricLabel();
     private final JLabel cardLabel = metricLabel();
+    private final JLabel mmgLabel = metricLabel();
     private final JLabel accountLabel = metricLabel();
     private final DefaultTableModel salesModel;
     private ZoneId storeZone = resolveStoreZone();
@@ -61,7 +63,7 @@ public class EndOfDay extends JFrame {
         root.setBackground(new Color(245, 247, 250));
 
         salesModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Receipt", "Time", "Employee", "Device", "Payment", "Status", "Paid", "Total"},
+                new Object[]{"Sale ID", "Receipt", "Time", "Employee", "Device", "Payment", "Reference", "Status", "Paid", "Total"},
                 0
         ) {
             @Override
@@ -105,18 +107,25 @@ public class EndOfDay extends JFrame {
 
         JButton runButton = new JButton("Run Report");
         JButton todayButton = new JButton("Today");
+        paymentBox.addItem(new FilterOption(null, "All Methods"));
+        paymentBox.addItem(new FilterOption("CASH", "Cash"));
+        paymentBox.addItem(new FilterOption("CARD", "Card"));
+        paymentBox.addItem(new FilterOption("CHEQUE", "Cheque"));
+        paymentBox.addItem(new FilterOption("MMG", "MMG"));
+        paymentBox.addItem(new FilterOption("ACCOUNT", "Account"));
 
         addFilter(filterPanel, 0, "From", fromField, 190);
         addFilter(filterPanel, 2, "To", toField, 190);
         addFilter(filterPanel, 4, "Employee", employeeBox, 220);
         addFilter(filterPanel, 6, "Device", deviceBox, 180);
+        addFilter(filterPanel, 8, "Payment", paymentBox, 160);
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 8;
+        gbc.gridx = 10;
         gbc.gridy = 0;
         gbc.insets = new Insets(0, 10, 0, 0);
         filterPanel.add(runButton, gbc);
-        gbc.gridx = 9;
+        gbc.gridx = 11;
         filterPanel.add(todayButton, gbc);
 
         runButton.addActionListener(e -> loadReport());
@@ -124,12 +133,14 @@ public class EndOfDay extends JFrame {
             setDefaultRange();
             employeeBox.setSelectedIndex(0);
             deviceBox.setSelectedIndex(0);
+            paymentBox.setSelectedIndex(0);
             loadReport();
         });
         fromField.addActionListener(e -> loadReport());
         toField.addActionListener(e -> loadReport());
         employeeBox.addActionListener(e -> loadReport());
         deviceBox.addActionListener(e -> loadReport());
+        paymentBox.addActionListener(e -> loadReport());
 
         headerPanel.add(titleRow, BorderLayout.NORTH);
         headerPanel.add(filterPanel, BorderLayout.CENTER);
@@ -140,7 +151,7 @@ public class EndOfDay extends JFrame {
         JPanel panel = new JPanel(new BorderLayout(12, 12));
         panel.setOpaque(false);
 
-        JPanel metricsPanel = new JPanel(new GridLayout(2, 5, 10, 10));
+        JPanel metricsPanel = new JPanel(new GridLayout(3, 4, 10, 10));
         metricsPanel.setOpaque(false);
         metricsPanel.add(transactionsLabel);
         metricsPanel.add(totalSalesLabel);
@@ -151,6 +162,7 @@ public class EndOfDay extends JFrame {
         metricsPanel.add(unpaidLabel);
         metricsPanel.add(cashLabel);
         metricsPanel.add(cardLabel);
+        metricsPanel.add(mmgLabel);
         metricsPanel.add(accountLabel);
 
         panel.add(metricsPanel, BorderLayout.NORTH);
@@ -274,6 +286,7 @@ public class EndOfDay extends JFrame {
                        COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS employee_name,
                        COALESCE(s.receipt_device_id, '') AS device_id,
                        COALESCE(s.payment_method, '') AS payment_method,
+                       COALESCE(s.payment_reference, '') AS payment_reference,
 	                       COALESCE(s.payment_status, 'PAID') AS payment_status,
 	                       COALESCE(s.amount_paid, 0) AS amount_paid,
 	                       COALESCE(s.discount_amount, 0) AS discount_amount,
@@ -303,6 +316,11 @@ public class EndOfDay extends JFrame {
             sql.append(" AND COALESCE(s.receipt_device_id, '') = ?");
             parameters.add(device.value());
         }
+        FilterOption payment = (FilterOption) paymentBox.getSelectedItem();
+        if (payment != null && payment.value() != null) {
+            sql.append(" AND s.payment_method = ?");
+            parameters.add(payment.value());
+        }
 
         sql.append(" ORDER BY s.created_at ASC, s.sale_id ASC");
 
@@ -313,6 +331,7 @@ public class EndOfDay extends JFrame {
         BigDecimal paid = BigDecimal.ZERO;
         BigDecimal cash = BigDecimal.ZERO;
         BigDecimal card = BigDecimal.ZERO;
+        BigDecimal mmg = BigDecimal.ZERO;
         BigDecimal account = BigDecimal.ZERO;
 
         try (Connection conn = DB.getConnection();
@@ -335,6 +354,8 @@ public class EndOfDay extends JFrame {
                         cash = cash.add(amountPaid);
                     } else if ("CARD".equalsIgnoreCase(paymentMethod) || "CHEQUE".equalsIgnoreCase(paymentMethod)) {
                         card = card.add(amountPaid);
+                    } else if ("MMG".equalsIgnoreCase(paymentMethod)) {
+                        mmg = mmg.add(amountPaid);
                     } else if ("ACCOUNT".equalsIgnoreCase(paymentMethod)) {
                         account = account.add(totalAmount.subtract(amountPaid));
                     }
@@ -346,6 +367,7 @@ public class EndOfDay extends JFrame {
                             rs.getString("employee_name"),
                             rs.getString("device_id"),
                             paymentMethod,
+                            rs.getString("payment_reference"),
                             rs.getString("payment_status"),
                             CURRENCY.format(amountPaid),
                             CURRENCY.format(totalAmount)
@@ -364,6 +386,7 @@ public class EndOfDay extends JFrame {
             unpaidLabel.setText("Unpaid: " + CURRENCY.format(totalSales.subtract(paid)));
             cashLabel.setText("Cash: " + CURRENCY.format(cash));
             cardLabel.setText("Card/Check: " + CURRENCY.format(card));
+            mmgLabel.setText("MMG: " + CURRENCY.format(mmg));
             accountLabel.setText("Account: " + CURRENCY.format(account));
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load end of day report: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);

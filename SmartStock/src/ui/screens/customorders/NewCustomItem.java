@@ -103,7 +103,7 @@ public class NewCustomItem extends JPanel {
         addField(form, gbc, 12, "Total Reorder:", reorderLevelField);
         JScrollPane descriptionScroll = new JScrollPane(itemDescriptionArea);
         descriptionScroll.setPreferredSize(new Dimension(260, 90));
-        addField(form, gbc, 12, "Description:", descriptionScroll);
+        addField(form, gbc, 13, "Description:", descriptionScroll);
         addTrackedField(mainImageComponents, form, gbc, 14, "Image:", imageSelector);
         gbc.gridx = 1;
         gbc.gridy = 15;
