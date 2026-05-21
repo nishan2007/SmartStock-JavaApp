@@ -348,7 +348,7 @@ public class EnterInventory extends JFrame {
                            coi.custom_item_id AS item_id,
                            coi.item_name AS name,
                            coi.description,
-                           COALESCE(NULLIF(coi.barcode, ''), 'CUSTOM-' || coi.custom_item_id) AS code,
+                           COALESCE(NULLIF(coi.sku, ''), NULLIF(coi.barcode, ''), 'CUSTOM-' || coi.custom_item_id) AS code,
                            coi.quantity_on_hand
                     FROM custom_order_items coi
                     WHERE coi.is_active = TRUE
@@ -356,6 +356,7 @@ public class EnterInventory extends JFrame {
                       AND COALESCE(coi.has_variants, FALSE) = FALSE
                       AND (
                           coi.item_name ILIKE ?
+                          OR COALESCE(coi.sku, '') ILIKE ?
                           OR COALESCE(coi.barcode, '') ILIKE ?
                           OR ('CUSTOM-' || coi.custom_item_id) ILIKE ?
                           OR EXISTS (
@@ -370,7 +371,7 @@ public class EnterInventory extends JFrame {
                            coiv.custom_variant_id AS item_id,
                            coi.item_name || ' - ' || coiv.variant_name AS name,
                            coi.description,
-                           COALESCE(NULLIF(coiv.barcode, ''), 'CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) AS code,
+                           COALESCE(NULLIF(coiv.sku, ''), NULLIF(coiv.barcode, ''), 'CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) AS code,
                            coiv.quantity_on_hand
                     FROM custom_order_item_variants coiv
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
@@ -380,6 +381,7 @@ public class EnterInventory extends JFrame {
                       AND (
                           coi.item_name ILIKE ?
                           OR coiv.variant_name ILIKE ?
+                          OR COALESCE(coiv.sku, '') ILIKE ?
                           OR COALESCE(coiv.barcode, '') ILIKE ?
                           OR ('CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) ILIKE ?
                       )
@@ -401,6 +403,8 @@ public class EnterInventory extends JFrame {
             ps.setString(9, "%" + searchText + "%");
             ps.setString(10, "%" + searchText + "%");
             ps.setString(11, "%" + searchText + "%");
+            ps.setString(12, "%" + searchText + "%");
+            ps.setString(13, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
             java.util.List<Object[]> rows = new java.util.ArrayList<>();

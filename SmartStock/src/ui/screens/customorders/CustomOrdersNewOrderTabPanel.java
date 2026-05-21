@@ -15,6 +15,7 @@ import java.util.List;
 class CustomOrdersNewOrderTabPanel extends JPanel {
     final CustomerInfoPanel customerInfoPanel;
     final DatePickerField dueDateField;
+    final JTextField itemLookupField;
     final JComboBox<CustomItemOption> orderItemBox;
     final JComboBox<VariantOption> variantBox;
     final JTextField linePriceField;
@@ -69,6 +70,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         GridBagConstraints leftLineGbc = formGbc();
         GridBagConstraints rightLineGbc = formGbc();
         orderItemBox = new JComboBox<>();
+        itemLookupField = new JTextField();
+        JButton itemLookupButton = new JButton("Lookup");
         variantBox = new JComboBox<>();
         linePriceField = new JTextField();
         printMaterialBox = new JComboBox<>();
@@ -94,20 +97,21 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         JButton addPrintAddonButton = new JButton("Add Print Add On");
         JButton removePrintAddonButton = new JButton("Remove Print Add On");
 
-        addField(leftLinePanel, leftLineGbc, 0, "Item:", orderItemBox);
-        addField(leftLinePanel, leftLineGbc, 1, "Size / Variant:", variantBox);
-        addField(leftLinePanel, leftLineGbc, 2, "Base Price:", linePriceField);
-        addField(leftLinePanel, leftLineGbc, 3, "Price Reason:", priceOverrideReasonField);
-        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 4, "Width:", widthField);
-        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 5, "Length:", lengthField);
+        addField(leftLinePanel, leftLineGbc, 0, "SKU / Barcode:", buildLookupPanel(itemLookupButton));
+        addField(leftLinePanel, leftLineGbc, 1, "Item:", orderItemBox);
+        addField(leftLinePanel, leftLineGbc, 2, "Size / Variant:", variantBox);
+        addField(leftLinePanel, leftLineGbc, 3, "Base Price:", linePriceField);
+        addField(leftLinePanel, leftLineGbc, 4, "Price Reason:", priceOverrideReasonField);
+        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 5, "Width:", widthField);
+        addTrackedField(areaLineComponents, leftLinePanel, leftLineGbc, 6, "Length:", lengthField);
         leftLineGbc.gridx = 1;
-        leftLineGbc.gridy = 6;
+        leftLineGbc.gridy = 7;
         leftLinePanel.add(areaCalculationLabel, leftLineGbc);
         areaLineComponents.add(areaCalculationLabel);
         JScrollPane lineNotesScroll = new JScrollPane(lineNotesArea);
         lineNotesScroll.setPreferredSize(new Dimension(300, 120));
-        addField(leftLinePanel, leftLineGbc, 7, "Order Instructions:", lineNotesScroll);
-        addVerticalFormSpacer(leftLinePanel, leftLineGbc, 8);
+        addField(leftLinePanel, leftLineGbc, 8, "Order Instructions:", lineNotesScroll);
+        addVerticalFormSpacer(leftLinePanel, leftLineGbc, 9);
 
         addField(rightLinePanel, rightLineGbc, 0, "Print Add On:", printMaterialBox);
         addTrackedField(printAddOnComponents, rightLinePanel, rightLineGbc, 1, "Print Size:", printSizePresetBox);
@@ -137,6 +141,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         linePanel.add(lineColumns, BorderLayout.CENTER);
 
         orderItemBox.addActionListener(e -> handler.orderItemChanged());
+        itemLookupField.addActionListener(e -> handler.orderLookup());
+        itemLookupButton.addActionListener(e -> handler.orderLookup());
         variantBox.addActionListener(e -> handler.variantChanged());
         printMaterialBox.addActionListener(e -> handler.printMaterialChanged());
         printSizePresetBox.addActionListener(e -> handler.printPresetChanged());
@@ -254,6 +260,13 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         return panel;
     }
 
+    private JPanel buildLookupPanel(JButton lookupButton) {
+        JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.add(itemLookupField, BorderLayout.CENTER);
+        panel.add(lookupButton, BorderLayout.EAST);
+        return panel;
+    }
+
     private JPanel buildPrintAddonsPanel(JPanel buttons) {
         printAddonModel = new DefaultTableModel(new Object[]{"Material ID", "Material", "Preset ID", "Size", "Pricing", "Description", "Lines", "Price"}, 0) {
             @Override
@@ -343,6 +356,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
     interface Handler {
         void orderItemChanged();
+        void orderLookup();
         void variantChanged();
         void printMaterialChanged();
         void printPresetChanged();

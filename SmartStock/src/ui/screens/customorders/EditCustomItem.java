@@ -1,6 +1,7 @@
 package ui.screens.customorders;
 
 import data.DB;
+import services.CustomOrderSkuGenerator;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
@@ -25,6 +26,7 @@ public class EditCustomItem extends JPanel {
     private TableRowSorter<DefaultTableModel> itemSorter;
     private JTextField searchField;
     private JTextField itemNameField;
+    private JTextField itemSkuPreviewField;
     private JTextField barcodeField;
     private JTextArea barcodesArea;
     private JTextArea descriptionArea;
@@ -46,6 +48,7 @@ public class EditCustomItem extends JPanel {
     private JTable variantTable;
     private JPanel variantPanel;
     private JTextField variantNameField;
+    private JTextField variantSkuPreviewField;
     private JTextField variantBarcodeField;
     private JTextField variantPriceField;
     private ProductImageHelper.ImageSelector variantImageSelector;
@@ -86,7 +89,7 @@ public class EditCustomItem extends JPanel {
         searchPanel.add(searchField, BorderLayout.CENTER);
         searchPanel.add(refreshButton, BorderLayout.EAST);
 
-        itemModel = new DefaultTableModel(new Object[]{"ID", "Item", "Pricing", "Variants", "Qty", "Stock", "Active"}, 0) {
+        itemModel = new DefaultTableModel(new Object[]{"ID", "Item", "SKU", "Pricing", "Variants", "Qty", "Stock", "Active"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -98,8 +101,8 @@ public class EditCustomItem extends JPanel {
         itemTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         itemTable.setRowHeight(26);
         itemTable.getColumnModel().getColumn(0).setMaxWidth(60);
-        itemTable.getColumnModel().getColumn(3).setMaxWidth(75);
-        itemTable.getColumnModel().getColumn(6).setMaxWidth(65);
+        itemTable.getColumnModel().getColumn(4).setMaxWidth(75);
+        itemTable.getColumnModel().getColumn(7).setMaxWidth(65);
         itemTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedItem();
@@ -142,6 +145,8 @@ public class EditCustomItem extends JPanel {
         JPanel form = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = formGbc();
         itemNameField = new JTextField();
+        itemSkuPreviewField = new JTextField();
+        itemSkuPreviewField.setEditable(false);
         barcodeField = new JTextField();
         barcodesArea = new JTextArea(2, 20);
         barcodesArea.setLineWrap(true);
@@ -161,6 +166,7 @@ public class EditCustomItem extends JPanel {
         quantityField = new JTextField("0");
         reorderLevelField = new JTextField("0");
         activeCheckBox = new JCheckBox("Active", true);
+        itemNameField.getDocument().addDocumentListener(simpleDocumentListener(this::updateItemSkuPreview));
 
         hasVariantsCheckBox.addActionListener(e -> {
             updatePricingFields();
@@ -170,28 +176,29 @@ public class EditCustomItem extends JPanel {
         productTypeBox.addActionListener(e -> updatePricingFields());
 
         addField(form, gbc, 0, "Item:", itemNameField);
-        addField(form, gbc, 1, "Barcode:", barcodeField);
+        addField(form, gbc, 1, "SKU:", itemSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", barcodeField);
         JScrollPane barcodeScroll = new JScrollPane(barcodesArea);
         barcodeScroll.setPreferredSize(new Dimension(220, 64));
-        addField(form, gbc, 2, "More Barcodes:", barcodeScroll);
+        addField(form, gbc, 3, "More Barcodes:", barcodeScroll);
         gbc.gridx = 1;
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         form.add(hasVariantsCheckBox, gbc);
-        addField(form, gbc, 4, "Product Type:", productTypeBox);
-        addField(form, gbc, 5, "Pricing:", pricingTypeBox);
-        addTrackedField(priceComponents, form, gbc, 6, "Price:", priceField);
-        addTrackedField(areaComponents, form, gbc, 7, "Price Unit:", areaPriceUnitBox);
-        addTrackedField(areaComponents, form, gbc, 8, "Size Unit:", dimensionUnitBox);
-        addTrackedField(areaComponents, form, gbc, 9, "Max Width:", maxWidthField);
-        addTrackedField(areaComponents, form, gbc, 10, "Max Length:", maxLengthField);
-        addField(form, gbc, 11, "Total Qty:", quantityField);
-        addField(form, gbc, 12, "Total Reorder:", reorderLevelField);
+        addField(form, gbc, 5, "Product Type:", productTypeBox);
+        addField(form, gbc, 6, "Pricing:", pricingTypeBox);
+        addTrackedField(priceComponents, form, gbc, 7, "Price:", priceField);
+        addTrackedField(areaComponents, form, gbc, 8, "Price Unit:", areaPriceUnitBox);
+        addTrackedField(areaComponents, form, gbc, 9, "Size Unit:", dimensionUnitBox);
+        addTrackedField(areaComponents, form, gbc, 10, "Max Width:", maxWidthField);
+        addTrackedField(areaComponents, form, gbc, 11, "Max Length:", maxLengthField);
+        addField(form, gbc, 12, "Total Qty:", quantityField);
+        addField(form, gbc, 13, "Total Reorder:", reorderLevelField);
         JScrollPane descScroll = new JScrollPane(descriptionArea);
         descScroll.setPreferredSize(new Dimension(220, 80));
-        addField(form, gbc, 13, "Description:", descScroll);
-        addTrackedField(mainImageComponents, form, gbc, 14, "Image:", imageSelector);
+        addField(form, gbc, 14, "Description:", descScroll);
+        addTrackedField(mainImageComponents, form, gbc, 15, "Image:", imageSelector);
         gbc.gridx = 1;
-        gbc.gridy = 15;
+        gbc.gridy = 16;
         form.add(activeCheckBox, gbc);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -211,7 +218,7 @@ public class EditCustomItem extends JPanel {
         variantPanel = new JPanel(new BorderLayout(10, 10));
         variantPanel.setBorder(BorderFactory.createTitledBorder("Variants"));
 
-        variantModel = new DefaultTableModel(new Object[]{"ID", "Variant", "Barcode", "Price", "Qty", "Reorder", "Stock", "Active", "Image"}, 0) {
+        variantModel = new DefaultTableModel(new Object[]{"ID", "Variant", "SKU", "Barcode", "Price", "Qty", "Reorder", "Stock", "Active", "Image"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -220,9 +227,9 @@ public class EditCustomItem extends JPanel {
         variantTable = new JTable(variantModel);
         variantTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         variantTable.setRowHeight(26);
-        hideColumn(variantTable, 8);
+        hideColumn(variantTable, 9);
         variantTable.getColumnModel().getColumn(0).setMaxWidth(60);
-        variantTable.getColumnModel().getColumn(7).setMaxWidth(70);
+        variantTable.getColumnModel().getColumn(8).setMaxWidth(70);
         variantTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedVariant();
@@ -233,21 +240,25 @@ public class EditCustomItem extends JPanel {
         form.setBorder(BorderFactory.createTitledBorder("Variant Details"));
         GridBagConstraints gbc = formGbc();
         variantNameField = new JTextField();
+        variantSkuPreviewField = new JTextField();
+        variantSkuPreviewField.setEditable(false);
         variantBarcodeField = new JTextField();
         variantPriceField = new JTextField();
         variantImageSelector = ProductImageHelper.createImageSelector(parentWindow);
         variantQtyField = new JTextField("0");
         variantReorderField = new JTextField("0");
         variantActiveCheckBox = new JCheckBox("Active", true);
+        variantNameField.getDocument().addDocumentListener(simpleDocumentListener(this::updateVariantSkuPreview));
 
         addField(form, gbc, 0, "Size / Variant:", variantNameField);
-        addField(form, gbc, 1, "Barcode:", variantBarcodeField);
-        addField(form, gbc, 2, "Price:", variantPriceField);
-        addField(form, gbc, 3, "Image:", variantImageSelector);
-        addField(form, gbc, 4, "Quantity:", variantQtyField);
-        addField(form, gbc, 5, "Reorder At:", variantReorderField);
+        addField(form, gbc, 1, "SKU:", variantSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", variantBarcodeField);
+        addField(form, gbc, 3, "Price:", variantPriceField);
+        addField(form, gbc, 4, "Image:", variantImageSelector);
+        addField(form, gbc, 5, "Quantity:", variantQtyField);
+        addField(form, gbc, 6, "Reorder At:", variantReorderField);
         gbc.gridx = 1;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         form.add(variantActiveCheckBox, gbc);
 
         JPanel buttons = new JPanel(new GridLayout(2, 2, 8, 8));
@@ -322,10 +333,45 @@ public class EditCustomItem extends JPanel {
         components.add(field);
     }
 
+    private javax.swing.event.DocumentListener simpleDocumentListener(Runnable callback) {
+        return new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+        };
+    }
+
+    private void updateItemSkuPreview() {
+        if (itemSkuPreviewField != null) {
+            itemSkuPreviewField.setText(CustomOrderSkuGenerator.itemSku(itemNameField == null ? "" : itemNameField.getText()));
+        }
+        updateVariantSkuPreview();
+    }
+
+    private void updateVariantSkuPreview() {
+        if (variantSkuPreviewField != null) {
+            variantSkuPreviewField.setText(CustomOrderSkuGenerator.variantSku(
+                    itemNameField == null ? "" : itemNameField.getText(),
+                    variantNameField == null ? "" : variantNameField.getText()
+            ));
+        }
+    }
+
     private void loadItems() {
         itemModel.setRowCount(0);
         String sql = """
-                SELECT custom_item_id, item_name, pricing_type, has_variants,
+                SELECT custom_item_id, item_name, sku, pricing_type, has_variants,
                        quantity_on_hand, reorder_level, is_active,
                        CASE WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low' ELSE 'OK' END AS stock_status
                 FROM custom_order_items
@@ -338,6 +384,7 @@ public class EditCustomItem extends JPanel {
                 itemModel.addRow(new Object[]{
                         rs.getLong("custom_item_id"),
                         rs.getString("item_name"),
+                        rs.getString("sku"),
                         rs.getString("pricing_type"),
                         rs.getBoolean("has_variants") ? "Yes" : "No",
                         rs.getBigDecimal("quantity_on_hand"),
@@ -368,7 +415,7 @@ public class EditCustomItem extends JPanel {
         selectedCustomItemId = Long.parseLong(valueAt(itemModel, modelRow, 0));
 
         String sql = """
-                SELECT custom_item_id, item_name, barcode, description, image_url, pricing_type,
+                SELECT custom_item_id, item_name, sku, barcode, description, image_url, pricing_type,
                        fixed_price, area_price, area_price_unit, dimension_unit, max_width, max_length,
                        product_type, has_variants, quantity_on_hand, reorder_level, is_active
                 FROM custom_order_items
@@ -382,6 +429,7 @@ public class EditCustomItem extends JPanel {
                     return;
                 }
                 itemNameField.setText(rs.getString("item_name"));
+                itemSkuPreviewField.setText(nullToBlank(rs.getString("sku")));
                 barcodeField.setText(nullToBlank(rs.getString("barcode")));
                 descriptionArea.setText(nullToBlank(rs.getString("description")));
                 pricingTypeBox.setSelectedItem(toPricingDisplay(rs.getString("pricing_type")));
@@ -522,7 +570,7 @@ public class EditCustomItem extends JPanel {
             return;
         }
         String sql = """
-                SELECT custom_variant_id, variant_name, barcode, image_url, fixed_price,
+                SELECT custom_variant_id, variant_name, sku, barcode, image_url, fixed_price,
                        quantity_on_hand, reorder_level, is_active,
                        CASE WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low' ELSE 'OK' END AS stock_status
                 FROM custom_order_item_variants
@@ -537,6 +585,7 @@ public class EditCustomItem extends JPanel {
                     variantModel.addRow(new Object[]{
                             rs.getLong("custom_variant_id"),
                             rs.getString("variant_name"),
+                            rs.getString("sku"),
                             rs.getString("barcode"),
                             formatMoney(rs.getBigDecimal("fixed_price")),
                             rs.getBigDecimal("quantity_on_hand"),
@@ -560,12 +609,13 @@ public class EditCustomItem extends JPanel {
         int modelRow = variantTable.convertRowIndexToModel(row);
         selectedVariantId = Long.parseLong(valueAt(variantModel, modelRow, 0));
         variantNameField.setText(valueAt(variantModel, modelRow, 1));
-        variantBarcodeField.setText(valueAt(variantModel, modelRow, 2));
-        variantPriceField.setText(valueAt(variantModel, modelRow, 3));
-        variantQtyField.setText(valueAt(variantModel, modelRow, 4));
-        variantReorderField.setText(valueAt(variantModel, modelRow, 5));
-        variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 7)));
-        variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 8));
+        variantSkuPreviewField.setText(valueAt(variantModel, modelRow, 2));
+        variantBarcodeField.setText(valueAt(variantModel, modelRow, 3));
+        variantPriceField.setText(valueAt(variantModel, modelRow, 4));
+        variantQtyField.setText(valueAt(variantModel, modelRow, 5));
+        variantReorderField.setText(valueAt(variantModel, modelRow, 6));
+        variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 8)));
+        variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 9));
     }
 
     private boolean saveVariant(boolean update) {
@@ -687,6 +737,7 @@ public class EditCustomItem extends JPanel {
         selectedCustomItemId = null;
         itemTable.clearSelection();
         itemNameField.setText("");
+        itemSkuPreviewField.setText("");
         barcodeField.setText("");
         barcodesArea.setText("");
         descriptionArea.setText("");
@@ -711,6 +762,7 @@ public class EditCustomItem extends JPanel {
             variantTable.clearSelection();
         }
         variantNameField.setText("");
+        variantSkuPreviewField.setText("");
         variantBarcodeField.setText("");
         variantPriceField.setText("");
         variantImageSelector.setImageUrl("");
@@ -721,6 +773,7 @@ public class EditCustomItem extends JPanel {
 
     private void setFormEnabled(boolean enabled) {
         itemNameField.setEnabled(enabled);
+        itemSkuPreviewField.setEnabled(enabled);
         barcodeField.setEnabled(enabled);
         barcodesArea.setEnabled(enabled);
         descriptionArea.setEnabled(enabled);

@@ -1,8 +1,9 @@
 package ui.screens;
 
 import data.DB;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
+import services.DeviceContextService;
+import services.SaleAuditService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -535,7 +536,7 @@ public class ReturnSale extends JFrame {
         }
         validateReturnQuantities(conn, lines);
 
-        String deviceId = ReceiptNumberManager.getDeviceReceiptSettings(loadedSale.locationId()).deviceId();
+        String deviceId = DeviceContextService.currentDeviceId();
         String insertReturnSql = """
                 INSERT INTO sale_returns (
                     sale_id,
@@ -545,9 +546,10 @@ public class ReturnSale extends JFrame {
                     refund_method,
                     refund_amount,
                     reason,
-                    device_id
+                    device_id,
+                    device_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String insertReturnItemSql = """
                 INSERT INTO sale_return_items (return_id, sale_item_id, product_id, quantity, unit_price)
@@ -555,7 +557,13 @@ public class ReturnSale extends JFrame {
                 """;
         String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
         String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
-        String movementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
+        String movementSql = """
+                INSERT INTO inventory_movements (
+                    product_id, location_id, change_qty, reason, note, user_name,
+                    sale_id, sale_item_id, sale_return_id, device_id, device_name, user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
         String updateSaleSql = """
                 UPDATE sales
                 SET returned_amount = COALESCE(returned_amount, 0) + ?,
@@ -578,6 +586,7 @@ public class ReturnSale extends JFrame {
             returnStmt.setBigDecimal(6, returnTotal);
             returnStmt.setString(7, reasonArea.getText().trim());
             returnStmt.setString(8, deviceId);
+            returnStmt.setString(9, DeviceContextService.currentDeviceName());
             returnStmt.executeUpdate();
 
             try (ResultSet keys = returnStmt.getGeneratedKeys()) {
@@ -588,7 +597,16 @@ public class ReturnSale extends JFrame {
             }
         }
 
-        try (PreparedStatement itemStmt = conn.prepareStatement(insertReturnItemSql);
+        SaleAuditService.record(
+                conn, loadedSale.saleId(), null, returnId, null,
+                loadedSale.customerId(), null, loadedSale.locationId(),
+                "RETURN_CREATED", "RETURN", "refund_amount",
+                null, returnTotal, returnTotal, null,
+                reasonArea.getText().trim(),
+                "refund_method=" + refundMethodBox.getSelectedItem()
+        );
+
+        try (PreparedStatement itemStmt = conn.prepareStatement(insertReturnItemSql, Statement.RETURN_GENERATED_KEYS);
              PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
              PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
              PreparedStatement movementStmt = conn.prepareStatement(movementSql);
@@ -599,17 +617,34 @@ public class ReturnSale extends JFrame {
                 itemStmt.setInt(3, line.productId());
                 itemStmt.setInt(4, line.quantity());
                 itemStmt.setBigDecimal(5, line.unitPrice());
-                itemStmt.addBatch();
+                itemStmt.executeUpdate();
+                long returnItemId;
+                try (ResultSet itemKeys = itemStmt.getGeneratedKeys()) {
+                    if (!itemKeys.next()) {
+                        throw new SQLException("Failed to create return item audit reference.");
+                    }
+                    returnItemId = itemKeys.getLong(1);
+                }
+
+                BigDecimal lineReturnAmount = line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())).setScale(2, RoundingMode.HALF_UP);
+                SaleAuditService.record(
+                        conn, loadedSale.saleId(), line.saleItemId(), returnId, returnItemId,
+                        loadedSale.customerId(), line.productId(), loadedSale.locationId(),
+                        "RETURN_LINE_RECORDED", "RETURN_ITEM", "quantity",
+                        null, line.quantity(), lineReturnAmount, line.quantity(),
+                        reasonArea.getText().trim(),
+                        "refund_method=" + refundMethodBox.getSelectedItem()
+                );
 
                 if (isInventoryProduct(line.productType())) {
                     ensureInventoryStmt.setInt(1, line.productId());
                     ensureInventoryStmt.setInt(2, loadedSale.locationId());
-                    ensureInventoryStmt.addBatch();
+                    ensureInventoryStmt.executeUpdate();
 
                     updateInventoryStmt.setInt(1, line.quantity());
                     updateInventoryStmt.setInt(2, line.productId());
                     updateInventoryStmt.setInt(3, loadedSale.locationId());
-                    updateInventoryStmt.addBatch();
+                    updateInventoryStmt.executeUpdate();
 
                     movementStmt.setInt(1, line.productId());
                     movementStmt.setInt(2, loadedSale.locationId());
@@ -617,14 +652,23 @@ public class ReturnSale extends JFrame {
                     movementStmt.setString(4, "RETURN");
                     movementStmt.setString(5, "return_id=" + returnId + "; sale_id=" + loadedSale.saleId() + "; receipt=" + loadedSale.receiptNumber());
                     movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                    movementStmt.addBatch();
+                    movementStmt.setInt(7, loadedSale.saleId());
+                    movementStmt.setInt(8, line.saleItemId());
+                    movementStmt.setLong(9, returnId);
+                    movementStmt.setString(10, DeviceContextService.currentDeviceId());
+                    movementStmt.setString(11, DeviceContextService.currentDeviceName());
+                    setNullableInteger(movementStmt, 12, SessionManager.getCurrentUserId());
+                    movementStmt.executeUpdate();
+                    SaleAuditService.record(
+                            conn, loadedSale.saleId(), line.saleItemId(), returnId, returnItemId,
+                            loadedSale.customerId(), line.productId(), loadedSale.locationId(),
+                            "RETURN_INVENTORY_RESTOCKED", "INVENTORY", null,
+                            null, null, null, line.quantity(),
+                            reasonArea.getText().trim(),
+                            "Inventory restored from sale return."
+                    );
                 }
             }
-
-            itemStmt.executeBatch();
-            ensureInventoryStmt.executeBatch();
-            updateInventoryStmt.executeBatch();
-            movementStmt.executeBatch();
 
             updateSaleStmt.setBigDecimal(1, returnTotal);
             updateSaleStmt.setBigDecimal(2, returnTotal);
@@ -701,8 +745,10 @@ public class ReturnSale extends JFrame {
         }
 
         String transactionSql = """
-                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name)
-                VALUES (?, ?, ?, 'RETURN', ?, ?)
+                INSERT INTO customer_account_transactions (
+                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name
+                )
+                VALUES (?, ?, ?, 'RETURN', ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(transactionSql)) {
             ps.setInt(1, customerId);
@@ -710,8 +756,18 @@ public class ReturnSale extends JFrame {
             ps.setBigDecimal(3, returnTotal.negate());
             ps.setString(4, "Returned items. return_id=" + returnId + "; sale_id=" + loadedSale.saleId());
             ps.setString(5, SessionManager.getCurrentUserDisplayName());
+            ps.setString(6, DeviceContextService.currentDeviceId());
+            ps.setString(7, DeviceContextService.currentDeviceName());
             ps.executeUpdate();
         }
+        SaleAuditService.record(
+                conn, loadedSale.saleId(), null, returnId, null,
+                customerId, null, loadedSale.locationId(),
+                "ACCOUNT_RETURN_APPLIED", "CUSTOMER_ACCOUNT", "current_balance",
+                currentBalance, newBalance, returnTotal.negate(), null,
+                null,
+                "return_id=" + returnId
+        );
     }
 
     private List<ReturnLine> collectReturnLines() {
@@ -816,6 +872,14 @@ public class ReturnSale extends JFrame {
 
     private BigDecimal defaultZero(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
+        }
     }
 
     private record SaleSnapshot(

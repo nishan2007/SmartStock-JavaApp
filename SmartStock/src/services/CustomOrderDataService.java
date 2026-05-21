@@ -21,7 +21,7 @@ public final class CustomOrderDataService {
     public static List<CustomItemOption> listActiveItems() throws SQLException {
         List<CustomItemOption> options = new ArrayList<>();
         String sql = """
-                SELECT custom_item_id, item_name, product_type, pricing_type, fixed_price,
+                SELECT custom_item_id, item_name, sku, product_type, pricing_type, fixed_price,
                        area_price, area_price_unit, dimension_unit, max_width, max_length,
                        COALESCE(has_variants, FALSE) AS has_variants,
                        is_active
@@ -43,6 +43,7 @@ public final class CustomOrderDataService {
                 options.add(new CustomItemOption(
                         rs.getLong("custom_item_id"),
                         rs.getString("item_name"),
+                        rs.getString("sku"),
                         rs.getString("product_type"),
                         rs.getString("pricing_type"),
                         fixedPrice,
@@ -61,7 +62,7 @@ public final class CustomOrderDataService {
     public static List<VariantOption> listActiveVariants(long customItemId) throws SQLException {
         List<VariantOption> variants = new ArrayList<>();
         String sql = """
-                SELECT custom_variant_id, variant_name, fixed_price
+                SELECT custom_variant_id, variant_name, sku, fixed_price
                 FROM custom_order_item_variants
                 WHERE custom_item_id = ?
                   AND is_active = TRUE
@@ -75,6 +76,7 @@ public final class CustomOrderDataService {
                     variants.add(new VariantOption(
                             rs.getLong("custom_variant_id"),
                             rs.getString("variant_name"),
+                            rs.getString("sku"),
                             rs.getBigDecimal("fixed_price")
                     ));
                 }
@@ -606,30 +608,122 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record CustomItemOption(Long customItemId, String name, String productType, String pricingType,
+    public static LookupResult lookupCustomItem(String search) throws SQLException {
+        String value = search == null ? "" : search.trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        String sql = """
+                WITH matches AS (
+                    SELECT coi.custom_item_id,
+                           NULL::BIGINT AS custom_variant_id,
+                           20 AS rank
+                    FROM custom_order_items coi
+                    WHERE coi.is_active = TRUE
+                      AND UPPER(COALESCE(coi.sku, '')) = UPPER(?)
+                    UNION ALL
+                    SELECT coiv.custom_item_id,
+                           coiv.custom_variant_id,
+                           10 AS rank
+                    FROM custom_order_item_variants coiv
+                    JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
+                    WHERE coi.is_active = TRUE
+                      AND coiv.is_active = TRUE
+                      AND UPPER(COALESCE(coiv.sku, '')) = UPPER(?)
+                    UNION ALL
+                    SELECT coi.custom_item_id,
+                           NULL::BIGINT AS custom_variant_id,
+                           30 AS rank
+                    FROM custom_order_items coi
+                    WHERE coi.is_active = TRUE
+                      AND UPPER(COALESCE(coi.barcode, '')) = UPPER(?)
+                    UNION ALL
+                    SELECT coib.custom_item_id,
+                           NULL::BIGINT AS custom_variant_id,
+                           40 AS rank
+                    FROM custom_order_item_barcodes coib
+                    JOIN custom_order_items coi ON coi.custom_item_id = coib.custom_item_id
+                    WHERE coi.is_active = TRUE
+                      AND UPPER(coib.barcode) = UPPER(?)
+                    UNION ALL
+                    SELECT coiv.custom_item_id,
+                           coiv.custom_variant_id,
+                           15 AS rank
+                    FROM custom_order_item_variants coiv
+                    JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
+                    WHERE coi.is_active = TRUE
+                      AND coiv.is_active = TRUE
+                      AND UPPER(COALESCE(coiv.barcode, '')) = UPPER(?)
+                    UNION ALL
+                    SELECT coi.custom_item_id,
+                           NULL::BIGINT AS custom_variant_id,
+                           60 AS rank
+                    FROM custom_order_items coi
+                    WHERE coi.is_active = TRUE
+                      AND coi.item_name ILIKE ?
+                    UNION ALL
+                    SELECT coiv.custom_item_id,
+                           coiv.custom_variant_id,
+                           50 AS rank
+                    FROM custom_order_item_variants coiv
+                    JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
+                    WHERE coi.is_active = TRUE
+                      AND coiv.is_active = TRUE
+                      AND coiv.variant_name ILIKE ?
+                )
+                SELECT custom_item_id, custom_variant_id
+                FROM matches
+                ORDER BY rank
+                LIMIT 1
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            String pattern = "%" + value + "%";
+            for (int i = 1; i <= 5; i++) {
+                ps.setString(i, value);
+            }
+            ps.setString(6, pattern);
+            ps.setString(7, pattern);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    long itemId = rs.getLong("custom_item_id");
+                    long variantId = rs.getLong("custom_variant_id");
+                    return new LookupResult(itemId, rs.wasNull() ? null : variantId);
+                }
+            }
+        }
+        return null;
+    }
+
+    public record CustomItemOption(Long customItemId, String name, String sku, String productType, String pricingType,
                                    BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
                                    String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
                                    BigDecimal maxLength) {
         @Override
         public String toString() {
+            String label = sku == null || sku.isBlank() ? name : name + " [" + sku + "]";
             if (hasVariants) {
-                return name + " (variants)";
+                return label + " (variants)";
             }
             if ("FIXED".equals(pricingType) && fixedPrice != null) {
-                return name + " ($" + fixedPrice + ")";
+                return label + " ($" + fixedPrice + ")";
             }
             if ("AREA".equals(pricingType)) {
-                return name + " (area)";
+                return label + " (area)";
             }
-            return name + " (variable)";
+            return label + " (variable)";
         }
     }
 
-    public record VariantOption(Long variantId, String name, BigDecimal fixedPrice) {
+    public record VariantOption(Long variantId, String name, String sku, BigDecimal fixedPrice) {
         @Override
         public String toString() {
-            return fixedPrice == null ? name : name + " ($" + fixedPrice + ")";
+            String label = sku == null || sku.isBlank() ? name : name + " [" + sku + "]";
+            return fixedPrice == null ? label : label + " ($" + fixedPrice + ")";
         }
+    }
+
+    public record LookupResult(Long customItemId, Long customVariantId) {
     }
 
     public record PrintMaterialOption(Long printMaterialId, String materialName) {

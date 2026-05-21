@@ -9,6 +9,7 @@ import services.CustomOrderDataService;
 import services.DeviceContextService;
 import services.CustomOrderDataService.CustomItemOption;
 import services.CustomOrderDataService.CustomerOption;
+import services.CustomOrderDataService.LookupResult;
 import services.CustomOrderDataService.OrderLineRequest;
 import services.CustomOrderDataService.OrderSaveRequest;
 import services.CustomOrderDataService.PrintAddonRequest;
@@ -58,6 +59,7 @@ public class CustomOrders extends JFrame {
 
     private CustomerInfoPanel customerInfoPanel;
     private DatePickerField dueDateField;
+    private JTextField itemLookupField;
     private JComboBox<CustomItemOption> orderItemBox;
     private JComboBox<VariantOption> variantBox;
     private JTextField linePriceField;
@@ -156,6 +158,7 @@ public class CustomOrders extends JFrame {
 
     private JPanel buildOrderEntryPanel() {
         CustomOrdersNewOrderTabPanel panel = new CustomOrdersNewOrderTabPanel(new CustomOrdersNewOrderTabPanel.Handler() {
+            @Override public void orderLookup() { lookupOrderItem(); }
             @Override public void orderItemChanged() { loadVariantsForSelectedItem(); applySelectedOrderItemPrice(); }
             @Override public void variantChanged() { applySelectedOrderItemPrice(); }
             @Override public void printMaterialChanged() { loadPrintSizePresets(); applySelectedPrintPresetPrice(); }
@@ -175,6 +178,7 @@ public class CustomOrders extends JFrame {
         });
         customerInfoPanel = panel.customerInfoPanel;
         dueDateField = panel.dueDateField;
+        itemLookupField = panel.itemLookupField;
         orderItemBox = panel.orderItemBox;
         variantBox = panel.variantBox;
         linePriceField = panel.linePriceField;
@@ -343,7 +347,7 @@ public class CustomOrders extends JFrame {
         orderItemBox.removeAllItems();
         printMaterialBox.removeAllItems();
         designPlacementBox.removeAllItems();
-        orderItemBox.addItem(new CustomItemOption(null, "Loading...", "INVENTORY", "VARIABLE", null, false, null, null, null, null, null));
+        orderItemBox.addItem(new CustomItemOption(null, "Loading...", null, "INVENTORY", "VARIABLE", null, false, null, null, null, null, null));
         printMaterialBox.addItem(new PrintMaterialOption(null, "Loading..."));
         designPlacementBox.addItem("Loading...");
         new SwingWorker<OrderEntryData, Void>() {
@@ -412,7 +416,7 @@ public class CustomOrders extends JFrame {
             return;
         }
         variantBox.removeAllItems();
-        variantBox.addItem(new VariantOption(null, "No Variant", null));
+        variantBox.addItem(new VariantOption(null, "No Variant", null, null));
         CustomItemOption item = orderItemBox == null ? null : (CustomItemOption) orderItemBox.getSelectedItem();
         if (item == null || item.customItemId() == null) {
             return;
@@ -421,6 +425,28 @@ public class CustomOrders extends JFrame {
             for (VariantOption variant : CustomOrderDataService.listActiveVariants(item.customItemId())) {
                 variantBox.addItem(variant);
             }
+        } catch (SQLException ex) {
+            showDatabaseSetupMessage(ex);
+        }
+    }
+
+    private void lookupOrderItem() {
+        String search = itemLookupField == null ? "" : itemLookupField.getText().trim();
+        if (search.isEmpty()) {
+            return;
+        }
+        try {
+            LookupResult result = CustomOrderDataService.lookupCustomItem(search);
+            if (result == null || result.customItemId() == null) {
+                JOptionPane.showMessageDialog(this, "No custom item or variant matched that SKU/barcode/name.");
+                return;
+            }
+            selectOrderItemById(result.customItemId());
+            if (result.customVariantId() != null) {
+                selectVariantById(result.customVariantId());
+            }
+            applySelectedOrderItemPrice();
+            itemLookupField.selectAll();
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
         }

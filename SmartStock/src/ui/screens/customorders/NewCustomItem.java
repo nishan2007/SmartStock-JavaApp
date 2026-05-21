@@ -1,6 +1,7 @@
 package ui.screens.customorders;
 
 import data.DB;
+import services.CustomOrderSkuGenerator;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
@@ -20,6 +21,7 @@ import java.util.Set;
 public class NewCustomItem extends JPanel {
     private final Window parentWindow;
     private JTextField itemNameField;
+    private JTextField itemSkuPreviewField;
     private JTextField barcodeField;
     private JTextArea barcodesArea;
     private JTextArea itemDescriptionArea;
@@ -57,6 +59,8 @@ public class NewCustomItem extends JPanel {
         gbc.anchor = GridBagConstraints.WEST;
 
         itemNameField = new JTextField();
+        itemSkuPreviewField = new JTextField();
+        itemSkuPreviewField.setEditable(false);
         barcodeField = new JTextField();
         barcodesArea = new JTextArea(3, 20);
         barcodesArea.setLineWrap(true);
@@ -76,6 +80,7 @@ public class NewCustomItem extends JPanel {
         quantityField = new JTextField("0");
         reorderLevelField = new JTextField("0");
         activeCheckBox = new JCheckBox("Active", true);
+        itemNameField.getDocument().addDocumentListener(simpleDocumentListener(this::updateSkuPreview));
 
         pricingTypeBox.addActionListener(e -> updatePricingFields());
         productTypeBox.addActionListener(e -> updateVariantFields());
@@ -85,28 +90,29 @@ public class NewCustomItem extends JPanel {
         });
 
         addField(form, gbc, 0, "Item:", itemNameField);
-        addField(form, gbc, 1, "Barcode:", barcodeField);
+        addField(form, gbc, 1, "SKU:", itemSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", barcodeField);
         JScrollPane barcodesScroll = new JScrollPane(barcodesArea);
         barcodesScroll.setPreferredSize(new Dimension(260, 76));
-        addField(form, gbc, 2, "More Barcodes:", barcodesScroll);
+        addField(form, gbc, 3, "More Barcodes:", barcodesScroll);
         gbc.gridx = 1;
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         form.add(hasVariantsCheckBox, gbc);
-        addField(form, gbc, 4, "Product Type:", productTypeBox);
-        addField(form, gbc, 5, "Pricing:", pricingTypeBox);
-        addTrackedField(priceComponents, form, gbc, 6, "Price:", priceField);
-        addTrackedField(areaComponents, form, gbc, 7, "Price Unit:", areaPriceUnitBox);
-        addTrackedField(areaComponents, form, gbc, 8, "Size Unit:", dimensionUnitBox);
-        addTrackedField(areaComponents, form, gbc, 9, "Max Width:", maxWidthField);
-        addTrackedField(areaComponents, form, gbc, 10, "Max Length:", maxLengthField);
-        addField(form, gbc, 11, "Total Qty:", quantityField);
-        addField(form, gbc, 12, "Total Reorder:", reorderLevelField);
+        addField(form, gbc, 5, "Product Type:", productTypeBox);
+        addField(form, gbc, 6, "Pricing:", pricingTypeBox);
+        addTrackedField(priceComponents, form, gbc, 7, "Price:", priceField);
+        addTrackedField(areaComponents, form, gbc, 8, "Price Unit:", areaPriceUnitBox);
+        addTrackedField(areaComponents, form, gbc, 9, "Size Unit:", dimensionUnitBox);
+        addTrackedField(areaComponents, form, gbc, 10, "Max Width:", maxWidthField);
+        addTrackedField(areaComponents, form, gbc, 11, "Max Length:", maxLengthField);
+        addField(form, gbc, 12, "Total Qty:", quantityField);
+        addField(form, gbc, 13, "Total Reorder:", reorderLevelField);
         JScrollPane descriptionScroll = new JScrollPane(itemDescriptionArea);
         descriptionScroll.setPreferredSize(new Dimension(260, 90));
-        addField(form, gbc, 13, "Description:", descriptionScroll);
-        addTrackedField(mainImageComponents, form, gbc, 14, "Image:", imageSelector);
+        addField(form, gbc, 14, "Description:", descriptionScroll);
+        addTrackedField(mainImageComponents, form, gbc, 15, "Image:", imageSelector);
         gbc.gridx = 1;
-        gbc.gridy = 15;
+        gbc.gridy = 16;
         form.add(activeCheckBox, gbc);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -130,6 +136,13 @@ public class NewCustomItem extends JPanel {
 
         updatePricingFields();
         updateVariantFields();
+        updateSkuPreview();
+    }
+
+    private void updateSkuPreview() {
+        if (itemSkuPreviewField != null) {
+            itemSkuPreviewField.setText(CustomOrderSkuGenerator.itemSku(itemNameField == null ? "" : itemNameField.getText()));
+        }
     }
 
     private JLabel addField(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
@@ -147,6 +160,25 @@ public class NewCustomItem extends JPanel {
     private void addTrackedField(List<JComponent> trackedComponents, JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
         trackedComponents.add(addField(panel, gbc, row, label, field));
         trackedComponents.add(field);
+    }
+
+    private javax.swing.event.DocumentListener simpleDocumentListener(Runnable callback) {
+        return new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+        };
     }
 
     private void updatePricingFields() {
@@ -317,7 +349,7 @@ public class NewCustomItem extends JPanel {
         dialog.setLayout(new BorderLayout(10, 10));
 
         DefaultTableModel variantModel = new DefaultTableModel(
-                new Object[]{"ID", "Size / Variant", "Barcode", "Price", "Qty", "Reorder At", "Stock", "Active", "Image"},
+                new Object[]{"ID", "Size / Variant", "SKU", "Barcode", "Price", "Qty", "Reorder At", "Stock", "Active", "Image"},
                 0
         ) {
             @Override
@@ -331,14 +363,16 @@ public class NewCustomItem extends JPanel {
         variantTable.getColumnModel().getColumn(0).setPreferredWidth(55);
         variantTable.getColumnModel().getColumn(1).setPreferredWidth(145);
         variantTable.getColumnModel().getColumn(2).setPreferredWidth(115);
-        variantTable.getColumnModel().getColumn(3).setPreferredWidth(80);
-        variantTable.getColumnModel().getColumn(4).setPreferredWidth(70);
-        variantTable.getColumnModel().getColumn(5).setPreferredWidth(95);
-        variantTable.getColumnModel().getColumn(6).setPreferredWidth(75);
-        variantTable.getColumnModel().getColumn(7).setPreferredWidth(65);
-        variantTable.getColumnModel().getColumn(8).setMinWidth(0);
-        variantTable.getColumnModel().getColumn(8).setMaxWidth(0);
-        variantTable.getColumnModel().getColumn(8).setPreferredWidth(0);
+        variantTable.getColumnModel().getColumn(2).setPreferredWidth(115);
+        variantTable.getColumnModel().getColumn(3).setPreferredWidth(115);
+        variantTable.getColumnModel().getColumn(4).setPreferredWidth(80);
+        variantTable.getColumnModel().getColumn(5).setPreferredWidth(70);
+        variantTable.getColumnModel().getColumn(6).setPreferredWidth(95);
+        variantTable.getColumnModel().getColumn(7).setPreferredWidth(75);
+        variantTable.getColumnModel().getColumn(8).setPreferredWidth(65);
+        variantTable.getColumnModel().getColumn(9).setMinWidth(0);
+        variantTable.getColumnModel().getColumn(9).setMaxWidth(0);
+        variantTable.getColumnModel().getColumn(9).setPreferredWidth(0);
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(BorderFactory.createTitledBorder("Variant Details"));
@@ -348,6 +382,8 @@ public class NewCustomItem extends JPanel {
         gbc.anchor = GridBagConstraints.WEST;
 
         JTextField variantNameField = new JTextField();
+        JTextField variantSkuPreviewField = new JTextField();
+        variantSkuPreviewField.setEditable(false);
         JTextField variantBarcodeField = new JTextField();
         JTextField variantPriceField = new JTextField();
         ProductImageHelper.ImageSelector variantImageSelector = ProductImageHelper.createImageSelector(dialog);
@@ -356,14 +392,18 @@ public class NewCustomItem extends JPanel {
         JCheckBox variantActiveCheckBox = new JCheckBox("Active", true);
         final Long[] selectedVariantId = new Long[1];
 
+        variantNameField.getDocument().addDocumentListener(simpleDocumentListener(() ->
+                variantSkuPreviewField.setText(CustomOrderSkuGenerator.variantSku(itemNameField.getText(), variantNameField.getText()))));
+
         addField(form, gbc, 0, "Size / Variant:", variantNameField);
-        addField(form, gbc, 1, "Barcode:", variantBarcodeField);
-        addField(form, gbc, 2, "Price:", variantPriceField);
-        addField(form, gbc, 3, "Image:", variantImageSelector);
-        addField(form, gbc, 4, "Quantity:", variantQtyField);
-        addField(form, gbc, 5, "Reorder At:", variantReorderField);
+        addField(form, gbc, 1, "SKU:", variantSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", variantBarcodeField);
+        addField(form, gbc, 3, "Price:", variantPriceField);
+        addField(form, gbc, 4, "Image:", variantImageSelector);
+        addField(form, gbc, 5, "Quantity:", variantQtyField);
+        addField(form, gbc, 6, "Reorder At:", variantReorderField);
         gbc.gridx = 1;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         form.add(variantActiveCheckBox, gbc);
 
         variantTable.getSelectionModel().addListSelectionListener(e -> {
@@ -373,12 +413,13 @@ public class NewCustomItem extends JPanel {
             int modelRow = variantTable.convertRowIndexToModel(variantTable.getSelectedRow());
             selectedVariantId[0] = Long.parseLong(valueAt(variantModel, modelRow, 0));
             variantNameField.setText(valueAt(variantModel, modelRow, 1));
-            variantBarcodeField.setText(valueAt(variantModel, modelRow, 2));
-            variantPriceField.setText(valueAt(variantModel, modelRow, 3));
-            variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 8));
-            variantQtyField.setText(valueAt(variantModel, modelRow, 4));
-            variantReorderField.setText(valueAt(variantModel, modelRow, 5));
-            variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 7)));
+            variantSkuPreviewField.setText(valueAt(variantModel, modelRow, 2));
+            variantBarcodeField.setText(valueAt(variantModel, modelRow, 3));
+            variantPriceField.setText(valueAt(variantModel, modelRow, 4));
+            variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 9));
+            variantQtyField.setText(valueAt(variantModel, modelRow, 5));
+            variantReorderField.setText(valueAt(variantModel, modelRow, 6));
+            variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 8)));
         });
 
         JButton saveVariantButton = new JButton("Save Variant");
@@ -443,7 +484,7 @@ public class NewCustomItem extends JPanel {
     private void loadVariants(DefaultTableModel variantModel) {
         variantModel.setRowCount(0);
         String sql = """
-                SELECT custom_variant_id, variant_name, barcode, fixed_price, quantity_on_hand, reorder_level, is_active, image_url,
+                SELECT custom_variant_id, variant_name, sku, barcode, fixed_price, quantity_on_hand, reorder_level, is_active, image_url,
                        CASE
                            WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
                            ELSE 'OK'
@@ -460,6 +501,7 @@ public class NewCustomItem extends JPanel {
                     variantModel.addRow(new Object[]{
                             rs.getLong("custom_variant_id"),
                             rs.getString("variant_name"),
+                            rs.getString("sku"),
                             rs.getString("barcode"),
                             formatMoney(rs.getBigDecimal("fixed_price")),
                             rs.getBigDecimal("quantity_on_hand"),

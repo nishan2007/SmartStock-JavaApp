@@ -7,6 +7,8 @@ import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import data.DB;
+import services.DeviceContextService;
+import services.SaleAuditService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
@@ -1833,9 +1835,12 @@ public class MakeASale extends JFrame {
 	                            discount_percent,
 	                            discount_amount,
                                 payment_reference,
-	                            transaction_source
+	                            transaction_source,
+                                device_id,
+                                device_name,
+                                completed_at
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	                        """;
                 int saleId;
 
@@ -1861,6 +1866,8 @@ public class MakeASale extends JFrame {
 		                    saleStmt.setBigDecimal(15, discountAmount);
                             saleStmt.setString(16, paymentReference.isBlank() ? null : paymentReference);
 		                    saleStmt.setString(17, "Java_app");
+                            saleStmt.setString(18, DeviceContextService.currentDeviceId());
+                            saleStmt.setString(19, DeviceContextService.currentDeviceName());
 	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -1869,6 +1876,31 @@ public class MakeASale extends JFrame {
                         }
                         saleId = generatedKeys.getInt(1);
                     }
+                }
+
+                SaleAuditService.recordSale(
+                        conn,
+                        saleId,
+                        selectedCustomer == null ? null : selectedCustomer.customerId,
+                        locationId,
+                        "SALE_CREATED",
+                        saleTotal,
+                        "receipt=" + receipt.receiptNumber()
+                                + "; payment_method=" + paymentMethod
+                                + "; payment_status=" + paymentStatus
+                                + "; subtotal=" + subtotalAmount
+                                + "; discount=" + discountAmount
+                                + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
+                );
+                if (discountPercent.compareTo(BigDecimal.ZERO) > 0 || discountAmount.compareTo(BigDecimal.ZERO) > 0) {
+                    SaleAuditService.record(
+                            conn, saleId, null, null, null,
+                            selectedCustomer == null ? null : selectedCustomer.customerId,
+                            null, locationId,
+                            "SALE_DISCOUNT_APPLIED", "SALE", "discount_percent",
+                            BigDecimal.ZERO, discountPercent, discountAmount, null,
+                            null, "Sale-level discount applied during checkout."
+                    );
                 }
 
                 if (selectedCustomer != null) {
@@ -1883,6 +1915,17 @@ public class MakeASale extends JFrame {
                                     : "Paid by " + paymentMethod + ". sale_id=" + saleId
                     );
                 }
+                SaleAuditService.recordSale(
+                        conn,
+                        saleId,
+                        selectedCustomer == null ? null : selectedCustomer.customerId,
+                        locationId,
+                        chargeCustomerAccount ? "ACCOUNT_CHARGE_RECORDED" : "PAYMENT_RECORDED",
+                        saleTotal,
+                        chargeCustomerAccount
+                                ? "Customer account charged. customer_id=" + selectedCustomer.customerId
+                                : "Payment method=" + paymentMethod + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
+                );
 
                 String insertItemSql = """
                         INSERT INTO sale_items (
@@ -1895,13 +1938,19 @@ public class MakeASale extends JFrame {
                             discount_amount,
                             product_type
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """;
-	                String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	                        """;
+	                String insertMovementSql = """
+                            INSERT INTO inventory_movements (
+                                product_id, location_id, change_qty, reason, note, user_name,
+                                sale_id, sale_item_id, device_id, device_name, user_id
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """;
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
                 String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ? AND quantity_on_hand >= ?";
 
-                try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql);
+                try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql, Statement.RETURN_GENERATED_KEYS);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
                      PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql)) {
@@ -1910,16 +1959,17 @@ public class MakeASale extends JFrame {
 		                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 		                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
 	                        String productType = getCartProductType(i);
-	                        BigDecimal originalPrice = canChangeSaleItemPrice()
+                            BigDecimal catalogPrice = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
+	                        BigDecimal enteredPrice = canChangeSaleItemPrice()
 	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
 	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
 		                        BigDecimal itemDiscountPercent = parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT));
 		                        BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
 		                                itemDiscountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
 		                        );
-		                        BigDecimal itemDiscountedPrice = originalPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
+		                        BigDecimal itemDiscountedPrice = enteredPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
 		                        BigDecimal chargedPrice = itemDiscountedPrice.multiply(saleDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
-		                        BigDecimal itemDiscountAmount = originalPrice
+		                        BigDecimal itemDiscountAmount = enteredPrice
 		                                .multiply(BigDecimal.valueOf(qty))
 		                                .multiply(itemDiscountPercent)
 		                                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
@@ -1928,11 +1978,54 @@ public class MakeASale extends JFrame {
 		                        itemStmt.setInt(2, productId);
 		                        itemStmt.setInt(3, qty);
 		                        itemStmt.setBigDecimal(4, chargedPrice);
-		                        itemStmt.setBigDecimal(5, originalPrice);
+		                        itemStmt.setBigDecimal(5, catalogPrice);
 		                        itemStmt.setBigDecimal(6, itemDiscountPercent);
 		                        itemStmt.setBigDecimal(7, itemDiscountAmount);
 		                        itemStmt.setString(8, productType);
-		                        itemStmt.addBatch();
+		                        itemStmt.executeUpdate();
+                            int saleItemId;
+                            try (ResultSet itemKeys = itemStmt.getGeneratedKeys()) {
+                                if (!itemKeys.next()) {
+                                    throw new SQLException("Failed to create sale item audit reference.");
+                                }
+                                saleItemId = itemKeys.getInt(1);
+                            }
+
+                            BigDecimal lineAmount = chargedPrice.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
+                            SaleAuditService.recordLine(
+                                    conn,
+                                    saleId,
+                                    saleItemId,
+                                    productId,
+                                    locationId,
+                                    "SALE_ITEM_ADDED",
+                                    lineAmount,
+                                    qty,
+                                    "product=" + cartModel.getValueAt(i, CART_COL_NAME)
+                                            + "; sku=" + cartModel.getValueAt(i, CART_COL_SKU)
+                                            + "; product_type=" + productType
+                            );
+                            if (enteredPrice.compareTo(catalogPrice) != 0) {
+                                SaleAuditService.record(
+                                        conn, saleId, saleItemId, null, null, null, productId, locationId,
+                                        "PRICE_OVERRIDE", "SALE_ITEM", "unit_price",
+                                        catalogPrice, enteredPrice,
+                                        enteredPrice.subtract(catalogPrice).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP),
+                                        qty,
+                                        null,
+                                        "Manual line price change during sale."
+                                );
+                            }
+                            if (itemDiscountPercent.compareTo(BigDecimal.ZERO) > 0 || itemDiscountAmount.compareTo(BigDecimal.ZERO) > 0) {
+                                SaleAuditService.record(
+                                        conn, saleId, saleItemId, null, null, null, productId, locationId,
+                                        "ITEM_DISCOUNT_APPLIED", "SALE_ITEM", "discount_percent",
+                                        BigDecimal.ZERO, itemDiscountPercent,
+                                        itemDiscountAmount, qty,
+                                        null,
+                                        "Line item discount applied during sale."
+                                );
+                            }
 
                         if (isInventoryProduct(productType)) {
                             ensureInventoryStmt.setInt(1, productId);
@@ -1953,11 +2046,25 @@ public class MakeASale extends JFrame {
                             movementStmt.setString(4, "SALE");
                             movementStmt.setString(5, "sale_id=" + saleId);
                             movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+                            movementStmt.setInt(7, saleId);
+                            movementStmt.setInt(8, saleItemId);
+                            movementStmt.setString(9, DeviceContextService.currentDeviceId());
+                            movementStmt.setString(10, DeviceContextService.currentDeviceName());
+                            setNullableInteger(movementStmt, 11, SessionManager.getCurrentUserId());
                             movementStmt.executeUpdate();
+                            SaleAuditService.recordLine(
+                                    conn,
+                                    saleId,
+                                    saleItemId,
+                                    productId,
+                                    locationId,
+                                    "INVENTORY_DEDUCTED",
+                                    null,
+                                    -qty,
+                                    "Inventory deducted for sale."
+                            );
                         }
                     }
-
-                    itemStmt.executeBatch();
                 }
 
                 conn.commit();
@@ -2113,6 +2220,17 @@ public class MakeASale extends JFrame {
                     }
                     itemStmt.executeBatch();
                 }
+                SaleAuditService.recordHeldCart(
+                        conn,
+                        SessionManager.getCurrentLocationId(),
+                        "HELD_CART_CREATED",
+                        cartModel.getRowCount(),
+                        lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP),
+                        "held_cart_id=" + heldCartId
+                                + "; hold_name=" + holdName.trim()
+                                + "; payment_method=" + (selectedPaymentMethod == null ? "" : selectedPaymentMethod)
+                                + "; customer_id=" + (selectedCustomer == null ? "" : selectedCustomer.customerId)
+                );
 
                 conn.commit();
 	                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
@@ -2157,6 +2275,14 @@ public class MakeASale extends JFrame {
             conn.setAutoCommit(false);
             try {
                 loadHeldCartIntoCurrentCart(conn, selectedHold.heldCartId());
+                SaleAuditService.recordHeldCart(
+                        conn,
+                        SessionManager.getCurrentLocationId(),
+                        "HELD_CART_RESUMED",
+                        cartModel.getRowCount(),
+                        BigDecimal.valueOf(getOverallTotal()).setScale(2, RoundingMode.HALF_UP),
+                        "held_cart_id=" + selectedHold.heldCartId()
+                );
                 deleteHeldCart(conn, selectedHold.heldCartId());
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Held cart resumed.");
@@ -2421,8 +2547,10 @@ public class MakeASale extends JFrame {
 
     private void insertCustomerAccountTransaction(Connection conn, int customerId, int saleId, BigDecimal amount, String type, String note) throws SQLException {
         String sql = """
-	                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name)
-	                VALUES (?, ?, ?, ?, ?, ?)
+	                INSERT INTO customer_account_transactions (
+	                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name
+	                )
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -2432,8 +2560,16 @@ public class MakeASale extends JFrame {
 	            ps.setString(4, type);
 	            ps.setString(5, note);
 	            ps.setString(6, SessionManager.getCurrentUserDisplayName());
+                ps.setString(7, DeviceContextService.currentDeviceId());
+                ps.setString(8, DeviceContextService.currentDeviceName());
 	            ps.executeUpdate();
         }
+        SaleAuditService.record(
+                conn, saleId, null, null, null, customerId, null, SessionManager.getCurrentLocationId(),
+                "CUSTOMER_ACCOUNT_TRANSACTION", "CUSTOMER_ACCOUNT", "amount",
+                null, amount, amount, null, null,
+                "type=" + type + "; " + note
+        );
     }
 
     private void updateOverallTotal() {

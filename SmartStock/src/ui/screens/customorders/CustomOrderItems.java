@@ -4,6 +4,7 @@ import data.DB;
 import ui.components.AppMenuBar;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.WindowHelper;
+import services.CustomOrderSkuGenerator;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -28,6 +29,7 @@ public class CustomOrderItems extends JFrame {
     private TableRowSorter<DefaultTableModel> itemSorter;
     private JTextField searchField;
     private JTextField itemNameField;
+    private JTextField itemSkuPreviewField;
     private JTextField barcodeField;
     private JTextArea barcodesArea;
     private JTextArea itemDescriptionArea;
@@ -120,7 +122,7 @@ public class CustomOrderItems extends JFrame {
         searchPanel.add(refreshButton, BorderLayout.EAST);
 
         itemModel = new DefaultTableModel(
-                new Object[]{"ID", "Item", "Barcode", "Pricing", "Price", "Variants", "Qty", "Reorder At", "Stock", "Active", "Description"},
+                new Object[]{"ID", "Item", "SKU", "Barcode", "Pricing", "Price", "Variants", "Qty", "Reorder At", "Stock", "Active", "Description", "Search"},
                 0
         ) {
             @Override
@@ -134,8 +136,9 @@ public class CustomOrderItems extends JFrame {
         itemTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         itemTable.setRowHeight(28);
         itemTable.getColumnModel().getColumn(0).setMaxWidth(70);
-        itemTable.getColumnModel().getColumn(5).setMaxWidth(80);
-        itemTable.getColumnModel().getColumn(9).setMaxWidth(70);
+        itemTable.getColumnModel().getColumn(6).setMaxWidth(80);
+        itemTable.getColumnModel().getColumn(10).setMaxWidth(70);
+        itemTable.removeColumn(itemTable.getColumnModel().getColumn(12));
         itemTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedItem();
@@ -209,6 +212,8 @@ public class CustomOrderItems extends JFrame {
         gbc.anchor = GridBagConstraints.WEST;
 
         itemNameField = new JTextField();
+        itemSkuPreviewField = new JTextField();
+        itemSkuPreviewField.setEditable(false);
         barcodeField = new JTextField();
         barcodesArea = new JTextArea(3, 20);
         barcodesArea.setLineWrap(true);
@@ -228,6 +233,7 @@ public class CustomOrderItems extends JFrame {
         quantityField = new JTextField("0");
         reorderLevelField = new JTextField("0");
         activeCheckBox = new JCheckBox("Active", true);
+        itemNameField.getDocument().addDocumentListener(simpleDocumentListener(this::updateItemSkuPreview));
         pricingTypeBox.addActionListener(e -> updateFixedPriceEnabled());
         productTypeBox.addActionListener(e -> updateVariantTrackingFields());
         hasVariantsCheckBox.addActionListener(e -> {
@@ -237,32 +243,33 @@ public class CustomOrderItems extends JFrame {
         });
 
         addField(form, gbc, 0, "Item:", itemNameField);
-        addField(form, gbc, 1, "Barcode:", barcodeField);
+        addField(form, gbc, 1, "SKU:", itemSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", barcodeField);
         JScrollPane barcodesScrollPane = new JScrollPane(barcodesArea);
         barcodesScrollPane.setPreferredSize(new Dimension(300, 76));
-        addField(form, gbc, 2, "More Barcodes:", barcodesScrollPane);
+        addField(form, gbc, 3, "More Barcodes:", barcodesScrollPane);
         gbc.gridx = 1;
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         form.add(hasVariantsCheckBox, gbc);
-        addField(form, gbc, 4, "Product Type:", productTypeBox);
-        addField(form, gbc, 5, "Pricing:", pricingTypeBox);
-        addTrackedField(pricePricingComponents, form, gbc, 6, "Price:", fixedPriceField);
-        addTrackedField(areaPricingComponents, form, gbc, 7, "Price Unit:", areaPriceUnitBox);
-        addTrackedField(areaPricingComponents, form, gbc, 8, "Size Unit:", dimensionUnitBox);
-        addTrackedField(areaPricingComponents, form, gbc, 9, "Max Width:", maxWidthField);
-        addTrackedField(areaPricingComponents, form, gbc, 10, "Max Length:", maxLengthField);
-        addField(form, gbc, 11, "Total Qty:", quantityField);
-        addField(form, gbc, 12, "Total Reorder:", reorderLevelField);
+        addField(form, gbc, 5, "Product Type:", productTypeBox);
+        addField(form, gbc, 6, "Pricing:", pricingTypeBox);
+        addTrackedField(pricePricingComponents, form, gbc, 7, "Price:", fixedPriceField);
+        addTrackedField(areaPricingComponents, form, gbc, 8, "Price Unit:", areaPriceUnitBox);
+        addTrackedField(areaPricingComponents, form, gbc, 9, "Size Unit:", dimensionUnitBox);
+        addTrackedField(areaPricingComponents, form, gbc, 10, "Max Width:", maxWidthField);
+        addTrackedField(areaPricingComponents, form, gbc, 11, "Max Length:", maxLengthField);
+        addField(form, gbc, 12, "Total Qty:", quantityField);
+        addField(form, gbc, 13, "Total Reorder:", reorderLevelField);
         JScrollPane descriptionScrollPane = new JScrollPane(itemDescriptionArea);
         descriptionScrollPane.setPreferredSize(new Dimension(300, 92));
-        addField(form, gbc, 13, "Description:", descriptionScrollPane);
-        addTrackedField(mainImageComponents, form, gbc, 14, "Image:", imageSelector);
+        addField(form, gbc, 14, "Description:", descriptionScrollPane);
+        addTrackedField(mainImageComponents, form, gbc, 15, "Image:", imageSelector);
         gbc.gridx = 1;
-        gbc.gridy = 15;
+        gbc.gridy = 16;
         form.add(activeCheckBox, gbc);
 
         variantPreviewModel = new DefaultTableModel(
-                new Object[]{"Variant", "Price", "Qty", "Reorder", "Stock", "Active"},
+                new Object[]{"Variant", "SKU", "Price", "Qty", "Reorder", "Stock", "Active"},
                 0
         ) {
             @Override
@@ -576,6 +583,31 @@ public class CustomOrderItems extends JFrame {
     private void addTrackedField(List<JComponent> trackedComponents, JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
         trackedComponents.add(addField(panel, gbc, row, label, field));
         trackedComponents.add(field);
+    }
+
+    private javax.swing.event.DocumentListener simpleDocumentListener(Runnable callback) {
+        return new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                callback.run();
+            }
+        };
+    }
+
+    private void updateItemSkuPreview() {
+        if (itemSkuPreviewField != null) {
+            itemSkuPreviewField.setText(CustomOrderSkuGenerator.itemSku(itemNameField == null ? "" : itemNameField.getText()));
+        }
     }
 
     private void runTableLoadAsync(DefaultTableModel model, RowLoader loader, Runnable afterLoad) {
@@ -1019,13 +1051,29 @@ public class CustomOrderItems extends JFrame {
         itemsLoaded = true;
         itemModel.setRowCount(0);
         String sql = """
-                SELECT custom_item_id, item_name, barcode, description, product_type, pricing_type, fixed_price,
+                SELECT custom_item_id, item_name, sku, barcode, description, product_type, pricing_type, fixed_price,
                        has_variants,
                        quantity_on_hand, reorder_level, is_active,
                        CASE
                            WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
                            ELSE 'OK'
-                       END AS stock_status
+                       END AS stock_status,
+                       CONCAT_WS(' ',
+                           item_name,
+                           sku,
+                           barcode,
+                           description,
+                           (
+                               SELECT STRING_AGG(coib.barcode, ' ')
+                               FROM custom_order_item_barcodes coib
+                               WHERE coib.custom_item_id = custom_order_items.custom_item_id
+                           ),
+                           (
+                               SELECT STRING_AGG(CONCAT_WS(' ', coiv.variant_name, coiv.sku, coiv.barcode), ' ')
+                               FROM custom_order_item_variants coiv
+                               WHERE coiv.custom_item_id = custom_order_items.custom_item_id
+                           )
+                       ) AS search_text
                 FROM custom_order_items
                 ORDER BY is_active DESC, item_name
                 """;
@@ -1036,6 +1084,7 @@ public class CustomOrderItems extends JFrame {
                 itemModel.addRow(new Object[]{
                         rs.getLong("custom_item_id"),
                         rs.getString("item_name"),
+                        rs.getString("sku"),
                         rs.getString("barcode"),
                         rs.getString("pricing_type"),
                         formatMoney(rs.getBigDecimal("fixed_price")),
@@ -1044,7 +1093,8 @@ public class CustomOrderItems extends JFrame {
                         rs.getBigDecimal("reorder_level"),
                         rs.getString("stock_status"),
                         rs.getBoolean("is_active"),
-                        rs.getString("description")
+                        rs.getString("description"),
+                        rs.getString("search_text")
                 });
             }
         } catch (SQLException ex) {
@@ -1059,13 +1109,29 @@ public class CustomOrderItems extends JFrame {
                 () -> {
                     List<Object[]> rows = new ArrayList<>();
                     String sql = """
-                            SELECT custom_item_id, item_name, barcode, description, product_type, pricing_type, fixed_price,
+                            SELECT custom_item_id, item_name, sku, barcode, description, product_type, pricing_type, fixed_price,
                                    has_variants,
                                    quantity_on_hand, reorder_level, is_active,
                                    CASE
                                        WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
                                        ELSE 'OK'
-                                   END AS stock_status
+                                   END AS stock_status,
+                                   CONCAT_WS(' ',
+                                       item_name,
+                                       sku,
+                                       barcode,
+                                       description,
+                                       (
+                                           SELECT STRING_AGG(coib.barcode, ' ')
+                                           FROM custom_order_item_barcodes coib
+                                           WHERE coib.custom_item_id = custom_order_items.custom_item_id
+                                       ),
+                                       (
+                                           SELECT STRING_AGG(CONCAT_WS(' ', coiv.variant_name, coiv.sku, coiv.barcode), ' ')
+                                           FROM custom_order_item_variants coiv
+                                           WHERE coiv.custom_item_id = custom_order_items.custom_item_id
+                                       )
+                                   ) AS search_text
                             FROM custom_order_items
                             ORDER BY is_active DESC, item_name
                             """;
@@ -1076,6 +1142,7 @@ public class CustomOrderItems extends JFrame {
                             rows.add(new Object[]{
                                     rs.getLong("custom_item_id"),
                                     rs.getString("item_name"),
+                                    rs.getString("sku"),
                                     rs.getString("barcode"),
                                     rs.getString("pricing_type"),
                                     formatMoney(rs.getBigDecimal("fixed_price")),
@@ -1084,7 +1151,8 @@ public class CustomOrderItems extends JFrame {
                                     rs.getBigDecimal("reorder_level"),
                                     rs.getString("stock_status"),
                                     rs.getBoolean("is_active"),
-                                    rs.getString("description")
+                                    rs.getString("description"),
+                                    rs.getString("search_text")
                             });
                         }
                     }
@@ -1254,17 +1322,18 @@ public class CustomOrderItems extends JFrame {
         int modelRow = itemTable.convertRowIndexToModel(row);
         selectedCustomItemId = Long.parseLong(valueAt(modelRow, 0));
         itemNameField.setText(valueAt(modelRow, 1));
-        barcodeField.setText(valueAt(modelRow, 2));
-        pricingTypeBox.setSelectedItem(toPricingDisplay(valueAt(modelRow, 3)));
-        fixedPriceField.setText(valueAt(modelRow, 4));
+        itemSkuPreviewField.setText(valueAt(modelRow, 2));
+        barcodeField.setText(valueAt(modelRow, 3));
+        pricingTypeBox.setSelectedItem(toPricingDisplay(valueAt(modelRow, 4)));
+        fixedPriceField.setText(valueAt(modelRow, 5));
         loadAreaPricingFields(selectedCustomItemId);
         loadMainImageField(selectedCustomItemId);
         loadProductTypeField(selectedCustomItemId);
-        hasVariantsCheckBox.setSelected("Yes".equalsIgnoreCase(valueAt(modelRow, 5)));
-        quantityField.setText(valueAt(modelRow, 6));
-        reorderLevelField.setText(valueAt(modelRow, 7));
-        activeCheckBox.setSelected(Boolean.parseBoolean(valueAt(modelRow, 9)));
-        itemDescriptionArea.setText(valueAt(modelRow, 10));
+        hasVariantsCheckBox.setSelected("Yes".equalsIgnoreCase(valueAt(modelRow, 6)));
+        quantityField.setText(valueAt(modelRow, 7));
+        reorderLevelField.setText(valueAt(modelRow, 8));
+        activeCheckBox.setSelected(Boolean.parseBoolean(valueAt(modelRow, 10)));
+        itemDescriptionArea.setText(valueAt(modelRow, 11));
         loadExtraBarcodes(selectedCustomItemId);
         loadVariantPreview(selectedCustomItemId, hasVariantsCheckBox.isSelected());
         updateFixedPriceEnabled();
@@ -1343,6 +1412,7 @@ public class CustomOrderItems extends JFrame {
         selectedCustomItemId = null;
         itemTable.clearSelection();
         itemNameField.setText("");
+        itemSkuPreviewField.setText("");
         barcodeField.setText("");
         barcodesArea.setText("");
         itemDescriptionArea.setText("");
@@ -1389,7 +1459,7 @@ public class CustomOrderItems extends JFrame {
             return;
         }
         String sql = """
-                SELECT variant_name, fixed_price, quantity_on_hand, reorder_level, is_active,
+                SELECT variant_name, sku, fixed_price, quantity_on_hand, reorder_level, is_active,
                        CASE
                            WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
                            ELSE 'OK'
@@ -1405,6 +1475,7 @@ public class CustomOrderItems extends JFrame {
                 while (rs.next()) {
                     variantPreviewModel.addRow(new Object[]{
                             rs.getString("variant_name"),
+                            rs.getString("sku"),
                             formatMoney(rs.getBigDecimal("fixed_price")),
                             rs.getBigDecimal("quantity_on_hand"),
                             rs.getBigDecimal("reorder_level"),
@@ -1758,7 +1829,7 @@ public class CustomOrderItems extends JFrame {
         dialog.setLayout(new BorderLayout(10, 10));
 
         DefaultTableModel variantModel = new DefaultTableModel(
-                new Object[]{"ID", "Size / Variant", "Barcode", "Price", "Qty", "Reorder At", "Stock", "Active", "Image"},
+                new Object[]{"ID", "Size / Variant", "SKU", "Barcode", "Price", "Qty", "Reorder At", "Stock", "Active", "Image"},
                 0
         ) {
             @Override
@@ -1772,14 +1843,16 @@ public class CustomOrderItems extends JFrame {
         variantTable.getColumnModel().getColumn(0).setPreferredWidth(55);
         variantTable.getColumnModel().getColumn(1).setPreferredWidth(145);
         variantTable.getColumnModel().getColumn(2).setPreferredWidth(115);
-        variantTable.getColumnModel().getColumn(3).setPreferredWidth(80);
-        variantTable.getColumnModel().getColumn(4).setPreferredWidth(70);
-        variantTable.getColumnModel().getColumn(5).setPreferredWidth(95);
-        variantTable.getColumnModel().getColumn(6).setPreferredWidth(75);
-        variantTable.getColumnModel().getColumn(7).setPreferredWidth(65);
-        variantTable.getColumnModel().getColumn(8).setMinWidth(0);
-        variantTable.getColumnModel().getColumn(8).setMaxWidth(0);
-        variantTable.getColumnModel().getColumn(8).setPreferredWidth(0);
+        variantTable.getColumnModel().getColumn(2).setPreferredWidth(115);
+        variantTable.getColumnModel().getColumn(3).setPreferredWidth(115);
+        variantTable.getColumnModel().getColumn(4).setPreferredWidth(80);
+        variantTable.getColumnModel().getColumn(5).setPreferredWidth(70);
+        variantTable.getColumnModel().getColumn(6).setPreferredWidth(95);
+        variantTable.getColumnModel().getColumn(7).setPreferredWidth(75);
+        variantTable.getColumnModel().getColumn(8).setPreferredWidth(65);
+        variantTable.getColumnModel().getColumn(9).setMinWidth(0);
+        variantTable.getColumnModel().getColumn(9).setMaxWidth(0);
+        variantTable.getColumnModel().getColumn(9).setPreferredWidth(0);
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(BorderFactory.createTitledBorder("Variant Details"));
@@ -1789,6 +1862,8 @@ public class CustomOrderItems extends JFrame {
         gbc.anchor = GridBagConstraints.WEST;
 
         JTextField variantNameField = new JTextField();
+        JTextField variantSkuPreviewField = new JTextField();
+        variantSkuPreviewField.setEditable(false);
         JTextField variantBarcodeField = new JTextField();
         JTextField variantPriceField = new JTextField();
         ProductImageHelper.ImageSelector variantImageSelector = ProductImageHelper.createImageSelector(dialog);
@@ -1797,14 +1872,18 @@ public class CustomOrderItems extends JFrame {
         JCheckBox variantActiveCheckBox = new JCheckBox("Active", true);
         final Long[] selectedVariantId = new Long[1];
 
+        variantNameField.getDocument().addDocumentListener(simpleDocumentListener(() ->
+                variantSkuPreviewField.setText(CustomOrderSkuGenerator.variantSku(itemNameField.getText(), variantNameField.getText()))));
+
         addField(form, gbc, 0, "Size / Variant:", variantNameField);
-        addField(form, gbc, 1, "Barcode:", variantBarcodeField);
-        addField(form, gbc, 2, "Price:", variantPriceField);
-        addField(form, gbc, 3, "Image:", variantImageSelector);
-        addField(form, gbc, 4, "Quantity:", variantQtyField);
-        addField(form, gbc, 5, "Reorder At:", variantReorderField);
+        addField(form, gbc, 1, "SKU:", variantSkuPreviewField);
+        addField(form, gbc, 2, "Barcode:", variantBarcodeField);
+        addField(form, gbc, 3, "Price:", variantPriceField);
+        addField(form, gbc, 4, "Image:", variantImageSelector);
+        addField(form, gbc, 5, "Quantity:", variantQtyField);
+        addField(form, gbc, 6, "Reorder At:", variantReorderField);
         gbc.gridx = 1;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         form.add(variantActiveCheckBox, gbc);
 
         variantTable.getSelectionModel().addListSelectionListener(e -> {
@@ -1814,12 +1893,13 @@ public class CustomOrderItems extends JFrame {
             int modelRow = variantTable.convertRowIndexToModel(variantTable.getSelectedRow());
             selectedVariantId[0] = Long.parseLong(valueAt(variantModel, modelRow, 0));
             variantNameField.setText(valueAt(variantModel, modelRow, 1));
-            variantBarcodeField.setText(valueAt(variantModel, modelRow, 2));
-            variantPriceField.setText(valueAt(variantModel, modelRow, 3));
-            variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 8));
-            variantQtyField.setText(valueAt(variantModel, modelRow, 4));
-            variantReorderField.setText(valueAt(variantModel, modelRow, 5));
-            variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 7)));
+            variantSkuPreviewField.setText(valueAt(variantModel, modelRow, 2));
+            variantBarcodeField.setText(valueAt(variantModel, modelRow, 3));
+            variantPriceField.setText(valueAt(variantModel, modelRow, 4));
+            variantImageSelector.setImageUrl(valueAt(variantModel, modelRow, 9));
+            variantQtyField.setText(valueAt(variantModel, modelRow, 5));
+            variantReorderField.setText(valueAt(variantModel, modelRow, 6));
+            variantActiveCheckBox.setSelected(Boolean.parseBoolean(valueAt(variantModel, modelRow, 8)));
         });
 
         JButton saveButton = new JButton("Save Variant");
@@ -1955,7 +2035,7 @@ public class CustomOrderItems extends JFrame {
     private void loadVariants(DefaultTableModel variantModel, Long customItemId) {
         variantModel.setRowCount(0);
         String sql = """
-                SELECT custom_variant_id, variant_name, barcode, fixed_price, quantity_on_hand, reorder_level, is_active, image_url,
+                SELECT custom_variant_id, variant_name, sku, barcode, fixed_price, quantity_on_hand, reorder_level, is_active, image_url,
                        CASE
                            WHEN is_active AND reorder_level > 0 AND quantity_on_hand <= reorder_level THEN 'Low'
                            ELSE 'OK'
@@ -1972,6 +2052,7 @@ public class CustomOrderItems extends JFrame {
                     variantModel.addRow(new Object[]{
                             rs.getLong("custom_variant_id"),
                             rs.getString("variant_name"),
+                            rs.getString("sku"),
                             rs.getString("barcode"),
                             formatMoney(rs.getBigDecimal("fixed_price")),
                             rs.getBigDecimal("quantity_on_hand"),
