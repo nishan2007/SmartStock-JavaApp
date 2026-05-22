@@ -32,6 +32,7 @@ public class EditItem extends JFrame {
     private JButton searchBtn;
 
     private JTextField nameField;
+    private JTextField sizeField;
     private JTextField skuField;
     private JTextField barcodeField;
     private JTextArea descriptionArea;
@@ -98,6 +99,7 @@ public class EditItem extends JFrame {
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
 
         nameField = new JTextField();
+        sizeField = new JTextField();
         skuField = new JTextField();
         barcodeField = new JTextField();
         descriptionArea = new JTextArea(3, 20);
@@ -137,6 +139,15 @@ public class EditItem extends JFrame {
         leftGbc.gridx = 0;
         leftGbc.gridy = 1;
         leftGbc.weightx = 0;
+        leftColumn.add(new JLabel("Size:"), leftGbc);
+
+        leftGbc.gridx = 1;
+        leftGbc.weightx = 1;
+        leftColumn.add(sizeField, leftGbc);
+
+        leftGbc.gridx = 0;
+        leftGbc.gridy = 2;
+        leftGbc.weightx = 0;
         leftColumn.add(new JLabel("SKU:"), leftGbc);
 
         leftGbc.gridx = 1;
@@ -144,7 +155,7 @@ public class EditItem extends JFrame {
         leftColumn.add(skuField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 2;
+        leftGbc.gridy = 3;
         leftGbc.weightx = 0;
         leftGbc.anchor = GridBagConstraints.NORTHWEST;
         leftColumn.add(new JLabel("Description:"), leftGbc);
@@ -158,7 +169,7 @@ public class EditItem extends JFrame {
         leftGbc.fill = GridBagConstraints.HORIZONTAL;
         leftGbc.weighty = 0;
         leftGbc.gridx = 0;
-        leftGbc.gridy = 3;
+        leftGbc.gridy = 4;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Barcode:"), leftGbc);
 
@@ -167,7 +178,7 @@ public class EditItem extends JFrame {
         leftColumn.add(barcodeField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 4;
+        leftGbc.gridy = 5;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Price:"), leftGbc);
 
@@ -176,7 +187,7 @@ public class EditItem extends JFrame {
         leftColumn.add(priceField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 5;
+        leftGbc.gridy = 6;
         leftGbc.weightx = 0;
         leftGbc.weighty = 1;
         leftColumn.add(Box.createVerticalGlue(), leftGbc);
@@ -364,6 +375,7 @@ public class EditItem extends JFrame {
         String sql = """
                 SELECT p.product_id,
                        p.name,
+                       COALESCE(p.size, '') AS size,
                        p.sku,
                        p.barcode,
                        p.description,
@@ -381,7 +393,7 @@ public class EditItem extends JFrame {
                 LEFT JOIN categories c ON p.category_id = c.category_id
                 LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
                 LEFT JOIN inventory i ON p.product_id = i.product_id AND i.location_id = ?
-                WHERE p.name ILIKE ? OR p.sku ILIKE ? OR p.barcode ILIKE ?
+                WHERE p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ? OR p.barcode ILIKE ?
                 ORDER BY p.name
                 """;
 
@@ -392,6 +404,7 @@ public class EditItem extends JFrame {
             ps.setString(2, "%" + searchText + "%");
             ps.setString(3, "%" + searchText + "%");
             ps.setString(4, "%" + searchText + "%");
+            ps.setString(5, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
 
@@ -400,6 +413,7 @@ public class EditItem extends JFrame {
                 rows.add(new Object[]{
                         rs.getInt("product_id"),
                         rs.getString("name"),
+                        rs.getString("size"),
                         rs.getString("sku"),
                         rs.getString("barcode"),
                         rs.getString("description") != null ? rs.getString("description") : "",
@@ -421,7 +435,7 @@ public class EditItem extends JFrame {
                 return;
             }
 
-            String[] columns = {"ID", "Name", "SKU", "Barcode", "Description", "Cost Price", "Price", "Type", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
+            String[] columns = {"ID", "Name", "Size", "SKU", "Barcode", "Description", "Cost Price", "Price", "Type", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
             DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -432,9 +446,9 @@ public class EditItem extends JFrame {
             JTable table = new JTable(model);
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             table.setRowSelectionInterval(0, 0);
-            hideColumn(table, 14);
-            hideColumn(table, 12);
-            hideColumn(table, 10);
+            hideColumn(table, 15);
+            hideColumn(table, 13);
+            hideColumn(table, 11);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(550, 200));
 
@@ -459,21 +473,23 @@ public class EditItem extends JFrame {
 
                 selectedProductId = (int) table.getValueAt(selectedRow, 0);
                 String name = (String) table.getValueAt(selectedRow, 1);
-                String sku = (String) table.getValueAt(selectedRow, 2);
-                String barcode = (String) table.getValueAt(selectedRow, 3);
-                String description = (String) table.getValueAt(selectedRow, 4);
-                double costPrice = (double) table.getValueAt(selectedRow, 5);
-                double price = (double) table.getValueAt(selectedRow, 6);
-                Object productType = table.getValueAt(selectedRow, 7);
-                Object quantity = table.getValueAt(selectedRow, 8);
-                Object reorderLevel = table.getValueAt(selectedRow, 9);
-                Object departmentId = table.getValueAt(selectedRow, 10);
-                Object departmentName = table.getValueAt(selectedRow, 11);
-                Object vendorId = table.getValueAt(selectedRow, 12);
-                Object vendorName = table.getValueAt(selectedRow, 13);
-                Object imageUrl = table.getValueAt(selectedRow, 14);
+                String size = (String) table.getValueAt(selectedRow, 2);
+                String sku = (String) table.getValueAt(selectedRow, 3);
+                String barcode = (String) table.getValueAt(selectedRow, 4);
+                String description = (String) table.getValueAt(selectedRow, 5);
+                double costPrice = (double) table.getValueAt(selectedRow, 6);
+                double price = (double) table.getValueAt(selectedRow, 7);
+                Object productType = table.getValueAt(selectedRow, 8);
+                Object quantity = table.getValueAt(selectedRow, 9);
+                Object reorderLevel = table.getValueAt(selectedRow, 10);
+                Object departmentId = table.getValueAt(selectedRow, 11);
+                Object departmentName = table.getValueAt(selectedRow, 12);
+                Object vendorId = table.getValueAt(selectedRow, 13);
+                Object vendorName = table.getValueAt(selectedRow, 14);
+                Object imageUrl = table.getValueAt(selectedRow, 15);
 
                 nameField.setText(name);
+                sizeField.setText(size != null ? size : "");
                 skuField.setText(sku);
                 barcodeField.setText(barcode != null ? barcode : "");
                 descriptionArea.setText(description != null ? description : "");
@@ -593,6 +609,7 @@ public class EditItem extends JFrame {
         }
 
         String name = nameField.getText().trim();
+        String size = sizeField.getText().trim();
         String sku = skuField.getText().trim();
         String barcode = barcodeField.getText().trim();
         String description = descriptionArea.getText().trim();
@@ -679,7 +696,7 @@ public class EditItem extends JFrame {
             return;
         }
 
-        String updateProductSql = "UPDATE products SET name = ?, sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
+        String updateProductSql = "UPDATE products SET name = ?, size = NULLIF(?, ''), sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
                 VALUES (?, ?, ?, ?)
@@ -701,26 +718,27 @@ public class EditItem extends JFrame {
                 int previousQuantity = getCurrentInventoryQuantity(conn, selectedProductId, selectedLocationId);
 
                 updatePs.setString(1, name);
-                updatePs.setString(2, sku);
-                updatePs.setString(3, barcode);
-                updatePs.setString(4, description);
-                updatePs.setDouble(5, costPrice);
-                updatePs.setDouble(6, price);
-                updatePs.setString(7, productType);
+                updatePs.setString(2, size);
+                updatePs.setString(3, sku);
+                updatePs.setString(4, barcode);
+                updatePs.setString(5, description);
+                updatePs.setDouble(6, costPrice);
+                updatePs.setDouble(7, price);
+                updatePs.setString(8, productType);
 
                 if (categoryId != null) {
-                    updatePs.setInt(8, categoryId);
-                } else {
-                    updatePs.setNull(8, java.sql.Types.INTEGER);
-                }
-                if (vendorId != null) {
-                    updatePs.setInt(9, vendorId);
+                    updatePs.setInt(9, categoryId);
                 } else {
                     updatePs.setNull(9, java.sql.Types.INTEGER);
                 }
+                if (vendorId != null) {
+                    updatePs.setInt(10, vendorId);
+                } else {
+                    updatePs.setNull(10, java.sql.Types.INTEGER);
+                }
 
-                updatePs.setString(10, imageUrl);
-                updatePs.setInt(11, selectedProductId);
+                updatePs.setString(11, imageUrl);
+                updatePs.setInt(12, selectedProductId);
 
                 int rowsUpdated = updatePs.executeUpdate();
                 if (rowsUpdated == 0) {
@@ -770,6 +788,7 @@ public class EditItem extends JFrame {
         selectedOriginalQuantity = 0;
         selectedProductType = "INVENTORY";
         nameField.setText("");
+        sizeField.setText("");
         skuField.setText("");
         barcodeField.setText("");
         descriptionArea.setText("");
@@ -789,6 +808,7 @@ public class EditItem extends JFrame {
 
     private void setFormEnabled(boolean enabled) {
         nameField.setEnabled(enabled);
+        sizeField.setEnabled(enabled);
         skuField.setEnabled(enabled);
         barcodeField.setEnabled(enabled);
         descriptionArea.setEnabled(enabled);

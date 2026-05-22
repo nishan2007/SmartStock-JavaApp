@@ -3,6 +3,9 @@ package ui.screens;
 import Receipt.ReceiptData;
 import Receipt.ReceiptFormatter;
 import Receipt.ReceiptItem;
+import Receipt.CustomOrderSlipBuilder;
+import Receipt.CustomOrderSlipData;
+import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
@@ -40,8 +43,26 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0.00", 8);
+    private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
+    private final JCheckBox slipAutoPrintBox = new JCheckBox("Print automatically after saving a custom order");
+    private final JTextField slipTitleField = new JTextField("CUSTOMER'S ORDER SLIP");
+    private final JTextField slipContactLineField = new JTextField();
+    private final JTextField slipEmailLineField = new JTextField();
+    private final JTextField slipBlankDetailLinesField = new JTextField("8", 4);
+    private final JTextField slipFooterNoteField = new JTextField();
+    private final JCheckBox slipShowLogoBox = new JCheckBox("Logo");
+    private final JCheckBox slipShowOrderNumberBox = new JCheckBox("Order number");
+    private final JCheckBox slipShowDueDateBox = new JCheckBox("Due date");
+    private final JCheckBox slipShowCustomerPhoneBox = new JCheckBox("Customer phone");
+    private final JCheckBox slipShowLineItemsBox = new JCheckBox("Line items");
+    private final JCheckBox slipShowPricingBox = new JCheckBox("Pricing");
+    private final JCheckBox slipShowPaymentSummaryBox = new JCheckBox("Payment summary");
+    private final JCheckBox slipShowPaymentReferenceBox = new JCheckBox("Payment reference");
+    private final JCheckBox slipShowTakenByBox = new JCheckBox("Taken/delivered by");
+    private final JCheckBox slipShowSignaturesBox = new JCheckBox("Signature lines");
     private final JLabel logoPreviewLabel = new JLabel("No Logo", SwingConstants.CENTER);
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
+    private final CustomOrderSlipPreviewPanel sampleSlipPanel = new CustomOrderSlipPreviewPanel();
     private boolean loadingSettings = false;
 
     public CompanyCustomization() {
@@ -60,11 +81,10 @@ public class CompanyCustomization extends JFrame {
         titleLabel.setForeground(new Color(32, 41, 57));
         rootPanel.add(titleLabel, BorderLayout.NORTH);
 
-        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
-        contentPanel.setOpaque(false);
-        contentPanel.add(buildPreferencesPanel(), BorderLayout.CENTER);
-        contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
-        rootPanel.add(contentPanel, BorderLayout.CENTER);
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Receipt Preferences", buildReceiptPreferencesScreen());
+        tabs.addTab("Custom Order Slips", buildCustomOrderSlipPreferencesScreen());
+        rootPanel.add(tabs, BorderLayout.CENTER);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttonPanel.setOpaque(false);
@@ -97,6 +117,22 @@ public class CompanyCustomization extends JFrame {
         panel.add(Box.createVerticalStrut(16));
         panel.add(buildCustomOrdersPanel());
         return panel;
+    }
+
+    private JPanel buildReceiptPreferencesScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        contentPanel.add(buildPreferencesPanel(), BorderLayout.CENTER);
+        contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
+        return contentPanel;
+    }
+
+    private JPanel buildCustomOrderSlipPreferencesScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        contentPanel.add(buildCustomOrderSlipPanel(), BorderLayout.CENTER);
+        contentPanel.add(buildSlipPreviewPanel(), BorderLayout.EAST);
+        return contentPanel;
     }
 
     private JPanel buildCompanyIdentityPanel() {
@@ -191,6 +227,70 @@ public class CompanyCustomization extends JFrame {
         return panel;
     }
 
+    private JPanel buildCustomOrderSlipPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setOpaque(false);
+        panel.add(buildSlipBehaviorPanel());
+        panel.add(Box.createVerticalStrut(16));
+        panel.add(buildSlipHeaderPanel());
+        panel.add(Box.createVerticalStrut(16));
+        panel.add(buildSlipFieldsPanel());
+        return panel;
+    }
+
+    private JPanel buildSlipBehaviorPanel() {
+        JPanel panel = createSectionPanel("Slip Behavior");
+        JPanel optionsPanel = new JPanel(new GridLayout(0, 1, 8, 8));
+        optionsPanel.setOpaque(false);
+        optionsPanel.add(slipEnabledBox);
+        optionsPanel.add(slipAutoPrintBox);
+        addWide(panel, optionsPanel, 1);
+        return panel;
+    }
+
+    private JPanel buildSlipHeaderPanel() {
+        JPanel panel = createSectionPanel("Slip Header");
+        addRow(panel, 1, "Title", slipTitleField);
+        addRow(panel, 2, "Contact Line", slipContactLineField);
+        addRow(panel, 3, "Email Line", slipEmailLineField);
+        addRow(panel, 4, "Footer Note", slipFooterNoteField);
+        addRow(panel, 5, "Blank Detail Lines", slipBlankDetailLinesField);
+        return panel;
+    }
+
+    private JPanel buildSlipFieldsPanel() {
+        JPanel panel = createSectionPanel("Fields to Print");
+        JPanel fieldsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
+        fieldsPanel.setOpaque(false);
+        fieldsPanel.add(slipShowLogoBox);
+        fieldsPanel.add(slipShowOrderNumberBox);
+        fieldsPanel.add(slipShowDueDateBox);
+        fieldsPanel.add(slipShowCustomerPhoneBox);
+        fieldsPanel.add(slipShowLineItemsBox);
+        fieldsPanel.add(slipShowPricingBox);
+        fieldsPanel.add(slipShowPaymentSummaryBox);
+        fieldsPanel.add(slipShowPaymentReferenceBox);
+        fieldsPanel.add(slipShowTakenByBox);
+        fieldsPanel.add(slipShowSignaturesBox);
+        addWide(panel, fieldsPanel, 1);
+        return panel;
+    }
+
+    private JPanel createSectionPanel(String title) {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(18, 18, 18, 18)
+        ));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel sectionLabel = new JLabel(title);
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        addWide(panel, sectionLabel, 0);
+        return panel;
+    }
+
     private JPanel buildLogoFilePanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 0));
         panel.setOpaque(false);
@@ -238,6 +338,26 @@ public class CompanyCustomization extends JFrame {
         sampleScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         panel.add(sampleScrollPane, BorderLayout.CENTER);
 
+        return panel;
+    }
+
+    private JPanel buildSlipPreviewPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setPreferredSize(new Dimension(430, 0));
+        panel.setMinimumSize(new Dimension(380, 0));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        JLabel sectionLabel = new JLabel("Sample Order Slip Preview");
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        panel.add(sectionLabel, BorderLayout.NORTH);
+
+        JScrollPane sampleScrollPane = new JScrollPane(sampleSlipPanel);
+        sampleScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        panel.add(sampleScrollPane, BorderLayout.CENTER);
         return panel;
     }
 
@@ -291,9 +411,12 @@ public class CompanyCustomization extends JFrame {
         CompanyCustomizationManager.CustomOrderSettings customOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
         customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        loadSlipFields(slipSettings);
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
+        refreshSlipPreview();
     }
 
     private void saveSettings() {
@@ -304,6 +427,7 @@ public class CompanyCustomization extends JFrame {
             if (customOrderMinimumDepositPercentField.isEnabled() || customOrderRefundApprovalLimitField.isEnabled()) {
                 CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
             }
+            CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
@@ -339,6 +463,59 @@ public class CompanyCustomization extends JFrame {
                 showSkuBox.isSelected(),
                 showItemDiscountBox.isSelected(),
                 showPaymentStatusBox.isSelected()
+        );
+    }
+
+    private void loadSlipFields(CompanyCustomizationManager.CustomOrderSlipSettings settings) {
+        slipEnabledBox.setSelected(settings.enabled());
+        slipAutoPrintBox.setSelected(settings.autoPrint());
+        slipTitleField.setText(settings.title());
+        slipContactLineField.setText(settings.contactLine());
+        slipEmailLineField.setText(settings.emailLine());
+        slipFooterNoteField.setText(settings.footerNote());
+        slipBlankDetailLinesField.setText(String.valueOf(settings.blankDetailLines()));
+        slipShowLogoBox.setSelected(settings.showLogo());
+        slipShowOrderNumberBox.setSelected(settings.showOrderNumber());
+        slipShowDueDateBox.setSelected(settings.showDueDate());
+        slipShowCustomerPhoneBox.setSelected(settings.showCustomerPhone());
+        slipShowLineItemsBox.setSelected(settings.showLineItems());
+        slipShowPricingBox.setSelected(settings.showPricing());
+        slipShowPaymentSummaryBox.setSelected(settings.showPaymentSummary());
+        slipShowPaymentReferenceBox.setSelected(settings.showPaymentReference());
+        slipShowTakenByBox.setSelected(settings.showTakenBy());
+        slipShowSignaturesBox.setSelected(settings.showSignatures());
+    }
+
+    private CompanyCustomizationManager.CustomOrderSlipSettings getSlipSettingsFromFields() {
+        int blankLines;
+        try {
+            blankLines = Integer.parseInt(slipBlankDetailLinesField.getText() == null || slipBlankDetailLinesField.getText().isBlank()
+                    ? "8"
+                    : slipBlankDetailLinesField.getText().trim());
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Blank detail lines must be a whole number from 0 to 20.");
+        }
+        if (blankLines < 0 || blankLines > 20) {
+            throw new IllegalArgumentException("Blank detail lines must be from 0 to 20.");
+        }
+        return new CompanyCustomizationManager.CustomOrderSlipSettings(
+                slipEnabledBox.isSelected(),
+                slipAutoPrintBox.isSelected(),
+                slipTitleField.getText(),
+                slipContactLineField.getText(),
+                slipEmailLineField.getText(),
+                slipFooterNoteField.getText(),
+                blankLines,
+                slipShowLogoBox.isSelected(),
+                slipShowOrderNumberBox.isSelected(),
+                slipShowDueDateBox.isSelected(),
+                slipShowCustomerPhoneBox.isSelected(),
+                slipShowLineItemsBox.isSelected(),
+                slipShowPricingBox.isSelected(),
+                slipShowPaymentSummaryBox.isSelected(),
+                slipShowPaymentReferenceBox.isSelected(),
+                slipShowTakenByBox.isSelected(),
+                slipShowSignaturesBox.isSelected()
         );
     }
 
@@ -402,16 +579,19 @@ public class CompanyCustomization extends JFrame {
             @Override
             public void insertUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshSlipPreview();
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshSlipPreview();
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshSlipPreview();
             }
         };
 
@@ -427,6 +607,24 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.addActionListener(e -> refreshSamplePreview());
         showItemDiscountBox.addActionListener(e -> refreshSamplePreview());
         showPaymentStatusBox.addActionListener(e -> refreshSamplePreview());
+
+        slipEnabledBox.addActionListener(e -> refreshSlipPreview());
+        slipAutoPrintBox.addActionListener(e -> refreshSlipPreview());
+        slipShowLogoBox.addActionListener(e -> refreshSlipPreview());
+        slipShowOrderNumberBox.addActionListener(e -> refreshSlipPreview());
+        slipShowDueDateBox.addActionListener(e -> refreshSlipPreview());
+        slipShowCustomerPhoneBox.addActionListener(e -> refreshSlipPreview());
+        slipShowLineItemsBox.addActionListener(e -> refreshSlipPreview());
+        slipShowPricingBox.addActionListener(e -> refreshSlipPreview());
+        slipShowPaymentSummaryBox.addActionListener(e -> refreshSlipPreview());
+        slipShowPaymentReferenceBox.addActionListener(e -> refreshSlipPreview());
+        slipShowTakenByBox.addActionListener(e -> refreshSlipPreview());
+        slipShowSignaturesBox.addActionListener(e -> refreshSlipPreview());
+        slipTitleField.getDocument().addDocumentListener(previewDocumentListener);
+        slipContactLineField.getDocument().addDocumentListener(previewDocumentListener);
+        slipEmailLineField.getDocument().addDocumentListener(previewDocumentListener);
+        slipFooterNoteField.getDocument().addDocumentListener(previewDocumentListener);
+        slipBlankDetailLinesField.getDocument().addDocumentListener(previewDocumentListener);
     }
 
     private void refreshSamplePreview() {
@@ -441,6 +639,44 @@ public class CompanyCustomization extends JFrame {
             updateSampleLogoPreview(previewSettings);
         } finally {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
+        }
+    }
+
+    private void refreshSlipPreview() {
+        if (loadingSettings) {
+            return;
+        }
+        sampleSlipPanel.setSlip(
+                CustomOrderSlipBuilder.sample(),
+                getSettingsFromFields(),
+                getSlipSettingsForPreview()
+        );
+        updateSlipLogoPreview();
+    }
+
+    private CompanyCustomizationManager.CustomOrderSlipSettings getSlipSettingsForPreview() {
+        try {
+            return getSlipSettingsFromFields();
+        } catch (IllegalArgumentException ex) {
+            return new CompanyCustomizationManager.CustomOrderSlipSettings(
+                    slipEnabledBox.isSelected(),
+                    slipAutoPrintBox.isSelected(),
+                    slipTitleField.getText(),
+                    slipContactLineField.getText(),
+                    slipEmailLineField.getText(),
+                    slipFooterNoteField.getText(),
+                    8,
+                    slipShowLogoBox.isSelected(),
+                    slipShowOrderNumberBox.isSelected(),
+                    slipShowDueDateBox.isSelected(),
+                    slipShowCustomerPhoneBox.isSelected(),
+                    slipShowLineItemsBox.isSelected(),
+                    slipShowPricingBox.isSelected(),
+                    slipShowPaymentSummaryBox.isSelected(),
+                    slipShowPaymentReferenceBox.isSelected(),
+                    slipShowTakenByBox.isSelected(),
+                    slipShowSignaturesBox.isSelected()
+            );
         }
     }
 
@@ -494,5 +730,65 @@ public class CompanyCustomization extends JFrame {
                 }
             }
         }.execute();
+    }
+
+    private void updateSlipLogoPreview() {
+        CompanyCustomizationManager.ReceiptSettings settings = getSettingsFromFields();
+        sampleSlipPanel.setLogo(null);
+        if (!getSlipSettingsForPreview().showLogo() || settings.logoPath().isBlank()) {
+            return;
+        }
+        new SwingWorker<BufferedImage, Void>() {
+            @Override
+            protected BufferedImage doInBackground() {
+                return CompanyCustomizationManager.loadCompanyLogo(settings);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    sampleSlipPanel.setLogo(get());
+                } catch (Exception ex) {
+                    sampleSlipPanel.setLogo(null);
+                }
+            }
+        }.execute();
+    }
+
+    private static class CustomOrderSlipPreviewPanel extends JPanel {
+        private CustomOrderSlipData slipData = CustomOrderSlipBuilder.sample();
+        private CompanyCustomizationManager.ReceiptSettings receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
+        private CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        private BufferedImage logo;
+
+        CustomOrderSlipPreviewPanel() {
+            setPreferredSize(new Dimension(760, 470));
+            setBackground(new Color(248, 250, 252));
+        }
+
+        void setSlip(CustomOrderSlipData slipData,
+                     CompanyCustomizationManager.ReceiptSettings receiptSettings,
+                     CompanyCustomizationManager.CustomOrderSlipSettings slipSettings) {
+            this.slipData = slipData;
+            this.receiptSettings = receiptSettings;
+            this.slipSettings = slipSettings;
+            repaint();
+        }
+
+        void setLogo(BufferedImage logo) {
+            this.logo = logo;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                CustomOrderSlipRenderer.paintSlip(g, 20, 20, getWidth() - 40, 390, slipData, receiptSettings, slipSettings, logo);
+            } finally {
+                g.dispose();
+            }
+        }
     }
 }

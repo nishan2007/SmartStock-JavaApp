@@ -130,6 +130,40 @@ public class CompanyCustomizationManager {
         cachedCustomOrderSettings = settings;
     }
 
+    public static CustomOrderSlipSettings loadCustomOrderSlipSettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (Objects.equals(locationId, cachedCustomOrderSlipLocationId) && cachedCustomOrderSlipSettings != null) {
+            return cachedCustomOrderSlipSettings;
+        }
+        if (locationId != null) {
+            try {
+                CustomOrderSlipSettings dbSettings = loadCustomOrderSlipSettingsFromDb(locationId);
+                if (dbSettings != null) {
+                    saveLocalCustomOrderSlipSettings(dbSettings);
+                    cachedCustomOrderSlipLocationId = locationId;
+                    cachedCustomOrderSlipSettings = dbSettings;
+                    return dbSettings;
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+        CustomOrderSlipSettings localSettings = loadLocalCustomOrderSlipSettings();
+        cachedCustomOrderSlipLocationId = locationId;
+        cachedCustomOrderSlipSettings = localSettings;
+        return localSettings;
+    }
+
+    public static void saveCustomOrderSlipSettings(CustomOrderSlipSettings settings) throws IOException, SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            saveCustomOrderSlipSettingsToDb(locationId, settings);
+        }
+        saveLocalCustomOrderSlipSettings(settings);
+        cachedCustomOrderSlipLocationId = locationId;
+        cachedCustomOrderSlipSettings = settings;
+    }
+
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT company_name,
@@ -269,6 +303,127 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static CustomOrderSlipSettings loadCustomOrderSlipSettingsFromDb(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(custom_order_slip_enabled, TRUE) AS enabled,
+                       COALESCE(custom_order_slip_auto_print, TRUE) AS auto_print,
+                       COALESCE(custom_order_slip_title, 'CUSTOMER''S ORDER SLIP') AS title,
+                       COALESCE(custom_order_slip_contact_line, '') AS contact_line,
+                       COALESCE(custom_order_slip_email_line, '') AS email_line,
+                       COALESCE(custom_order_slip_footer_note, 'NB: The management is NOT responsible for any LOSS or DAMAGE to your personal property.') AS footer_note,
+                       COALESCE(custom_order_slip_blank_detail_lines, 8) AS blank_detail_lines,
+                       COALESCE(custom_order_slip_show_logo, TRUE) AS show_logo,
+                       COALESCE(custom_order_slip_show_order_number, TRUE) AS show_order_number,
+                       COALESCE(custom_order_slip_show_due_date, TRUE) AS show_due_date,
+                       COALESCE(custom_order_slip_show_customer_phone, TRUE) AS show_customer_phone,
+                       COALESCE(custom_order_slip_show_line_items, TRUE) AS show_line_items,
+                       COALESCE(custom_order_slip_show_pricing, TRUE) AS show_pricing,
+                       COALESCE(custom_order_slip_show_payment_summary, TRUE) AS show_payment_summary,
+                       COALESCE(custom_order_slip_show_payment_reference, TRUE) AS show_payment_reference,
+                       COALESCE(custom_order_slip_show_taken_by, TRUE) AS show_taken_by,
+                       COALESCE(custom_order_slip_show_signatures, TRUE) AS show_signatures
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new CustomOrderSlipSettings(
+                        rs.getBoolean("enabled"),
+                        rs.getBoolean("auto_print"),
+                        rs.getString("title"),
+                        rs.getString("contact_line"),
+                        rs.getString("email_line"),
+                        rs.getString("footer_note"),
+                        rs.getInt("blank_detail_lines"),
+                        rs.getBoolean("show_logo"),
+                        rs.getBoolean("show_order_number"),
+                        rs.getBoolean("show_due_date"),
+                        rs.getBoolean("show_customer_phone"),
+                        rs.getBoolean("show_line_items"),
+                        rs.getBoolean("show_pricing"),
+                        rs.getBoolean("show_payment_summary"),
+                        rs.getBoolean("show_payment_reference"),
+                        rs.getBoolean("show_taken_by"),
+                        rs.getBoolean("show_signatures")
+                );
+            }
+        }
+    }
+
+    private static void saveCustomOrderSlipSettingsToDb(int locationId, CustomOrderSlipSettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    custom_order_slip_enabled,
+                    custom_order_slip_auto_print,
+                    custom_order_slip_title,
+                    custom_order_slip_contact_line,
+                    custom_order_slip_email_line,
+                    custom_order_slip_footer_note,
+                    custom_order_slip_blank_detail_lines,
+                    custom_order_slip_show_logo,
+                    custom_order_slip_show_order_number,
+                    custom_order_slip_show_due_date,
+                    custom_order_slip_show_customer_phone,
+                    custom_order_slip_show_line_items,
+                    custom_order_slip_show_pricing,
+                    custom_order_slip_show_payment_summary,
+                    custom_order_slip_show_payment_reference,
+                    custom_order_slip_show_taken_by,
+                    custom_order_slip_show_signatures,
+                    updated_at
+                )
+                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    custom_order_slip_enabled = EXCLUDED.custom_order_slip_enabled,
+                    custom_order_slip_auto_print = EXCLUDED.custom_order_slip_auto_print,
+                    custom_order_slip_title = EXCLUDED.custom_order_slip_title,
+                    custom_order_slip_contact_line = EXCLUDED.custom_order_slip_contact_line,
+                    custom_order_slip_email_line = EXCLUDED.custom_order_slip_email_line,
+                    custom_order_slip_footer_note = EXCLUDED.custom_order_slip_footer_note,
+                    custom_order_slip_blank_detail_lines = EXCLUDED.custom_order_slip_blank_detail_lines,
+                    custom_order_slip_show_logo = EXCLUDED.custom_order_slip_show_logo,
+                    custom_order_slip_show_order_number = EXCLUDED.custom_order_slip_show_order_number,
+                    custom_order_slip_show_due_date = EXCLUDED.custom_order_slip_show_due_date,
+                    custom_order_slip_show_customer_phone = EXCLUDED.custom_order_slip_show_customer_phone,
+                    custom_order_slip_show_line_items = EXCLUDED.custom_order_slip_show_line_items,
+                    custom_order_slip_show_pricing = EXCLUDED.custom_order_slip_show_pricing,
+                    custom_order_slip_show_payment_summary = EXCLUDED.custom_order_slip_show_payment_summary,
+                    custom_order_slip_show_payment_reference = EXCLUDED.custom_order_slip_show_payment_reference,
+                    custom_order_slip_show_taken_by = EXCLUDED.custom_order_slip_show_taken_by,
+                    custom_order_slip_show_signatures = EXCLUDED.custom_order_slip_show_signatures,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setBoolean(2, settings.enabled());
+            ps.setBoolean(3, settings.autoPrint());
+            ps.setString(4, settings.title());
+            ps.setString(5, settings.contactLine());
+            ps.setString(6, settings.emailLine());
+            ps.setString(7, settings.footerNote());
+            ps.setInt(8, settings.blankDetailLines());
+            ps.setBoolean(9, settings.showLogo());
+            ps.setBoolean(10, settings.showOrderNumber());
+            ps.setBoolean(11, settings.showDueDate());
+            ps.setBoolean(12, settings.showCustomerPhone());
+            ps.setBoolean(13, settings.showLineItems());
+            ps.setBoolean(14, settings.showPricing());
+            ps.setBoolean(15, settings.showPaymentSummary());
+            ps.setBoolean(16, settings.showPaymentReference());
+            ps.setBoolean(17, settings.showTakenBy());
+            ps.setBoolean(18, settings.showSignatures());
+            ps.executeUpdate();
+        }
+    }
+
     private static ReceiptSettings loadLocalReceiptSettings() {
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
@@ -309,9 +464,44 @@ public class CompanyCustomizationManager {
         );
     }
 
+    private static CustomOrderSlipSettings loadLocalCustomOrderSlipSettings() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        return new CustomOrderSlipSettings(
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.enabled", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.auto_print", "true")),
+                properties.getProperty("custom_order_slip.title", "CUSTOMER'S ORDER SLIP"),
+                properties.getProperty("custom_order_slip.contact_line", ""),
+                properties.getProperty("custom_order_slip.email_line", ""),
+                properties.getProperty("custom_order_slip.footer_note", "NB: The management is NOT responsible for any LOSS or DAMAGE to your personal property."),
+                parseIntInRange(properties.getProperty("custom_order_slip.blank_detail_lines", "8"), 0, 20, 8),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_logo", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_order_number", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_due_date", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_customer_phone", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_line_items", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_pricing", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_summary", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_reference", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_taken_by", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_signatures", "true"))
+        );
+    }
+
     private static void saveLocalReceiptSettings(ReceiptSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
         Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
         properties.setProperty("receipt.company_name", settings.companyName());
         properties.setProperty("receipt.header_line", settings.headerLine());
         properties.setProperty("receipt.footer_line", settings.footerLine());
@@ -344,6 +534,36 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static void saveLocalCustomOrderSlipSettings(CustomOrderSlipSettings settings) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
+        properties.setProperty("custom_order_slip.enabled", String.valueOf(settings.enabled()));
+        properties.setProperty("custom_order_slip.auto_print", String.valueOf(settings.autoPrint()));
+        properties.setProperty("custom_order_slip.title", settings.title());
+        properties.setProperty("custom_order_slip.contact_line", settings.contactLine());
+        properties.setProperty("custom_order_slip.email_line", settings.emailLine());
+        properties.setProperty("custom_order_slip.footer_note", settings.footerNote());
+        properties.setProperty("custom_order_slip.blank_detail_lines", String.valueOf(settings.blankDetailLines()));
+        properties.setProperty("custom_order_slip.show_logo", String.valueOf(settings.showLogo()));
+        properties.setProperty("custom_order_slip.show_order_number", String.valueOf(settings.showOrderNumber()));
+        properties.setProperty("custom_order_slip.show_due_date", String.valueOf(settings.showDueDate()));
+        properties.setProperty("custom_order_slip.show_customer_phone", String.valueOf(settings.showCustomerPhone()));
+        properties.setProperty("custom_order_slip.show_line_items", String.valueOf(settings.showLineItems()));
+        properties.setProperty("custom_order_slip.show_pricing", String.valueOf(settings.showPricing()));
+        properties.setProperty("custom_order_slip.show_payment_summary", String.valueOf(settings.showPaymentSummary()));
+        properties.setProperty("custom_order_slip.show_payment_reference", String.valueOf(settings.showPaymentReference()));
+        properties.setProperty("custom_order_slip.show_taken_by", String.valueOf(settings.showTakenBy()));
+        properties.setProperty("custom_order_slip.show_signatures", String.valueOf(settings.showSignatures()));
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
     private static java.math.BigDecimal parsePercent(String value) {
         try {
             java.math.BigDecimal percent = new java.math.BigDecimal(value == null || value.isBlank() ? "0" : value.trim());
@@ -362,6 +582,18 @@ public class CompanyCustomizationManager {
             return amount.compareTo(java.math.BigDecimal.ZERO) < 0 ? java.math.BigDecimal.ZERO : amount;
         } catch (NumberFormatException ex) {
             return java.math.BigDecimal.ZERO;
+        }
+    }
+
+    private static int parseIntInRange(String value, int min, int max, int fallback) {
+        try {
+            int parsed = Integer.parseInt(value == null || value.isBlank() ? String.valueOf(fallback) : value.trim());
+            if (parsed < min || parsed > max) {
+                return fallback;
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            return fallback;
         }
     }
 
@@ -424,6 +656,8 @@ public class CompanyCustomizationManager {
     private static ReceiptSettings cachedReceiptSettings;
     private static Integer cachedCustomOrderLocationId;
     private static CustomOrderSettings cachedCustomOrderSettings;
+    private static Integer cachedCustomOrderSlipLocationId;
+    private static CustomOrderSlipSettings cachedCustomOrderSlipSettings;
 
     private static String getExtension(String fileName) {
         int dotIndex = fileName == null ? -1 : fileName.lastIndexOf('.');
@@ -555,6 +789,43 @@ public class CompanyCustomizationManager {
         public CustomOrderSettings {
             minimumDepositPercent = minimumDepositPercent == null ? java.math.BigDecimal.ZERO : minimumDepositPercent;
             refundApprovalLimit = refundApprovalLimit == null ? java.math.BigDecimal.ZERO : refundApprovalLimit;
+        }
+    }
+
+    public record CustomOrderSlipSettings(
+            boolean enabled,
+            boolean autoPrint,
+            String title,
+            String contactLine,
+            String emailLine,
+            String footerNote,
+            int blankDetailLines,
+            boolean showLogo,
+            boolean showOrderNumber,
+            boolean showDueDate,
+            boolean showCustomerPhone,
+            boolean showLineItems,
+            boolean showPricing,
+            boolean showPaymentSummary,
+            boolean showPaymentReference,
+            boolean showTakenBy,
+            boolean showSignatures
+    ) {
+        public CustomOrderSlipSettings {
+            title = clean(title, "CUSTOMER'S ORDER SLIP");
+            contactLine = Objects.requireNonNullElse(contactLine, "").trim();
+            emailLine = Objects.requireNonNullElse(emailLine, "").trim();
+            footerNote = clean(footerNote, "NB: The management is NOT responsible for any LOSS or DAMAGE to your personal property.");
+            if (blankDetailLines < 0) {
+                blankDetailLines = 0;
+            } else if (blankDetailLines > 20) {
+                blankDetailLines = 20;
+            }
+        }
+
+        private static String clean(String value, String fallback) {
+            String cleaned = Objects.requireNonNullElse(value, "").trim();
+            return cleaned.isBlank() ? fallback : cleaned;
         }
     }
 }

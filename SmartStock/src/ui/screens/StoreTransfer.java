@@ -274,7 +274,7 @@ public class StoreTransfer extends JFrame {
         StringBuilder sql = new StringBuilder("""
                 SELECT p.product_id,
                        p.sku,
-                       p.name,
+                       p.name || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS name,
                        COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
                 FROM products p
                 JOIN inventory i ON i.product_id = p.product_id
@@ -283,7 +283,7 @@ public class StoreTransfer extends JFrame {
                 """);
         boolean hasSearch = !search.isBlank();
         if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ?)");
+            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ?)");
         }
         sql.append(" ORDER BY p.name ASC LIMIT 100");
 
@@ -295,6 +295,7 @@ public class StoreTransfer extends JFrame {
                 ps.setString(2, pattern);
                 ps.setString(3, pattern);
                 ps.setString(4, pattern);
+                ps.setString(5, pattern);
             }
 
             try (ResultSet rs = ps.executeQuery()) {

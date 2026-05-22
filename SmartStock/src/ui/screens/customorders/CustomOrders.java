@@ -1,5 +1,6 @@
 package ui.screens.customorders;
 
+import Receipt.CustomOrderSlipPrinter;
 import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -58,11 +59,14 @@ public class CustomOrders extends JFrame {
     private final boolean canViewAssignedOrders = PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
 
     private CustomerInfoPanel customerInfoPanel;
+    private JCheckBox dueDateEnabledBox;
     private DatePickerField dueDateField;
+    private JTextArea guidedOrderNotesArea;
     private JTextField itemLookupField;
     private JComboBox<CustomItemOption> orderItemBox;
     private JComboBox<VariantOption> variantBox;
     private JTextField linePriceField;
+    private JLabel priceRateUnitLabel;
     private JComboBox<PrintMaterialOption> printMaterialBox;
     private JComboBox<PrintSizePresetOption> printSizePresetBox;
     private JTextField printChargeField;
@@ -86,7 +90,17 @@ public class CustomOrders extends JFrame {
     private JTextField lineDiscountPercentField;
     private JTextField lineDiscountReasonField;
     private JTextField priceOverrideReasonField;
+    private JTextField depositOverrideReasonField;
     private JLabel orderTotalLabel;
+    private JLabel lineCountLabel;
+    private JLabel minimumDepositLabel;
+    private JLabel reviewLineCountLabel;
+    private JLabel reviewOrderTotalLabel;
+    private JLabel reviewMinimumDepositLabel;
+    private DefaultListModel<String> reviewLineModel;
+    private JLabel customerSummaryLabel;
+    private JLabel paymentMinimumDepositLabel;
+    private JLabel depositOverrideNoticeLabel;
     private ButtonGroup paymentMethodGroup;
     private JToggleButton cashPaymentButton;
     private JToggleButton cardPaymentButton;
@@ -106,6 +120,7 @@ public class CustomOrders extends JFrame {
     private JComboBox<String> statusFilterBox;
     private JTextArea selectedOrderDetailsArea;
     private Long selectedOrderId;
+    private CustomOrdersNewOrderTabPanel newOrderPanel;
     private DefaultTableModel myOrdersModel;
     private JTable myOrdersTable;
     private TableRowSorter<DefaultTableModel> myOrdersSorter;
@@ -135,7 +150,7 @@ public class CustomOrders extends JFrame {
             tabs.addTab("New Order", buildOrderEntryPanel());
         }
         if (!orderManagementMode && canCreateOrders) {
-            tabs.addTab("Order Lookup", buildOrderLookupPanel());
+            tabs.addTab("Lookup", buildOrderLookupPanel());
         }
         if (orderManagementMode && (canViewAssignedOrders || canManageOrders)) {
             tabs.addTab("My Orders", buildMyOrdersPanel());
@@ -170,18 +185,25 @@ public class CustomOrders extends JFrame {
             @Override public void addPlacement() { addDesignPlacementNote(); }
             @Override public void addOrderLine() { CustomOrders.this.addOrderLine(); }
             @Override public void removeOrderLine() { removeSelectedOrderLine(); }
+            @Override public void editLineDiscount() { showLineDiscountDialog(); }
             @Override public void cartSelectionChanged() { loadSelectedCartLineIntoEditor(); }
             @Override public void selectPaymentMethod(String method) { CustomOrders.this.selectPaymentMethod(method); }
             @Override public Runnable upfrontChanged() { return CustomOrders.this::updatePaymentPreview; }
+            @Override public boolean canLeaveStep(int step) { return validateGuidedStep(step); }
+            @Override public void enterStep(int step) { enterGuidedStep(step); }
             @Override public void saveOrder() { saveCustomOrder(); }
             @Override public void clearOrder() { clearOrderEntry(); }
         });
+        newOrderPanel = panel;
         customerInfoPanel = panel.customerInfoPanel;
+        dueDateEnabledBox = panel.dueDateEnabledBox;
         dueDateField = panel.dueDateField;
+        guidedOrderNotesArea = panel.orderNotesArea;
         itemLookupField = panel.itemLookupField;
         orderItemBox = panel.orderItemBox;
         variantBox = panel.variantBox;
         linePriceField = panel.linePriceField;
+        priceRateUnitLabel = panel.priceRateUnitLabel;
         printMaterialBox = panel.printMaterialBox;
         printSizePresetBox = panel.printSizePresetBox;
         printChargeField = panel.printChargeField;
@@ -206,11 +228,21 @@ public class CustomOrders extends JFrame {
         lineDiscountPercentField = panel.lineDiscountPercentField;
         lineDiscountReasonField = panel.lineDiscountReasonField;
         priceOverrideReasonField = panel.priceOverrideReasonField;
+        depositOverrideReasonField = panel.depositOverrideReasonField;
         lineDiscountPercentField.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
         lineDiscountPercentField.setToolTipText(lineDiscountPercentField.isEnabled() ? "Enter a percentage discount for this order line." : "Requires Custom Order Line Discount permission.");
         lineDiscountReasonField.setEnabled(lineDiscountPercentField.isEnabled());
         lineDiscountReasonField.setToolTipText(lineDiscountReasonField.isEnabled() ? "Required when a line discount is used." : "Requires Custom Order Line Discount permission.");
         orderTotalLabel = panel.orderTotalLabel;
+        lineCountLabel = panel.lineCountLabel;
+        minimumDepositLabel = panel.minimumDepositLabel;
+        reviewLineCountLabel = panel.reviewLineCountLabel;
+        reviewOrderTotalLabel = panel.reviewOrderTotalLabel;
+        reviewMinimumDepositLabel = panel.reviewMinimumDepositLabel;
+        reviewLineModel = panel.reviewLineModel;
+        customerSummaryLabel = panel.customerSummaryLabel;
+        paymentMinimumDepositLabel = panel.paymentMinimumDepositLabel;
+        depositOverrideNoticeLabel = panel.depositOverrideNoticeLabel;
         paymentMethodGroup = panel.paymentMethodGroup;
         cashPaymentButton = panel.cashPaymentButton;
         cardPaymentButton = panel.cardPaymentButton;
@@ -259,6 +291,90 @@ public class CustomOrders extends JFrame {
         updatePaymentReferenceState();
     }
 
+    private boolean validateGuidedStep(int step) {
+        if (step == 0 && (orderLineModel == null || orderLineModel.getRowCount() == 0)) {
+            JOptionPane.showMessageDialog(this, "Add at least one custom order line before review.");
+            return false;
+        }
+        if (step == 1) {
+            try {
+                if (dueDateEnabledBox != null && dueDateEnabledBox.isSelected() && dueDateField != null) {
+                    dueDateField.getSelectedDate();
+                }
+            } catch (DateTimeParseException ex) {
+                JOptionPane.showMessageDialog(this, "Due date must use YYYY-MM-DD.");
+                return false;
+            }
+        }
+        if (step == 2) {
+            String customerName = customerInfoPanel == null ? "" : customerInfoPanel.getCustomerName();
+            String customerPhone = customerInfoPanel == null ? "" : customerInfoPanel.getCustomerPhone();
+            if (customerName.isBlank()) {
+                JOptionPane.showMessageDialog(this, "Customer name is required before payment.");
+                return false;
+            }
+            if (customerPhone.isBlank()) {
+                JOptionPane.showMessageDialog(this, "Customer phone number is required before payment.");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void enterGuidedStep(int step) {
+        if (step == 1) {
+            refreshReviewStep();
+        } else if (step == 3) {
+            refreshPaymentStep();
+        }
+    }
+
+    private void refreshReviewStep() {
+        if (reviewLineModel == null) {
+            return;
+        }
+        BigDecimal total = calculateOrderTotal();
+        BigDecimal minimumDeposit = calculateMinimumDepositRequired();
+        reviewLineCountLabel.setText("Lines: " + orderLineModel.getRowCount());
+        reviewOrderTotalLabel.setText("Order Total: " + formatMoney(total));
+        reviewMinimumDepositLabel.setText("Minimum Deposit Required: " + formatMoney(minimumDeposit));
+        reviewLineModel.clear();
+        for (int i = 0; i < orderLineModel.getRowCount(); i++) {
+            String item = valueAt(orderLineModel, i, 2);
+            String variant = valueAt(orderLineModel, i, 3);
+            String totalText = valueAt(orderLineModel, i, 5);
+            String discount = valueAt(orderLineModel, i, 24);
+            String addons = valueAt(orderLineModel, i, 21);
+            String notes = valueAt(orderLineModel, i, 7);
+            String details = valueAt(orderLineModel, i, 6);
+            StringBuilder line = new StringBuilder(item);
+            if (!variant.isBlank()) {
+                line.append(" / ").append(variant);
+            }
+            line.append(" - ").append(totalText);
+            if (!discount.isBlank() && parseMoneyValue(discount).compareTo(BigDecimal.ZERO) > 0) {
+                line.append(" (discount ").append(discount).append("%)");
+            }
+            if (!addons.isBlank()) {
+                line.append(" | print: ").append(addons);
+            }
+            if (!notes.isBlank()) {
+                line.append(" | notes: ").append(notes.replace("\n", " / "));
+            }
+            if (!details.isBlank()) {
+                line.append(" | details: ").append(details.replace("\n", " / "));
+            }
+            reviewLineModel.addElement(line.toString());
+        }
+    }
+
+    private void refreshPaymentStep() {
+        if (customerSummaryLabel != null && customerInfoPanel != null) {
+            customerSummaryLabel.setText("Customer: " + customerInfoPanel.getCustomerName() + " / " + customerInfoPanel.getCustomerPhone());
+        }
+        updatePaymentPreview();
+    }
+
     private void updatePaymentButtonStyles() {
         stylePaymentButton(cashPaymentButton, "CASH".equals(selectedPaymentMethod));
         stylePaymentButton(cardPaymentButton, "CARD".equals(selectedPaymentMethod));
@@ -281,12 +397,12 @@ public class CustomOrders extends JFrame {
         if (paymentReferenceField == null) {
             return;
         }
-        boolean needsReference = selectedPaymentMethod != null && !"CASH".equals(selectedPaymentMethod);
+        boolean needsReference = requiresPaymentReference(selectedPaymentMethod);
         paymentReferenceField.setEnabled(needsReference);
         if (!needsReference) {
             paymentReferenceField.setText("");
         }
-        paymentReferenceField.setToolTipText(needsReference ? "Enter check number, card transaction ID, MMG reference, or account reference." : "Reference is only used for non-cash payments.");
+        paymentReferenceField.setToolTipText(needsReference ? "Enter card transaction ID, cheque number, or MMG reference." : "Reference is only used for card, cheque, or MMG payments.");
     }
 
     private void addDesignPlacementNote() {
@@ -976,11 +1092,12 @@ public class CustomOrders extends JFrame {
         }
         LocalDate dueDate;
         try {
-            dueDate = dueDateField == null ? null : dueDateField.getSelectedDate();
+            dueDate = dueDateEnabledBox != null && dueDateEnabledBox.isSelected() && dueDateField != null ? dueDateField.getSelectedDate() : null;
         } catch (DateTimeParseException ex) {
             JOptionPane.showMessageDialog(this, "Due date must use YYYY-MM-DD.");
             return;
         }
+        String orderNotes = guidedOrderNotesArea == null ? "" : guidedOrderNotesArea.getText().trim();
 
         BigDecimal total = calculateOrderTotal();
         BigDecimal upfrontPaid = parseMoney(upfrontPaymentField.getText().trim().isEmpty() ? "0" : upfrontPaymentField.getText().trim(), "Upfront payment");
@@ -1036,13 +1153,28 @@ public class CustomOrders extends JFrame {
                     depositOverride.overrideReason(),
                     depositOverride.overrideByUserId(),
                     depositOverride.overrideByName(),
+                    orderNotes,
                     buildOrderLineRequests()
             ));
-                JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved.");
+                String printMessage = printCustomOrderSlipIfEnabled(orderNumber);
+                JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved." + printMessage);
                 clearOrderEntry();
                 loadOrders();
         } catch (SQLException ex) {
             showDatabaseSetupMessage(ex);
+        }
+    }
+
+    private String printCustomOrderSlipIfEnabled(String orderNumber) {
+        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        if (!slipSettings.enabled() || !slipSettings.autoPrint()) {
+            return "";
+        }
+        try {
+            CustomOrderSlipPrinter.print(orderNumber);
+            return "\n\nOrder slip sent to printer.";
+        } catch (Exception ex) {
+            return "\n\nOrder slip could not be printed: " + ex.getMessage();
         }
     }
 
@@ -1103,14 +1235,10 @@ public class CustomOrders extends JFrame {
                     JOptionPane.WARNING_MESSAGE);
             return null;
         }
-        String reason = JOptionPane.showInputDialog(this,
-                "Required deposit is " + formatMoney(requiredDeposit) + ". Enter manager override reason:");
-        if (reason == null) {
-            return null;
-        }
-        reason = reason.trim();
+        String reason = depositOverrideReasonField == null ? "" : depositOverrideReasonField.getText().trim();
         if (reason.isBlank()) {
-            JOptionPane.showMessageDialog(this, "Deposit override reason is required.");
+            JOptionPane.showMessageDialog(this,
+                    "Required deposit is " + formatMoney(requiredDeposit) + ". Enter a deposit override reason on the Payment step.");
             return null;
         }
         return new DepositOverride(requiredDeposit, reason, SessionManager.getCurrentUserId(), SessionManager.getCurrentUserDisplayName());
@@ -2366,6 +2494,91 @@ public class CustomOrders extends JFrame {
         }
     }
 
+    private void showLineDiscountDialog() {
+        int viewRow = orderLineTable == null ? -1 : orderLineTable.getSelectedRow();
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(this, "Select a cart line to discount.");
+            return;
+        }
+        int modelRow = orderLineTable.convertRowIndexToModel(viewRow);
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            JOptionPane.showMessageDialog(this, "You do not have permission to apply custom order line discounts.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        JTextField percentField = new JTextField(valueAt(orderLineModel, modelRow, 24).isBlank() ? "0" : valueAt(orderLineModel, modelRow, 24), 8);
+        JTextField reasonField = new JTextField(valueAt(orderLineModel, modelRow, 26), 24);
+        JLabel previewLabel = new JLabel(" ");
+        BigDecimal originalTotal = parseMoneyValue(valueAt(orderLineModel, modelRow, 23));
+        Runnable updatePreview = () -> {
+            try {
+                BigDecimal percent = new BigDecimal(percentField.getText().replace("%", "").trim());
+                if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+                    previewLabel.setText("Percent must be between 0 and 100.");
+                    return;
+                }
+                BigDecimal discountAmount = originalTotal.multiply(percent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+                previewLabel.setText("Discount: " + formatMoney(discountAmount) + " | New Total: " + formatMoney(originalTotal.subtract(discountAmount).max(BigDecimal.ZERO)));
+            } catch (Exception ex) {
+                previewLabel.setText("Enter a valid percentage.");
+            }
+        };
+        percentField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { updatePreview.run(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { updatePreview.run(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { updatePreview.run(); }
+        });
+        updatePreview.run();
+
+        JPanel panel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        panel.add(new JLabel("Discount %:"), gbc);
+        gbc.gridx = 1;
+        panel.add(percentField, gbc);
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        panel.add(new JLabel("Reason:"), gbc);
+        gbc.gridx = 1;
+        panel.add(reasonField, gbc);
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        gbc.gridwidth = 2;
+        panel.add(previewLabel, gbc);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Line Discount", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+        BigDecimal percent;
+        try {
+            percent = new BigDecimal(percentField.getText().replace("%", "").trim());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Line discount percent must be a valid percentage.");
+            return;
+        }
+        if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+            JOptionPane.showMessageDialog(this, "Line discount percent must be between 0 and 100.");
+            return;
+        }
+        String reason = reasonField.getText().trim();
+        if (percent.compareTo(BigDecimal.ZERO) > 0 && reason.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Discount reason is required when a line discount is used.");
+            return;
+        }
+        BigDecimal discountAmount = originalTotal.multiply(percent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        BigDecimal newTotal = originalTotal.subtract(discountAmount).max(BigDecimal.ZERO);
+        orderLineModel.setValueAt(formatMoney(newTotal), modelRow, 5);
+        orderLineModel.setValueAt(percent, modelRow, 24);
+        orderLineModel.setValueAt(discountAmount, modelRow, 25);
+        orderLineModel.setValueAt(percent.compareTo(BigDecimal.ZERO) == 0 ? "" : reason, modelRow, 26);
+        updateOrderTotal();
+    }
+
     private void addOrderLine() {
         CustomItemOption item = (CustomItemOption) orderItemBox.getSelectedItem();
         if (item == null) {
@@ -2385,12 +2598,15 @@ public class CustomOrders extends JFrame {
         BigDecimal configuredPrice = configuredLinePrice(item, variant);
         BigDecimal basePrice;
         if ("AREA".equals(item.pricingType())) {
-            areaCalculation = calculateAreaPrice(item, configuredPrice, true);
+            BigDecimal areaRate = parseMoney(linePriceField.getText().trim(), "Area price/rate");
+            if (areaRate == null) {
+                return;
+            }
+            areaCalculation = calculateAreaPrice(item, areaRate, true);
             if (areaCalculation == null) {
                 return;
             }
             basePrice = areaCalculation.totalPrice();
-            linePriceField.setText(formatMoney(basePrice));
         } else {
             basePrice = parseMoney(linePriceField.getText().trim(), "Base price");
             if (basePrice == null) {
@@ -3297,6 +3513,7 @@ public class CustomOrders extends JFrame {
         if (item == null) {
             linePriceField.setText("");
             linePriceField.setEditable(true);
+            updatePriceRateUnitLabel(null);
             setAreaLineVisible(false);
             return;
         }
@@ -3304,16 +3521,30 @@ public class CustomOrders extends JFrame {
         boolean area = "AREA".equals(item.pricingType());
         VariantOption variant = variantBox == null ? null : (VariantOption) variantBox.getSelectedItem();
         BigDecimal configuredPrice = configuredLinePrice(item, variant);
-        linePriceField.setEditable(!fixed && !area);
+        linePriceField.setEditable(!fixed);
         widthField.setEnabled(area);
         lengthField.setEnabled(area);
         setAreaLineVisible(area);
         if (fixed && configuredPrice != null) {
             linePriceField.setText(formatMoney(configuredPrice));
+        } else if (area && configuredPrice != null && linePriceField.getText().trim().isBlank()) {
+            linePriceField.setText(formatMoney(configuredPrice));
         } else if (!area) {
             linePriceField.setText("");
         }
+        updatePriceRateUnitLabel(item);
         updateAreaCalculationPreview();
+    }
+
+    private void updatePriceRateUnitLabel(CustomItemOption item) {
+        if (priceRateUnitLabel == null) {
+            return;
+        }
+        if (item != null && "AREA".equals(item.pricingType())) {
+            priceRateUnitLabel.setText("/ " + displayAreaUnit(item.areaPriceUnit()));
+        } else {
+            priceRateUnitLabel.setText(" ");
+        }
     }
 
     private BigDecimal configuredLinePrice(CustomItemOption item, VariantOption variant) {
@@ -3344,16 +3575,25 @@ public class CustomOrders extends JFrame {
         CustomItemOption item = orderItemBox == null ? null : (CustomItemOption) orderItemBox.getSelectedItem();
         if (item == null || !"AREA".equals(item.pricingType())) {
             areaCalculationLabel.setText(" ");
+            updatePriceRateUnitLabel(item);
             return;
         }
+        updatePriceRateUnitLabel(item);
         VariantOption variant = variantBox == null ? null : (VariantOption) variantBox.getSelectedItem();
         BigDecimal configuredPrice = configuredLinePrice(item, variant);
+        if (!linePriceField.getText().trim().isBlank()) {
+            try {
+                configuredPrice = parseMoneyValue(linePriceField.getText().trim());
+            } catch (Exception ignored) {
+                areaCalculationLabel.setText("Enter a valid area price/rate.");
+                return;
+            }
+        }
         AreaCalculation calculation = calculateAreaPrice(item, configuredPrice, false);
         if (calculation == null) {
-            areaCalculationLabel.setText("Rate: " + formatMoney(configuredPrice) + " / " + displayAreaUnit(item.areaPriceUnit()));
+            areaCalculationLabel.setText(" ");
             return;
         }
-        linePriceField.setText(formatMoney(calculation.totalPrice()));
         areaCalculationLabel.setText(stripTrailingZeros(calculation.area()) + " " + displayAreaUnit(calculation.areaUnit())
                 + " x " + formatMoney(calculation.areaPrice()) + " = " + formatMoney(calculation.totalPrice()));
     }
@@ -3469,6 +3709,13 @@ public class CustomOrders extends JFrame {
         if (dueDateField != null) {
             dueDateField.clearDate();
         }
+        if (dueDateEnabledBox != null) {
+            dueDateEnabledBox.setSelected(false);
+            dueDateField.setEnabled(false);
+        }
+        if (guidedOrderNotesArea != null) {
+            guidedOrderNotesArea.setText("");
+        }
         designPlacementField.setText("");
         lineNotesArea.setText("");
         lineQuantityField.setText("1");
@@ -3487,6 +3734,10 @@ public class CustomOrders extends JFrame {
         lengthField.setText("");
         upfrontPaymentField.setText("0.00");
         paymentReferenceField.setText("");
+        if (depositOverrideReasonField != null) {
+            depositOverrideReasonField.setText("");
+            depositOverrideReasonField.setEnabled(false);
+        }
         selectedPaymentMethod = null;
         if (paymentMethodGroup != null) {
             paymentMethodGroup.clearSelection();
@@ -3495,10 +3746,23 @@ public class CustomOrders extends JFrame {
         updatePaymentReferenceState();
         applySelectedOrderItemPrice();
         updateOrderTotal();
+        if (newOrderPanel != null) {
+            newOrderPanel.showLinesStep();
+        }
     }
 
     private void updateOrderTotal() {
-        orderTotalLabel.setText("Total: " + formatMoney(calculateOrderTotal()));
+        BigDecimal total = calculateOrderTotal();
+        BigDecimal minimumDeposit = calculateMinimumDepositRequired();
+        if (lineCountLabel != null) {
+            lineCountLabel.setText("<html><b>Lines</b><br>" + (orderLineModel == null ? 0 : orderLineModel.getRowCount()) + "</html>");
+        }
+        if (orderTotalLabel != null) {
+            orderTotalLabel.setText("<html><b>Order Total</b><br>" + formatMoney(total) + "</html>");
+        }
+        if (minimumDepositLabel != null) {
+            minimumDepositLabel.setText("<html><b>Minimum Deposit</b><br>" + formatMoney(minimumDeposit) + "</html>");
+        }
         updatePaymentPreview();
     }
 
@@ -3517,7 +3781,26 @@ public class CustomOrders extends JFrame {
             balanceDueLabel.setText("Balance Due: --");
             return;
         }
-        balanceDueLabel.setText("Balance Due: " + formatMoney(total.subtract(paid)));
+        BigDecimal minimumDeposit = calculateMinimumDepositRequired();
+        BigDecimal balance = total.subtract(paid);
+        balanceDueLabel.setText("Balance Due: " + formatMoney(balance));
+        if (paymentMinimumDepositLabel != null) {
+            paymentMinimumDepositLabel.setText("Minimum Deposit Required: " + formatMoney(minimumDeposit));
+        }
+        if (depositOverrideNoticeLabel != null) {
+            boolean belowMinimum = total.compareTo(BigDecimal.ZERO) > 0
+                    && minimumDeposit.compareTo(BigDecimal.ZERO) > 0
+                    && paid.compareTo(minimumDeposit) < 0;
+            depositOverrideNoticeLabel.setText(belowMinimum
+                    ? "Payment is below minimum deposit. Override permission and reason are required."
+                    : " ");
+            if (depositOverrideReasonField != null) {
+                depositOverrideReasonField.setEnabled(belowMinimum);
+                if (!belowMinimum) {
+                    depositOverrideReasonField.setText("");
+                }
+            }
+        }
     }
 
     private BigDecimal calculateOrderTotal() {

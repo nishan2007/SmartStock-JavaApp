@@ -26,6 +26,7 @@ import java.util.Set;
 public class NewItem extends JFrame {
 
     private JTextField nameField;
+    private JTextField sizeField;
     private JTextField skuField;
     private JTextField barcodeField;
     private JTextArea descriptionArea;
@@ -82,6 +83,7 @@ public class NewItem extends JFrame {
         rightGbc.anchor = GridBagConstraints.NORTHWEST;
 
         nameField = new JTextField();
+        sizeField = new JTextField();
         skuField = new JTextField();
         barcodeField = new JTextField();
         descriptionArea = new JTextArea(3, 20);
@@ -116,14 +118,23 @@ public class NewItem extends JFrame {
         leftGbc.gridx = 0;
         leftGbc.gridy = 1;
         leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("SKU:"), leftGbc);
+        leftColumn.add(new JLabel("Size:"), leftGbc);
+
+        leftGbc.gridx = 1;
+        leftGbc.weightx = 1;
+        leftColumn.add(sizeField, leftGbc);
+
+        leftGbc.gridx = 0;
+        leftGbc.gridy = 2;
+        leftGbc.weightx = 0;
+        leftColumn.add(new JLabel("SKU (auto if blank):"), leftGbc);
 
         leftGbc.gridx = 1;
         leftGbc.weightx = 1;
         leftColumn.add(skuField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 2;
+        leftGbc.gridy = 3;
         leftGbc.weightx = 0;
         leftGbc.anchor = GridBagConstraints.NORTHWEST;
         leftColumn.add(new JLabel("Description:"), leftGbc);
@@ -137,7 +148,7 @@ public class NewItem extends JFrame {
         leftGbc.fill = GridBagConstraints.HORIZONTAL;
         leftGbc.weighty = 0;
         leftGbc.gridx = 0;
-        leftGbc.gridy = 3;
+        leftGbc.gridy = 4;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Barcode:"), leftGbc);
 
@@ -146,7 +157,7 @@ public class NewItem extends JFrame {
         leftColumn.add(barcodeField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 4;
+        leftGbc.gridy = 5;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Price:"), leftGbc);
 
@@ -155,7 +166,7 @@ public class NewItem extends JFrame {
         leftColumn.add(priceField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 5;
+        leftGbc.gridy = 6;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Item Type:"), leftGbc);
 
@@ -164,7 +175,7 @@ public class NewItem extends JFrame {
         leftColumn.add(itemTypeBox, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 6;
+        leftGbc.gridy = 7;
         leftGbc.weightx = 0;
         leftColumn.add(new JLabel("Starting Quantity:"), leftGbc);
 
@@ -173,7 +184,7 @@ public class NewItem extends JFrame {
         leftColumn.add(quantityField, leftGbc);
 
         leftGbc.gridx = 0;
-        leftGbc.gridy = 7;
+        leftGbc.gridy = 8;
         leftGbc.weightx = 0;
         leftGbc.weighty = 1;
         leftColumn.add(Box.createVerticalGlue(), leftGbc);
@@ -305,6 +316,7 @@ public class NewItem extends JFrame {
 
     private void saveItem() {
         String name = nameField.getText().trim();
+        String size = sizeField.getText().trim();
         String sku = skuField.getText().trim();
         String barcode = barcodeField.getText().trim();
         String description = descriptionArea.getText().trim();
@@ -339,8 +351,8 @@ public class NewItem extends JFrame {
         uniqueBarcodes.remove(barcode);
         extraBarcodes.addAll(uniqueBarcodes);
 
-        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, and Price are required.");
+        if (name.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Name, Barcode, Cost Price, and Price are required. Leave SKU blank to auto-generate it.");
             return;
         }
 
@@ -378,7 +390,11 @@ public class NewItem extends JFrame {
             return;
         }
 
-        String sql = "INSERT INTO products (name, sku, barcode, description, cost_price, price, product_type, category_id, vendor_id, image_url, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = """
+                INSERT INTO products (name, size, sku, barcode, description, cost_price, price, product_type, category_id, vendor_id, image_url, created_by_user_id, created_by_name)
+                VALUES (?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING product_id, sku
+                """;
 
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
@@ -392,41 +408,41 @@ public class NewItem extends JFrame {
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
 
-            try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS);
+            try (PreparedStatement ps = conn.prepareStatement(sql);
                  PreparedStatement inventoryPs = conn.prepareStatement(upsertInventorySql);
                  PreparedStatement barcodePs = conn.prepareStatement(insertBarcodeSql);
                  PreparedStatement movementPs = conn.prepareStatement(insertMovementSql)) {
-
                 ps.setString(1, name);
-                ps.setString(2, sku);
-                ps.setString(3, barcode);
-                ps.setString(4, description);
-                ps.setDouble(5, costPrice);
-                ps.setDouble(6, price);
+                ps.setString(2, size);
+                ps.setString(3, sku);
+                ps.setString(4, barcode);
+                ps.setString(5, description);
+                ps.setDouble(6, costPrice);
+                ps.setDouble(7, price);
 
-                ps.setString(7, productType);
+                ps.setString(8, productType);
 
                 if (categoryId == null) {
-                    ps.setNull(8, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(8, categoryId);
-                }
-                if (vendorId == null) {
                     ps.setNull(9, java.sql.Types.INTEGER);
                 } else {
-                    ps.setInt(9, vendorId);
+                    ps.setInt(9, categoryId);
                 }
-                ps.setString(10, imageUrl);
-                setCurrentUserAuditParameters(ps, 11, 12);
-
-                ps.executeUpdate();
+                if (vendorId == null) {
+                    ps.setNull(10, java.sql.Types.INTEGER);
+                } else {
+                    ps.setInt(10, vendorId);
+                }
+                ps.setString(11, imageUrl);
+                setCurrentUserAuditParameters(ps, 12, 13);
 
                 int productId;
-                try (java.sql.ResultSet rs = ps.getGeneratedKeys()) {
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
-                        throw new SQLException("Failed to get new product ID.");
+                        throw new SQLException("Failed to get new product ID and SKU.");
                     }
-                    productId = rs.getInt(1);
+                    productId = rs.getInt("product_id");
+                    sku = rs.getString("sku");
+                    extraBarcodes.remove(sku);
                 }
 
                 if (inventoryItem) {
@@ -456,7 +472,7 @@ public class NewItem extends JFrame {
                 }
 
                 conn.commit();
-                JOptionPane.showMessageDialog(this, "Item added successfully.");
+                JOptionPane.showMessageDialog(this, "Item added successfully. SKU: " + sku);
                 clearFields();
 
             } catch (SQLException ex) {
@@ -482,6 +498,7 @@ public class NewItem extends JFrame {
 
     private void clearFields() {
         nameField.setText("");
+        sizeField.setText("");
         skuField.setText("");
         barcodeField.setText("");
         descriptionArea.setText("");

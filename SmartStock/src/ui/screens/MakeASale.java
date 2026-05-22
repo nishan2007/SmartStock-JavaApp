@@ -1120,14 +1120,14 @@ public class MakeASale extends JFrame {
         }
 
         String sql = """
-            SELECT p.product_id, p.name, p.description, p.sku, p.price,
+            SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
                    COALESCE(p.product_type, 'INVENTORY') AS product_type,
                    COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
             FROM products p
             LEFT JOIN inventory i
                 ON p.product_id = i.product_id
                AND i.location_id = ?
-            WHERE (? = '' OR p.name ILIKE ? OR p.sku ILIKE ?)
+            WHERE (? = '' OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
             ORDER BY p.name
             LIMIT 250
             """;
@@ -1139,6 +1139,7 @@ public class MakeASale extends JFrame {
             ps.setString(2, searchText);
             ps.setString(3, "%" + searchText + "%");
             ps.setString(4, "%" + searchText + "%");
+            ps.setString(5, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
 
@@ -1148,6 +1149,7 @@ public class MakeASale extends JFrame {
                 rows.add(new Object[]{
                         rs.getInt("product_id"),
                         rs.getString("name"),
+                        rs.getString("size"),
                         rs.getString("description"),
                         rs.getString("sku"),
                         rs.getDouble("price"),
@@ -1177,7 +1179,7 @@ public class MakeASale extends JFrame {
             searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
             searchPopup.setFocusable(false);
 
-            String[] columns = {"ID", "Name", "Description", "SKU", "Price", "Type", "Stock"};
+            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Stock"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -1253,10 +1255,11 @@ public class MakeASale extends JFrame {
 
         int productId = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 0)).intValue();
         String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 1));
-        String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
-        String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
-        double price = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 4)).doubleValue();
-        String productType = normalizeProductType(String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 5)));
+        String size = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
+        String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
+        String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
+        double price = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 5)).doubleValue();
+        String productType = normalizeProductType(String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 6)));
 
         String qtyText = JOptionPane.showInputDialog(this, "Enter quantity:", "1");
         if (qtyText == null) {
@@ -1271,7 +1274,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        addToCart(productId, name, description, sku, price, qty, productType);
+        addToCart(productId, displayNameWithSize(name, size), description, sku, price, qty, productType);
         closeSearchPopup();
         searchField.requestFocusInWindow();
         searchField.selectAll();
@@ -1282,6 +1285,14 @@ public class MakeASale extends JFrame {
             searchPopup.setVisible(false);
         }
     }
+
+    private String displayNameWithSize(String name, String size) {
+        if (size == null || size.isBlank()) {
+            return name;
+        }
+        return name + " (" + size + ")";
+    }
+
     private void addToCart(int productId, String name, String description, String sku, double price, int qty, String productType) {
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             int existingProductId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());

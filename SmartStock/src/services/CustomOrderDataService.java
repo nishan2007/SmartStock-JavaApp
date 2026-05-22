@@ -314,7 +314,7 @@ public final class CustomOrderDataService {
                 } else {
                     orderPs.setDate(5, Date.valueOf(request.dueDate()));
                 }
-                orderPs.setNull(6, Types.VARCHAR);
+                orderPs.setString(6, blankToNull(request.orderNotes()));
                 orderPs.setBigDecimal(7, request.total());
                 orderPs.setBigDecimal(8, request.amountPaid());
                 orderPs.setBigDecimal(9, request.balanceDue());
@@ -525,7 +525,6 @@ public final class CustomOrderDataService {
     }
 
     private static int createGeneralCustomerAccount(Connection conn, String name, String phone) throws SQLException {
-        Integer generalTypeId = findCustomerTypeId(conn, "General");
         String sql = """
                 INSERT INTO customer_accounts (
                     name, customer_type_id, phone, credit_limit,
@@ -536,11 +535,7 @@ public final class CustomOrderDataService {
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
-            if (generalTypeId == null) {
-                ps.setNull(2, java.sql.Types.INTEGER);
-            } else {
-                ps.setInt(2, generalTypeId);
-            }
+            ps.setInt(2, 1);
             ps.setString(3, phone);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -591,21 +586,6 @@ public final class CustomOrderDataService {
 
     private static BigDecimal defaultZero(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
-    }
-
-    private static Integer findCustomerTypeId(Connection conn, String name) throws SQLException {
-        String sql = """
-                SELECT customer_type_id
-                FROM customer_types
-                WHERE name = ?
-                  AND is_active = TRUE
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt("customer_type_id") : null;
-            }
-        }
     }
 
     public static LookupResult lookupCustomItem(String search) throws SQLException {
@@ -780,6 +760,7 @@ public final class CustomOrderDataService {
             String depositOverrideReason,
             Integer depositOverrideByUserId,
             String depositOverrideByName,
+            String orderNotes,
             List<OrderLineRequest> lines
     ) {
     }

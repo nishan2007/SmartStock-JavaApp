@@ -469,7 +469,8 @@ public class ViewSales extends JFrame {
 
         String detailsSql = """
                 SELECT COALESCE(p.product_id, 0) AS product_id,
-	                       COALESCE(p.name, 'Deleted Item') AS product_name,
+	                       COALESCE(p.name, 'Deleted Item')
+                               || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
 	                       COALESCE(si.quantity, 0) AS quantity,
 	                       COALESCE(si.original_unit_price, si.unit_price, 0) AS original_unit_price,
 	                       COALESCE(si.discount_percent, 0) AS discount_percent,
@@ -481,7 +482,7 @@ public class ViewSales extends JFrame {
                 LEFT JOIN products p ON si.product_id = p.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
                 WHERE si.sale_id = ?
-	                GROUP BY si.sale_item_id, p.product_id, p.name, si.quantity, si.original_unit_price, si.discount_percent, si.discount_amount, si.unit_price
+	                GROUP BY si.sale_item_id, p.product_id, p.name, p.size, si.quantity, si.original_unit_price, si.discount_percent, si.discount_amount, si.unit_price
                 ORDER BY si.sale_item_id ASC
                 """;
         String saleSummarySql = """
@@ -506,7 +507,8 @@ public class ViewSales extends JFrame {
         String returnItemsSql = """
                 SELECT sri.return_id,
                        sri.product_id,
-                       COALESCE(p.name, 'Deleted Item') AS product_name,
+                       COALESCE(p.name, 'Deleted Item')
+                           || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
                        sri.quantity,
                        COALESCE(sri.unit_price, 0) AS unit_price,
                        sri.quantity * COALESCE(sri.unit_price, 0) AS line_total

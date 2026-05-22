@@ -117,6 +117,7 @@ public class ViewInventory extends JFrame {
         columns.add("Product ID");
         columns.add("SKU");
         columns.add("Name");
+        columns.add("Size");
         columns.add("Description");
         columns.add("Type");
         columns.add("Category");
@@ -169,6 +170,7 @@ public class ViewInventory extends JFrame {
         setColumnWidth(columnModel, "Product ID", 80);
         setColumnWidth(columnModel, "SKU", 130);
         setColumnWidth(columnModel, "Name", 180);
+        setColumnWidth(columnModel, "Size", 100);
         setColumnWidth(columnModel, "Description", 240);
         setColumnWidth(columnModel, "Type", 115);
         setColumnWidth(columnModel, "Category", 120);
@@ -323,6 +325,7 @@ public class ViewInventory extends JFrame {
         sql.append("SELECT p.product_id, ");
         sql.append("p.sku, ");
         sql.append("p.name, ");
+        sql.append("COALESCE(p.size, '') AS size, ");
         sql.append("COALESCE(p.description, '') AS description, ");
         sql.append("COALESCE(p.product_type, 'INVENTORY') AS product_type, ");
         sql.append("COALESCE(c.name, '') AS category_name, ");
@@ -347,7 +350,7 @@ public class ViewInventory extends JFrame {
 
         boolean hasSearch = searchText != null && !searchText.isBlank();
         if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.description, '') ILIKE ?");
+            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR COALESCE(p.description, '') ILIKE ?");
             if (canViewCreatedBy) {
                 sql.append(" OR COALESCE(p.created_by_name, '') ILIKE ?");
             }
@@ -384,6 +387,7 @@ public class ViewInventory extends JFrame {
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
                 ps.setString(paramIndex++, pattern);
+                ps.setString(paramIndex++, pattern);
                 if (canViewCreatedBy) {
                     ps.setString(paramIndex++, pattern);
                 }
@@ -397,6 +401,7 @@ public class ViewInventory extends JFrame {
                     int productId = rs.getInt("product_id");
                     String sku = rs.getString("sku");
                     String name = rs.getString("name");
+                    String size = rs.getString("size");
                     String description = rs.getString("description");
                     String productType = normalizeProductType(rs.getString("product_type"));
                     String category = rs.getString("category_name");
@@ -412,6 +417,7 @@ public class ViewInventory extends JFrame {
                     row.add(productId);
                     row.add(sku);
                     row.add(name);
+                    row.add(size);
                     row.add(description);
                     row.add(formatProductType(productType));
                     row.add(category);

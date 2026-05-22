@@ -103,7 +103,8 @@ public class ReceiptBuilder {
 
     private static List<ReceiptItem> loadSaleItems(Connection conn, int saleId) throws SQLException {
         String sql = """
-                SELECT COALESCE(p.name, 'Deleted Item') AS product_name,
+                SELECT COALESCE(p.name, 'Deleted Item')
+                           || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
                        COALESCE(p.sku, '') AS sku,
                        COALESCE(si.quantity, 0) AS quantity,
                        COALESCE(si.original_unit_price, si.unit_price, 0) AS original_unit_price,

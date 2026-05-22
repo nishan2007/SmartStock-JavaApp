@@ -397,7 +397,8 @@ public class ReturnSale extends JFrame {
                 SELECT si.sale_item_id,
                        si.product_id,
                        COALESCE(p.sku, '') AS sku,
-                       COALESCE(p.name, 'Unknown') AS product_name,
+                       COALESCE(p.name, 'Unknown')
+                           || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
                        COALESCE(si.product_type, p.product_type, 'INVENTORY') AS product_type,
                        COALESCE(si.quantity, 0) AS sold_qty,
                        COALESCE(si.unit_price, 0) AS unit_price,
@@ -406,7 +407,7 @@ public class ReturnSale extends JFrame {
                 LEFT JOIN products p ON p.product_id = si.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
                 WHERE si.sale_id = ?
-                GROUP BY si.sale_item_id, si.product_id, p.sku, p.name, si.product_type, p.product_type, si.quantity, si.unit_price
+                GROUP BY si.sale_item_id, si.product_id, p.sku, p.name, p.size, si.product_type, p.product_type, si.quantity, si.unit_price
                 ORDER BY si.sale_item_id ASC
                 """;
 

@@ -333,7 +333,7 @@ public class EnterInventory extends JFrame {
                 FROM (
                     SELECT 'Product' AS item_type,
                            p.product_id AS item_id,
-                           p.name,
+                           p.name || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS name,
                            p.description,
                            p.sku AS code,
                            COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
@@ -342,7 +342,7 @@ public class EnterInventory extends JFrame {
                         ON p.product_id = i.product_id
                        AND i.location_id = ?
                     WHERE COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
-                      AND (p.name ILIKE ? OR p.sku ILIKE ?)
+                      AND (p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
                     UNION ALL
                     SELECT 'Custom Item' AS item_type,
                            coi.custom_item_id AS item_id,
@@ -405,6 +405,7 @@ public class EnterInventory extends JFrame {
             ps.setString(11, "%" + searchText + "%");
             ps.setString(12, "%" + searchText + "%");
             ps.setString(13, "%" + searchText + "%");
+            ps.setString(14, "%" + searchText + "%");
 
             ResultSet rs = ps.executeQuery();
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
