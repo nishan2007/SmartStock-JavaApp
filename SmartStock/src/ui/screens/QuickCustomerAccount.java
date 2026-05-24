@@ -146,12 +146,6 @@ public class QuickCustomerAccount extends JFrame {
             return;
         }
 
-        String accountNumber = generateNextAccountNumber(businessAccount);
-        if (accountNumber == null) {
-            return;
-        }
-        accountNumberField.setText(accountNumber);
-
         if (canSetCreditLimit) {
             creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
             if (creditLimit == null) {
@@ -164,22 +158,26 @@ public class QuickCustomerAccount extends JFrame {
         }
 
         String sql = """
-                INSERT INTO customer_accounts (account_number, name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, TRUE, ?)
+                INSERT INTO customer_accounts (name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
+                VALUES (?, ?, ?, ?, ?, 0, ?, TRUE, ?)
+                RETURNING account_number
                 """;
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setString(1, accountNumber);
-            ps.setString(2, name);
-            setNullableInteger(ps, 3, customerTypeId);
-            ps.setString(4, phone.isEmpty() ? null : phone);
-            ps.setString(5, email.isEmpty() ? null : email);
-            ps.setBigDecimal(6, creditLimit);
-            ps.setBoolean(7, businessAccount);
-            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
-            ps.executeUpdate();
+            ps.setString(1, name);
+            setNullableInteger(ps, 2, customerTypeId);
+            ps.setString(3, phone.isEmpty() ? null : phone);
+            ps.setString(4, email.isEmpty() ? null : email);
+            ps.setBigDecimal(5, creditLimit);
+            ps.setBoolean(6, businessAccount);
+            ps.setString(7, accountNotes.isEmpty() ? null : accountNotes);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    accountNumberField.setText(rs.getString("account_number"));
+                }
+            }
 
             JOptionPane.showMessageDialog(this, "Customer account created.");
             if (afterSave != null) {
@@ -189,30 +187,6 @@ public class QuickCustomerAccount extends JFrame {
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to create customer account: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
-    }
-
-    private String generateNextAccountNumber(boolean businessAccount) {
-        String prefix = businessAccount ? "BA" : "CA";
-        String sql = """
-                SELECT COALESCE(MAX(CAST(SUBSTRING(account_number FROM 4) AS INTEGER)), 0) + 1 AS next_number
-                FROM customer_accounts
-                WHERE account_number ~ ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, "^" + prefix + "-[0-9]+$");
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return String.format("%s-%06d", prefix, rs.getInt("next_number"));
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to generate account number: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
-
-        return null;
     }
 
     private BigDecimal parseMoney(String value, String fieldName) {

@@ -5,18 +5,27 @@ import Receipt.ReceiptFormatter;
 import Receipt.ReceiptItem;
 import Receipt.CustomOrderSlipBuilder;
 import Receipt.CustomOrderSlipData;
+import Receipt.CustomOrderSlipFormatter;
 import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import ui.screens.companyprefs.CompanyIdentityPanel;
+import ui.screens.companyprefs.CustomOrderDepositPanel;
+import ui.screens.companyprefs.CustomOrderReceiptPanel;
+import ui.screens.companyprefs.SaleReceiptPanel;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeCellRenderer;
+import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
@@ -29,9 +38,19 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public class CompanyCustomization extends JFrame {
+    public static final String NAV_COMPANY_IDENTITY = "Company Identity";
+    public static final String NAV_LOCATIONS = "Locations";
+    public static final String NAV_CASH_DRAWER_MANAGER = "Cash Drawer Manager";
+    private static final String NAV_SALE = "Sale";
+    private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
+    private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
+    private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
+    private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
+
     private final JTextField companyNameField = new JTextField();
     private final JTextField headerLineField = new JTextField();
     private final JTextField footerLineField = new JTextField();
+    private final JTextField receiptStartCounterField = new JTextField("1");
     private final JTextField logoPathField = new JTextField();
     private final JTextField configPathField = new JTextField();
     private final JCheckBox showLogoBox = new JCheckBox("Show logo on receipt");
@@ -41,6 +60,8 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
+    private final JTextField saleDiscountLimitPercentField = new JTextField("5", 8);
+    private final JTextField saleReturnApprovalLimitField = new JTextField("0.00", 8);
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0.00", 8);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
@@ -54,6 +75,10 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox slipShowOrderNumberBox = new JCheckBox("Order number");
     private final JCheckBox slipShowDueDateBox = new JCheckBox("Due date");
     private final JCheckBox slipShowCustomerPhoneBox = new JCheckBox("Customer phone");
+    private final JCheckBox slipShowCustomerAccountBox = new JCheckBox("Customer account");
+    private final JCheckBox slipShowStoreBox = new JCheckBox("Store");
+    private final JCheckBox slipShowDeviceBox = new JCheckBox("Device");
+    private final JCheckBox slipShowCashierBox = new JCheckBox("Cashier");
     private final JCheckBox slipShowLineItemsBox = new JCheckBox("Line items");
     private final JCheckBox slipShowPricingBox = new JCheckBox("Pricing");
     private final JCheckBox slipShowPaymentSummaryBox = new JCheckBox("Payment summary");
@@ -63,9 +88,17 @@ public class CompanyCustomization extends JFrame {
     private final JLabel logoPreviewLabel = new JLabel("No Logo", SwingConstants.CENTER);
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final CustomOrderSlipPreviewPanel sampleSlipPanel = new CustomOrderSlipPreviewPanel();
+    private final ReceiptPreview.ReceiptPaperPanel sampleSlip40ColumnPanel = new ReceiptPreview.ReceiptPaperPanel();
+    private final JPanel rightContentPanel = new JPanel(new CardLayout());
+    private JTree navigationTree;
     private boolean loadingSettings = false;
+    private JButton saveButton;
 
     public CompanyCustomization() {
+        this(NAV_COMPANY_IDENTITY);
+    }
+
+    public CompanyCustomization(String initialSection) {
         setTitle("Company Preferences");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(900, 640);
@@ -81,16 +114,24 @@ public class CompanyCustomization extends JFrame {
         titleLabel.setForeground(new Color(32, 41, 57));
         rootPanel.add(titleLabel, BorderLayout.NORTH);
 
-        JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Receipt Preferences", buildReceiptPreferencesScreen());
-        tabs.addTab("Custom Order Slips", buildCustomOrderSlipPreferencesScreen());
-        rootPanel.add(tabs, BorderLayout.CENTER);
+        addPermittedCards();
+
+        JSplitPane mainSplitPane = new JSplitPane(
+                JSplitPane.HORIZONTAL_SPLIT,
+                buildNavigationPanel(),
+                rightContentPanel
+        );
+        mainSplitPane.setBorder(BorderFactory.createEmptyBorder());
+        mainSplitPane.setContinuousLayout(true);
+        mainSplitPane.setResizeWeight(0);
+        mainSplitPane.setDividerLocation(290);
+        rootPanel.add(mainSplitPane, BorderLayout.CENTER);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttonPanel.setOpaque(false);
         JButton refreshButton = new JButton("Refresh");
         JButton closeButton = new JButton("Close");
-        JButton saveButton = new JButton("Save");
+        saveButton = new JButton("Save");
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
         buttonPanel.add(saveButton);
@@ -102,28 +143,215 @@ public class CompanyCustomization extends JFrame {
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveButton.addActionListener(e -> saveSettings());
         wireLivePreview();
+        configureActionButtons();
 
         loadSettings();
+        routeNavigationKey(firstPermittedSection(initialSection));
         WindowHelper.configurePosWindow(this);
     }
 
-    private JPanel buildPreferencesPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setOpaque(false);
-        panel.add(buildCompanyIdentityPanel());
-        panel.add(Box.createVerticalStrut(16));
-        panel.add(buildReceiptFormattingPanel());
-        panel.add(Box.createVerticalStrut(16));
-        panel.add(buildCustomOrdersPanel());
-        return panel;
+    private JComponent buildNavigationPanel() {
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode("Preferences");
+        addNodeIfPermitted(root, NAV_COMPANY_IDENTITY);
+        addNodeIfPermitted(root, NAV_LOCATIONS);
+        addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
+
+        DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
+        addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
+        if (saleNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_SALE)) {
+            root.add(saleNode);
+        }
+
+        DefaultMutableTreeNode customOrdersNode = new DefaultMutableTreeNode(NAV_CUSTOM_ORDERS);
+        addNodeIfPermitted(customOrdersNode, NAV_CUSTOM_ORDER_DEPOSIT_REFUND);
+        addNodeIfPermitted(customOrdersNode, NAV_CUSTOM_ORDER_SLIP_FORMATTING);
+        if (customOrdersNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_CUSTOM_ORDERS)) {
+            root.add(customOrdersNode);
+        }
+
+        JTree tree = new JTree(new DefaultTreeModel(root));
+        navigationTree = tree;
+        tree.setRootVisible(false);
+        tree.setShowsRootHandles(true);
+        tree.setRowHeight(24);
+        tree.setFont(new Font("SansSerif", Font.PLAIN, 14));
+
+        DefaultTreeCellRenderer renderer = new DefaultTreeCellRenderer();
+        renderer.setBorderSelectionColor(new Color(220, 224, 230));
+        renderer.setBackgroundSelectionColor(new Color(232, 240, 254));
+        renderer.setTextSelectionColor(new Color(32, 41, 57));
+        renderer.setTextNonSelectionColor(new Color(32, 41, 57));
+        renderer.setBackgroundNonSelectionColor(Color.WHITE);
+        tree.setCellRenderer(renderer);
+
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            tree.expandRow(row);
+        }
+
+        tree.addTreeSelectionListener(e -> {
+            DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
+            if (selectedNode == null) {
+                return;
+            }
+            String key = String.valueOf(selectedNode.getUserObject());
+            routeNavigationKey(key);
+        });
+
+        JPanel container = new JPanel(new BorderLayout());
+        container.setBackground(Color.WHITE);
+        container.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(10, 10, 10, 10)
+        ));
+        JLabel label = new JLabel("Preferences");
+        label.setFont(new Font("SansSerif", Font.BOLD, 16));
+        label.setBorder(new EmptyBorder(0, 0, 8, 0));
+        container.add(label, BorderLayout.NORTH);
+        container.add(new JScrollPane(tree), BorderLayout.CENTER);
+
+        TreePath defaultPath = findTreePath(root, firstPermittedSection(NAV_COMPANY_IDENTITY));
+        if (defaultPath != null) {
+            tree.setSelectionPath(defaultPath);
+        }
+
+        return container;
     }
 
-    private JPanel buildReceiptPreferencesScreen() {
+    private void routeNavigationKey(String key) {
+        String permittedKey = firstPermittedSection(key);
+        CardLayout cardLayout = (CardLayout) rightContentPanel.getLayout();
+        cardLayout.show(rightContentPanel, permittedKey);
+        selectNavigationPath(permittedKey);
+    }
+
+    private void addPermittedCards() {
+        if (canAccessPreferenceSection(NAV_COMPANY_IDENTITY)) {
+            rightContentPanel.add(buildCompanyIdentityScreen(), NAV_COMPANY_IDENTITY);
+        }
+        if (canAccessPreferenceSection(NAV_LOCATIONS)) {
+            rightContentPanel.add(buildLocationsEmbeddedScreen(), NAV_LOCATIONS);
+        }
+        if (canAccessPreferenceSection(NAV_CASH_DRAWER_MANAGER)) {
+            rightContentPanel.add(buildCashDrawerEmbeddedScreen(), NAV_CASH_DRAWER_MANAGER);
+        }
+        if (canAccessPreferenceSection(NAV_SALE)) {
+            rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE);
+        }
+        if (canAccessPreferenceSection(NAV_SALE_RECEIPT_FORMATTING)) {
+            rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE_RECEIPT_FORMATTING);
+        }
+        if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_DEPOSIT_REFUND)) {
+            rightContentPanel.add(buildCustomOrderDepositRefundScreen(), NAV_CUSTOM_ORDER_DEPOSIT_REFUND);
+        }
+        if (canAccessPreferenceSection(NAV_CUSTOM_ORDERS)) {
+            rightContentPanel.add(buildCustomOrderSlipPreferencesScreen(), NAV_CUSTOM_ORDERS);
+        }
+        if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_SLIP_FORMATTING)) {
+            rightContentPanel.add(buildCustomOrderSlipPreferencesScreen(), NAV_CUSTOM_ORDER_SLIP_FORMATTING);
+        }
+    }
+
+    private void configureActionButtons() {
+        if (saveButton == null) {
+            return;
+        }
+        boolean canSavePreferences = canEditCompanyPreferences();
+        saveButton.setEnabled(canSavePreferences);
+        saveButton.setToolTipText(canSavePreferences
+                ? "Save company preference updates"
+                : "Requires Company Preferences access.");
+    }
+
+    private void addNodeIfPermitted(DefaultMutableTreeNode parent, String key) {
+        if (canAccessPreferenceSection(key)) {
+            parent.add(new DefaultMutableTreeNode(key));
+        }
+    }
+
+    private boolean canAccessPreferenceSection(String key) {
+        return switch (key) {
+            case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
+            case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
+            case NAV_COMPANY_IDENTITY, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
+                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING -> canEditCompanyPreferences();
+            default -> false;
+        };
+    }
+
+    private boolean canEditCompanyPreferences() {
+        return PermissionManager.hasPermission("COMPANY_PREFERENCES")
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+    }
+
+    private String firstPermittedSection(String preferredKey) {
+        if (canAccessPreferenceSection(preferredKey)) {
+            return preferredKey;
+        }
+        for (String key : new String[]{
+                NAV_COMPANY_IDENTITY,
+                NAV_LOCATIONS,
+                NAV_CASH_DRAWER_MANAGER,
+                NAV_SALE,
+                NAV_SALE_RECEIPT_FORMATTING,
+                NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
+                NAV_CUSTOM_ORDERS,
+                NAV_CUSTOM_ORDER_SLIP_FORMATTING
+        }) {
+            if (canAccessPreferenceSection(key)) {
+                return key;
+            }
+        }
+        return NAV_COMPANY_IDENTITY;
+    }
+
+    private TreePath findTreePath(DefaultMutableTreeNode root, String key) {
+        java.util.Enumeration<?> nodes = root.breadthFirstEnumeration();
+        while (nodes.hasMoreElements()) {
+            DefaultMutableTreeNode node = (DefaultMutableTreeNode) nodes.nextElement();
+            if (key.equals(String.valueOf(node.getUserObject()))) {
+                return new TreePath(node.getPath());
+            }
+        }
+        return null;
+    }
+
+    private void selectNavigationPath(String key) {
+        if (navigationTree == null) {
+            return;
+        }
+        DefaultMutableTreeNode root = (DefaultMutableTreeNode) navigationTree.getModel().getRoot();
+        TreePath path = findTreePath(root, key);
+        if (path != null && !path.equals(navigationTree.getSelectionPath())) {
+            navigationTree.setSelectionPath(path);
+        }
+    }
+
+    private JPanel buildCompanyIdentityScreen() {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
-        contentPanel.add(buildPreferencesPanel(), BorderLayout.CENTER);
+        logoPathField.setEditable(false);
+        contentPanel.add(new CompanyIdentityPanel(companyNameField, buildLogoFilePanel()), BorderLayout.NORTH);
+        JPanel filler = new JPanel();
+        filler.setOpaque(false);
+        contentPanel.add(filler, BorderLayout.CENTER);
+        return contentPanel;
+    }
+
+    private JPanel buildSaleReceiptPreferencesScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        contentPanel.add(buildReceiptFormattingPanel(), BorderLayout.CENTER);
         contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
+        return contentPanel;
+    }
+
+    private JPanel buildCustomOrderDepositRefundScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        contentPanel.add(buildCustomOrdersPanel(), BorderLayout.NORTH);
+        JPanel filler = new JPanel();
+        filler.setOpaque(false);
+        contentPanel.add(filler, BorderLayout.CENTER);
         return contentPanel;
     }
 
@@ -135,47 +363,21 @@ public class CompanyCustomization extends JFrame {
         return contentPanel;
     }
 
-    private JPanel buildCompanyIdentityPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(Color.WHITE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                new EmptyBorder(18, 18, 18, 18)
-        ));
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+    private JPanel buildLocationsEmbeddedScreen() {
+        JPanel container = new JPanel(new BorderLayout());
+        container.setOpaque(false);
+        container.add(new LocationManagementPanel(), BorderLayout.CENTER);
+        return container;
+    }
 
-        JLabel sectionLabel = new JLabel("Company Identity");
-        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        addWide(panel, sectionLabel, 0);
-
-        logoPathField.setEditable(false);
-        addRow(panel, 1, "Company Name", companyNameField);
-        addRow(panel, 2, "Company Logo", buildLogoFilePanel());
-
-        return panel;
+    private JPanel buildCashDrawerEmbeddedScreen() {
+        JPanel container = new JPanel(new BorderLayout());
+        container.setOpaque(false);
+        container.add(new CashDrawerManagementPanel(), BorderLayout.CENTER);
+        return container;
     }
 
     private JPanel buildCustomOrdersPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(Color.WHITE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                new EmptyBorder(18, 18, 18, 18)
-        ));
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-        JLabel sectionLabel = new JLabel("Custom Orders");
-        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        addWide(panel, sectionLabel, 0);
-
-        JPanel percentPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        percentPanel.setOpaque(false);
-        customOrderMinimumDepositPercentField.setPreferredSize(new Dimension(90, 30));
-        percentPanel.add(customOrderMinimumDepositPercentField);
-        percentPanel.add(new JLabel("%"));
-        addRow(panel, 1, "Minimum Deposit", percentPanel);
-        addRow(panel, 2, "Refund Approval Over", customOrderRefundApprovalLimitField);
-
         boolean canEditDeposit = PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_SETTINGS")
                 || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES");
         boolean canEditRefundLimit = PermissionManager.hasPermission("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS")
@@ -189,106 +391,67 @@ public class CompanyCustomization extends JFrame {
                 ? "Refunds above this amount require approval permission. Use 0.00 to disable."
                 : "Requires Custom Order Refund Approval Settings permission.");
 
-        return panel;
+        return new CustomOrderDepositPanel(customOrderMinimumDepositPercentField, customOrderRefundApprovalLimitField);
     }
 
     private JPanel buildReceiptFormattingPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(Color.WHITE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                new EmptyBorder(18, 18, 18, 18)
-        ));
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-        JLabel sectionLabel = new JLabel("Receipt Formatting");
-        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        addWide(panel, sectionLabel, 0);
-
         configPathField.setEditable(false);
         configPathField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         configPathField.setText(CompanyCustomizationManager.getConfigPath().toString());
+        boolean canEditDiscountLimit = PermissionManager.hasPermission("SALE_DISCOUNT_LIMIT_SETTINGS")
+                || canEditCompanyPreferences();
+        boolean canEditReturnApprovalLimit = PermissionManager.hasPermission("SALE_RETURN_APPROVAL_SETTINGS")
+                || canEditCompanyPreferences();
+        saleDiscountLimitPercentField.setEnabled(canEditDiscountLimit);
+        saleReturnApprovalLimitField.setEnabled(canEditReturnApprovalLimit);
+        saleDiscountLimitPercentField.setToolTipText(canEditDiscountLimit
+                ? "Default discount limit without manager override."
+                : "Requires Sale Discount Limit Settings permission.");
+        saleReturnApprovalLimitField.setToolTipText(canEditReturnApprovalLimit
+                ? "Returns above this amount require override permission. Use 0.00 to disable."
+                : "Requires Sale Return Approval Settings permission.");
 
-        addRow(panel, 1, "Header Line", headerLineField);
-        addRow(panel, 2, "Footer Line", footerLineField);
-        addRow(panel, 3, "Config File", configPathField);
-
-        JPanel optionsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
-        optionsPanel.setOpaque(false);
-        optionsPanel.add(showLogoBox);
-        optionsPanel.add(showSaleIdBox);
-        optionsPanel.add(showDeviceBox);
-        optionsPanel.add(showCustomerBox);
-        optionsPanel.add(showSkuBox);
-        optionsPanel.add(showItemDiscountBox);
-        optionsPanel.add(showPaymentStatusBox);
-        addWide(panel, optionsPanel, 4);
-
-        return panel;
+        return new SaleReceiptPanel(
+                headerLineField,
+                footerLineField,
+                receiptStartCounterField,
+                configPathField,
+                saleDiscountLimitPercentField,
+                saleReturnApprovalLimitField,
+                showLogoBox,
+                showSaleIdBox,
+                showDeviceBox,
+                showCustomerBox,
+                showSkuBox,
+                showItemDiscountBox,
+                showPaymentStatusBox
+        );
     }
 
     private JPanel buildCustomOrderSlipPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setOpaque(false);
-        panel.add(buildSlipBehaviorPanel());
-        panel.add(Box.createVerticalStrut(16));
-        panel.add(buildSlipHeaderPanel());
-        panel.add(Box.createVerticalStrut(16));
-        panel.add(buildSlipFieldsPanel());
-        return panel;
-    }
-
-    private JPanel buildSlipBehaviorPanel() {
-        JPanel panel = createSectionPanel("Slip Behavior");
-        JPanel optionsPanel = new JPanel(new GridLayout(0, 1, 8, 8));
-        optionsPanel.setOpaque(false);
-        optionsPanel.add(slipEnabledBox);
-        optionsPanel.add(slipAutoPrintBox);
-        addWide(panel, optionsPanel, 1);
-        return panel;
-    }
-
-    private JPanel buildSlipHeaderPanel() {
-        JPanel panel = createSectionPanel("Slip Header");
-        addRow(panel, 1, "Title", slipTitleField);
-        addRow(panel, 2, "Contact Line", slipContactLineField);
-        addRow(panel, 3, "Email Line", slipEmailLineField);
-        addRow(panel, 4, "Footer Note", slipFooterNoteField);
-        addRow(panel, 5, "Blank Detail Lines", slipBlankDetailLinesField);
-        return panel;
-    }
-
-    private JPanel buildSlipFieldsPanel() {
-        JPanel panel = createSectionPanel("Fields to Print");
-        JPanel fieldsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
-        fieldsPanel.setOpaque(false);
-        fieldsPanel.add(slipShowLogoBox);
-        fieldsPanel.add(slipShowOrderNumberBox);
-        fieldsPanel.add(slipShowDueDateBox);
-        fieldsPanel.add(slipShowCustomerPhoneBox);
-        fieldsPanel.add(slipShowLineItemsBox);
-        fieldsPanel.add(slipShowPricingBox);
-        fieldsPanel.add(slipShowPaymentSummaryBox);
-        fieldsPanel.add(slipShowPaymentReferenceBox);
-        fieldsPanel.add(slipShowTakenByBox);
-        fieldsPanel.add(slipShowSignaturesBox);
-        addWide(panel, fieldsPanel, 1);
-        return panel;
-    }
-
-    private JPanel createSectionPanel(String title) {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(Color.WHITE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                new EmptyBorder(18, 18, 18, 18)
-        ));
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel sectionLabel = new JLabel(title);
-        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        addWide(panel, sectionLabel, 0);
-        return panel;
+        return new CustomOrderReceiptPanel(
+                slipEnabledBox,
+                slipAutoPrintBox,
+                slipTitleField,
+                slipContactLineField,
+                slipEmailLineField,
+                slipFooterNoteField,
+                slipBlankDetailLinesField,
+                slipShowLogoBox,
+                slipShowOrderNumberBox,
+                slipShowDueDateBox,
+                slipShowCustomerPhoneBox,
+                slipShowCustomerAccountBox,
+                slipShowStoreBox,
+                slipShowDeviceBox,
+                slipShowCashierBox,
+                slipShowLineItemsBox,
+                slipShowPricingBox,
+                slipShowPaymentSummaryBox,
+                slipShowPaymentReferenceBox,
+                slipShowTakenByBox,
+                slipShowSignaturesBox
+        );
     }
 
     private JPanel buildLogoFilePanel() {
@@ -355,43 +518,20 @@ public class CompanyCustomization extends JFrame {
         sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
         panel.add(sectionLabel, BorderLayout.NORTH);
 
-        JScrollPane sampleScrollPane = new JScrollPane(sampleSlipPanel);
-        sampleScrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        panel.add(sampleScrollPane, BorderLayout.CENTER);
+        JTabbedPane previewTabs = new JTabbedPane();
+        JScrollPane letterScrollPane = new JScrollPane(sampleSlipPanel);
+        letterScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        previewTabs.addTab("Letter", letterScrollPane);
+        previewTabs.addTab("40 Column", buildSlip40ColumnPreviewPanel());
+        panel.add(previewTabs, BorderLayout.CENTER);
         return panel;
     }
 
-    private void addRow(JPanel panel, int row, String label, JComponent field) {
-        JLabel fieldLabel = new JLabel(label);
-        fieldLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        fieldLabel.setForeground(new Color(55, 65, 81));
-
-        GridBagConstraints labelConstraints = new GridBagConstraints();
-        labelConstraints.gridx = 0;
-        labelConstraints.gridy = row;
-        labelConstraints.insets = new Insets(0, 0, 12, 14);
-        labelConstraints.anchor = GridBagConstraints.WEST;
-        panel.add(fieldLabel, labelConstraints);
-
-        GridBagConstraints fieldConstraints = new GridBagConstraints();
-        fieldConstraints.gridx = 1;
-        fieldConstraints.gridy = row;
-        fieldConstraints.insets = new Insets(0, 0, 12, 0);
-        fieldConstraints.weightx = 1;
-        fieldConstraints.fill = GridBagConstraints.HORIZONTAL;
-        panel.add(field, fieldConstraints);
-    }
-
-    private void addWide(JPanel panel, JComponent component, int row) {
-        GridBagConstraints constraints = new GridBagConstraints();
-        constraints.gridx = 0;
-        constraints.gridy = row;
-        constraints.gridwidth = 2;
-        constraints.weightx = 1;
-        constraints.fill = GridBagConstraints.HORIZONTAL;
-        constraints.insets = new Insets(row == 0 ? 0 : 8, 0, 14, 0);
-        constraints.anchor = GridBagConstraints.WEST;
-        panel.add(component, constraints);
+    private JComponent buildSlip40ColumnPreviewPanel() {
+        JScrollPane scrollPane = new JScrollPane(sampleSlip40ColumnPanel);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.getHorizontalScrollBar().setUnitIncrement(16);
+        return scrollPane;
     }
 
     private void loadSettings() {
@@ -408,6 +548,10 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.setSelected(settings.showSku());
         showItemDiscountBox.setSelected(settings.showItemDiscount());
         showPaymentStatusBox.setSelected(settings.showPaymentStatus());
+        receiptStartCounterField.setText(String.valueOf(settings.nextReceiptCounter()));
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
+        saleReturnApprovalLimitField.setText(saleSafetySettings.returnApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         CompanyCustomizationManager.CustomOrderSettings customOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
         customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
@@ -423,6 +567,10 @@ public class CompanyCustomization extends JFrame {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
+            CompanyCustomizationManager.SaleSafetySettings existingSaleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+            if (saleDiscountLimitPercentField.isEnabled() || saleReturnApprovalLimitField.isEnabled()) {
+                CompanyCustomizationManager.saveSaleSafetySettings(getSaleSafetySettingsFromFields(existingSaleSafetySettings));
+            }
             CompanyCustomizationManager.CustomOrderSettings existingCustomOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
             if (customOrderMinimumDepositPercentField.isEnabled() || customOrderRefundApprovalLimitField.isEnabled()) {
                 CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
@@ -450,6 +598,22 @@ public class CompanyCustomization extends JFrame {
         return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit);
     }
 
+    private CompanyCustomizationManager.SaleSafetySettings getSaleSafetySettingsFromFields(CompanyCustomizationManager.SaleSafetySettings existingSettings) {
+        String discountValue = saleDiscountLimitPercentField.getText() == null ? "" : saleDiscountLimitPercentField.getText().trim();
+        BigDecimal discountLimit = discountValue.isBlank() ? BigDecimal.valueOf(5) : new BigDecimal(discountValue.replace("%", "").trim());
+        if (discountLimit.compareTo(BigDecimal.ZERO) < 0 || discountLimit.compareTo(BigDecimal.valueOf(100)) > 0) {
+            throw new IllegalArgumentException("Sale discount limit percent must be between 0 and 100.");
+        }
+        String returnLimitValue = saleReturnApprovalLimitField.getText() == null ? "" : saleReturnApprovalLimitField.getText().trim();
+        BigDecimal returnApprovalLimit = returnLimitValue.isBlank() ? BigDecimal.ZERO : new BigDecimal(returnLimitValue.replace("$", "").replace(",", "").trim());
+        if (returnApprovalLimit.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Sale return approval limit cannot be negative.");
+        }
+        BigDecimal savedDiscountLimit = saleDiscountLimitPercentField.isEnabled() ? discountLimit : existingSettings.discountLimitPercent();
+        BigDecimal savedReturnLimit = saleReturnApprovalLimitField.isEnabled() ? returnApprovalLimit : existingSettings.returnApprovalLimit();
+        return new CompanyCustomizationManager.SaleSafetySettings(savedDiscountLimit, savedReturnLimit);
+    }
+
     private CompanyCustomizationManager.ReceiptSettings getSettingsFromFields() {
         return new CompanyCustomizationManager.ReceiptSettings(
                 companyNameField.getText(),
@@ -462,8 +626,21 @@ public class CompanyCustomization extends JFrame {
                 showCustomerBox.isSelected(),
                 showSkuBox.isSelected(),
                 showItemDiscountBox.isSelected(),
-                showPaymentStatusBox.isSelected()
+                showPaymentStatusBox.isSelected(),
+                parsePositiveCounter(receiptStartCounterField.getText())
         );
+    }
+
+    private int parsePositiveCounter(String value) {
+        try {
+            int parsed = Integer.parseInt(value == null ? "1" : value.trim());
+            if (parsed < 1) {
+                throw new IllegalArgumentException("Receipt counter start must be 1 or more.");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Receipt counter start must be a whole number.");
+        }
     }
 
     private void loadSlipFields(CompanyCustomizationManager.CustomOrderSlipSettings settings) {
@@ -478,6 +655,10 @@ public class CompanyCustomization extends JFrame {
         slipShowOrderNumberBox.setSelected(settings.showOrderNumber());
         slipShowDueDateBox.setSelected(settings.showDueDate());
         slipShowCustomerPhoneBox.setSelected(settings.showCustomerPhone());
+        slipShowCustomerAccountBox.setSelected(settings.showCustomerAccount());
+        slipShowStoreBox.setSelected(settings.showStore());
+        slipShowDeviceBox.setSelected(settings.showDevice());
+        slipShowCashierBox.setSelected(settings.showCashier());
         slipShowLineItemsBox.setSelected(settings.showLineItems());
         slipShowPricingBox.setSelected(settings.showPricing());
         slipShowPaymentSummaryBox.setSelected(settings.showPaymentSummary());
@@ -510,6 +691,10 @@ public class CompanyCustomization extends JFrame {
                 slipShowOrderNumberBox.isSelected(),
                 slipShowDueDateBox.isSelected(),
                 slipShowCustomerPhoneBox.isSelected(),
+                slipShowCustomerAccountBox.isSelected(),
+                slipShowStoreBox.isSelected(),
+                slipShowDeviceBox.isSelected(),
+                slipShowCashierBox.isSelected(),
                 slipShowLineItemsBox.isSelected(),
                 slipShowPricingBox.isSelected(),
                 slipShowPaymentSummaryBox.isSelected(),
@@ -598,6 +783,7 @@ public class CompanyCustomization extends JFrame {
         companyNameField.getDocument().addDocumentListener(previewDocumentListener);
         headerLineField.getDocument().addDocumentListener(previewDocumentListener);
         footerLineField.getDocument().addDocumentListener(previewDocumentListener);
+        receiptStartCounterField.getDocument().addDocumentListener(previewDocumentListener);
         logoPathField.getDocument().addDocumentListener(previewDocumentListener);
 
         showLogoBox.addActionListener(e -> refreshSamplePreview());
@@ -614,6 +800,10 @@ public class CompanyCustomization extends JFrame {
         slipShowOrderNumberBox.addActionListener(e -> refreshSlipPreview());
         slipShowDueDateBox.addActionListener(e -> refreshSlipPreview());
         slipShowCustomerPhoneBox.addActionListener(e -> refreshSlipPreview());
+        slipShowCustomerAccountBox.addActionListener(e -> refreshSlipPreview());
+        slipShowStoreBox.addActionListener(e -> refreshSlipPreview());
+        slipShowDeviceBox.addActionListener(e -> refreshSlipPreview());
+        slipShowCashierBox.addActionListener(e -> refreshSlipPreview());
         slipShowLineItemsBox.addActionListener(e -> refreshSlipPreview());
         slipShowPricingBox.addActionListener(e -> refreshSlipPreview());
         slipShowPaymentSummaryBox.addActionListener(e -> refreshSlipPreview());
@@ -646,11 +836,15 @@ public class CompanyCustomization extends JFrame {
         if (loadingSettings) {
             return;
         }
+        CustomOrderSlipData sampleSlip = CustomOrderSlipBuilder.sample();
+        CompanyCustomizationManager.ReceiptSettings receiptSettings = getSettingsFromFields();
+        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = getSlipSettingsForPreview();
         sampleSlipPanel.setSlip(
-                CustomOrderSlipBuilder.sample(),
-                getSettingsFromFields(),
-                getSlipSettingsForPreview()
+                sampleSlip,
+                receiptSettings,
+                slipSettings
         );
+        sampleSlip40ColumnPanel.setReceiptText(CustomOrderSlipFormatter.format40Column(sampleSlip, receiptSettings, slipSettings), false);
         updateSlipLogoPreview();
     }
 
@@ -670,6 +864,10 @@ public class CompanyCustomization extends JFrame {
                     slipShowOrderNumberBox.isSelected(),
                     slipShowDueDateBox.isSelected(),
                     slipShowCustomerPhoneBox.isSelected(),
+                    slipShowCustomerAccountBox.isSelected(),
+                    slipShowStoreBox.isSelected(),
+                    slipShowDeviceBox.isSelected(),
+                    slipShowCashierBox.isSelected(),
                     slipShowLineItemsBox.isSelected(),
                     slipShowPricingBox.isSelected(),
                     slipShowPaymentSummaryBox.isSelected(),
@@ -683,7 +881,7 @@ public class CompanyCustomization extends JFrame {
     private ReceiptData createSampleReceipt() {
         return new ReceiptData(
                 12345,
-                "R-S001-POS-DEMO-000123",
+                "0001-0001-000123",
                 Timestamp.valueOf(LocalDateTime.of(2026, 4, 21, 14, 35)),
                 "Main Store",
                 "Sample Cashier",
@@ -735,9 +933,11 @@ public class CompanyCustomization extends JFrame {
     private void updateSlipLogoPreview() {
         CompanyCustomizationManager.ReceiptSettings settings = getSettingsFromFields();
         sampleSlipPanel.setLogo(null);
+        sampleSlip40ColumnPanel.setLogo(null, false);
         if (!getSlipSettingsForPreview().showLogo() || settings.logoPath().isBlank()) {
             return;
         }
+        sampleSlip40ColumnPanel.setLogoLoading(true);
         new SwingWorker<BufferedImage, Void>() {
             @Override
             protected BufferedImage doInBackground() {
@@ -747,9 +947,12 @@ public class CompanyCustomization extends JFrame {
             @Override
             protected void done() {
                 try {
-                    sampleSlipPanel.setLogo(get());
+                    BufferedImage logo = get();
+                    sampleSlipPanel.setLogo(logo);
+                    sampleSlip40ColumnPanel.setLogo(logo, false);
                 } catch (Exception ex) {
                     sampleSlipPanel.setLogo(null);
+                    sampleSlip40ColumnPanel.setLogo(null, false);
                 }
             }
         }.execute();

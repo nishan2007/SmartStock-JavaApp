@@ -2,6 +2,8 @@ package ui.screens;
 
 import data.DB;
 import managers.PermissionManager;
+import models.CashDrawerContext;
+import services.CashDrawerService;
 import services.DeviceContextService;
 import ui.components.AppMenuBar;
 import ui.components.CustomerTypeSelector;
@@ -368,30 +370,28 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
-        String accountNumber = generateNextAccountNumber(businessAccount);
-        if (accountNumber == null) {
-            return;
-        }
-        accountNumberField.setText(accountNumber);
-
         String sql = """
-                INSERT INTO customer_accounts (account_number, name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                INSERT INTO customer_accounts (name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+                RETURNING account_number
                 """;
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setString(1, accountNumber.isEmpty() ? null : accountNumber);
-            ps.setString(2, name);
-            setNullableInteger(ps, 3, customerTypeId);
-            ps.setString(4, phone.isEmpty() ? null : phone);
-            ps.setString(5, email.isEmpty() ? null : email);
-            ps.setBigDecimal(6, creditLimit);
-            ps.setBoolean(7, businessAccount);
-            ps.setBoolean(8, activeCheckBox.isSelected());
-            ps.setString(9, accountNotes.isEmpty() ? null : accountNotes);
-            ps.executeUpdate();
+            ps.setString(1, name);
+            setNullableInteger(ps, 2, customerTypeId);
+            ps.setString(3, phone.isEmpty() ? null : phone);
+            ps.setString(4, email.isEmpty() ? null : email);
+            ps.setBigDecimal(5, creditLimit);
+            ps.setBoolean(6, businessAccount);
+            ps.setBoolean(7, activeCheckBox.isSelected());
+            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    accountNumberField.setText(rs.getString("account_number"));
+                }
+            }
 
             JOptionPane.showMessageDialog(this, "Customer account added.");
             clearFields();
@@ -491,10 +491,40 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
+        String paymentMethod = null;
+        String paymentReference = null;
+        if (!addCharge) {
+            paymentMethod = promptForPaymentMethod();
+            if (paymentMethod == null) {
+                return;
+            }
+            if (requiresPaymentReference(paymentMethod)) {
+                paymentReference = JOptionPane.showInputDialog(this, "Enter payment reference:");
+                if (paymentReference == null) {
+                    return;
+                }
+                paymentReference = paymentReference.trim();
+                if (paymentReference.isBlank()) {
+                    JOptionPane.showMessageDialog(this, "Payment reference is required for card, cheque, and MMG payments.");
+                    return;
+                }
+            }
+        }
+
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
             try {
                 AccountSnapshot account = loadAccountForUpdate(conn, selectedCustomerId);
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                if (!addCharge && "CASH".equalsIgnoreCase(paymentMethod)) {
+                    try {
+                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+                    } catch (SQLException ex) {
+                        JOptionPane.showMessageDialog(this, ex.getMessage());
+                        conn.rollback();
+                        return;
+                    }
+                }
                 BigDecimal signedAmount = addCharge ? amount : amount.negate();
                 BigDecimal newBalance = account.balance.add(signedAmount);
 
@@ -516,10 +546,13 @@ public class CustomerAccounts extends JFrame {
                         signedAmount,
                         addCharge ? "MANUAL_CHARGE" : "PAYMENT",
                         addCharge ? "Manual account charge" : "Customer payment",
-                        null
+                        null,
+                        addCharge ? null : paymentMethod,
+                        addCharge ? null : paymentReference,
+                        cashDrawer
                 );
                 if (!addCharge) {
-                    String allocationNote = applyPaymentToUnpaidAccountCharges(conn, selectedCustomerId, amount, transaction.transactionId());
+                    String allocationNote = applyPaymentToUnpaidAccountCharges(conn, selectedCustomerId, amount, transaction.transactionId(), paymentMethod, paymentReference, cashDrawer);
                     updateTransactionNote(conn, transaction.transactionId(), allocationNote);
                 }
                 conn.commit();
@@ -609,12 +642,13 @@ public class CustomerAccounts extends JFrame {
         return "Customer payment applied to " + appliedSales;
     }
 
-    private String applyPaymentToUnpaidAccountCharges(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId) throws SQLException {
+    private String applyPaymentToUnpaidAccountCharges(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId,
+                                                      String paymentMethod, String paymentReference, CashDrawerContext cashDrawer) throws SQLException {
         BigDecimal remainingPayment = paymentAmount;
         StringBuilder appliedCharges = new StringBuilder();
 
         remainingPayment = applyPaymentToUnpaidSales(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges);
-        remainingPayment = applyPaymentToUnpaidCustomOrders(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges);
+        remainingPayment = applyPaymentToUnpaidCustomOrders(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges, paymentMethod, paymentReference, cashDrawer);
 
         if (appliedCharges.isEmpty()) {
             return "Customer payment. No unpaid account sales or custom orders were available to apply this payment to.";
@@ -679,7 +713,9 @@ public class CustomerAccounts extends JFrame {
         return remainingPayment;
     }
 
-    private BigDecimal applyPaymentToUnpaidCustomOrders(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId, StringBuilder appliedCharges) throws SQLException {
+    private BigDecimal applyPaymentToUnpaidCustomOrders(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId,
+                                                        StringBuilder appliedCharges, String paymentMethod, String paymentReference,
+                                                        CashDrawerContext cashDrawer) throws SQLException {
         BigDecimal remainingPayment = paymentAmount;
         String selectSql = """
                 SELECT custom_order_id, order_number,
@@ -719,9 +755,10 @@ public class CustomerAccounts extends JFrame {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, 'ACCOUNT', ?, ?, ?, 'PAYMENT', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?)
                 """;
         String allocationSql = """
                 INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, custom_order_id, amount)
@@ -750,7 +787,7 @@ public class CustomerAccounts extends JFrame {
 
                     BigDecimal appliedAmount = remainingPayment.min(amountDue);
                     applyCustomOrderPayment(updatePs, orderId, appliedAmount);
-                    insertCustomOrderAccountPayment(paymentPs, orderId, appliedAmount, paymentTransactionId);
+                    insertCustomOrderAccountPayment(paymentPs, orderId, appliedAmount, paymentTransactionId, paymentMethod, paymentReference, cashDrawer);
                     insertCustomOrderPaymentAllocation(allocationPs, paymentTransactionId, customerId, orderId, appliedAmount);
                     appendAppliedCharge(appliedCharges, "custom order " + orderNumber + " " + money(appliedAmount));
                     remainingPayment = remainingPayment.subtract(appliedAmount);
@@ -773,14 +810,21 @@ public class CustomerAccounts extends JFrame {
         ps.executeUpdate();
     }
 
-    private void insertCustomOrderAccountPayment(PreparedStatement ps, long orderId, BigDecimal amount, int paymentTransactionId) throws SQLException {
+    private void insertCustomOrderAccountPayment(PreparedStatement ps, long orderId, BigDecimal amount, int paymentTransactionId,
+                                                 String paymentMethod, String paymentReference, CashDrawerContext cashDrawer) throws SQLException {
         ps.setLong(1, orderId);
         ps.setBigDecimal(2, amount);
-        ps.setString(3, "Account payment transaction #" + paymentTransactionId);
-        setNullableInteger(ps, 4, managers.SessionManager.getCurrentUserId());
-        ps.setString(5, managers.SessionManager.getCurrentUserDisplayName());
-        ps.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
-        ps.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+        ps.setString(3, "ACCOUNT");
+        ps.setString(4, paymentReference == null || paymentReference.isBlank()
+                ? "Account payment transaction #" + paymentTransactionId
+                : "Account payment transaction #" + paymentTransactionId + " / " + paymentReference);
+        setNullableInteger(ps, 5, managers.SessionManager.getCurrentUserId());
+        ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
+        ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
+        ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
+        setNullableLong(ps, 9, cashDrawer == null ? null : cashDrawer.cashDrawerId());
+        ps.setString(10, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
+        setNullableLong(ps, 11, cashDrawer == null ? null : cashDrawer.sessionId());
         ps.executeUpdate();
     }
 
@@ -857,10 +901,15 @@ public class CustomerAccounts extends JFrame {
         }
     }
 
-    private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note, Integer saleId) throws SQLException {
+    private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note,
+                                                        Integer saleId, String paymentMethod, String paymentReference,
+                                                        CashDrawerContext cashDrawer) throws SQLException {
         String sql = """
-                INSERT INTO customer_account_transactions (customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO customer_account_transactions (
+                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, customerId);
@@ -875,6 +924,11 @@ public class CustomerAccounts extends JFrame {
             ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
             ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
             ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
+            ps.setString(9, blankToNull(paymentMethod));
+            ps.setString(10, blankToNull(paymentReference));
+            setNullableLong(ps, 11, cashDrawer == null ? null : cashDrawer.cashDrawerId());
+            ps.setString(12, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
+            setNullableLong(ps, 13, cashDrawer == null ? null : cashDrawer.sessionId());
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -908,7 +962,7 @@ public class CustomerAccounts extends JFrame {
 
     private void clearFields() {
         selectedCustomerId = null;
-        accountNumberField.setText("");
+        accountNumberField.setText("Generated on save");
         accountNumberField.setEditable(false);
         nameField.setText("");
         phoneField.setText("");
@@ -926,30 +980,6 @@ public class CustomerAccounts extends JFrame {
         paymentHistoryButton.setEnabled(false);
         customerTable.clearSelection();
         nameField.requestFocusInWindow();
-    }
-
-    private String generateNextAccountNumber(boolean businessAccount) {
-        String prefix = businessAccount ? "BA" : "CA";
-        String sql = """
-                SELECT COALESCE(MAX(CAST(SUBSTRING(account_number FROM 4) AS INTEGER)), 0) + 1 AS next_number
-                FROM customer_accounts
-                WHERE account_number ~ ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, "^" + prefix + "-[0-9]+$");
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return String.format("%s-%06d", prefix, rs.getInt("next_number"));
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to generate account number: " + ex.getMessage());
-        }
-
-        return null;
     }
 
     private void applyCustomerFilter() {
@@ -986,6 +1016,37 @@ public class CustomerAccounts extends JFrame {
         } else {
             ps.setInt(index, value);
         }
+    }
+
+    private void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
+        }
+    }
+
+    private String promptForPaymentMethod() {
+        String[] options = {"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"};
+        Object selected = JOptionPane.showInputDialog(
+                this,
+                "Select payment method:",
+                "Payment Method",
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                options,
+                options[0]
+        );
+        if (selected == null) {
+            return null;
+        }
+        return selected.toString();
+    }
+
+    private boolean requiresPaymentReference(String paymentMethod) {
+        return "CARD".equalsIgnoreCase(paymentMethod)
+                || "CHEQUE".equalsIgnoreCase(paymentMethod)
+                || "MMG".equalsIgnoreCase(paymentMethod);
     }
 
     private String stripMoney(String value) {

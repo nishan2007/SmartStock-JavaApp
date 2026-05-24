@@ -62,7 +62,16 @@ class CustomOrdersManageTabPanel extends JPanel {
         selectedOrderDetailsArea.setWrapStyleWord(true);
         refreshButton.addActionListener(e -> handler.refreshOrders());
 
+        JPanel slipActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JButton previewSlipButton = new JButton("Preview Slip");
+        JButton printSlipButton = new JButton("Print Slip");
+        slipActions.add(previewSlipButton);
+        slipActions.add(printSlipButton);
+        previewSlipButton.addActionListener(e -> handler.previewSelectedSlip());
+        printSlipButton.addActionListener(e -> handler.printSelectedSlip());
+
         right.add(new JScrollPane(selectedOrderDetailsArea), BorderLayout.CENTER);
+        right.add(slipActions, BorderLayout.SOUTH);
 
         add(left, BorderLayout.CENTER);
         add(right, BorderLayout.EAST);
@@ -80,5 +89,7 @@ class CustomOrdersManageTabPanel extends JPanel {
         void loadSelectedOrder();
         Runnable applyFilter();
         void refreshOrders();
+        void previewSelectedSlip();
+        void printSelectedSlip();
     }
 }

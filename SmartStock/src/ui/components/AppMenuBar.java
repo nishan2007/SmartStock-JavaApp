@@ -7,6 +7,7 @@ import managers.SupabaseSessionManager;
 import data.DB;
 import ui.screens.CompanyCustomization;
 import ui.screens.customorders.CustomOrderItems;
+import ui.screens.BalanceDraw;
 import ui.screens.CustomerAccounts;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
@@ -14,9 +15,6 @@ import ui.screens.EditItem;
 import ui.screens.EndOfDay;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
-import ui.screens.HardwareSetup;
-import ui.screens.LocalDeviceSettings;
-import ui.screens.LocationManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
@@ -35,6 +33,7 @@ import ui.screens.TimeClock;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
+import ui.screens.WorkstationPreferences;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -54,6 +53,7 @@ public class AppMenuBar {
         JMenuBar menuBar = new JMenuBar();
 
         JMenu pointOfSaleMenu = new JMenu("Point of Sale");
+        JMenu operationsMenu = new JMenu("Operations");
         JMenu ordersMenu = new JMenu("Orders");
         JMenu inventoryMenu = new JMenu("Inventory");
         JMenu employeeMenu = new JMenu("Employee");
@@ -62,6 +62,7 @@ public class AppMenuBar {
         JMenuItem mainMenuItem = new JMenuItem("Main Menu");
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
         JMenuItem returnSaleItem = new JMenuItem("Returns");
+        JMenuItem balanceDrawItem = new JMenuItem("Balance Draw");
         JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Manager Dashboard");
         JMenuItem endOfDayItem = new JMenuItem("End of Day");
         JMenuItem ordersEndOfDayItem = new JMenuItem("Orders End Of Day");
@@ -81,18 +82,17 @@ public class AppMenuBar {
         JMenuItem deviceManagementItem = new JMenuItem("Device Management");
         JMenuItem machineManagementItem = new JMenuItem("Machines");
         JMenuItem partsManagementItem = new JMenuItem("Parts");
-        JMenuItem locationManagementItem = new JMenuItem("Locations");
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
+        JMenuItem workstationPreferencesItem = new JMenuItem("Workstation Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
-        JMenuItem localDeviceSettingsItem = new JMenuItem("Local Device Settings");
-        JMenuItem hardwareSetupItem = new JMenuItem("Hardware Setup");
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canBalanceDrawer = PermissionManager.hasPermission("BALANCE_DRAWER");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
@@ -122,12 +122,10 @@ public class AppMenuBar {
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
         boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
         boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
-        boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
+        boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
-        boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canLocationManagement || canCompanyCustomization || canLocalDeviceSettings || canHardwareSetup;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -137,6 +135,9 @@ public class AppMenuBar {
         }
         if (!canProcessReturns || "ReturnSale".equalsIgnoreCase(screenKey)) {
             returnSaleItem.setEnabled(false);
+        }
+        if (!canBalanceDrawer || "BalanceDraw".equalsIgnoreCase(screenKey)) {
+            balanceDrawItem.setEnabled(false);
         }
         if (!canOrdersManagerDashboard || "OrdersManagerDashboard".equalsIgnoreCase(screenKey)) {
             ordersManagerDashboardItem.setEnabled(false);
@@ -219,17 +220,11 @@ public class AppMenuBar {
         if (!canPartsManagement || "PartsManagement".equalsIgnoreCase(screenKey)) {
             partsManagementItem.setEnabled(false);
         }
-        if (!canLocationManagement || "LocationManagement".equalsIgnoreCase(screenKey)) {
-            locationManagementItem.setEnabled(false);
-        }
         if (!canCompanyCustomization || "CompanyCustomization".equalsIgnoreCase(screenKey)) {
             companyCustomizationItem.setEnabled(false);
         }
-        if (!canLocalDeviceSettings || "LocalDeviceSettings".equalsIgnoreCase(screenKey)) {
-            localDeviceSettingsItem.setEnabled(false);
-        }
-        if (!canHardwareSetup || "HardwareSetup".equalsIgnoreCase(screenKey)) {
-            hardwareSetupItem.setEnabled(false);
+        if (!canWorkstationPreferences || "WorkstationPreferences".equalsIgnoreCase(screenKey)) {
+            workstationPreferencesItem.setEnabled(false);
         }
 
         makeSaleItem.addActionListener(new ActionListener() {
@@ -254,6 +249,18 @@ public class AppMenuBar {
                     return;
                 }
                 NavigationManager.openReturnSale(parent);
+            }
+        });
+
+        balanceDrawItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("BALANCE_DRAWER", parent, "Balance Draw")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(BalanceDraw.class)) {
+                    return;
+                }
+                NavigationManager.openBalanceDraw(parent);
             }
         });
 
@@ -525,6 +532,7 @@ public class AppMenuBar {
             }
         });
 
+
         machineManagementItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("MACHINE_MANAGEMENT", parent, "Machine List")) {
@@ -549,17 +557,6 @@ public class AppMenuBar {
             }
         });
 
-        locationManagementItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", parent, "Location Management")) {
-                    return;
-                }
-                if (WindowHelper.focusIfAlreadyOpen(LocationManagement.class)) {
-                    return;
-                }
-                NavigationManager.openLocationManagement(parent);
-            }
-        });
 
         companyCustomizationItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -573,27 +570,15 @@ public class AppMenuBar {
             }
         });
 
-        localDeviceSettingsItem.addActionListener(new ActionListener() {
+        workstationPreferencesItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("LOCAL_DEVICE_SETTINGS", parent, "Local Device Settings")) {
+                if (!requireWorkstationPreferencesPermission(parent)) {
                     return;
                 }
-                if (WindowHelper.focusIfAlreadyOpen(LocalDeviceSettings.class)) {
+                if (WindowHelper.focusIfAlreadyOpen(WorkstationPreferences.class)) {
                     return;
                 }
-                NavigationManager.openLocalDeviceSettings(parent);
-            }
-        });
-
-        hardwareSetupItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("HARDWARE_SETUP", parent, "Hardware Setup")) {
-                    return;
-                }
-                if (WindowHelper.focusIfAlreadyOpen(HardwareSetup.class)) {
-                    return;
-                }
-                NavigationManager.openHardwareSetup(parent);
+                NavigationManager.openWorkstationPreferences(parent);
             }
         });
 
@@ -604,6 +589,8 @@ public class AppMenuBar {
         pointOfSaleMenu.add(endOfDayItem);
         pointOfSaleMenu.add(ViewSalesItem);
         pointOfSaleMenu.add(customerAccountsItem);
+
+        operationsMenu.add(balanceDrawItem);
 
         ordersMenu.add(ordersManagerDashboardItem);
         ordersMenu.add(customOrdersItem);
@@ -629,10 +616,8 @@ public class AppMenuBar {
         adminMenu.add(deviceManagementItem);
         adminMenu.add(machineManagementItem);
         adminMenu.add(partsManagementItem);
-        adminMenu.add(locationManagementItem);
         adminMenu.add(companyCustomizationItem);
-        adminMenu.add(localDeviceSettingsItem);
-        adminMenu.add(hardwareSetupItem);
+        adminMenu.add(workstationPreferencesItem);
 
         JMenu sessionMenu = new JMenu("Session");
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
@@ -679,6 +664,7 @@ public class AppMenuBar {
 
 
         menuBar.add(pointOfSaleMenu);
+        menuBar.add(operationsMenu);
         menuBar.add(ordersMenu);
         menuBar.add(inventoryMenu);
         menuBar.add(employeeMenu);
@@ -690,7 +676,9 @@ public class AppMenuBar {
 
     private static boolean hasCompanyPreferencesPermission() {
         return PermissionManager.hasPermission("COMPANY_PREFERENCES")
-                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION")
+                || PermissionManager.hasPermission("LOCATION_MANAGEMENT")
+                || PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT");
     }
 
     private static boolean requireCompanyPreferencesPermission(Component parent) {
@@ -700,6 +688,26 @@ public class AppMenuBar {
         JOptionPane.showMessageDialog(
                 parent,
                 "You do not have permission to access Company Preferences.",
+                "Access Denied",
+                JOptionPane.WARNING_MESSAGE
+        );
+        return false;
+    }
+
+    private static boolean hasWorkstationPreferencesPermission() {
+        return PermissionManager.hasPermission("COMPANY_PREFERENCES")
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION")
+                || PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS")
+                || PermissionManager.hasPermission("HARDWARE_SETUP");
+    }
+
+    private static boolean requireWorkstationPreferencesPermission(Component parent) {
+        if (hasWorkstationPreferencesPermission()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(
+                parent,
+                "You do not have permission to access Workstation Preferences.",
                 "Access Denied",
                 JOptionPane.WARNING_MESSAGE
         );

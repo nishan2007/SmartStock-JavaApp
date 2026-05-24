@@ -5,9 +5,12 @@ import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
 import managers.CompanyCustomizationManager;
+import models.CashDrawerContext;
+import services.CashDrawerService;
 import services.CustomOrderAuditService;
 import services.CustomOrderDataService;
 import services.DeviceContextService;
+import services.ManagerApprovalService;
 import services.CustomOrderDataService.CustomItemOption;
 import services.CustomOrderDataService.CustomerOption;
 import services.CustomOrderDataService.LookupResult;
@@ -19,6 +22,7 @@ import services.CustomOrderDataService.PrintSizePresetOption;
 import services.CustomOrderDataService.VariantOption;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import ui.screens.CustomOrderSlipPreview;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -229,10 +233,10 @@ public class CustomOrders extends JFrame {
         lineDiscountReasonField = panel.lineDiscountReasonField;
         priceOverrideReasonField = panel.priceOverrideReasonField;
         depositOverrideReasonField = panel.depositOverrideReasonField;
-        lineDiscountPercentField.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
-        lineDiscountPercentField.setToolTipText(lineDiscountPercentField.isEnabled() ? "Enter a percentage discount for this order line." : "Requires Custom Order Line Discount permission.");
-        lineDiscountReasonField.setEnabled(lineDiscountPercentField.isEnabled());
-        lineDiscountReasonField.setToolTipText(lineDiscountReasonField.isEnabled() ? "Required when a line discount is used." : "Requires Custom Order Line Discount permission.");
+        lineDiscountPercentField.setEnabled(true);
+        lineDiscountPercentField.setToolTipText("Enter a percentage discount for this order line. Approval is required if you do not have discount permission.");
+        lineDiscountReasonField.setEnabled(true);
+        lineDiscountReasonField.setToolTipText("Required when a line discount is used.");
         orderTotalLabel = panel.orderTotalLabel;
         lineCountLabel = panel.lineCountLabel;
         minimumDepositLabel = panel.minimumDepositLabel;
@@ -264,6 +268,8 @@ public class CustomOrders extends JFrame {
             @Override public void loadSelectedOrder() { CustomOrders.this.loadSelectedOrder(); }
             @Override public Runnable applyFilter() { return CustomOrders.this::applyOrderFilter; }
             @Override public void refreshOrders() { CustomOrders.this.loadOrders(); }
+            @Override public void previewSelectedSlip() { CustomOrders.this.previewSelectedManagedOrderSlip(); }
+            @Override public void printSelectedSlip() { CustomOrders.this.printSelectedManagedOrderSlip(); }
         });
         ordersModel = panel.ordersModel;
         ordersTable = panel.ordersTable;
@@ -427,6 +433,8 @@ public class CustomOrders extends JFrame {
             @Override public void loadSelectedMyOrder() { CustomOrders.this.loadSelectedMyOrder(); }
             @Override public Runnable applyFilter() { return CustomOrders.this::applyMyOrderFilter; }
             @Override public void refreshMyOrders() { CustomOrders.this.loadMyOrders(); }
+            @Override public void previewSelectedMyOrderSlip() { CustomOrders.this.previewSelectedMyOrderSlip(); }
+            @Override public void printSelectedMyOrderSlip() { CustomOrders.this.printSelectedMyOrderSlip(); }
         });
         myOrdersModel = panel.myOrdersModel;
         myOrdersTable = panel.myOrdersTable;
@@ -1520,9 +1528,10 @@ public class CustomOrders extends JFrame {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?)
                 """;
         String accountUpdateSql = """
                 UPDATE customer_accounts
@@ -1531,9 +1540,10 @@ public class CustomOrders extends JFrame {
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, ?)
+                VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -1561,6 +1571,16 @@ public class CustomOrders extends JFrame {
                     conn.rollback();
                     return false;
                 }
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                if ("CASH".equalsIgnoreCase(method)) {
+                    try {
+                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+                    } catch (SQLException ex) {
+                        JOptionPane.showMessageDialog(parent, "This device is not assigned to an active cash drawer for the selected store.");
+                        conn.rollback();
+                        return false;
+                    }
+                }
                 updatePs.setBigDecimal(1, amount);
                 updatePs.setBigDecimal(2, amount);
                 updatePs.setString(3, method);
@@ -1577,6 +1597,9 @@ public class CustomOrders extends JFrame {
                 paymentPs.setString(6, SessionManager.getCurrentUserDisplayName());
                 paymentPs.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
                 paymentPs.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
+                setNullableLong(paymentPs, 9, cashDrawer.cashDrawerId());
+                paymentPs.setString(10, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(paymentPs, 11, cashDrawer.sessionId());
                 paymentPs.executeUpdate();
                 accountUpdatePs.setBigDecimal(1, amount);
                 accountUpdatePs.setInt(2, customerId);
@@ -1588,6 +1611,11 @@ public class CustomOrders extends JFrame {
                 accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
                 accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
                 accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.setString(8, method);
+                accountTransactionPs.setString(9, reference.isBlank() ? null : reference);
+                setNullableLong(accountTransactionPs, 10, cashDrawer.cashDrawerId());
+                accountTransactionPs.setString(11, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(accountTransactionPs, 12, cashDrawer.sessionId());
                 accountTransactionPs.executeUpdate();
                 CustomOrderAuditService.recordAudit(conn, orderId, "PAYMENT", "amount_paid", null, amount, "Payment applied by order lookup");
                 conn.commit();
@@ -1669,9 +1697,10 @@ public class CustomOrders extends JFrame {
         String refundSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name
+                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?, ?, ?, ?)
                 """;
         String accountUpdateSql = """
                 UPDATE customer_accounts
@@ -1680,9 +1709,10 @@ public class CustomOrders extends JFrame {
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?)
+                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection()) {
@@ -1752,6 +1782,17 @@ public class CustomOrders extends JFrame {
                     orderAdjustmentUpdatePs.executeUpdate();
                 }
 
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0 && "CASH".equalsIgnoreCase(method)) {
+                    try {
+                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+                    } catch (SQLException ex) {
+                        JOptionPane.showMessageDialog(parent, "This device is not assigned to an active cash drawer for the selected store.");
+                        conn.rollback();
+                        return false;
+                    }
+                }
+
                 if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
                     refundPs.setLong(1, orderId);
                     refundPs.setBigDecimal(2, actualRefundAmount);
@@ -1762,6 +1803,9 @@ public class CustomOrders extends JFrame {
                     refundPs.setString(7, reason);
                     refundPs.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
                     refundPs.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+                    setNullableLong(refundPs, 10, cashDrawer.cashDrawerId());
+                    refundPs.setString(11, blankToNull(cashDrawer.drawerName()));
+                    setNullableLong(refundPs, 12, cashDrawer.sessionId());
                     refundPs.executeUpdate();
                 }
 
@@ -1795,6 +1839,11 @@ public class CustomOrders extends JFrame {
                 accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
                 accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
                 accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.setString(8, method);
+                accountTransactionPs.setString(9, reference.isBlank() ? null : reference);
+                setNullableLong(accountTransactionPs, 10, cashDrawer.cashDrawerId());
+                accountTransactionPs.setString(11, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(accountTransactionPs, 12, cashDrawer.sessionId());
                 accountTransactionPs.executeUpdate();
 
                 CustomOrderAuditService.recordAudit(conn, orderId, "REFUND", "amount_paid", amountPaid, amountPaid.subtract(actualRefundAmount), reason);
@@ -1901,9 +1950,10 @@ public class CustomOrders extends JFrame {
         String refundSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name
+                    taken_by_user_id, taken_by_name, payment_action, void_reason, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'REFUND', ?, ?, ?, ?, ?, ?)
                 """;
         String lineReturnSql = """
                 INSERT INTO custom_order_line_returns (
@@ -1926,9 +1976,10 @@ public class CustomOrders extends JFrame {
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?)
+                VALUES (?, ?, ?, 'CUSTOM_ORDER_REFUND', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection()) {
@@ -2030,6 +2081,17 @@ public class CustomOrders extends JFrame {
                     orderAdjustmentUpdatePs.executeUpdate();
                 }
 
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0 && "CASH".equalsIgnoreCase(method)) {
+                    try {
+                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+                    } catch (SQLException ex) {
+                        JOptionPane.showMessageDialog(parent, "This device is not assigned to an active cash drawer for the selected store.");
+                        conn.rollback();
+                        return false;
+                    }
+                }
+
                 if (actualRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
                     refundPs.setLong(1, orderId);
                     refundPs.setBigDecimal(2, actualRefundAmount);
@@ -2040,6 +2102,9 @@ public class CustomOrders extends JFrame {
                     refundPs.setString(7, reason);
                     refundPs.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
                     refundPs.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+                    setNullableLong(refundPs, 10, cashDrawer.cashDrawerId());
+                    refundPs.setString(11, blankToNull(cashDrawer.drawerName()));
+                    setNullableLong(refundPs, 12, cashDrawer.sessionId());
                     refundPs.executeUpdate();
                 }
 
@@ -2112,6 +2177,11 @@ public class CustomOrders extends JFrame {
                 accountTransactionPs.setString(5, SessionManager.getCurrentUserDisplayName());
                 accountTransactionPs.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
                 accountTransactionPs.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
+                accountTransactionPs.setString(8, method);
+                accountTransactionPs.setString(9, reference.isBlank() ? null : reference);
+                setNullableLong(accountTransactionPs, 10, cashDrawer.cashDrawerId());
+                accountTransactionPs.setString(11, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(accountTransactionPs, 12, cashDrawer.sessionId());
                 accountTransactionPs.executeUpdate();
 
                 CustomOrderAuditService.recordAudit(conn, orderId, "LINE_RETURN", "line_return_amount", null, amount, reason);
@@ -2481,17 +2551,15 @@ public class CustomOrders extends JFrame {
                 JOptionPane.showMessageDialog(this, "Line discount percent must be between 0 and 100.");
                 return null;
             }
-            if (percent.compareTo(BigDecimal.ZERO) > 0
-                    && !PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
-                    && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to apply custom order line discounts.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-                return null;
-            }
             return percent;
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(this, "Line discount percent must be a valid percentage.");
             return null;
         }
+    }
+
+    private ManagerApprovalService.ApprovalResult requireCustomOrderApproval(String permissionKey, String title, String prompt) {
+        return ManagerApprovalService.requestApproval(this, permissionKey, title, prompt);
     }
 
     private void showLineDiscountDialog() {
@@ -2501,12 +2569,6 @@ public class CustomOrders extends JFrame {
             return;
         }
         int modelRow = orderLineTable.convertRowIndexToModel(viewRow);
-        if (!PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
-                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
-            JOptionPane.showMessageDialog(this, "You do not have permission to apply custom order line discounts.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
         JTextField percentField = new JTextField(valueAt(orderLineModel, modelRow, 24).isBlank() ? "0" : valueAt(orderLineModel, modelRow, 24), 8);
         JTextField reasonField = new JTextField(valueAt(orderLineModel, modelRow, 26), 24);
         JLabel previewLabel = new JLabel(" ");
@@ -2566,6 +2628,21 @@ public class CustomOrders extends JFrame {
             return;
         }
         String reason = reasonField.getText().trim();
+        if (percent.compareTo(BigDecimal.ZERO) > 0
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            ManagerApprovalService.ApprovalResult approval = requireCustomOrderApproval(
+                    "CUSTOM_ORDER_LINE_DISCOUNT",
+                    "Custom Order Line Discount Override",
+                    "Reason for custom order line discount override:"
+            );
+            if (approval == null) {
+                return;
+            }
+            if (reason.isBlank() && approval.reason() != null && !approval.reason().isBlank()) {
+                reason = approval.reason().trim();
+            }
+        }
         if (percent.compareTo(BigDecimal.ZERO) > 0 && reason.isBlank()) {
             JOptionPane.showMessageDialog(this, "Discount reason is required when a line discount is used.");
             return;
@@ -2630,6 +2707,21 @@ public class CustomOrders extends JFrame {
             return;
         }
         String discountReason = lineDiscountReasonField == null ? "" : lineDiscountReasonField.getText().trim();
+        if (discountPercent.compareTo(BigDecimal.ZERO) > 0
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_LINE_DISCOUNT")
+                && !PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            ManagerApprovalService.ApprovalResult approval = requireCustomOrderApproval(
+                    "CUSTOM_ORDER_LINE_DISCOUNT",
+                    "Custom Order Line Discount Override",
+                    "Reason for custom order line discount override:"
+            );
+            if (approval == null) {
+                return;
+            }
+            if (discountReason.isBlank() && approval.reason() != null && !approval.reason().isBlank()) {
+                discountReason = approval.reason().trim();
+            }
+        }
         if (discountPercent.compareTo(BigDecimal.ZERO) > 0 && discountReason.isBlank()) {
             JOptionPane.showMessageDialog(this, "Discount reason is required when a line discount is used.");
             return;
@@ -2681,6 +2773,22 @@ public class CustomOrders extends JFrame {
         if (reason.isBlank()) {
             JOptionPane.showMessageDialog(this, "Price reason is required for variable or manually changed pricing.");
             return null;
+        }
+        if (!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")) {
+            ManagerApprovalService.ApprovalResult approval = requireCustomOrderApproval(
+                    "CUSTOM_ORDER_OVERRIDES",
+                    "Custom Order Price Override",
+                    "Reason for custom order price override:"
+            );
+            if (approval == null) {
+                return null;
+            }
+            if (approval.reason() != null && !approval.reason().isBlank()) {
+                reason = approval.reason().trim();
+                if (priceOverrideReasonField != null) {
+                    priceOverrideReasonField.setText(reason);
+                }
+            }
         }
         return new PriceOverrideAudit(configuredPrice, basePrice, reason);
     }
@@ -3015,6 +3123,69 @@ public class CustomOrders extends JFrame {
         int modelRow = myOrdersTable.convertRowIndexToModel(row);
         long orderId = Long.parseLong(myOrdersModel.getValueAt(modelRow, 0).toString());
         loadOrderDetails(orderId, myOrderDetailsArea);
+    }
+
+    private void previewSelectedManagedOrderSlip() {
+        String orderNumber = selectedOrderNumber(ordersTable, ordersModel);
+        if (orderNumber == null) {
+            JOptionPane.showMessageDialog(this, "Select a custom order to preview its slip.");
+            return;
+        }
+        showSlipPreview(orderNumber);
+    }
+
+    private void printSelectedManagedOrderSlip() {
+        String orderNumber = selectedOrderNumber(ordersTable, ordersModel);
+        if (orderNumber == null) {
+            JOptionPane.showMessageDialog(this, "Select a custom order to print its slip.");
+            return;
+        }
+        printSlip(orderNumber);
+    }
+
+    private void previewSelectedMyOrderSlip() {
+        String orderNumber = selectedOrderNumber(myOrdersTable, myOrdersModel);
+        if (orderNumber == null) {
+            JOptionPane.showMessageDialog(this, "Select a custom order to preview its slip.");
+            return;
+        }
+        showSlipPreview(orderNumber);
+    }
+
+    private void printSelectedMyOrderSlip() {
+        String orderNumber = selectedOrderNumber(myOrdersTable, myOrdersModel);
+        if (orderNumber == null) {
+            JOptionPane.showMessageDialog(this, "Select a custom order to print its slip.");
+            return;
+        }
+        printSlip(orderNumber);
+    }
+
+    private String selectedOrderNumber(JTable table, DefaultTableModel model) {
+        if (table == null || model == null || table.getSelectedRow() < 0) {
+            return null;
+        }
+        int modelRow = table.convertRowIndexToModel(table.getSelectedRow());
+        Object value = model.getValueAt(modelRow, 1);
+        String orderNumber = value == null ? "" : value.toString().trim();
+        return orderNumber.isBlank() ? null : orderNumber;
+    }
+
+    private void showSlipPreview(String orderNumber) {
+        try {
+            new CustomOrderSlipPreview(orderNumber).setVisible(true);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to preview custom order slip.\n\n" + ex.getMessage(), "Slip Preview", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void printSlip(String orderNumber) {
+        try {
+            CustomOrderSlipPrinter.print(orderNumber);
+            JOptionPane.showMessageDialog(this, "Custom order slip sent to printer.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to print custom order slip.\n\n" + ex.getMessage(), "Print Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void loadOrderDetails(Long orderId, JTextArea detailsArea) {

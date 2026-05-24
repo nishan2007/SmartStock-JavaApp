@@ -130,6 +130,40 @@ public class CompanyCustomizationManager {
         cachedCustomOrderSettings = settings;
     }
 
+    public static SaleSafetySettings loadSaleSafetySettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (Objects.equals(locationId, cachedSaleSafetyLocationId) && cachedSaleSafetySettings != null) {
+            return cachedSaleSafetySettings;
+        }
+        if (locationId != null) {
+            try {
+                SaleSafetySettings dbSettings = loadSaleSafetySettingsFromDb(locationId);
+                if (dbSettings != null) {
+                    saveLocalSaleSafetySettings(dbSettings);
+                    cachedSaleSafetyLocationId = locationId;
+                    cachedSaleSafetySettings = dbSettings;
+                    return dbSettings;
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+        SaleSafetySettings localSettings = loadLocalSaleSafetySettings();
+        cachedSaleSafetyLocationId = locationId;
+        cachedSaleSafetySettings = localSettings;
+        return localSettings;
+    }
+
+    public static void saveSaleSafetySettings(SaleSafetySettings settings) throws IOException, SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            saveSaleSafetySettingsToDb(locationId, settings);
+        }
+        saveLocalSaleSafetySettings(settings);
+        cachedSaleSafetyLocationId = locationId;
+        cachedSaleSafetySettings = settings;
+    }
+
     public static CustomOrderSlipSettings loadCustomOrderSlipSettings() {
         Integer locationId = SessionManager.getCurrentLocationId();
         if (Objects.equals(locationId, cachedCustomOrderSlipLocationId) && cachedCustomOrderSlipSettings != null) {
@@ -176,7 +210,8 @@ public class CompanyCustomizationManager {
                        COALESCE(show_customer, TRUE) AS show_customer,
                        COALESCE(show_sku, TRUE) AS show_sku,
                        COALESCE(show_item_discount, TRUE) AS show_item_discount,
-                       COALESCE(show_payment_status, TRUE) AS show_payment_status
+                       COALESCE(show_payment_status, TRUE) AS show_payment_status,
+                       COALESCE(next_receipt_counter, 1) AS next_receipt_counter
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -200,7 +235,8 @@ public class CompanyCustomizationManager {
                         rs.getBoolean("show_customer"),
                         rs.getBoolean("show_sku"),
                         rs.getBoolean("show_item_discount"),
-                        rs.getBoolean("show_payment_status")
+                        rs.getBoolean("show_payment_status"),
+                        rs.getInt("next_receipt_counter")
                 );
             }
         }
@@ -221,9 +257,10 @@ public class CompanyCustomizationManager {
                     show_sku,
                     show_item_discount,
                     show_payment_status,
+                    next_receipt_counter,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     company_name = EXCLUDED.company_name,
                     receipt_header_line = EXCLUDED.receipt_header_line,
@@ -236,6 +273,7 @@ public class CompanyCustomizationManager {
                     show_sku = EXCLUDED.show_sku,
                     show_item_discount = EXCLUDED.show_item_discount,
                     show_payment_status = EXCLUDED.show_payment_status,
+                    next_receipt_counter = EXCLUDED.next_receipt_counter,
                     updated_at = NOW()
                 """;
 
@@ -253,6 +291,7 @@ public class CompanyCustomizationManager {
             ps.setBoolean(10, settings.showSku());
             ps.setBoolean(11, settings.showItemDiscount());
             ps.setBoolean(12, settings.showPaymentStatus());
+            ps.setInt(13, settings.nextReceiptCounter());
             ps.executeUpdate();
         }
     }
@@ -303,6 +342,52 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static SaleSafetySettings loadSaleSafetySettingsFromDb(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(sale_discount_limit_percent, 5) AS sale_discount_limit_percent,
+                       COALESCE(sale_return_approval_limit, 0) AS sale_return_approval_limit
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new SaleSafetySettings(
+                        rs.getBigDecimal("sale_discount_limit_percent"),
+                        rs.getBigDecimal("sale_return_approval_limit")
+                );
+            }
+        }
+    }
+
+    private static void saveSaleSafetySettingsToDb(int locationId, SaleSafetySettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    sale_discount_limit_percent,
+                    sale_return_approval_limit,
+                    updated_at
+                )
+                VALUES (?, 'SmartStock', ?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    sale_discount_limit_percent = EXCLUDED.sale_discount_limit_percent,
+                    sale_return_approval_limit = EXCLUDED.sale_return_approval_limit,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setBigDecimal(2, settings.discountLimitPercent());
+            ps.setBigDecimal(3, settings.returnApprovalLimit());
+            ps.executeUpdate();
+        }
+    }
+
     private static CustomOrderSlipSettings loadCustomOrderSlipSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT COALESCE(custom_order_slip_enabled, TRUE) AS enabled,
@@ -316,6 +401,10 @@ public class CompanyCustomizationManager {
                        COALESCE(custom_order_slip_show_order_number, TRUE) AS show_order_number,
                        COALESCE(custom_order_slip_show_due_date, TRUE) AS show_due_date,
                        COALESCE(custom_order_slip_show_customer_phone, TRUE) AS show_customer_phone,
+                       COALESCE(custom_order_slip_show_customer_account, TRUE) AS show_customer_account,
+                       COALESCE(custom_order_slip_show_store, TRUE) AS show_store,
+                       COALESCE(custom_order_slip_show_device, TRUE) AS show_device,
+                       COALESCE(custom_order_slip_show_cashier, TRUE) AS show_cashier,
                        COALESCE(custom_order_slip_show_line_items, TRUE) AS show_line_items,
                        COALESCE(custom_order_slip_show_pricing, TRUE) AS show_pricing,
                        COALESCE(custom_order_slip_show_payment_summary, TRUE) AS show_payment_summary,
@@ -344,6 +433,10 @@ public class CompanyCustomizationManager {
                         rs.getBoolean("show_order_number"),
                         rs.getBoolean("show_due_date"),
                         rs.getBoolean("show_customer_phone"),
+                        rs.getBoolean("show_customer_account"),
+                        rs.getBoolean("show_store"),
+                        rs.getBoolean("show_device"),
+                        rs.getBoolean("show_cashier"),
                         rs.getBoolean("show_line_items"),
                         rs.getBoolean("show_pricing"),
                         rs.getBoolean("show_payment_summary"),
@@ -371,6 +464,10 @@ public class CompanyCustomizationManager {
                     custom_order_slip_show_order_number,
                     custom_order_slip_show_due_date,
                     custom_order_slip_show_customer_phone,
+                    custom_order_slip_show_customer_account,
+                    custom_order_slip_show_store,
+                    custom_order_slip_show_device,
+                    custom_order_slip_show_cashier,
                     custom_order_slip_show_line_items,
                     custom_order_slip_show_pricing,
                     custom_order_slip_show_payment_summary,
@@ -379,7 +476,7 @@ public class CompanyCustomizationManager {
                     custom_order_slip_show_signatures,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_slip_enabled = EXCLUDED.custom_order_slip_enabled,
                     custom_order_slip_auto_print = EXCLUDED.custom_order_slip_auto_print,
@@ -392,6 +489,10 @@ public class CompanyCustomizationManager {
                     custom_order_slip_show_order_number = EXCLUDED.custom_order_slip_show_order_number,
                     custom_order_slip_show_due_date = EXCLUDED.custom_order_slip_show_due_date,
                     custom_order_slip_show_customer_phone = EXCLUDED.custom_order_slip_show_customer_phone,
+                    custom_order_slip_show_customer_account = EXCLUDED.custom_order_slip_show_customer_account,
+                    custom_order_slip_show_store = EXCLUDED.custom_order_slip_show_store,
+                    custom_order_slip_show_device = EXCLUDED.custom_order_slip_show_device,
+                    custom_order_slip_show_cashier = EXCLUDED.custom_order_slip_show_cashier,
                     custom_order_slip_show_line_items = EXCLUDED.custom_order_slip_show_line_items,
                     custom_order_slip_show_pricing = EXCLUDED.custom_order_slip_show_pricing,
                     custom_order_slip_show_payment_summary = EXCLUDED.custom_order_slip_show_payment_summary,
@@ -414,12 +515,16 @@ public class CompanyCustomizationManager {
             ps.setBoolean(10, settings.showOrderNumber());
             ps.setBoolean(11, settings.showDueDate());
             ps.setBoolean(12, settings.showCustomerPhone());
-            ps.setBoolean(13, settings.showLineItems());
-            ps.setBoolean(14, settings.showPricing());
-            ps.setBoolean(15, settings.showPaymentSummary());
-            ps.setBoolean(16, settings.showPaymentReference());
-            ps.setBoolean(17, settings.showTakenBy());
-            ps.setBoolean(18, settings.showSignatures());
+            ps.setBoolean(13, settings.showCustomerAccount());
+            ps.setBoolean(14, settings.showStore());
+            ps.setBoolean(15, settings.showDevice());
+            ps.setBoolean(16, settings.showCashier());
+            ps.setBoolean(17, settings.showLineItems());
+            ps.setBoolean(18, settings.showPricing());
+            ps.setBoolean(19, settings.showPaymentSummary());
+            ps.setBoolean(20, settings.showPaymentReference());
+            ps.setBoolean(21, settings.showTakenBy());
+            ps.setBoolean(22, settings.showSignatures());
             ps.executeUpdate();
         }
     }
@@ -445,7 +550,8 @@ public class CompanyCustomizationManager {
                 Boolean.parseBoolean(properties.getProperty("receipt.show_customer", "true")),
                 Boolean.parseBoolean(properties.getProperty("receipt.show_sku", "true")),
                 Boolean.parseBoolean(properties.getProperty("receipt.show_item_discount", "true")),
-                Boolean.parseBoolean(properties.getProperty("receipt.show_payment_status", "true"))
+                Boolean.parseBoolean(properties.getProperty("receipt.show_payment_status", "true")),
+                parseIntInRange(properties.getProperty("receipt.next_receipt_counter", "1"), 1, 999999, 1)
         );
     }
 
@@ -485,12 +591,31 @@ public class CompanyCustomizationManager {
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_order_number", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_due_date", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_customer_phone", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_customer_account", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_store", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_device", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_cashier", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_line_items", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_pricing", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_summary", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_reference", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_taken_by", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_signatures", "true"))
+        );
+    }
+
+    private static SaleSafetySettings loadLocalSaleSafetySettings() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        return new SaleSafetySettings(
+                parsePercent(properties.getProperty("sales.discount_limit_percent", "5")),
+                parseMoney(properties.getProperty("sales.return_approval_limit", "0"))
         );
     }
 
@@ -513,6 +638,7 @@ public class CompanyCustomizationManager {
         properties.setProperty("receipt.show_sku", String.valueOf(settings.showSku()));
         properties.setProperty("receipt.show_item_discount", String.valueOf(settings.showItemDiscount()));
         properties.setProperty("receipt.show_payment_status", String.valueOf(settings.showPaymentStatus()));
+        properties.setProperty("receipt.next_receipt_counter", String.valueOf(settings.nextReceiptCounter()));
 
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
@@ -553,12 +679,31 @@ public class CompanyCustomizationManager {
         properties.setProperty("custom_order_slip.show_order_number", String.valueOf(settings.showOrderNumber()));
         properties.setProperty("custom_order_slip.show_due_date", String.valueOf(settings.showDueDate()));
         properties.setProperty("custom_order_slip.show_customer_phone", String.valueOf(settings.showCustomerPhone()));
+        properties.setProperty("custom_order_slip.show_customer_account", String.valueOf(settings.showCustomerAccount()));
+        properties.setProperty("custom_order_slip.show_store", String.valueOf(settings.showStore()));
+        properties.setProperty("custom_order_slip.show_device", String.valueOf(settings.showDevice()));
+        properties.setProperty("custom_order_slip.show_cashier", String.valueOf(settings.showCashier()));
         properties.setProperty("custom_order_slip.show_line_items", String.valueOf(settings.showLineItems()));
         properties.setProperty("custom_order_slip.show_pricing", String.valueOf(settings.showPricing()));
         properties.setProperty("custom_order_slip.show_payment_summary", String.valueOf(settings.showPaymentSummary()));
         properties.setProperty("custom_order_slip.show_payment_reference", String.valueOf(settings.showPaymentReference()));
         properties.setProperty("custom_order_slip.show_taken_by", String.valueOf(settings.showTakenBy()));
         properties.setProperty("custom_order_slip.show_signatures", String.valueOf(settings.showSignatures()));
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
+    private static void saveLocalSaleSafetySettings(SaleSafetySettings settings) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
+        properties.setProperty("sales.discount_limit_percent", settings.discountLimitPercent().toPlainString());
+        properties.setProperty("sales.return_approval_limit", settings.returnApprovalLimit().toPlainString());
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -656,6 +801,8 @@ public class CompanyCustomizationManager {
     private static ReceiptSettings cachedReceiptSettings;
     private static Integer cachedCustomOrderLocationId;
     private static CustomOrderSettings cachedCustomOrderSettings;
+    private static Integer cachedSaleSafetyLocationId;
+    private static SaleSafetySettings cachedSaleSafetySettings;
     private static Integer cachedCustomOrderSlipLocationId;
     private static CustomOrderSlipSettings cachedCustomOrderSlipSettings;
 
@@ -770,13 +917,17 @@ public class CompanyCustomizationManager {
             boolean showCustomer,
             boolean showSku,
             boolean showItemDiscount,
-            boolean showPaymentStatus
+            boolean showPaymentStatus,
+            int nextReceiptCounter
     ) {
         public ReceiptSettings {
             companyName = clean(companyName, "SmartStock");
             headerLine = Objects.requireNonNullElse(headerLine, "").trim();
             footerLine = clean(footerLine, "Thank you");
             logoPath = Objects.requireNonNullElse(logoPath, "").trim();
+            if (nextReceiptCounter < 1) {
+                nextReceiptCounter = 1;
+            }
         }
 
         private static String clean(String value, String fallback) {
@@ -792,6 +943,21 @@ public class CompanyCustomizationManager {
         }
     }
 
+    public record SaleSafetySettings(java.math.BigDecimal discountLimitPercent, java.math.BigDecimal returnApprovalLimit) {
+        public SaleSafetySettings {
+            discountLimitPercent = discountLimitPercent == null ? java.math.BigDecimal.valueOf(5) : discountLimitPercent;
+            if (discountLimitPercent.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                discountLimitPercent = java.math.BigDecimal.ZERO;
+            } else if (discountLimitPercent.compareTo(java.math.BigDecimal.valueOf(100)) > 0) {
+                discountLimitPercent = java.math.BigDecimal.valueOf(100);
+            }
+            returnApprovalLimit = returnApprovalLimit == null ? java.math.BigDecimal.ZERO : returnApprovalLimit;
+            if (returnApprovalLimit.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                returnApprovalLimit = java.math.BigDecimal.ZERO;
+            }
+        }
+    }
+
     public record CustomOrderSlipSettings(
             boolean enabled,
             boolean autoPrint,
@@ -804,6 +970,10 @@ public class CompanyCustomizationManager {
             boolean showOrderNumber,
             boolean showDueDate,
             boolean showCustomerPhone,
+            boolean showCustomerAccount,
+            boolean showStore,
+            boolean showDevice,
+            boolean showCashier,
             boolean showLineItems,
             boolean showPricing,
             boolean showPaymentSummary,

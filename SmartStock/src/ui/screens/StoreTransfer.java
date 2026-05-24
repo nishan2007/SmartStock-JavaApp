@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
@@ -358,6 +359,9 @@ public class StoreTransfer extends JFrame {
     }
 
     private void submitTransfer() {
+        if (!PermissionManager.requirePermission("STORE_TRANSFER", this, "Submit Transfer")) {
+            return;
+        }
         Integer sourceLocationId = SessionManager.getCurrentLocationId();
         LocationOption destination = (LocationOption) destinationBox.getSelectedItem();
         if (sourceLocationId == null) {
@@ -584,6 +588,9 @@ public class StoreTransfer extends JFrame {
     }
 
     private void receiveSelectedTransfer() {
+        if (!PermissionManager.requirePermission("STORE_TRANSFER", this, "Receive Transfer")) {
+            return;
+        }
         int selectedRow = incomingTable.getSelectedRow();
         if (selectedRow < 0) {
             JOptionPane.showMessageDialog(this, "Select an incoming transfer to receive.");

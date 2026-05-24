@@ -467,6 +467,16 @@ public class ViewSales extends JFrame {
             }
         };
 
+        DefaultTableModel overrideAuditModel = new DefaultTableModel(
+                new Object[]{"Time", "Action", "Scope", "Field", "Old", "New", "Amount", "Qty", "Reason", "Note", "By User", "Device"},
+                0
+        ) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
         String detailsSql = """
                 SELECT COALESCE(p.product_id, 0) AS product_id,
 	                       COALESCE(p.name, 'Deleted Item')
@@ -518,6 +528,27 @@ public class ViewSales extends JFrame {
                 WHERE sr.sale_id = ?
                 ORDER BY sr.created_at DESC, sri.return_item_id ASC
                 """;
+        String overrideAuditSql = """
+                SELECT (sal.created_at AT TIME ZONE ?) AS local_created_at,
+                       COALESCE(sal.action_type, '') AS action_type,
+                       COALESCE(sal.action_scope, '') AS action_scope,
+                       COALESCE(sal.field_name, '') AS field_name,
+                       COALESCE(sal.old_value, '') AS old_value,
+                       COALESCE(sal.new_value, '') AS new_value,
+                       sal.amount,
+                       sal.quantity,
+                       COALESCE(sal.reason, '') AS reason,
+                       COALESCE(sal.note, '') AS note,
+                       COALESCE(sal.user_name, '') AS user_name,
+                       COALESCE(sal.device_name, sal.device_id, '') AS device_name
+                FROM sale_audit_log sal
+                WHERE sal.sale_id = ?
+                  AND (
+                      UPPER(COALESCE(sal.action_type, '')) LIKE '%OVERRIDE%'
+                      OR UPPER(COALESCE(sal.action_type, '')) IN ('SALE_DISCOUNT_APPLIED', 'PRICE_OVERRIDE', 'ITEM_DISCOUNT_APPLIED')
+                  )
+                ORDER BY sal.created_at DESC, sal.sale_audit_id DESC
+                """;
 
         double total = 0;
         double recordedSaleTotal = 0;
@@ -530,7 +561,8 @@ public class ViewSales extends JFrame {
              PreparedStatement ps = conn.prepareStatement(detailsSql);
              PreparedStatement summaryPs = conn.prepareStatement(saleSummarySql);
              PreparedStatement returnsPs = conn.prepareStatement(returnsSql);
-             PreparedStatement returnItemsPs = conn.prepareStatement(returnItemsSql)) {
+             PreparedStatement returnItemsPs = conn.prepareStatement(returnItemsSql);
+             PreparedStatement overrideAuditPs = conn.prepareStatement(overrideAuditSql)) {
 
             ps.setInt(1, saleId);
             summaryPs.setInt(1, saleId);
@@ -594,6 +626,29 @@ public class ViewSales extends JFrame {
                     });
                 }
             }
+
+            overrideAuditPs.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+            overrideAuditPs.setInt(2, saleId);
+            try (ResultSet rs = overrideAuditPs.executeQuery()) {
+                while (rs.next()) {
+                    Object amountValue = rs.getBigDecimal("amount");
+                    Object qtyValue = rs.getObject("quantity");
+                    overrideAuditModel.addRow(new Object[]{
+                            formatTimestamp(rs.getTimestamp("local_created_at")),
+                            rs.getString("action_type"),
+                            rs.getString("action_scope"),
+                            rs.getString("field_name"),
+                            rs.getString("old_value"),
+                            rs.getString("new_value"),
+                            amountValue == null ? "" : currencyFormat.format(rs.getDouble("amount")),
+                            qtyValue == null ? "" : rs.getInt("quantity"),
+                            rs.getString("reason"),
+                            rs.getString("note"),
+                            rs.getString("user_name"),
+                            rs.getString("device_name")
+                    });
+                }
+            }
         } catch (SQLException e) {
             JOptionPane.showMessageDialog(this,
                     "Failed to load sale details.\n\n" + e.getMessage(),
@@ -618,6 +673,10 @@ public class ViewSales extends JFrame {
         returnItemsTable.setRowHeight(24);
         returnItemsTable.getTableHeader().setReorderingAllowed(false);
 
+        JTable overrideAuditTable = new JTable(overrideAuditModel);
+        overrideAuditTable.setRowHeight(24);
+        overrideAuditTable.getTableHeader().setReorderingAllowed(false);
+
         JPanel returnsPanel = new JPanel(new BorderLayout(8, 8));
         JSplitPane returnsSplit = new JSplitPane(
                 JSplitPane.VERTICAL_SPLIT,
@@ -631,6 +690,7 @@ public class ViewSales extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Sale Items", scrollPane);
         tabs.addTab("Returns (" + returnsModel.getRowCount() + ")", returnsPanel);
+        tabs.addTab("Override Audit (" + overrideAuditModel.getRowCount() + ")", new JScrollPane(overrideAuditTable));
         panel.add(tabs, BorderLayout.CENTER);
 
         JLabel totalLabel = new JLabel("Subtotal: " + currencyFormat.format(subtotalAmount > 0 ? subtotalAmount : total)

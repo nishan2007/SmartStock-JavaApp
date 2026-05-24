@@ -1,7 +1,9 @@
 package ui.screens;
 
 import data.DB;
+import managers.PermissionManager;
 import managers.SessionManager;
+import services.CashDrawerService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
@@ -34,7 +36,9 @@ public class EndOfDay extends JFrame {
     private final JComboBox<FilterOption> employeeBox = new JComboBox<>();
     private final JComboBox<FilterOption> deviceBox = new JComboBox<>();
     private final JComboBox<FilterOption> paymentBox = new JComboBox<>();
+    private final JComboBox<FilterOption> drawerBox = new JComboBox<>();
     private final JLabel storeLabel = new JLabel();
+    private final JLabel currentDrawerLabel = new JLabel("Current Drawer: Unassigned");
     private final JLabel transactionsLabel = metricLabel();
     private final JLabel totalSalesLabel = metricLabel();
     private final JLabel discountsLabel = metricLabel();
@@ -46,6 +50,7 @@ public class EndOfDay extends JFrame {
     private final JLabel cardLabel = metricLabel();
     private final JLabel mmgLabel = metricLabel();
     private final JLabel accountLabel = metricLabel();
+    private final JLabel reconciliationLabel = metricLabel();
     private final DefaultTableModel salesModel;
     private ZoneId storeZone = resolveStoreZone();
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -63,7 +68,7 @@ public class EndOfDay extends JFrame {
         root.setBackground(new Color(245, 247, 250));
 
         salesModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Receipt", "Time", "Employee", "Device", "Payment", "Reference", "Status", "Paid", "Total"},
+                new Object[]{"Sale ID", "Receipt", "Time", "Employee", "Device", "Drawer", "Payment", "Reference", "Status", "Paid", "Total"},
                 0
         ) {
             @Override
@@ -80,6 +85,7 @@ public class EndOfDay extends JFrame {
 
         setDefaultRange();
         loadFilters();
+        loadCurrentDrawerLabel();
         loadReport();
         WindowHelper.configurePosWindow(this);
     }
@@ -96,7 +102,17 @@ public class EndOfDay extends JFrame {
         JPanel titleRow = new JPanel(new BorderLayout());
         titleRow.setOpaque(false);
         titleRow.add(titleLabel, BorderLayout.WEST);
-        titleRow.add(storeLabel, BorderLayout.EAST);
+        JPanel rightMetaPanel = new JPanel();
+        rightMetaPanel.setOpaque(false);
+        rightMetaPanel.setLayout(new BoxLayout(rightMetaPanel, BoxLayout.Y_AXIS));
+        currentDrawerLabel.setForeground(new Color(75, 85, 99));
+        storeLabel.setForeground(new Color(75, 85, 99));
+        currentDrawerLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
+        storeLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
+        rightMetaPanel.add(currentDrawerLabel);
+        rightMetaPanel.add(Box.createVerticalStrut(2));
+        rightMetaPanel.add(storeLabel);
+        titleRow.add(rightMetaPanel, BorderLayout.EAST);
 
         JPanel filterPanel = new JPanel(new GridBagLayout());
         filterPanel.setBackground(Color.WHITE);
@@ -119,13 +135,14 @@ public class EndOfDay extends JFrame {
         addFilter(filterPanel, 4, "Employee", employeeBox, 220);
         addFilter(filterPanel, 6, "Device", deviceBox, 180);
         addFilter(filterPanel, 8, "Payment", paymentBox, 160);
+        addFilter(filterPanel, 10, "Drawer", drawerBox, 180);
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 10;
+        gbc.gridx = 12;
         gbc.gridy = 0;
         gbc.insets = new Insets(0, 10, 0, 0);
         filterPanel.add(runButton, gbc);
-        gbc.gridx = 11;
+        gbc.gridx = 13;
         filterPanel.add(todayButton, gbc);
 
         runButton.addActionListener(e -> loadReport());
@@ -134,6 +151,7 @@ public class EndOfDay extends JFrame {
             employeeBox.setSelectedIndex(0);
             deviceBox.setSelectedIndex(0);
             paymentBox.setSelectedIndex(0);
+            drawerBox.setSelectedIndex(0);
             loadReport();
         });
         fromField.addActionListener(e -> loadReport());
@@ -141,6 +159,7 @@ public class EndOfDay extends JFrame {
         employeeBox.addActionListener(e -> loadReport());
         deviceBox.addActionListener(e -> loadReport());
         paymentBox.addActionListener(e -> loadReport());
+        drawerBox.addActionListener(e -> loadReport());
 
         headerPanel.add(titleRow, BorderLayout.NORTH);
         headerPanel.add(filterPanel, BorderLayout.CENTER);
@@ -164,6 +183,7 @@ public class EndOfDay extends JFrame {
         metricsPanel.add(cardLabel);
         metricsPanel.add(mmgLabel);
         metricsPanel.add(accountLabel);
+        metricsPanel.add(reconciliationLabel);
 
         panel.add(metricsPanel, BorderLayout.NORTH);
         panel.add(new JScrollPane(salesTable), BorderLayout.CENTER);
@@ -195,8 +215,10 @@ public class EndOfDay extends JFrame {
     private void loadFilters() {
         employeeBox.removeAllItems();
         deviceBox.removeAllItems();
+        drawerBox.removeAllItems();
         employeeBox.addItem(new FilterOption(null, "All Employees"));
         deviceBox.addItem(new FilterOption(null, "All Devices"));
+        drawerBox.addItem(new FilterOption(null, "All Drawers"));
 
         Integer locationId = SessionManager.getCurrentLocationId();
         if (locationId == null) {
@@ -232,10 +254,17 @@ public class EndOfDay extends JFrame {
                 WHERE device_id <> ''
                 ORDER BY device_id
                 """;
+        String drawerSql = """
+                SELECT DISTINCT COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'Unassigned') AS drawer_name
+                FROM sales
+                WHERE location_id = ?
+                ORDER BY drawer_name
+                """;
 
         try (Connection conn = DB.getConnection();
             PreparedStatement employeePs = conn.prepareStatement(employeeSql);
-             PreparedStatement devicePs = conn.prepareStatement(deviceSql)) {
+             PreparedStatement devicePs = conn.prepareStatement(deviceSql);
+             PreparedStatement drawerPs = conn.prepareStatement(drawerSql)) {
             employeePs.setInt(1, locationId);
             employeePs.setInt(2, locationId);
             try (ResultSet rs = employeePs.executeQuery()) {
@@ -252,15 +281,27 @@ public class EndOfDay extends JFrame {
                     deviceBox.addItem(new FilterOption(deviceId, deviceId));
                 }
             }
+            drawerPs.setInt(1, locationId);
+            try (ResultSet rs = drawerPs.executeQuery()) {
+                while (rs.next()) {
+                    String drawerName = rs.getString("drawer_name");
+                    drawerBox.addItem(new FilterOption(drawerName, drawerName));
+                }
+            }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load filters: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void loadReport() {
+        if (!PermissionManager.hasPermission("END_OF_DAY")) {
+            JOptionPane.showMessageDialog(this, "You do not have permission to access End of Day.");
+            return;
+        }
         salesModel.setRowCount(0);
         storeZone = resolveStoreZone();
         updateStoreLabel();
+        loadCurrentDrawerLabel();
 
         Integer locationId = SessionManager.getCurrentLocationId();
         if (locationId == null) {
@@ -286,11 +327,13 @@ public class EndOfDay extends JFrame {
                        COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS employee_name,
                        COALESCE(s.receipt_device_id, '') AS device_id,
                        COALESCE(s.payment_method, '') AS payment_method,
+                       COALESCE(NULLIF(TRIM(s.cash_drawer_name), ''), 'Unassigned') AS cash_drawer_name,
                        COALESCE(s.payment_reference, '') AS payment_reference,
-	                       COALESCE(s.payment_status, 'PAID') AS payment_status,
-	                       COALESCE(s.amount_paid, 0) AS amount_paid,
-	                       COALESCE(s.discount_amount, 0) AS discount_amount,
-	                       COALESCE(s.total_amount, 0) AS total_amount
+                       COALESCE(s.payment_status, 'PAID') AS payment_status,
+                       COALESCE(s.amount_paid, 0) AS amount_paid,
+                       COALESCE(s.discount_amount, 0) AS discount_amount,
+                       COALESCE(s.total_amount, 0) AS total_amount,
+                       COALESCE(s.returned_amount, 0) AS returned_amount
                 FROM sales s
                 LEFT JOIN users u ON u.user_id = s.user_id
                 WHERE s.location_id = ?
@@ -321,6 +364,11 @@ public class EndOfDay extends JFrame {
             sql.append(" AND s.payment_method = ?");
             parameters.add(payment.value());
         }
+        FilterOption drawer = (FilterOption) drawerBox.getSelectedItem();
+        if (drawer != null && drawer.value() != null) {
+            sql.append(" AND COALESCE(NULLIF(TRIM(s.cash_drawer_name), ''), 'Unassigned') = ?");
+            parameters.add(drawer.value());
+        }
 
         sql.append(" ORDER BY s.created_at ASC, s.sale_id ASC");
 
@@ -333,6 +381,7 @@ public class EndOfDay extends JFrame {
         BigDecimal card = BigDecimal.ZERO;
         BigDecimal mmg = BigDecimal.ZERO;
         BigDecimal account = BigDecimal.ZERO;
+        BigDecimal salesReturnedAmounts = BigDecimal.ZERO;
 
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql.toString())) {
@@ -346,9 +395,11 @@ public class EndOfDay extends JFrame {
                     BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
                     BigDecimal discountAmount = defaultZero(rs.getBigDecimal("discount_amount"));
                     BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
+                    BigDecimal returnedAmount = defaultZero(rs.getBigDecimal("returned_amount"));
                     String paymentMethod = rs.getString("payment_method");
                     totalSales = totalSales.add(totalAmount);
                     discounts = discounts.add(discountAmount);
+                    salesReturnedAmounts = salesReturnedAmounts.add(returnedAmount);
                     paid = paid.add(amountPaid);
                     if ("CASH".equalsIgnoreCase(paymentMethod)) {
                         cash = cash.add(amountPaid);
@@ -366,6 +417,7 @@ public class EndOfDay extends JFrame {
                             formatLocalTime(rs.getTimestamp("local_created_at")),
                             rs.getString("employee_name"),
                             rs.getString("device_id"),
+                            rs.getString("cash_drawer_name"),
                             paymentMethod,
                             rs.getString("payment_reference"),
                             rs.getString("payment_status"),
@@ -376,6 +428,19 @@ public class EndOfDay extends JFrame {
             }
 
             returns = loadReturnTotal(conn, locationId, from, to, employee, device);
+            boolean hasScopedFilters = (employee != null && employee.value() != null)
+                    || (device != null && device.value() != null)
+                    || (payment != null && payment.value() != null)
+                    || (drawer != null && drawer.value() != null);
+            BigDecimal ledgerCredits = BigDecimal.ZERO;
+            BigDecimal ledgerPayments = BigDecimal.ZERO;
+            BigDecimal returnMismatch = returns.subtract(salesReturnedAmounts).abs();
+            BigDecimal accountMismatch = BigDecimal.ZERO;
+            if (!hasScopedFilters) {
+                ledgerCredits = loadCustomerLedgerTotal(conn, locationId, from, to, "SALE_CREDIT");
+                ledgerPayments = loadCustomerLedgerTotal(conn, locationId, from, to, "PAYMENT");
+                accountMismatch = ledgerCredits.subtract(account).abs();
+            }
 
             transactionsLabel.setText("Transactions: " + transactions);
             totalSalesLabel.setText("Total Sales: " + CURRENCY.format(totalSales));
@@ -388,9 +453,61 @@ public class EndOfDay extends JFrame {
             cardLabel.setText("Card/Check: " + CURRENCY.format(card));
             mmgLabel.setText("MMG: " + CURRENCY.format(mmg));
             accountLabel.setText("Account: " + CURRENCY.format(account));
+            updateReconciliationLabel(returnMismatch, accountMismatch, ledgerCredits, ledgerPayments, hasScopedFilters);
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load end of day report: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private BigDecimal loadCustomerLedgerTotal(Connection conn, int locationId, ZonedDateTime from, ZonedDateTime to, String transactionType) throws SQLException {
+        String sql = """
+                SELECT COALESCE(SUM(amount), 0) AS total_amount
+                FROM customer_account_transactions
+                WHERE location_id = ?
+                  AND transaction_type = ?
+                  AND (created_at AT TIME ZONE ?) >= ?
+                  AND (created_at AT TIME ZONE ?) < ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setString(2, transactionType);
+            ps.setString(3, storeZone.getId());
+            ps.setTimestamp(4, Timestamp.valueOf(from.toLocalDateTime()));
+            ps.setString(5, storeZone.getId());
+            ps.setTimestamp(6, Timestamp.valueOf(to.toLocalDateTime()));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return defaultZero(rs.getBigDecimal("total_amount"));
+                }
+            }
+        }
+        return BigDecimal.ZERO;
+    }
+
+    private void updateReconciliationLabel(BigDecimal returnMismatch,
+                                           BigDecimal accountMismatch,
+                                           BigDecimal ledgerCredits,
+                                           BigDecimal ledgerPayments,
+                                           boolean hasScopedFilters) {
+        if (hasScopedFilters) {
+            reconciliationLabel.setText("Reconciliation: scoped filters applied (alerts shown only in full-day unfiltered view)");
+            reconciliationLabel.setForeground(new Color(75, 85, 99));
+            return;
+        }
+        BigDecimal tolerance = new BigDecimal("0.01");
+        boolean returnOk = returnMismatch.compareTo(tolerance) <= 0;
+        boolean accountOk = accountMismatch.compareTo(tolerance) <= 0;
+        boolean allOk = returnOk && accountOk;
+
+        String text = allOk
+                ? "Reconciliation: OK"
+                : "Reconciliation: ALERT | Returns diff "
+                + CURRENCY.format(returnMismatch)
+                + " | Account diff " + CURRENCY.format(accountMismatch)
+                + " | Ledger PAY " + CURRENCY.format(ledgerPayments.abs())
+                + " / CREDIT " + CURRENCY.format(ledgerCredits);
+        reconciliationLabel.setText(text);
+        reconciliationLabel.setForeground(allOk ? new Color(6, 95, 70) : new Color(185, 28, 28));
     }
 
     private BigDecimal loadReturnTotal(Connection conn, int locationId, ZonedDateTime from, ZonedDateTime to, FilterOption employee, FilterOption device) throws SQLException {
@@ -451,6 +568,25 @@ public class EndOfDay extends JFrame {
         Integer locationId = SessionManager.getCurrentLocationId();
         String storeText = locationId == null ? "Store: Not selected" : "Store: " + (storeName == null ? locationId : storeName);
         storeLabel.setText(storeText + "    Store Timezone: " + storeZone);
+    }
+
+    private void loadCurrentDrawerLabel() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        String deviceId = SessionManager.getCurrentDeviceId();
+        if (locationId == null || deviceId == null || deviceId.isBlank()) {
+            currentDrawerLabel.setText("Current Drawer: Unassigned");
+            return;
+        }
+        try (Connection conn = DB.getConnection()) {
+            String drawerName = CashDrawerService.resolveDrawerForDevice(conn, locationId, deviceId).drawerName();
+            if (drawerName == null || drawerName.isBlank()) {
+                currentDrawerLabel.setText("Current Drawer: Unassigned");
+            } else {
+                currentDrawerLabel.setText("Current Drawer: " + drawerName);
+            }
+        } catch (SQLException ex) {
+            currentDrawerLabel.setText("Current Drawer: Unassigned");
+        }
     }
 
     private ZoneId resolveStoreZone() {

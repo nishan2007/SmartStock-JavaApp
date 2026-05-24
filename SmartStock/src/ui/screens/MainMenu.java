@@ -3,6 +3,8 @@ import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
+import models.CashDrawerContext;
+import services.CashDrawerService;
 import services.DeviceService;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
@@ -22,9 +24,11 @@ import java.sql.SQLException;
 
 
 public class MainMenu extends JFrame {
+    private static boolean drawStartPromptShownThisAppSession;
 
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
+    private final JButton balanceDrawButton;
     private final JButton ordersManagerDashboardButton;
     private final JButton endOfDayButton;
     private final JButton ordersEndOfDayButton;
@@ -50,10 +54,8 @@ public class MainMenu extends JFrame {
     private final JButton machineManagementButton;
     private final JButton partsManagementButton;
     private final JButton maintenanceManagementButton;
-    private final JButton locationManagementButton;
     private final JButton companyCustomizationButton;
-    private final JButton localDeviceSettingsButton;
-    private final JButton hardwareSetupButton;
+    private final JButton workstationPreferencesButton;
     private final JButton logoutButton;
 
     public MainMenu() {
@@ -89,6 +91,7 @@ public class MainMenu extends JFrame {
 
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
         returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/ViewSales.png"));
+        balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/ViewSales.png"));
         ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/ViewSales.png"));
         endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/ViewSales.png"));
         ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/ViewSales.png"));
@@ -114,11 +117,8 @@ public class MainMenu extends JFrame {
         machineManagementButton = createMenuButton("Machines", "Create, update, and delete machine records", loadIcon("src/ICONS/ViewInventory.png"));
         partsManagementButton = createMenuButton("Parts", "Create, update, and delete maintenance parts", loadIcon("src/ICONS/ViewInventory.png"));
         maintenanceManagementButton = createMenuButton("Maintenance", "Manage machines, parts, service logs, and problem tickets", loadIcon("src/ICONS/ViewInventory.png"));
-        locationManagementButton = createMenuButton("Locations", "Manage store locations", loadIcon("src/ICONS/Security.png"));
         companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/Security.png"));
-        localDeviceSettingsButton = createMenuButton("Local Device", "Edit register receipt settings", loadIcon("src/ICONS/Security.png"));
-        hardwareSetupButton = createMenuButton("Hardware Setup", "Configure POS printers", loadIcon("src/ICONS/Security.png"));
-        applyPermissions();
+        workstationPreferencesButton = createMenuButton("Workstation Preferences", "Device-level workstation and printing behavior", loadIcon("src/ICONS/Security.png"));
 
         JPanel sectionStackPanel = new JPanel() {
             @Override
@@ -137,6 +137,12 @@ public class MainMenu extends JFrame {
                 viewSalesButton,
                 customerAccountsButton,
                 customerTransactionHistoryButton
+        ));
+        sectionStackPanel.add(Box.createVerticalStrut(18));
+        sectionStackPanel.add(createSectionPanel(
+                "Operations",
+                new Color(15, 118, 110),
+                balanceDrawButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -178,10 +184,8 @@ public class MainMenu extends JFrame {
                 deviceManagementButton,
                 machineManagementButton,
                 partsManagementButton,
-                locationManagementButton,
                 companyCustomizationButton,
-                localDeviceSettingsButton,
-                hardwareSetupButton
+                workstationPreferencesButton
         ));
 
         JPanel scrollContentPanel = new ViewportWidthPanel(new BorderLayout());
@@ -214,10 +218,12 @@ public class MainMenu extends JFrame {
         mainPanel.add(sectionScrollPane, BorderLayout.CENTER);
         mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
+        applyPermissions();
         add(mainPanel, BorderLayout.CENTER);
         wireActions();
         wireWindowSessionHandling();
         WindowHelper.configurePosWindow(this);
+        SwingUtilities.invokeLater(this::promptToStartDrawIfNeeded);
     }
     private ImageIcon loadIcon(String path) {
         ImageIcon icon = null;
@@ -400,6 +406,7 @@ public class MainMenu extends JFrame {
     public void applyPermissions() {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
+        boolean canBalanceDrawer = PermissionManager.hasPermission("BALANCE_DRAWER");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
@@ -428,13 +435,12 @@ public class MainMenu extends JFrame {
         boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
         boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
         boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
-        boolean canLocationManagement = PermissionManager.hasPermission("LOCATION_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
-        boolean canLocalDeviceSettings = PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS");
-        boolean canHardwareSetup = PermissionManager.hasPermission("HARDWARE_SETUP");
+        boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
 
         makeSaleButton.setEnabled(canMakeSale);
         returnSaleButton.setEnabled(canProcessReturns);
+        balanceDrawButton.setEnabled(canBalanceDrawer);
         ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
         endOfDayButton.setEnabled(canEndOfDay);
         ordersEndOfDayButton.setEnabled(canOrdersEndOfDay);
@@ -460,10 +466,8 @@ public class MainMenu extends JFrame {
         machineManagementButton.setEnabled(canMachineManagement);
         partsManagementButton.setEnabled(canPartsManagement);
         maintenanceManagementButton.setEnabled(canMaintenanceManagement);
-        locationManagementButton.setEnabled(canLocationManagement);
         companyCustomizationButton.setEnabled(canCompanyCustomization);
-        localDeviceSettingsButton.setEnabled(canLocalDeviceSettings);
-        hardwareSetupButton.setEnabled(canHardwareSetup);
+        workstationPreferencesButton.setEnabled(canWorkstationPreferences);
     }
 
 
@@ -480,6 +484,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openReturnSale(this);
+        });
+        balanceDrawButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("BALANCE_DRAWER", this, "Balance Draw")) {
+                return;
+            }
+            NavigationManager.openBalanceDraw(this);
         });
         ordersManagerDashboardButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {
@@ -638,29 +648,17 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openMaintenanceManagement(this);
         });
-        locationManagementButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("LOCATION_MANAGEMENT", this, "Location Management")) {
-                return;
-            }
-            NavigationManager.openLocationManagement(this);
-        });
         companyCustomizationButton.addActionListener(e -> {
             if (!requireCompanyPreferencesPermission()) {
                 return;
             }
             NavigationManager.openCompanyCustomization(this);
         });
-        localDeviceSettingsButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("LOCAL_DEVICE_SETTINGS", this, "Local Device Settings")) {
+        workstationPreferencesButton.addActionListener(e -> {
+            if (!requireWorkstationPreferencesPermission()) {
                 return;
             }
-            NavigationManager.openLocalDeviceSettings(this);
-        });
-        hardwareSetupButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("HARDWARE_SETUP", this, "Hardware Setup")) {
-                return;
-            }
-            NavigationManager.openHardwareSetup(this);
+            NavigationManager.openWorkstationPreferences(this);
         });
 
         logoutButton.addActionListener(e -> {
@@ -679,6 +677,41 @@ public class MainMenu extends JFrame {
                 endSessionSafely();
             }
         });
+    }
+
+    private void promptToStartDrawIfNeeded() {
+        if (drawStartPromptShownThisAppSession || !PermissionManager.hasPermission("BALANCE_DRAWER")) {
+            return;
+        }
+
+        CashDrawerContext drawer;
+        try (Connection conn = DB.getConnection()) {
+            drawer = CashDrawerService.resolveCurrentDrawer(conn);
+        } catch (Exception ex) {
+            System.err.println("Failed to check cash draw startup status: " + ex.getMessage());
+            return;
+        }
+
+        if (!drawer.isAssigned() || drawer.hasActiveSession()) {
+            return;
+        }
+
+        drawStartPromptShownThisAppSession = true;
+        Object[] options = {"Start Draw", "Skip"};
+        int choice = JOptionPane.showOptionDialog(
+                this,
+                "No draw is open for " + drawer.drawerName() + ".\n\nStart it now before taking cash?",
+                "Start Draw",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                options[0]
+        );
+
+        if (choice == JOptionPane.YES_OPTION) {
+            NavigationManager.openBalanceDraw(this);
+        }
     }
 
     private void endSessionSafely() {
@@ -839,7 +872,9 @@ public class MainMenu extends JFrame {
 
     private boolean hasCompanyPreferencesPermission() {
         return PermissionManager.hasPermission("COMPANY_PREFERENCES")
-                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION");
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION")
+                || PermissionManager.hasPermission("LOCATION_MANAGEMENT")
+                || PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT");
     }
 
     private boolean requireCompanyPreferencesPermission() {
@@ -855,8 +890,32 @@ public class MainMenu extends JFrame {
         return false;
     }
 
+    private boolean hasWorkstationPreferencesPermission() {
+        return PermissionManager.hasPermission("COMPANY_PREFERENCES")
+                || PermissionManager.hasPermission("COMPANY_CUSTOMIZATION")
+                || PermissionManager.hasPermission("LOCAL_DEVICE_SETTINGS")
+                || PermissionManager.hasPermission("HARDWARE_SETUP");
+    }
+
+    private boolean requireWorkstationPreferencesPermission() {
+        if (hasWorkstationPreferencesPermission()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(
+                this,
+                "You do not have permission to access Workstation Preferences.",
+                "Access Denied",
+                JOptionPane.WARNING_MESSAGE
+        );
+        return false;
+    }
+
     public JButton getMakeSaleButton() {
         return makeSaleButton;
+    }
+
+    public JButton getBalanceDrawButton() {
+        return balanceDrawButton;
     }
 
     public JButton getEnterInventoryButton() {
@@ -930,14 +989,6 @@ public class MainMenu extends JFrame {
 
     public JButton getCompanyCustomizationButton() {
         return companyCustomizationButton;
-    }
-
-    public JButton getLocalDeviceSettingsButton() {
-        return localDeviceSettingsButton;
-    }
-
-    public JButton getHardwareSetupButton() {
-        return hardwareSetupButton;
     }
 
     public JButton getLogoutButton() {

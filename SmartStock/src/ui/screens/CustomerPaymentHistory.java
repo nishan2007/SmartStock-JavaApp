@@ -72,7 +72,7 @@ public class CustomerPaymentHistory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         paymentModel = new DefaultTableModel(
-                new Object[]{"Payment ID", "Payment Date", "User", "Payment Amount", "Sale ID", "Applied", "Sale Total", "Sale Paid", "Sale Status", "Sale Date"},
+                new Object[]{"Payment ID", "Payment Date", "User", "Method", "Reference", "Device", "Drawer", "Payment Amount", "Applied To", "Applied", "Charge Total", "Paid", "Status", "Charge Date"},
                 0
         ) {
             @Override
@@ -88,13 +88,17 @@ public class CustomerPaymentHistory extends JFrame {
         paymentTable.getColumnModel().getColumn(0).setPreferredWidth(130);
         paymentTable.getColumnModel().getColumn(1).setPreferredWidth(160);
         paymentTable.getColumnModel().getColumn(2).setPreferredWidth(150);
-        paymentTable.getColumnModel().getColumn(3).setPreferredWidth(120);
-        paymentTable.getColumnModel().getColumn(4).setPreferredWidth(90);
-        paymentTable.getColumnModel().getColumn(5).setPreferredWidth(110);
-        paymentTable.getColumnModel().getColumn(6).setPreferredWidth(110);
-        paymentTable.getColumnModel().getColumn(7).setPreferredWidth(110);
-        paymentTable.getColumnModel().getColumn(8).setPreferredWidth(100);
-        paymentTable.getColumnModel().getColumn(9).setPreferredWidth(160);
+        paymentTable.getColumnModel().getColumn(3).setPreferredWidth(90);
+        paymentTable.getColumnModel().getColumn(4).setPreferredWidth(160);
+        paymentTable.getColumnModel().getColumn(5).setPreferredWidth(120);
+        paymentTable.getColumnModel().getColumn(6).setPreferredWidth(120);
+        paymentTable.getColumnModel().getColumn(7).setPreferredWidth(120);
+        paymentTable.getColumnModel().getColumn(8).setPreferredWidth(150);
+        paymentTable.getColumnModel().getColumn(9).setPreferredWidth(110);
+        paymentTable.getColumnModel().getColumn(10).setPreferredWidth(110);
+        paymentTable.getColumnModel().getColumn(11).setPreferredWidth(110);
+        paymentTable.getColumnModel().getColumn(12).setPreferredWidth(100);
+        paymentTable.getColumnModel().getColumn(13).setPreferredWidth(160);
 
         return new JScrollPane(paymentTable);
     }
@@ -111,24 +115,34 @@ public class CustomerPaymentHistory extends JFrame {
         paymentModel.setRowCount(0);
         String sql = """
                 SELECT COALESCE(t.payment_id, '') AS payment_id,
-	                       t.transaction_id,
-	                       (t.created_at AT TIME ZONE ?) AS payment_date,
-	                       COALESCE(t.user_name, '') AS user_name,
-	                       ABS(COALESCE(t.amount, 0)) AS payment_amount,
-                       a.sale_id,
-                       a.amount AS applied_amount,
-                       COALESCE(s.total_amount, 0) AS sale_total,
-                       COALESCE(s.amount_paid, 0) AS sale_paid,
-                       COALESCE(s.payment_status, '') AS payment_status,
-                       (s.created_at AT TIME ZONE ?) AS sale_date
-                FROM customer_account_transactions t
-                LEFT JOIN customer_account_payment_allocations a
-                    ON a.payment_transaction_id = t.transaction_id
-                LEFT JOIN sales s ON a.sale_id = s.sale_id
-                WHERE t.customer_id = ?
-                  AND t.transaction_type = 'PAYMENT'
-                ORDER BY t.created_at DESC, t.transaction_id DESC, a.sale_id ASC
-                """;
+		                       t.transaction_id,
+		                       (t.created_at AT TIME ZONE ?) AS payment_date,
+		                       COALESCE(t.user_name, '') AS user_name,
+                       COALESCE(t.payment_method, '') AS payment_method,
+                       COALESCE(t.payment_reference, '') AS payment_reference,
+                       COALESCE(t.device_name, t.device_id, '') AS device_name,
+                       COALESCE(t.cash_drawer_name, '') AS cash_drawer_name,
+		                       ABS(COALESCE(t.amount, 0)) AS payment_amount,
+	                       a.sale_id,
+                       a.custom_order_id,
+	                       a.amount AS applied_amount,
+	                       COALESCE(s.total_amount, 0) AS sale_total,
+	                       COALESCE(s.amount_paid, 0) AS sale_paid,
+	                       COALESCE(s.payment_status, '') AS payment_status,
+                       COALESCE(co.order_number, '') AS order_number,
+                       COALESCE(co.total_amount, 0) AS custom_order_total,
+                       COALESCE(co.amount_paid, 0) AS custom_order_paid,
+                       COALESCE(co.payment_status, '') AS custom_order_payment_status,
+	                       (COALESCE(s.created_at, co.created_at) AT TIME ZONE ?) AS charge_date
+	                FROM customer_account_transactions t
+	                LEFT JOIN customer_account_payment_allocations a
+	                    ON a.payment_transaction_id = t.transaction_id
+	                LEFT JOIN sales s ON a.sale_id = s.sale_id
+                LEFT JOIN custom_orders co ON a.custom_order_id = co.custom_order_id
+	                WHERE t.customer_id = ?
+	                  AND t.transaction_type = 'PAYMENT'
+	                ORDER BY t.created_at DESC, t.transaction_id DESC, a.sale_id ASC, a.custom_order_id ASC
+	                """;
 
         int rowCount = 0;
         int paymentCount = 0;
@@ -144,8 +158,8 @@ public class CustomerPaymentHistory extends JFrame {
             ps.setInt(3, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String paymentId = rs.getString("payment_id");
                     int transactionId = rs.getInt("transaction_id");
+                    String paymentId = rs.getString("payment_id");
                     String displayPaymentId = paymentId == null || paymentId.isBlank()
                             ? String.format("PAY-%06d", transactionId)
                             : paymentId;
@@ -162,17 +176,21 @@ public class CustomerPaymentHistory extends JFrame {
                     }
 
                     paymentModel.addRow(new Object[]{
-	                            displayPaymentId,
-	                            formatTimestamp(rs.getTimestamp("payment_date")),
-	                            rs.getString("user_name"),
-	                            currencyFormat.format(paymentAmount),
-                            nullableInt(rs, "sale_id"),
-                            appliedAmount == null ? "" : currencyFormat.format(appliedAmount),
-                            currencyFormat.format(defaultZero(rs.getBigDecimal("sale_total"))),
-                            currencyFormat.format(defaultZero(rs.getBigDecimal("sale_paid"))),
-                            formatStatus(rs.getString("payment_status")),
-                            formatTimestamp(rs.getTimestamp("sale_date"))
-                    });
+		                            displayPaymentId,
+		                            formatTimestamp(rs.getTimestamp("payment_date")),
+		                            rs.getString("user_name"),
+                            rs.getString("payment_method"),
+                            rs.getString("payment_reference"),
+                            rs.getString("device_name"),
+                            rs.getString("cash_drawer_name"),
+		                            currencyFormat.format(paymentAmount),
+                            appliedTarget(rs),
+	                            appliedAmount == null ? "" : currencyFormat.format(appliedAmount),
+                            currencyFormat.format(chargeTotal(rs)),
+                            currencyFormat.format(chargePaid(rs)),
+	                            formatStatus(chargeStatus(rs)),
+	                            formatTimestamp(rs.getTimestamp("charge_date"))
+	                    });
                     rowCount++;
                 }
             }
@@ -180,7 +198,7 @@ public class CustomerPaymentHistory extends JFrame {
             summaryLabel.setText("Payments: " + paymentCount
                     + "    Rows: " + rowCount
                     + "    Total Paid: " + currencyFormat.format(totalPayments)
-                    + "    Applied To Sales: " + currencyFormat.format(totalApplied));
+                    + "    Applied: " + currencyFormat.format(totalApplied));
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load payment history: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -189,6 +207,45 @@ public class CustomerPaymentHistory extends JFrame {
     private Object nullableInt(ResultSet rs, String column) throws SQLException {
         int value = rs.getInt(column);
         return rs.wasNull() ? "" : value;
+    }
+
+    private String appliedTarget(ResultSet rs) throws SQLException {
+        int saleId = rs.getInt("sale_id");
+        if (!rs.wasNull()) {
+            return "Sale #" + saleId;
+        }
+        long customOrderId = rs.getLong("custom_order_id");
+        if (!rs.wasNull()) {
+            String orderNumber = rs.getString("order_number");
+            return orderNumber == null || orderNumber.isBlank()
+                    ? "Custom Order #" + customOrderId
+                    : "Custom Order " + orderNumber;
+        }
+        return "";
+    }
+
+    private BigDecimal chargeTotal(ResultSet rs) throws SQLException {
+        Object saleId = nullableInt(rs, "sale_id");
+        if (!String.valueOf(saleId).isBlank()) {
+            return defaultZero(rs.getBigDecimal("sale_total"));
+        }
+        return defaultZero(rs.getBigDecimal("custom_order_total"));
+    }
+
+    private BigDecimal chargePaid(ResultSet rs) throws SQLException {
+        Object saleId = nullableInt(rs, "sale_id");
+        if (!String.valueOf(saleId).isBlank()) {
+            return defaultZero(rs.getBigDecimal("sale_paid"));
+        }
+        return defaultZero(rs.getBigDecimal("custom_order_paid"));
+    }
+
+    private String chargeStatus(ResultSet rs) throws SQLException {
+        Object saleId = nullableInt(rs, "sale_id");
+        if (!String.valueOf(saleId).isBlank()) {
+            return rs.getString("payment_status");
+        }
+        return rs.getString("custom_order_payment_status");
     }
 
     private String formatTimestamp(Timestamp timestamp) {

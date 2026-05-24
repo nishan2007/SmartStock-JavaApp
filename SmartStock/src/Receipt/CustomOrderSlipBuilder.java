@@ -19,13 +19,16 @@ public class CustomOrderSlipBuilder {
 
     public static CustomOrderSlipData buildFromOrderNumber(String orderNumber) throws SQLException {
         String sql = """
-                SELECT co.order_number, co.customer_name, co.customer_phone, co.due_date,
+                SELECT co.order_number, co.customer_name, co.customer_phone,
+                       COALESCE(ca.account_number, '') AS account_number,
+                       co.due_date,
                        co.created_at, co.taken_by_name, co.location_name, co.device_name,
                        co.payment_method, co.payment_reference, co.payment_status,
                        co.total_amount, co.amount_paid, co.balance_due, co.order_notes,
                        col.item_name, col.variant_name, col.customization_details,
                        col.order_instructions, col.line_total
                 FROM custom_orders co
+                LEFT JOIN customer_accounts ca ON ca.customer_id = co.customer_id
                 LEFT JOIN custom_order_lines col ON col.custom_order_id = co.custom_order_id
                 WHERE co.order_number = ?
                 ORDER BY col.sort_order, col.custom_order_line_id
@@ -43,6 +46,7 @@ public class CustomOrderSlipBuilder {
                                 rs.getString("order_number"),
                                 rs.getString("customer_name"),
                                 rs.getString("customer_phone"),
+                                rs.getString("account_number"),
                                 dueDate == null ? null : dueDate.toLocalDate(),
                                 rs.getTimestamp("created_at"),
                                 rs.getString("taken_by_name"),
@@ -82,6 +86,7 @@ public class CustomOrderSlipBuilder {
                 "CO-20260522-001",
                 "Alex Customer",
                 "555-0199",
+                "CA-000100",
                 LocalDate.of(2026, 5, 30),
                 Timestamp.valueOf("2026-05-22 10:30:00"),
                 "Sample Cashier",

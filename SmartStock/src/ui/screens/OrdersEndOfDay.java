@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DB;
 import managers.SessionManager;
+import services.CashDrawerService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
@@ -38,7 +39,9 @@ public class OrdersEndOfDay extends JFrame {
     private final JComboBox<FilterOption> employeeBox = new JComboBox<>();
     private final JComboBox<FilterOption> deviceBox = new JComboBox<>();
     private final JComboBox<FilterOption> paymentBox = new JComboBox<>();
+    private final JComboBox<FilterOption> drawerBox = new JComboBox<>();
     private final JLabel storeLabel = new JLabel();
+    private final JLabel currentDrawerLabel = new JLabel("Current Drawer: Unassigned");
     private final JLabel ordersLabel = metricLabel();
     private final JLabel orderTotalLabel = metricLabel();
     private final JLabel collectedLabel = metricLabel();
@@ -66,7 +69,7 @@ public class OrdersEndOfDay extends JFrame {
         root.setBackground(new Color(245, 247, 250));
 
         paymentModel = new DefaultTableModel(
-                new Object[]{"Payment ID", "Order #", "Time", "Customer", "Employee", "Device", "Method", "Reference", "Amount", "Order Total", "Balance", "Status"},
+                new Object[]{"Payment ID", "Order #", "Time", "Customer", "Employee", "Device", "Drawer", "Method", "Reference", "Amount", "Order Total", "Balance", "Status"},
                 0
         ) {
             @Override
@@ -84,6 +87,7 @@ public class OrdersEndOfDay extends JFrame {
 
         setDefaultRange();
         loadFilters();
+        loadCurrentDrawerLabel();
         loadReport();
         WindowHelper.configurePosWindow(this);
     }
@@ -100,7 +104,17 @@ public class OrdersEndOfDay extends JFrame {
         JPanel titleRow = new JPanel(new BorderLayout());
         titleRow.setOpaque(false);
         titleRow.add(titleLabel, BorderLayout.WEST);
-        titleRow.add(storeLabel, BorderLayout.EAST);
+        JPanel rightMetaPanel = new JPanel();
+        rightMetaPanel.setOpaque(false);
+        rightMetaPanel.setLayout(new BoxLayout(rightMetaPanel, BoxLayout.Y_AXIS));
+        currentDrawerLabel.setForeground(new Color(75, 85, 99));
+        storeLabel.setForeground(new Color(75, 85, 99));
+        currentDrawerLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
+        storeLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
+        rightMetaPanel.add(currentDrawerLabel);
+        rightMetaPanel.add(Box.createVerticalStrut(2));
+        rightMetaPanel.add(storeLabel);
+        titleRow.add(rightMetaPanel, BorderLayout.EAST);
 
         JPanel filterPanel = new JPanel(new GridBagLayout());
         filterPanel.setBackground(Color.WHITE);
@@ -124,13 +138,14 @@ public class OrdersEndOfDay extends JFrame {
         addFilter(filterPanel, 4, "Employee", employeeBox, 220);
         addFilter(filterPanel, 6, "Device", deviceBox, 180);
         addFilter(filterPanel, 8, "Payment", paymentBox, 160);
+        addFilter(filterPanel, 10, "Drawer", drawerBox, 180);
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 10;
+        gbc.gridx = 12;
         gbc.gridy = 0;
         gbc.insets = new Insets(0, 10, 0, 0);
         filterPanel.add(runButton, gbc);
-        gbc.gridx = 11;
+        gbc.gridx = 13;
         filterPanel.add(todayButton, gbc);
 
         runButton.addActionListener(e -> loadReport());
@@ -139,6 +154,7 @@ public class OrdersEndOfDay extends JFrame {
             employeeBox.setSelectedIndex(0);
             deviceBox.setSelectedIndex(0);
             paymentBox.setSelectedIndex(0);
+            drawerBox.setSelectedIndex(0);
             loadReport();
         });
         fromField.addActionListener(e -> loadReport());
@@ -146,6 +162,7 @@ public class OrdersEndOfDay extends JFrame {
         employeeBox.addActionListener(e -> loadReport());
         deviceBox.addActionListener(e -> loadReport());
         paymentBox.addActionListener(e -> loadReport());
+        drawerBox.addActionListener(e -> loadReport());
 
         headerPanel.add(titleRow, BorderLayout.NORTH);
         headerPanel.add(filterPanel, BorderLayout.CENTER);
@@ -202,8 +219,10 @@ public class OrdersEndOfDay extends JFrame {
     private void loadFilters() {
         employeeBox.removeAllItems();
         deviceBox.removeAllItems();
+        drawerBox.removeAllItems();
         employeeBox.addItem(new FilterOption(null, "All Employees"));
         deviceBox.addItem(new FilterOption(null, "All Devices"));
+        drawerBox.addItem(new FilterOption(null, "All Drawers"));
         String employeeSql = """
                 SELECT DISTINCT taken_by_user_id, COALESCE(taken_by_name, u.full_name, u.username, 'Unknown') AS employee_name
                 FROM custom_order_payments p
@@ -237,9 +256,17 @@ public class OrdersEndOfDay extends JFrame {
                 WHERE device_name <> ''
                 ORDER BY device_name
                 """;
+        String drawerSql = """
+                SELECT DISTINCT COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'Unassigned') AS drawer_name
+                FROM custom_order_payments p
+                JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
+                WHERE co.location_id = ?
+                ORDER BY drawer_name
+                """;
         try (Connection conn = DB.getConnection();
              PreparedStatement employeePs = conn.prepareStatement(employeeSql);
-             PreparedStatement devicePs = conn.prepareStatement(deviceSql)) {
+             PreparedStatement devicePs = conn.prepareStatement(deviceSql);
+             PreparedStatement drawerPs = conn.prepareStatement(drawerSql)) {
             try (ResultSet rs = employeePs.executeQuery()) {
                 while (rs.next()) {
                     employeeBox.addItem(new FilterOption(rs.getObject("taken_by_user_id"), rs.getString("employee_name")));
@@ -251,6 +278,16 @@ public class OrdersEndOfDay extends JFrame {
                     deviceBox.addItem(new FilterOption(deviceName, deviceName));
                 }
             }
+            Integer locationId = SessionManager.getCurrentLocationId();
+            if (locationId != null) {
+                drawerPs.setInt(1, locationId);
+                try (ResultSet rs = drawerPs.executeQuery()) {
+                    while (rs.next()) {
+                        String drawerName = rs.getString("drawer_name");
+                        drawerBox.addItem(new FilterOption(drawerName, drawerName));
+                    }
+                }
+            }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load order filters: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -260,6 +297,7 @@ public class OrdersEndOfDay extends JFrame {
         paymentModel.setRowCount(0);
         storeZone = resolveStoreZone();
         updateStoreLabel();
+        loadCurrentDrawerLabel();
 
         ZonedDateTime from = parseDateTime(fromField.getText().trim(), "From");
         ZonedDateTime to = parseDateTime(toField.getText().trim(), "To");
@@ -278,6 +316,7 @@ public class OrdersEndOfDay extends JFrame {
                        co.customer_name,
                        COALESCE(p.taken_by_name, u.full_name, u.username, 'Unknown') AS employee_name,
                        COALESCE(p.device_name, co.device_name, p.device_id, co.device_id, '') AS device_name,
+                       COALESCE(NULLIF(TRIM(p.cash_drawer_name), ''), 'Unassigned') AS cash_drawer_name,
                        p.payment_method,
                        COALESCE(p.payment_reference, '') AS payment_reference,
                        COALESCE(p.payment_action, 'PAYMENT') AS payment_action,
@@ -319,6 +358,11 @@ public class OrdersEndOfDay extends JFrame {
         if (payment != null && payment.value() != null) {
             sql.append(" AND p.payment_method = ?");
             parameters.add(payment.value());
+        }
+        FilterOption drawer = (FilterOption) drawerBox.getSelectedItem();
+        if (drawer != null && drawer.value() != null) {
+            sql.append(" AND COALESCE(NULLIF(TRIM(p.cash_drawer_name), ''), 'Unassigned') = ?");
+            parameters.add(drawer.value());
         }
         sql.append(" ORDER BY p.created_at ASC, p.custom_order_payment_id ASC");
 
@@ -363,6 +407,7 @@ public class OrdersEndOfDay extends JFrame {
                             rs.getString("customer_name"),
                             rs.getString("employee_name"),
                             rs.getString("device_name"),
+                            rs.getString("cash_drawer_name"),
                             method,
                             rs.getString("payment_reference"),
                             CURRENCY.format(signedAmount),
@@ -505,6 +550,25 @@ public class OrdersEndOfDay extends JFrame {
         Integer locationId = SessionManager.getCurrentLocationId();
         String storeText = locationId == null ? "Store: Not selected" : "Store: " + (storeName == null ? locationId : storeName);
         storeLabel.setText(storeText + "    Store Timezone: " + storeZone);
+    }
+
+    private void loadCurrentDrawerLabel() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        String deviceId = SessionManager.getCurrentDeviceId();
+        if (locationId == null || deviceId == null || deviceId.isBlank()) {
+            currentDrawerLabel.setText("Current Drawer: Unassigned");
+            return;
+        }
+        try (Connection conn = DB.getConnection()) {
+            String drawerName = CashDrawerService.resolveDrawerForDevice(conn, locationId, deviceId).drawerName();
+            if (drawerName == null || drawerName.isBlank()) {
+                currentDrawerLabel.setText("Current Drawer: Unassigned");
+            } else {
+                currentDrawerLabel.setText("Current Drawer: " + drawerName);
+            }
+        } catch (SQLException ex) {
+            currentDrawerLabel.setText("Current Drawer: Unassigned");
+        }
     }
 
     private ZoneId resolveStoreZone() {

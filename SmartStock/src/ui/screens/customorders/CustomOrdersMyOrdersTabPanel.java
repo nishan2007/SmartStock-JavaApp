@@ -63,6 +63,14 @@ class CustomOrdersMyOrdersTabPanel extends JPanel {
         right.setPreferredSize(new Dimension(420, 0));
         right.setBorder(BorderFactory.createTitledBorder("Order Details"));
         right.add(new JScrollPane(myOrderDetailsArea), BorderLayout.CENTER);
+        JPanel slipActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JButton previewSlipButton = new JButton("Preview Slip");
+        JButton printSlipButton = new JButton("Print Slip");
+        slipActions.add(previewSlipButton);
+        slipActions.add(printSlipButton);
+        previewSlipButton.addActionListener(e -> handler.previewSelectedMyOrderSlip());
+        printSlipButton.addActionListener(e -> handler.printSelectedMyOrderSlip());
+        right.add(slipActions, BorderLayout.SOUTH);
 
         add(left, BorderLayout.CENTER);
         add(right, BorderLayout.EAST);
@@ -80,5 +88,7 @@ class CustomOrdersMyOrdersTabPanel extends JPanel {
         void loadSelectedMyOrder();
         Runnable applyFilter();
         void refreshMyOrders();
+        void previewSelectedMyOrderSlip();
+        void printSelectedMyOrderSlip();
     }
 }

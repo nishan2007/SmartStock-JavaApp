@@ -2,6 +2,7 @@ package managers;
 
 import data.DB;
 import services.DeviceService;
+import ui.screens.BalanceDraw;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
@@ -12,7 +13,6 @@ import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
 import ui.screens.EndOfDay;
-import ui.screens.HardwareSetup;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.OrdersManagerDashboard;
@@ -20,7 +20,6 @@ import ui.screens.MachineManagement;
 import ui.screens.NewItem;
 import ui.screens.Orders;
 import ui.screens.OrdersEndOfDay;
-import ui.screens.LocationManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.PartsManagement;
 import ui.screens.ReceivingHistory;
@@ -31,9 +30,9 @@ import ui.screens.VendorList;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
 import ui.screens.Login;
-import ui.screens.LocalDeviceSettings;
 import ui.screens.PayrollDashboard;
 import ui.screens.TimeClock;
+import ui.screens.WorkstationPreferences;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -55,6 +54,7 @@ public final class NavigationManager {
         MAIN_MENU,
         MAKE_SALE,
         RETURN_SALE,
+        BALANCE_DRAW,
         ORDERS_MANAGER_DASHBOARD,
         END_OF_DAY,
         ORDERS_END_OF_DAY,
@@ -79,10 +79,8 @@ public final class NavigationManager {
         MACHINE_MANAGEMENT,
         PARTS_MANAGEMENT,
         MAINTENANCE_MANAGEMENT,
-        LOCATION_MANAGEMENT,
-        LOCAL_DEVICE_SETTINGS,
-        HARDWARE_SETUP,
-        COMPANY_CUSTOMIZATION
+        COMPANY_CUSTOMIZATION,
+        WORKSTATION_PREFERENCES
     }
 
     private static void openScreen(JFrame parent, JFrame screen) {
@@ -112,6 +110,10 @@ public final class NavigationManager {
 
     public static void openReturnSale(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.RETURN_SALE));
+    }
+
+    public static void openBalanceDraw(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.BALANCE_DRAW));
     }
 
     public static void openOrdersManagerDashboard(JFrame parent) {
@@ -210,20 +212,12 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.MAINTENANCE_MANAGEMENT));
     }
 
-    public static void openLocationManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.LOCATION_MANAGEMENT));
-    }
-
-    public static void openLocalDeviceSettings(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.LOCAL_DEVICE_SETTINGS));
-    }
-
-    public static void openHardwareSetup(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.HARDWARE_SETUP));
-    }
-
     public static void openCompanyCustomization(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.COMPANY_CUSTOMIZATION));
+    }
+
+    public static void openWorkstationPreferences(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.WORKSTATION_PREFERENCES));
     }
 
     private static JFrame createScreen(ScreenType screenType) {
@@ -231,6 +225,7 @@ public final class NavigationManager {
             case MAIN_MENU -> new MainMenu();
             case MAKE_SALE -> new MakeASale();
             case RETURN_SALE -> new ReturnSale();
+            case BALANCE_DRAW -> new BalanceDraw();
             case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
             case END_OF_DAY -> new EndOfDay();
             case ORDERS_END_OF_DAY -> new OrdersEndOfDay();
@@ -255,10 +250,8 @@ public final class NavigationManager {
             case MACHINE_MANAGEMENT -> new MachineManagement();
             case PARTS_MANAGEMENT -> new PartsManagement();
             case MAINTENANCE_MANAGEMENT -> new MaintenanceManagement();
-            case LOCATION_MANAGEMENT -> new LocationManagement();
-            case LOCAL_DEVICE_SETTINGS -> new LocalDeviceSettings();
-            case HARDWARE_SETUP -> new HardwareSetup();
             case COMPANY_CUSTOMIZATION -> new CompanyCustomization();
+            case WORKSTATION_PREFERENCES -> new WorkstationPreferences();
         };
     }
 
@@ -271,6 +264,7 @@ public final class NavigationManager {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
             case "ReturnSale" -> ScreenType.RETURN_SALE;
+            case "BalanceDraw" -> ScreenType.BALANCE_DRAW;
             case "OrdersManagerDashboard" -> ScreenType.ORDERS_MANAGER_DASHBOARD;
             case "EndOfDay" -> ScreenType.END_OF_DAY;
             case "OrdersEndOfDay" -> ScreenType.ORDERS_END_OF_DAY;
@@ -295,10 +289,8 @@ public final class NavigationManager {
             case "MachineManagement" -> ScreenType.MACHINE_MANAGEMENT;
             case "PartsManagement" -> ScreenType.PARTS_MANAGEMENT;
             case "MaintenanceManagement" -> ScreenType.MAINTENANCE_MANAGEMENT;
-            case "LocationManagement" -> ScreenType.LOCATION_MANAGEMENT;
-            case "LocalDeviceSettings" -> ScreenType.LOCAL_DEVICE_SETTINGS;
-            case "HardwareSetup" -> ScreenType.HARDWARE_SETUP;
             case "CompanyCustomization" -> ScreenType.COMPANY_CUSTOMIZATION;
+            case "WorkstationPreferences" -> ScreenType.WORKSTATION_PREFERENCES;
             default -> null;
         };
     }

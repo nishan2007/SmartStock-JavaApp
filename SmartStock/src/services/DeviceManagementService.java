@@ -22,6 +22,7 @@ public final class DeviceManagementService {
                 SELECT d.device_id::text AS device_id,
                        d.installation_id,
                        COALESCE(d.device_name, '') AS device_name,
+                       COALESCE(d.receipt_device_code, '0001') AS receipt_device_code,
                        COALESCE(d.hostname, '') AS hostname,
                        COALESCE(d.os_name, '') AS os_name,
                        COALESCE(d.os_version, '') AS os_version,
@@ -81,6 +82,7 @@ public final class DeviceManagementService {
                         rs.getString("device_id"),
                         rs.getString("installation_id"),
                         rs.getString("device_name"),
+                        rs.getString("receipt_device_code"),
                         rs.getString("hostname"),
                         rs.getString("os_name"),
                         rs.getString("os_version"),
@@ -219,6 +221,19 @@ public final class DeviceManagementService {
         }
     }
 
+    public static void updateDeviceReceiptCode(Connection conn, String deviceId, String receiptCode) throws SQLException {
+        String sql = """
+                UPDATE devices
+                SET receipt_device_code = ?
+                WHERE device_id = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, sanitizeCode(receiptCode));
+            ps.setObject(2, UUID.fromString(deviceId));
+            ps.executeUpdate();
+        }
+    }
+
     private static String normalizeNotes(String notes) {
         if (notes == null) {
             return null;
@@ -226,4 +241,15 @@ public final class DeviceManagementService {
         String trimmed = notes.trim();
         return trimmed.isEmpty() ? null : trimmed;
     }
+
+    private static String sanitizeCode(String value) {
+        if (value == null) return "0001";
+        String digits = value.replaceAll("\\D+", "");
+        if (digits.isBlank()) return "0001";
+        int parsed = Integer.parseInt(digits);
+        if (parsed < 1) parsed = 1;
+        if (parsed > 9999) parsed = 9999;
+        return String.format("%04d", parsed);
+    }
+
 }

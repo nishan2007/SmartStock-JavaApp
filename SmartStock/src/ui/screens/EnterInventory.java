@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
@@ -20,8 +21,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 public class EnterInventory extends JFrame {
     private JTextField searchField;
@@ -674,6 +678,9 @@ public class EnterInventory extends JFrame {
     }
 
     private void addInventory() {
+        if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", this, "Add to Inventory")) {
+            return;
+        }
         if (inventoryModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "No inventory entries have been added.");
             return;
@@ -760,11 +767,12 @@ public class EnterInventory extends JFrame {
                 try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
                      PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
-                     PreparedStatement updateCustomItemStmt = conn.prepareStatement(updateCustomItemSql);
+                     PreparedStatement updateCustomItemStmt = conn.prepareStatement(updateCustomItemSql, Statement.RETURN_GENERATED_KEYS);
                      PreparedStatement customItemMovementStmt = conn.prepareStatement(insertCustomItemMovementSql);
-                     PreparedStatement updateCustomVariantStmt = conn.prepareStatement(updateCustomVariantSql);
+                     PreparedStatement updateCustomVariantStmt = conn.prepareStatement(updateCustomVariantSql, Statement.RETURN_GENERATED_KEYS);
                      PreparedStatement customVariantMovementStmt = conn.prepareStatement(insertCustomVariantMovementSql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
+                    List<StockExpectation> expectations = new ArrayList<>();
 
 	                    receivingBatchStmt.setString(1, receive.receiveId());
 	                    receivingBatchStmt.setInt(2, locationId);
@@ -777,15 +785,20 @@ public class EnterInventory extends JFrame {
                     for (int i = 0; i < inventoryModel.getRowCount(); i++) {
                         String itemType = inventoryModel.getValueAt(i, 0).toString();
                         int itemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
+                        String itemName = String.valueOf(inventoryModel.getValueAt(i, 2));
                         int qty = parsePositiveInt(inventoryModel.getValueAt(i, 6), 0);
                         if (qty <= 0) {
                             throw new SQLException("Quantity must be greater than zero for " + itemType + " " + itemId + ".");
                         }
+                        int currentStock = parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
+                        expectations.add(new StockExpectation(itemType, itemId, itemName, currentStock + qty));
 
                         if ("Custom Item".equals(itemType)) {
                             updateCustomItemStmt.setInt(1, qty);
                             updateCustomItemStmt.setInt(2, itemId);
-                            updateCustomItemStmt.addBatch();
+                            if (updateCustomItemStmt.executeUpdate() == 0) {
+                                throw new SQLException("Custom item " + itemId + " no longer exists.");
+                            }
 
                             customItemMovementStmt.setInt(1, itemId);
                             customItemMovementStmt.setInt(2, qty);
@@ -795,11 +808,13 @@ public class EnterInventory extends JFrame {
                             customItemMovementStmt.setString(6, receive.receiveId());
                             customItemMovementStmt.setString(7, receive.deviceId());
                             customItemMovementStmt.setInt(8, receive.sequence());
-                            customItemMovementStmt.addBatch();
+                            customItemMovementStmt.executeUpdate();
                         } else if ("Custom Variant".equals(itemType)) {
                             updateCustomVariantStmt.setInt(1, qty);
                             updateCustomVariantStmt.setInt(2, itemId);
-                            updateCustomVariantStmt.addBatch();
+                            if (updateCustomVariantStmt.executeUpdate() == 0) {
+                                throw new SQLException("Custom variant " + itemId + " no longer exists.");
+                            }
 
                             customVariantMovementStmt.setInt(1, qty);
                             customVariantMovementStmt.setString(2, "INVENTORY_ENTRY");
@@ -809,7 +824,9 @@ public class EnterInventory extends JFrame {
                             customVariantMovementStmt.setString(6, receive.deviceId());
                             customVariantMovementStmt.setInt(7, receive.sequence());
                             customVariantMovementStmt.setInt(8, itemId);
-                            customVariantMovementStmt.addBatch();
+                            if (customVariantMovementStmt.executeUpdate() == 0) {
+                                throw new SQLException("Failed to record movement for custom variant " + itemId + ".");
+                            }
                         } else {
                             ensureInventoryStmt.setInt(1, itemId);
                             ensureInventoryStmt.setInt(2, locationId);
@@ -836,10 +853,7 @@ public class EnterInventory extends JFrame {
                     ensureInventoryStmt.executeBatch();
                     updateInventoryStmt.executeBatch();
                     movementStmt.executeBatch();
-                    updateCustomItemStmt.executeBatch();
-                    customItemMovementStmt.executeBatch();
-                    updateCustomVariantStmt.executeBatch();
-                    customVariantMovementStmt.executeBatch();
+                    verifyExpectedStock(conn, locationId, expectations);
                 }
 
                 conn.commit();
@@ -860,4 +874,48 @@ public class EnterInventory extends JFrame {
             JOptionPane.showMessageDialog(this, "Inventory entry failed: " + ex.getMessage());
         }
     }
+
+    private void verifyExpectedStock(Connection conn, int locationId, List<StockExpectation> expectations) throws SQLException {
+        String productSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM inventory WHERE location_id = ? AND product_id = ?";
+        String customItemSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM custom_order_items WHERE custom_item_id = ?";
+        String customVariantSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM custom_order_item_variants WHERE custom_variant_id = ?";
+
+        try (PreparedStatement productPs = conn.prepareStatement(productSql);
+             PreparedStatement customItemPs = conn.prepareStatement(customItemSql);
+             PreparedStatement customVariantPs = conn.prepareStatement(customVariantSql)) {
+            for (StockExpectation expectation : expectations) {
+                int actual;
+                if ("Custom Item".equals(expectation.itemType())) {
+                    customItemPs.setInt(1, expectation.itemId());
+                    actual = queryOnHand(customItemPs);
+                } else if ("Custom Variant".equals(expectation.itemType())) {
+                    customVariantPs.setInt(1, expectation.itemId());
+                    actual = queryOnHand(customVariantPs);
+                } else {
+                    productPs.setInt(1, locationId);
+                    productPs.setInt(2, expectation.itemId());
+                    actual = queryOnHand(productPs);
+                }
+
+                if (actual != expectation.expectedNewStock()) {
+                    throw new SQLException(
+                            "Stock mismatch for " + expectation.itemType() + " " + expectation.itemName()
+                                    + " (id " + expectation.itemId() + "). Expected "
+                                    + expectation.expectedNewStock() + " but found " + actual + "."
+                    );
+                }
+            }
+        }
+    }
+
+    private int queryOnHand(PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) {
+                return 0;
+            }
+            return rs.getInt("quantity_on_hand");
+        }
+    }
+
+    private record StockExpectation(String itemType, int itemId, String itemName, int expectedNewStock) {}
 }

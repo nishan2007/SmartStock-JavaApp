@@ -112,8 +112,9 @@ public class DeviceService {
                                 is_approved,
                                 is_blocked,
                                 approved_at,
-                                approved_by_user_id
-                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, ?, ?, ?, false, ?, ?)
+                                approved_by_user_id,
+                                receipt_device_code
+                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, ?, ?, ?, false, ?, ?, '0001')
                             returning device_id
                             """;
 

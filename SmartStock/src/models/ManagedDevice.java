@@ -6,6 +6,7 @@ public class ManagedDevice {
     private final String deviceId;
     private final String installationId;
     private final String deviceName;
+    private final String receiptDeviceCode;
     private final String hostname;
     private final String osName;
     private final String osVersion;
@@ -35,6 +36,7 @@ public class ManagedDevice {
             String deviceId,
             String installationId,
             String deviceName,
+            String receiptDeviceCode,
             String hostname,
             String osName,
             String osVersion,
@@ -63,6 +65,7 @@ public class ManagedDevice {
         this.deviceId = deviceId;
         this.installationId = installationId;
         this.deviceName = deviceName;
+        this.receiptDeviceCode = receiptDeviceCode;
         this.hostname = hostname;
         this.osName = osName;
         this.osVersion = osVersion;
@@ -92,6 +95,7 @@ public class ManagedDevice {
     public String getDeviceId() { return deviceId; }
     public String getInstallationId() { return installationId; }
     public String getDeviceName() { return deviceName; }
+    public String getReceiptDeviceCode() { return receiptDeviceCode; }
     public String getHostname() { return hostname; }
     public String getOsName() { return osName; }
     public String getOsVersion() { return osVersion; }

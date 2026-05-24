@@ -13,13 +13,28 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 public class Roles_Permission extends JFrame {
+    private static final class PermissionDefinition {
+        final String key;
+        final String label;
+        final String group;
+        final String description;
+
+        PermissionDefinition(String key, String label, String group, String description) {
+            this.key = key;
+            this.label = label;
+            this.group = group;
+            this.description = description;
+        }
+    }
 
     private JList<RoleItem> roleList;
     private DefaultListModel<RoleItem> roleListModel;
@@ -33,6 +48,8 @@ public class Roles_Permission extends JFrame {
     private JButton saveButton;
     private JButton addRoleButton;
     private static final Map<String, String> DEFAULT_PERMISSIONS = createDefaultPermissions();
+    private static final Map<String, String> DEFAULT_PERMISSION_DESCRIPTIONS = createDefaultPermissionDescriptions();
+    private static final Map<String, String> DEFAULT_PERMISSION_GROUPS = createDefaultPermissionGroups();
 
     public Roles_Permission() {
         setTitle("Role & Permission Management");
@@ -107,31 +124,17 @@ public class Roles_Permission extends JFrame {
         WindowHelper.showPosWindow(this);
     }
 
-    private void addPermission(String key, String label, String group, String description) {
-        if (key == null || key.isBlank()) {
-            return;
-        }
-
-        String normalizedKey = key.trim().toUpperCase();
-        if (permissionCheckboxes.containsKey(normalizedKey)) {
-            return;
-        }
-
-        JCheckBox cb = new JCheckBox(label);
+    private JCheckBox buildPermissionCheckBox(String key, String label, String description) {
+        JCheckBox cb = new JCheckBox(formatPermissionText(label, description));
         cb.setAlignmentX(Component.LEFT_ALIGNMENT);
+        cb.setOpaque(false);
 
-        String tooltip = normalizedKey;
+        String tooltip = key;
         if (description != null && !description.isBlank()) {
             tooltip += " - " + description;
         }
         cb.setToolTipText(tooltip);
-
-        if (group != null && !group.isBlank()) {
-            cb.setText(label + "  (" + group + ")");
-        }
-
-        permissionCheckboxes.put(normalizedKey, cb);
-        permissionPanel.add(cb);
+        return cb;
     }
 
     private JPanel wrapPermissionColumn(String title, JPanel contentPanel) {
@@ -144,31 +147,13 @@ public class Roles_Permission extends JFrame {
         return wrapper;
     }
 
-    private void addMobilePermission(String key, String label, String group, String description) {
-        if (key == null || key.isBlank()) {
-            return;
-        }
-
-        String normalizedKey = key.trim();
-        if (mobilePermissionCheckboxes.containsKey(normalizedKey)) {
-            return;
-        }
-
-        JCheckBox cb = new JCheckBox(label);
-        cb.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-        String tooltip = normalizedKey;
-        if (description != null && !description.isBlank()) {
-            tooltip += " - " + description;
-        }
-        cb.setToolTipText(tooltip);
-
-        if (group != null && !group.isBlank()) {
-            cb.setText(label + "  (" + group + ")");
-        }
-
-        mobilePermissionCheckboxes.put(normalizedKey, cb);
-        mobilePermissionPanel.add(cb);
+    private JPanel createSectionPanel(String sectionTitle) {
+        JPanel sectionPanel = new JPanel();
+        sectionPanel.setLayout(new BoxLayout(sectionPanel, BoxLayout.Y_AXIS));
+        sectionPanel.setOpaque(false);
+        sectionPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        sectionPanel.setBorder(BorderFactory.createTitledBorder(sectionTitle));
+        return sectionPanel;
     }
 
     private void ensurePermissionDefinitionsExist() {
@@ -194,6 +179,9 @@ public class Roles_Permission extends JFrame {
             if (permissionColumns.contains("description")) {
                 optionalColumns.add("description");
             }
+            if (permissionColumns.contains("permission_group")) {
+                optionalColumns.add("permission_group");
+            }
 
             String columnsSql = "permission_key";
             String selectSql = "?";
@@ -210,16 +198,62 @@ public class Roles_Permission extends JFrame {
                 for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
                     String key = entry.getKey();
                     String label = entry.getValue();
+                    String description = defaultPermissionDescription(key, label);
+                    String group = defaultPermissionGroup(key);
 
                     int parameterIndex = 1;
                     ps.setString(parameterIndex++, key);
-                    for (int i = 0; i < optionalColumns.size(); i++) {
-                        ps.setString(parameterIndex++, label);
+                    for (String column : optionalColumns) {
+                        if ("description".equals(column)) {
+                            ps.setString(parameterIndex++, description);
+                        } else if ("permission_group".equals(column)) {
+                            ps.setString(parameterIndex++, group);
+                        } else {
+                            ps.setString(parameterIndex++, label);
+                        }
                     }
                     ps.setString(parameterIndex, key);
                     ps.addBatch();
                 }
                 ps.executeBatch();
+            }
+
+            if (permissionColumns.contains("description")) {
+                String updateSql = """
+                        UPDATE permissions
+                        SET description = ?
+                        WHERE UPPER(permission_key) = UPPER(?)
+                          AND (description IS NULL OR TRIM(description) = '')
+                        """;
+                try (PreparedStatement update = conn.prepareStatement(updateSql)) {
+                    for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
+                        String key = entry.getKey();
+                        String description = defaultPermissionDescription(key, entry.getValue());
+                        update.setString(1, description);
+                        update.setString(2, key);
+                        update.addBatch();
+                    }
+                    update.executeBatch();
+                }
+            }
+
+            if (permissionColumns.contains("permission_group")) {
+                String groupSql = """
+                        UPDATE permissions
+                        SET permission_group = ?
+                        WHERE UPPER(permission_key) = UPPER(?)
+                          AND (permission_group IS NULL OR TRIM(permission_group) = '')
+                        """;
+                try (PreparedStatement update = conn.prepareStatement(groupSql)) {
+                    for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
+                        String key = entry.getKey();
+                        String group = defaultPermissionGroup(key);
+                        update.setString(1, group);
+                        update.setString(2, key);
+                        update.addBatch();
+                    }
+                    update.executeBatch();
+                }
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(
@@ -235,6 +269,7 @@ public class Roles_Permission extends JFrame {
     private void loadPermissionDefinitions() {
         permissionCheckboxes.clear();
         permissionPanel.removeAll();
+        List<PermissionDefinition> definitions = new ArrayList<>();
 
         try (Connection conn = DB.getConnection()) {
             Set<String> permissionColumns = getPermissionTableColumns(conn);
@@ -266,13 +301,23 @@ public class Roles_Permission extends JFrame {
                     String label = rs.getString("display_name");
                     String group = rs.getString("permission_group");
                     String description = rs.getString("description");
-
-                    addPermission(
-                            key,
-                            label == null || label.isBlank() ? formatRoleName(key) : label,
-                            group,
-                            description
-                    );
+                    if (key == null || key.isBlank()) {
+                        continue;
+                    }
+                    String normalizedKey = key.trim().toUpperCase();
+                    String resolvedLabel = label == null || label.isBlank() ? formatRoleName(key) : label;
+                    String resolvedGroup = (group == null || group.isBlank())
+                            ? defaultPermissionGroup(normalizedKey)
+                            : formatRoleName(group);
+                    String resolvedDescription = (description == null || description.isBlank())
+                            ? defaultPermissionDescription(normalizedKey, resolvedLabel)
+                            : description;
+                    definitions.add(new PermissionDefinition(
+                            normalizedKey,
+                            resolvedLabel,
+                            resolvedGroup,
+                            resolvedDescription
+                    ));
                 }
             }
         } catch (SQLException ex) {
@@ -285,10 +330,18 @@ public class Roles_Permission extends JFrame {
             ex.printStackTrace();
 
             for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
-                addPermission(entry.getKey(), entry.getValue(), null, null);
+                String key = entry.getKey();
+                String label = entry.getValue();
+                definitions.add(new PermissionDefinition(
+                        key,
+                        label,
+                        defaultPermissionGroup(key),
+                        defaultPermissionDescription(key, label)
+                ));
             }
         }
 
+        renderPermissionSections(permissionPanel, permissionCheckboxes, definitions);
         permissionPanel.revalidate();
         permissionPanel.repaint();
     }
@@ -297,6 +350,7 @@ public class Roles_Permission extends JFrame {
         mobilePermissionCheckboxes.clear();
         mobilePermissionPanel.removeAll();
         mobilePermissionsAvailable = false;
+        List<PermissionDefinition> definitions = new ArrayList<>();
 
         try (Connection conn = DB.getConnection()) {
             if (!tableExists(conn, "mobile_permissions") || !tableExists(conn, "role_mobile_permissions")) {
@@ -315,14 +369,31 @@ public class Roles_Permission extends JFrame {
             try (PreparedStatement ps = conn.prepareStatement(sql);
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    addMobilePermission(
-                            rs.getString("permission_key"),
-                            rs.getString("display_name"),
-                            rs.getString("permission_group"),
-                            rs.getString("description")
-                    );
+                    String key = rs.getString("permission_key");
+                    if (key == null || key.isBlank()) {
+                        continue;
+                    }
+                    String resolvedGroup = rs.getString("permission_group");
+                    String resolvedLabel = rs.getString("display_name");
+                    if (resolvedLabel == null || resolvedLabel.isBlank()) {
+                        resolvedLabel = formatRoleName(key);
+                    }
+                    if (resolvedGroup == null || resolvedGroup.isBlank()) {
+                        resolvedGroup = "General";
+                    }
+                    String description = rs.getString("description");
+                    if (description == null || description.isBlank()) {
+                        description = "Allows " + formatRoleName(key).toLowerCase() + " in the mobile app.";
+                    }
+                    definitions.add(new PermissionDefinition(
+                            key.trim(),
+                            resolvedLabel,
+                            formatRoleName(resolvedGroup),
+                            description
+                    ));
                 }
             }
+            renderPermissionSections(mobilePermissionPanel, mobilePermissionCheckboxes, definitions);
             mobilePermissionsAvailable = true;
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(
@@ -336,6 +407,40 @@ public class Roles_Permission extends JFrame {
 
         mobilePermissionPanel.revalidate();
         mobilePermissionPanel.repaint();
+    }
+
+    private void renderPermissionSections(
+            JPanel targetPanel,
+            Map<String, JCheckBox> checkBoxMap,
+            List<PermissionDefinition> definitions
+    ) {
+        targetPanel.removeAll();
+        Map<String, List<PermissionDefinition>> bySection = new TreeMap<>();
+        for (PermissionDefinition definition : definitions) {
+            String section = definition.group == null || definition.group.isBlank()
+                    ? "General"
+                    : definition.group;
+            bySection.computeIfAbsent(section, ignored -> new ArrayList<>()).add(definition);
+        }
+
+        for (Map.Entry<String, List<PermissionDefinition>> sectionEntry : bySection.entrySet()) {
+            JPanel sectionPanel = createSectionPanel(sectionEntry.getKey());
+            List<PermissionDefinition> sectionPermissions = sectionEntry.getValue();
+            sectionPermissions.sort(Comparator.comparing(permission -> permission.label.toLowerCase()));
+            for (PermissionDefinition definition : sectionPermissions) {
+                if (checkBoxMap.containsKey(definition.key)) {
+                    continue;
+                }
+                JCheckBox checkBox = buildPermissionCheckBox(
+                        definition.key,
+                        definition.label,
+                        definition.description
+                );
+                checkBoxMap.put(definition.key, checkBox);
+                sectionPanel.add(checkBox);
+            }
+            targetPanel.add(sectionPanel);
+        }
     }
 
     private String buildPermissionDisplayExpression(Set<String> permissionColumns) {
@@ -659,13 +764,54 @@ public class Roles_Permission extends JFrame {
         return formatted.toString();
     }
 
+    private static String formatPermissionText(String label, String description) {
+        if (description == null || description.isBlank()) {
+            return label;
+        }
+        return "<html><b>" + escapeHtml(label) + "</b><br><span style='color:#666666;'>" +
+                escapeHtml(description) + "</span></html>";
+    }
+
+    private static String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private static String defaultPermissionDescription(String permissionKey, String fallbackLabel) {
+        if (permissionKey == null) {
+            return fallbackLabel;
+        }
+        String description = DEFAULT_PERMISSION_DESCRIPTIONS.get(permissionKey.toUpperCase());
+        return (description == null || description.isBlank()) ? fallbackLabel : description;
+    }
+
+    private static String defaultPermissionGroup(String permissionKey) {
+        if (permissionKey == null) {
+            return "General";
+        }
+        String group = DEFAULT_PERMISSION_GROUPS.get(permissionKey.toUpperCase());
+        return (group == null || group.isBlank()) ? "General" : group;
+    }
+
     private static Map<String, String> createDefaultPermissions() {
         Map<String, String> permissions = new LinkedHashMap<>();
         permissions.put("MAKE_SALE", "Make Sale");
         permissions.put("APPLY_SALE_DISCOUNT", "Apply Sale Discount");
+        permissions.put("SALE_DISCOUNT_OVERRIDE", "Sale Discount Override");
+        permissions.put("RETURN_OVERRIDE", "Return Override");
+        permissions.put("SALE_DISCOUNT_LIMIT_SETTINGS", "Sale Discount Limit Settings");
+        permissions.put("SALE_RETURN_APPROVAL_SETTINGS", "Sale Return Approval Settings");
         permissions.put("CHANGE_SALE_ITEM_PRICE", "Change Sale Item Price");
         permissions.put("PROCESS_RETURNS", "Process Returns");
         permissions.put("END_OF_DAY", "End of Day");
+        permissions.put("BALANCE_DRAWER", "Balance Draw");
         permissions.put("VIEW_SALES", "View Sales");
         permissions.put("NEW_ITEM", "Add Item");
         permissions.put("EDIT_ITEM", "Edit Item");
@@ -704,11 +850,134 @@ public class Roles_Permission extends JFrame {
         permissions.put("PAYROLL_DASHBOARD", "Payroll Dashboard");
         permissions.put("ROLE_MANAGEMENT", "Roles & Permission");
         permissions.put("LOCATION_MANAGEMENT", "Location Management");
+        permissions.put("CASH_DRAWER_MANAGEMENT", "Cash Drawer Management");
         permissions.put("COMPANY_PREFERENCES", "Company Preferences");
         permissions.put("CHANGE_STORE", "Change Store");
         permissions.put("VIEW_REPORTS", "View Reports");
-        permissions.put("LOCAL_DEVICE_SETTINGS", "Local Device Settings");
-        permissions.put("HARDWARE_SETUP", "Hardware Setup");
+        permissions.put("LOCAL_DEVICE_SETTINGS", "Workstation Settings");
+        permissions.put("HARDWARE_SETUP", "Hardware Settings");
         return permissions;
+    }
+
+    private static Map<String, String> createDefaultPermissionDescriptions() {
+        Map<String, String> descriptions = new LinkedHashMap<>();
+        descriptions.put("MAKE_SALE", "Allows creating and completing normal sales transactions.");
+        descriptions.put("APPLY_SALE_DISCOUNT", "Allows applying line and sale-level discounts without manager override.");
+        descriptions.put("SALE_DISCOUNT_OVERRIDE", "Allows approving discount overrides above configured limits.");
+        descriptions.put("RETURN_OVERRIDE", "Allows approving return amount overrides above configured limits.");
+        descriptions.put("SALE_DISCOUNT_LIMIT_SETTINGS", "Allows changing sale discount approval thresholds in company settings.");
+        descriptions.put("SALE_RETURN_APPROVAL_SETTINGS", "Allows changing return approval thresholds in company settings.");
+        descriptions.put("CHANGE_SALE_ITEM_PRICE", "Allows editing item unit prices during a sale without override.");
+        descriptions.put("PROCESS_RETURNS", "Allows creating and completing return transactions.");
+        descriptions.put("END_OF_DAY", "Allows running end-of-day reconciliation and closeout tasks.");
+        descriptions.put("BALANCE_DRAWER", "Allows balancing drawer sessions and submitting counted cash totals.");
+        descriptions.put("VIEW_SALES", "Allows viewing past sales and related transaction history.");
+        descriptions.put("NEW_ITEM", "Allows creating new inventory items.");
+        descriptions.put("EDIT_ITEM", "Allows editing existing inventory item details.");
+        descriptions.put("RECEIVING_INVENTORY", "Allows receiving stock into inventory quantities.");
+        descriptions.put("VIEW_RECEIVING_HISTORY", "Allows viewing historical receiving records.");
+        descriptions.put("STORE_TRANSFER", "Allows sending and receiving inventory store transfers.");
+        descriptions.put("VIEW_INVENTORY", "Allows viewing the inventory list and stock levels.");
+        descriptions.put("VIEW_ITEM_DETAILS", "Allows opening full item detail records.");
+        descriptions.put("VIEW_COST_PRICE", "Allows viewing internal item cost prices.");
+        descriptions.put("VIEW_VENDOR", "Allows viewing vendor assignments on items.");
+        descriptions.put("VIEW_CREATED_BY", "Allows viewing item creation and ownership metadata.");
+        descriptions.put("MANUAL_ADJUSTMENT", "Allows manual quantity adjustments outside normal receiving/transfer flows.");
+        descriptions.put("DEPARTMENT_MANAGEMENT", "Allows creating and managing item departments.");
+        descriptions.put("VENDOR_MANAGEMENT", "Allows creating and managing vendors.");
+        descriptions.put("CUSTOMER_ACCOUNTS", "Allows using customer account balances, credits, and history.");
+        descriptions.put("CREATE_CUSTOM_ORDER", "Allows creating new custom orders.");
+        descriptions.put("MANAGE_CUSTOM_ORDERS", "Allows full management access across all custom orders.");
+        descriptions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Allows viewing custom orders assigned to the logged-in user.");
+        descriptions.put("ORDERS_MANAGER_DASHBOARD", "Allows access to manager-level custom order dashboard tools.");
+        descriptions.put("ORDERS_END_OF_DAY", "Allows access to custom-order end-of-day totals and reconciliation.");
+        descriptions.put("CUSTOM_ORDER_REFUNDS", "Allows issuing refunds on custom orders.");
+        descriptions.put("CUSTOM_ORDER_LINE_RETURNS", "Allows returning individual custom-order lines.");
+        descriptions.put("CUSTOM_ORDER_LINE_DELIVERY", "Allows marking custom-order lines as delivered.");
+        descriptions.put("CUSTOM_ORDER_LINE_DISCOUNT", "Allows discounting custom-order lines without override.");
+        descriptions.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Allows overriding required custom-order deposit amounts.");
+        descriptions.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Allows editing custom-order minimum deposit settings.");
+        descriptions.put("CUSTOM_ORDER_REFUND_APPROVAL", "Allows approving high-value custom-order refunds.");
+        descriptions.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Allows editing custom-order refund approval limits.");
+        descriptions.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Allows updating production workflow states for custom-order lines.");
+        descriptions.put("CUSTOM_ORDER_CANCEL", "Allows canceling custom orders.");
+        descriptions.put("SET_CREDIT_LIMIT", "Allows setting customer credit limits.");
+        descriptions.put("EDIT_ACCOUNT_NUMBER", "Allows changing customer account numbers.");
+        descriptions.put("EMPLOYEE_MANAGEMENT", "Allows creating and managing employee records.");
+        descriptions.put("TIME_CLOCK", "Allows clock-in/clock-out actions.");
+        descriptions.put("TIME_CLOCK_MANAGEMENT", "Allows viewing and correcting staff time clock records.");
+        descriptions.put("PAYROLL_DASHBOARD", "Allows viewing payroll and labor summary dashboards.");
+        descriptions.put("ROLE_MANAGEMENT", "Allows editing role definitions and assigning permissions.");
+        descriptions.put("LOCATION_MANAGEMENT", "Allows creating and editing store locations.");
+        descriptions.put("CASH_DRAWER_MANAGEMENT", "Allows configuring cash drawer workflows and sessions.");
+        descriptions.put("COMPANY_PREFERENCES", "Allows editing company-wide operational preferences.");
+        descriptions.put("CHANGE_STORE", "Allows switching the active store context.");
+        descriptions.put("VIEW_REPORTS", "Allows opening reporting screens and exports.");
+        descriptions.put("LOCAL_DEVICE_SETTINGS", "Allows changing workstation-specific app/receipt settings.");
+        descriptions.put("HARDWARE_SETUP", "Allows configuring scanner, printer, and hardware integration settings.");
+        return descriptions;
+    }
+
+    private static Map<String, String> createDefaultPermissionGroups() {
+        Map<String, String> groups = new LinkedHashMap<>();
+
+        groups.put("MAKE_SALE", "Sales");
+        groups.put("APPLY_SALE_DISCOUNT", "Sales");
+        groups.put("SALE_DISCOUNT_OVERRIDE", "Sales");
+        groups.put("RETURN_OVERRIDE", "Sales");
+        groups.put("SALE_DISCOUNT_LIMIT_SETTINGS", "Sales");
+        groups.put("SALE_RETURN_APPROVAL_SETTINGS", "Sales");
+        groups.put("CHANGE_SALE_ITEM_PRICE", "Sales");
+        groups.put("PROCESS_RETURNS", "Sales");
+        groups.put("END_OF_DAY", "Sales");
+        groups.put("BALANCE_DRAWER", "Sales");
+        groups.put("VIEW_SALES", "Sales");
+        groups.put("CUSTOMER_ACCOUNTS", "Sales");
+        groups.put("SET_CREDIT_LIMIT", "Sales");
+        groups.put("EDIT_ACCOUNT_NUMBER", "Sales");
+        groups.put("CREATE_CUSTOM_ORDER", "Orders");
+        groups.put("MANAGE_CUSTOM_ORDERS", "Orders");
+        groups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Orders");
+        groups.put("ORDERS_MANAGER_DASHBOARD", "Orders");
+        groups.put("ORDERS_END_OF_DAY", "Orders");
+        groups.put("CUSTOM_ORDER_REFUNDS", "Orders");
+        groups.put("CUSTOM_ORDER_LINE_RETURNS", "Orders");
+        groups.put("CUSTOM_ORDER_LINE_DELIVERY", "Orders");
+        groups.put("CUSTOM_ORDER_LINE_DISCOUNT", "Orders");
+        groups.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Orders");
+        groups.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Orders");
+        groups.put("CUSTOM_ORDER_REFUND_APPROVAL", "Orders");
+        groups.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Orders");
+        groups.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Orders");
+        groups.put("CUSTOM_ORDER_CANCEL", "Orders");
+
+        groups.put("NEW_ITEM", "Inventory");
+        groups.put("EDIT_ITEM", "Inventory");
+        groups.put("RECEIVING_INVENTORY", "Inventory");
+        groups.put("VIEW_RECEIVING_HISTORY", "Inventory");
+        groups.put("STORE_TRANSFER", "Inventory");
+        groups.put("VIEW_INVENTORY", "Inventory");
+        groups.put("VIEW_ITEM_DETAILS", "Inventory");
+        groups.put("VIEW_COST_PRICE", "Inventory");
+        groups.put("VIEW_VENDOR", "Inventory");
+        groups.put("VIEW_CREATED_BY", "Inventory");
+        groups.put("MANUAL_ADJUSTMENT", "Inventory");
+        groups.put("DEPARTMENT_MANAGEMENT", "Inventory");
+        groups.put("VENDOR_MANAGEMENT", "Inventory");
+
+        groups.put("EMPLOYEE_MANAGEMENT", "People");
+        groups.put("TIME_CLOCK", "People");
+        groups.put("TIME_CLOCK_MANAGEMENT", "People");
+        groups.put("PAYROLL_DASHBOARD", "People");
+
+        groups.put("ROLE_MANAGEMENT", "Administration");
+        groups.put("LOCATION_MANAGEMENT", "Administration");
+        groups.put("CASH_DRAWER_MANAGEMENT", "Administration");
+        groups.put("COMPANY_PREFERENCES", "Administration");
+        groups.put("CHANGE_STORE", "Administration");
+        groups.put("VIEW_REPORTS", "Administration");
+        groups.put("LOCAL_DEVICE_SETTINGS", "Administration");
+        groups.put("HARDWARE_SETUP", "Administration");
+        return groups;
     }
 }

@@ -1,123 +1,191 @@
 package managers;
 
+import data.DB;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetAddress;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Properties;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 public class ReceiptNumberManager {
     private static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "device.properties");
-    private static final String DEVICE_ID_KEY = "device_id";
+    private static final int CODE_LENGTH = 4;
     private static final int RECEIPT_SEQUENCE_PADDING = 6;
 
     private ReceiptNumberManager() {
     }
 
     public static synchronized ReceiptNumber nextReceipt(int locationId) throws IOException {
-        Properties properties = loadProperties();
-        String deviceId = getOrCreateDeviceId(properties);
-        String storeCode = formatStoreCode(locationId);
-        String sequenceKey = "next_receipt_sequence." + storeCode + "." + deviceId;
-        int sequence = parsePositiveInt(properties.getProperty(sequenceKey), 1);
-
-        properties.setProperty(sequenceKey, String.valueOf(sequence + 1));
-        saveProperties(properties);
-
-        String receiptNumber = formatReceiptNumber(storeCode, deviceId, sequence);
-        return new ReceiptNumber(receiptNumber, deviceId, sequence);
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                String storeCode = resolveStoreCode(conn, locationId);
+                String deviceCode = resolveDeviceCode(conn);
+                int sequence = nextStoreReceiptSequence(conn, locationId);
+                String receiptNumber = formatReceiptNumber(storeCode, deviceCode, sequence);
+                conn.commit();
+                return new ReceiptNumber(receiptNumber, deviceCode, sequence);
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (SQLException ex) {
+            throw new IOException("Unable to generate next receipt number.", ex);
+        }
     }
 
     public static synchronized ReceiveNumber nextReceive(int locationId) throws IOException {
-        Properties properties = loadProperties();
-        String deviceId = getOrCreateDeviceId(properties);
-        String storeCode = formatStoreCode(locationId);
-        String sequenceKey = "next_receive_sequence." + storeCode + "." + deviceId;
-        int sequence = parsePositiveInt(properties.getProperty(sequenceKey), 1);
-
-        properties.setProperty(sequenceKey, String.valueOf(sequence + 1));
-        saveProperties(properties);
-
-        String receiveId = formatReceiveId(storeCode, deviceId, sequence);
-        return new ReceiveNumber(receiveId, deviceId, sequence);
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                String storeCode = resolveStoreCode(conn, locationId);
+                String deviceCode = resolveDeviceCode(conn);
+                int sequence = nextStoreReceiptSequence(conn, locationId);
+                String receiveId = formatReceiveId(storeCode, deviceCode, sequence);
+                conn.commit();
+                return new ReceiveNumber(receiveId, deviceCode, sequence);
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (SQLException ex) {
+            throw new IOException("Unable to generate next receive number.", ex);
+        }
     }
 
     public static synchronized DeviceReceiptSettings getDeviceReceiptSettings(int locationId) throws IOException {
-        Properties properties = loadProperties();
-        String deviceId = getOrCreateDeviceId(properties);
-        String storeCode = formatStoreCode(locationId);
-        String receiptSequenceKey = "next_receipt_sequence." + storeCode + "." + deviceId;
-        String receiveSequenceKey = "next_receive_sequence." + storeCode + "." + deviceId;
-        int nextReceiptSequence = parsePositiveInt(properties.getProperty(receiptSequenceKey), 1);
-        int nextReceiveSequence = parsePositiveInt(properties.getProperty(receiveSequenceKey), 1);
-        String nextReceiptPreview = formatReceiptNumber(storeCode, deviceId, nextReceiptSequence);
-        String nextReceivePreview = formatReceiveId(storeCode, deviceId, nextReceiveSequence);
-
-        return new DeviceReceiptSettings(
-                CONFIG_PATH,
-                deviceId,
-                storeCode,
-                nextReceiptSequence,
-                nextReceiptPreview,
-                nextReceiveSequence,
-                nextReceivePreview
-        );
+        try (Connection conn = DB.getConnection()) {
+            String storeCode = resolveStoreCode(conn, locationId);
+            String deviceCode = resolveDeviceCode(conn);
+            int nextSequence = currentStoreReceiptSequence(conn, locationId);
+            String nextReceiptPreview = formatReceiptNumber(storeCode, deviceCode, nextSequence);
+            String nextReceivePreview = formatReceiveId(storeCode, deviceCode, nextSequence);
+            return new DeviceReceiptSettings(
+                    CONFIG_PATH,
+                    deviceCode,
+                    storeCode,
+                    nextSequence,
+                    nextReceiptPreview,
+                    nextSequence,
+                    nextReceivePreview
+            );
+        } catch (SQLException ex) {
+            throw new IOException("Unable to load receipt settings.", ex);
+        }
     }
 
     public static synchronized String updateDeviceId(String deviceId) throws IOException {
-        String sanitizedDeviceId = sanitizeDeviceId(deviceId);
-        if (sanitizedDeviceId.isBlank()) {
-            throw new IllegalArgumentException("Device ID cannot be blank.");
+        String sanitized = sanitizeCode(deviceId);
+        if (sanitized.isBlank()) {
+            throw new IllegalArgumentException("Device code cannot be blank.");
         }
-
-        Properties properties = loadProperties();
-        properties.setProperty(DEVICE_ID_KEY, sanitizedDeviceId);
-        saveProperties(properties);
-        return sanitizedDeviceId;
+        return sanitized;
     }
 
     public static String previewSanitizedDeviceId(String deviceId) {
-        return sanitizeDeviceId(deviceId);
+        return sanitizeCode(deviceId);
     }
 
     public static Path getConfigPath() {
         return CONFIG_PATH;
     }
 
-    private static Properties loadProperties() throws IOException {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
+    private static int currentStoreReceiptSequence(Connection conn, int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(next_receipt_counter, 1) AS next_receipt_counter
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Missing company_customization row for location_id=" + locationId);
+                }
+                return parsePositiveInt(rs.getString("next_receipt_counter"), 1);
             }
         }
-        return properties;
     }
 
-    private static void saveProperties(Properties properties) throws IOException {
-        Files.createDirectories(CONFIG_PATH.getParent());
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock local device receipt settings");
-        }
-    }
-
-    private static String getOrCreateDeviceId(Properties properties) throws IOException {
-        String deviceId = sanitizeDeviceId(properties.getProperty(DEVICE_ID_KEY));
-        if (deviceId.isBlank()) {
-            deviceId = sanitizeDeviceId("POS-" + getHostName());
-            if (deviceId.isBlank()) {
-                deviceId = "POS-LOCAL";
+    private static int nextStoreReceiptSequence(Connection conn, int locationId) throws SQLException {
+        String sql = """
+                WITH store_counter AS (
+                    SELECT GREATEST(COALESCE(next_receipt_counter, 1), 1) AS counter
+                    FROM company_customization
+                    WHERE location_id = ?
+                    FOR UPDATE
+                ),
+                max_sale_sequence AS (
+                    SELECT COALESCE(
+                               MAX(
+                                   CASE
+                                       WHEN COALESCE(receipt_number, '') ~ '^[0-9]{4}-[0-9]{4}-[0-9]{6}$'
+                                       THEN RIGHT(receipt_number, 6)::INT
+                                       ELSE NULL
+                                   END
+                               ),
+                               0
+                           ) AS max_sequence
+                    FROM sales
+                    WHERE location_id = ?
+                ),
+                next_sequence AS (
+                    SELECT GREATEST(store_counter.counter, max_sale_sequence.max_sequence + 1) AS sequence
+                    FROM store_counter, max_sale_sequence
+                )
+                UPDATE company_customization
+                SET next_receipt_counter = (SELECT sequence + 1 FROM next_sequence),
+                    updated_at = NOW()
+                WHERE location_id = ?
+                RETURNING (SELECT sequence FROM next_sequence) AS sequence
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setInt(2, locationId);
+            ps.setInt(3, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("sequence");
+                }
             }
-            properties.setProperty(DEVICE_ID_KEY, deviceId);
-            saveProperties(properties);
         }
-        return deviceId;
+        throw new SQLException("Unable to advance receipt sequence for store.");
     }
 
-    private static String formatStoreCode(int locationId) {
-        return String.format("S%03d", locationId);
+    private static String resolveStoreCode(Connection conn, int locationId) throws SQLException {
+        String sql = "SELECT COALESCE(receipt_store_code, '') AS receipt_store_code FROM locations WHERE location_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Location not found for location_id=" + locationId);
+                }
+                return requireCode(rs.getString("receipt_store_code"), "location.receipt_store_code");
+            }
+        }
+    }
+
+    private static String resolveDeviceCode(Connection conn) throws SQLException {
+        String currentDeviceId = SessionManager.getCurrentDeviceId();
+        if (currentDeviceId == null || currentDeviceId.isBlank()) {
+            throw new SQLException("No active device session found for receipt numbering.");
+        }
+        String sql = "SELECT COALESCE(receipt_device_code, '') AS receipt_device_code FROM devices WHERE device_id = ?::uuid";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, currentDeviceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Device not found for device_id=" + currentDeviceId);
+                }
+                return requireCode(rs.getString("receipt_device_code"), "devices.receipt_device_code");
+            }
+        }
     }
 
     private static int parsePositiveInt(String value, int fallback) {
@@ -130,29 +198,29 @@ public class ReceiptNumberManager {
     }
 
     private static String formatReceiptNumber(String storeCode, String deviceId, int sequence) {
-        return "R-" + storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
+        return storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
     }
 
     private static String formatReceiveId(String storeCode, String deviceId, int sequence) {
-        return "RCV-" + storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
+        return storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
     }
 
-    private static String sanitizeDeviceId(String value) {
-        if (value == null) {
-            return "";
+    private static String requireCode(String value, String sourceField) throws SQLException {
+        String sanitized = sanitizeCode(value);
+        if (sanitized.isBlank()) {
+            throw new SQLException("Missing or invalid code in " + sourceField);
         }
-        String cleaned = value.trim().toUpperCase().replaceAll("[^A-Z0-9-]+", "-");
-        cleaned = cleaned.replaceAll("-+", "-");
-        cleaned = cleaned.replaceAll("^-|-$", "");
-        return cleaned;
+        return sanitized;
     }
 
-    private static String getHostName() {
-        try {
-            return InetAddress.getLocalHost().getHostName();
-        } catch (Exception ex) {
-            return "LOCAL";
-        }
+    private static String sanitizeCode(String value) {
+        if (value == null) return "";
+        String digits = value.replaceAll("\\D+", "");
+        if (digits.isBlank()) return "";
+        int number = parsePositiveInt(digits, 1);
+        if (number < 1) number = 1;
+        if (number > 9999) number = 9999;
+        return String.format("%0" + CODE_LENGTH + "d", number);
     }
 
     public record ReceiptNumber(String receiptNumber, String deviceId, int sequence) {

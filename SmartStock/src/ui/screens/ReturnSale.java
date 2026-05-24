@@ -1,8 +1,13 @@
 package ui.screens;
 
 import data.DB;
+import managers.CompanyCustomizationManager;
+import managers.PermissionManager;
 import managers.SessionManager;
+import models.CashDrawerContext;
+import services.CashDrawerService;
 import services.DeviceContextService;
+import services.ManagerApprovalService;
 import services.SaleAuditService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
@@ -34,11 +39,13 @@ import java.util.List;
 import java.util.Locale;
 
 public class ReturnSale extends JFrame {
+    private static final String RETURN_OVERRIDE_PERMISSION = "RETURN_OVERRIDE";
     private final JTextField saleSearchField = new JTextField();
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
     private final JComboBox<String> refundMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
     private final JTextArea reasonArea = new JTextArea(3, 30);
     private final JLabel totalReturnLabel = new JLabel("Return Total: $0.00");
+    private final JLabel overrideStatusLabel = new JLabel("No active override approvals");
     private final DefaultTableModel itemModel;
     private final DefaultTableModel saleSearchModel;
     private final JTable saleSearchTable;
@@ -47,6 +54,9 @@ public class ReturnSale extends JFrame {
     private SaleSnapshot loadedSale;
     private boolean updatingModel;
     private boolean selectingSearchResult;
+    private Integer overrideApprovedByUserId;
+    private String overrideApprovedByName;
+    private BigDecimal overrideApprovedUpToAmount = BigDecimal.ZERO;
 
     private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
@@ -214,6 +224,7 @@ public class ReturnSale extends JFrame {
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actionPanel.setOpaque(false);
         totalReturnLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
+        overrideStatusLabel.setForeground(new Color(71, 85, 105));
         JButton returnAllButton = new JButton("Return All Available");
         JButton clearButton = new JButton("Clear Qty");
         JButton submitButton = new JButton("Submit Return");
@@ -230,7 +241,11 @@ public class ReturnSale extends JFrame {
         submitButton.addActionListener(e -> submitReturn());
 
         panel.add(reasonPanel, BorderLayout.CENTER);
-        panel.add(actionPanel, BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout(8, 6));
+        footer.setOpaque(false);
+        footer.add(overrideStatusLabel, BorderLayout.WEST);
+        footer.add(actionPanel, BorderLayout.EAST);
+        panel.add(footer, BorderLayout.SOUTH);
         return panel;
     }
 
@@ -332,6 +347,9 @@ public class ReturnSale extends JFrame {
     }
 
     private void loadSale() {
+        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Load Sale for Return")) {
+            return;
+        }
         String search = saleSearchField.getText().trim();
         if (search.isBlank()) {
             JOptionPane.showMessageDialog(this, "Enter a sale ID or receipt number.");
@@ -470,6 +488,9 @@ public class ReturnSale extends JFrame {
     }
 
     private void submitReturn() {
+        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Submit Return")) {
+            return;
+        }
         if (loadedSale == null) {
             JOptionPane.showMessageDialog(this, "Load a sale first.");
             return;
@@ -492,6 +513,42 @@ public class ReturnSale extends JFrame {
         }
 
         BigDecimal returnTotal = calculateReturnTotal(lines);
+        if (returnTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            JOptionPane.showMessageDialog(this, "Return total must be greater than zero.");
+            return;
+        }
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
+                ? BigDecimal.ZERO
+                : saleSafetySettings.returnApprovalLimit();
+        boolean overrideRequired = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
+                && returnTotal.compareTo(returnApprovalLimit) > 0;
+        if (overrideRequired && !PermissionManager.hasPermission(RETURN_OVERRIDE_PERMISSION)) {
+            if (overrideApprovedByUserId == null || overrideApprovedUpToAmount.compareTo(returnTotal) < 0) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Return override is required in the return editor before submit.",
+                        "Override Required",
+                        JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
+        } else if (overrideRequired) {
+            overrideApprovedByUserId = SessionManager.getCurrentUserId();
+            overrideApprovedByName = SessionManager.getCurrentUserDisplayName();
+            overrideApprovedUpToAmount = returnTotal;
+            overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
+        } else {
+            overrideApprovedByUserId = null;
+            overrideApprovedByName = null;
+            overrideApprovedUpToAmount = BigDecimal.ZERO;
+            overrideStatusLabel.setText("No active override approvals");
+        }
+        String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
+        if (reason.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Reason / note is required for returns.");
+            return;
+        }
         int result = JOptionPane.showConfirmDialog(
                 this,
                 "Process return for " + CURRENCY.format(returnTotal) + "?",
@@ -521,6 +578,13 @@ public class ReturnSale extends JFrame {
     }
 
     private long createReturn(Connection conn, List<ReturnLine> lines, BigDecimal returnTotal) throws Exception {
+        String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
+                ? BigDecimal.ZERO
+                : saleSafetySettings.returnApprovalLimit();
+        boolean returnOverrideApplied = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
+                && returnTotal.compareTo(returnApprovalLimit) > 0;
         String lockSaleSql = """
                 SELECT sale_id, location_id, customer_id, payment_method, total_amount, amount_paid, returned_amount
                 FROM sales
@@ -538,6 +602,10 @@ public class ReturnSale extends JFrame {
         validateReturnQuantities(conn, lines);
 
         String deviceId = DeviceContextService.currentDeviceId();
+        CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+        if ("CASH".equalsIgnoreCase(String.valueOf(refundMethodBox.getSelectedItem()))) {
+            cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+        }
         String insertReturnSql = """
                 INSERT INTO sale_returns (
                     sale_id,
@@ -548,9 +616,15 @@ public class ReturnSale extends JFrame {
                     refund_amount,
                     reason,
                     device_id,
-                    device_name
+                    device_name,
+                    cash_drawer_id,
+                    cash_drawer_name,
+                    cash_drawer_session_id,
+                    override_reason,
+                    override_by_user_id,
+                    override_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String insertReturnItemSql = """
                 INSERT INTO sale_return_items (return_id, sale_item_id, product_id, quantity, unit_price)
@@ -585,9 +659,15 @@ public class ReturnSale extends JFrame {
             returnStmt.setString(4, SessionManager.getCurrentUserDisplayName());
             returnStmt.setString(5, String.valueOf(refundMethodBox.getSelectedItem()));
             returnStmt.setBigDecimal(6, returnTotal);
-            returnStmt.setString(7, reasonArea.getText().trim());
+            returnStmt.setString(7, reason);
             returnStmt.setString(8, deviceId);
             returnStmt.setString(9, DeviceContextService.currentDeviceName());
+            setNullableLong(returnStmt, 10, cashDrawer.cashDrawerId());
+            returnStmt.setString(11, cashDrawer.drawerName());
+            setNullableLong(returnStmt, 12, cashDrawer.sessionId());
+            returnStmt.setString(13, returnOverrideApplied ? reason : null);
+            setNullableInteger(returnStmt, 14, returnOverrideApplied ? overrideApprovedByUserId : null);
+            returnStmt.setString(15, returnOverrideApplied ? overrideApprovedByName : null);
             returnStmt.executeUpdate();
 
             try (ResultSet keys = returnStmt.getGeneratedKeys()) {
@@ -603,9 +683,20 @@ public class ReturnSale extends JFrame {
                 loadedSale.customerId(), null, loadedSale.locationId(),
                 "RETURN_CREATED", "RETURN", "refund_amount",
                 null, returnTotal, returnTotal, null,
-                reasonArea.getText().trim(),
+                reason,
                 "refund_method=" + refundMethodBox.getSelectedItem()
         );
+        if (returnOverrideApplied) {
+            SaleAuditService.record(
+                    conn, loadedSale.saleId(), null, returnId, null,
+                    loadedSale.customerId(), null, loadedSale.locationId(),
+                    "RETURN_OVERRIDE_APPROVED", "RETURN", "override_by",
+                    null, overrideApprovedByName,
+                    returnTotal, null,
+                    reason,
+                    "Return override approval captured."
+            );
+        }
 
         try (PreparedStatement itemStmt = conn.prepareStatement(insertReturnItemSql, Statement.RETURN_GENERATED_KEYS);
              PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
@@ -633,7 +724,7 @@ public class ReturnSale extends JFrame {
                         loadedSale.customerId(), line.productId(), loadedSale.locationId(),
                         "RETURN_LINE_RECORDED", "RETURN_ITEM", "quantity",
                         null, line.quantity(), lineReturnAmount, line.quantity(),
-                        reasonArea.getText().trim(),
+                        reason,
                         "refund_method=" + refundMethodBox.getSelectedItem()
                 );
 
@@ -665,7 +756,7 @@ public class ReturnSale extends JFrame {
                             loadedSale.customerId(), line.productId(), loadedSale.locationId(),
                             "RETURN_INVENTORY_RESTOCKED", "INVENTORY", null,
                             null, null, null, line.quantity(),
-                            reasonArea.getText().trim(),
+                            reason,
                             "Inventory restored from sale return."
                     );
                 }
@@ -812,7 +903,59 @@ public class ReturnSale extends JFrame {
         for (ReturnLine line : collectReturnLines()) {
             total = total.add(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
         }
+        evaluateReturnOverrideForCurrentTotal(total);
         totalReturnLabel.setText("Return Total: " + CURRENCY.format(total));
+    }
+
+    private void evaluateReturnOverrideForCurrentTotal(BigDecimal total) {
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
+                ? BigDecimal.ZERO
+                : saleSafetySettings.returnApprovalLimit();
+        boolean overrideRequired = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
+                && total.compareTo(returnApprovalLimit) > 0;
+
+        if (!overrideRequired) {
+            overrideApprovedByUserId = null;
+            overrideApprovedByName = null;
+            overrideApprovedUpToAmount = BigDecimal.ZERO;
+            overrideStatusLabel.setText("No active override approvals");
+            return;
+        }
+
+        if (PermissionManager.hasPermission(RETURN_OVERRIDE_PERMISSION)) {
+            overrideApprovedByUserId = SessionManager.getCurrentUserId();
+            overrideApprovedByName = SessionManager.getCurrentUserDisplayName();
+            overrideApprovedUpToAmount = total;
+            overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
+            return;
+        }
+
+        if (overrideApprovedByUserId != null && overrideApprovedUpToAmount.compareTo(total) >= 0) {
+            return;
+        }
+
+        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                this,
+                RETURN_OVERRIDE_PERMISSION,
+                "Return Override",
+                "Reason for return override:"
+        );
+        if (approval == null) {
+            overrideApprovedByUserId = null;
+            overrideApprovedByName = null;
+            overrideApprovedUpToAmount = BigDecimal.ZERO;
+            overrideStatusLabel.setText("Return override required before submit");
+            return;
+        }
+
+        overrideApprovedByUserId = approval.approvedByUserId();
+        overrideApprovedByName = approval.approvedByName();
+        overrideApprovedUpToAmount = total;
+        if ((reasonArea.getText() == null || reasonArea.getText().trim().isBlank()) && approval.reason() != null) {
+            reasonArea.setText(approval.reason());
+        }
+        overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
     }
 
     private BigDecimal calculateReturnTotal(List<ReturnLine> lines) {
@@ -880,6 +1023,14 @@ public class ReturnSale extends JFrame {
             ps.setNull(index, java.sql.Types.INTEGER);
         } else {
             ps.setInt(index, value);
+        }
+    }
+
+    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
         }
     }
 

@@ -170,7 +170,7 @@ public class CustomerAccountDetails extends JFrame {
         panel.setBorder(BorderFactory.createTitledBorder("Transaction History"));
 
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Type", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Device", "Drawer", "Type", "Method", "Reference", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
                 0
         ) {
             @Override
@@ -187,13 +187,17 @@ public class CustomerAccountDetails extends JFrame {
         transactionTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         transactionTable.getColumnModel().getColumn(2).setPreferredWidth(160);
         transactionTable.getColumnModel().getColumn(3).setPreferredWidth(150);
-        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(130);
-        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(90);
-        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(120);
-        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(100);
-        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(10).setPreferredWidth(260);
+        transactionTable.getColumnModel().getColumn(4).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(5).setPreferredWidth(120);
+        transactionTable.getColumnModel().getColumn(6).setPreferredWidth(130);
+        transactionTable.getColumnModel().getColumn(7).setPreferredWidth(90);
+        transactionTable.getColumnModel().getColumn(8).setPreferredWidth(150);
+        transactionTable.getColumnModel().getColumn(9).setPreferredWidth(90);
+        transactionTable.getColumnModel().getColumn(10).setPreferredWidth(120);
+        transactionTable.getColumnModel().getColumn(11).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(12).setPreferredWidth(100);
+        transactionTable.getColumnModel().getColumn(13).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(14).setPreferredWidth(260);
 
         transactionSummaryLabel = new JLabel("Transactions: 0");
         transactionSummaryLabel.setBorder(new EmptyBorder(4, 2, 0, 2));
@@ -271,10 +275,14 @@ public class CustomerAccountDetails extends JFrame {
         String sql = """
                 SELECT t.transaction_id,
                        COALESCE(t.payment_id, '') AS payment_id,
-                       (t.created_at AT TIME ZONE ?) AS local_created_at,
-	                       COALESCE(t.user_name, '') AS user_name,
-	                       COALESCE(t.transaction_type, '') AS transaction_type,
-                       t.sale_id,
+		                       (t.created_at AT TIME ZONE ?) AS local_created_at,
+		                       COALESCE(t.user_name, '') AS user_name,
+                       COALESCE(t.device_name, t.device_id, '') AS device_name,
+                       COALESCE(t.cash_drawer_name, '') AS cash_drawer_name,
+		                       COALESCE(t.transaction_type, '') AS transaction_type,
+                       COALESCE(t.payment_method, '') AS payment_method,
+                       COALESCE(t.payment_reference, '') AS payment_reference,
+	                       t.sale_id,
                        t.custom_order_id,
                        COALESCE(t.amount, 0) AS ledger_amount,
                        CASE
@@ -315,10 +323,14 @@ public class CustomerAccountDetails extends JFrame {
                     transactionModel.addRow(new Object[]{
                             rs.getInt("transaction_id"),
 	                            rs.getString("payment_id"),
-	                            formatTimestamp(rs.getTimestamp("local_created_at")),
-	                            rs.getString("user_name"),
-	                            formatType(rs.getString("transaction_type")),
-                            nullableInt(rs, "sale_id"),
+		                            formatTimestamp(rs.getTimestamp("local_created_at")),
+		                            rs.getString("user_name"),
+                            rs.getString("device_name"),
+                            rs.getString("cash_drawer_name"),
+		                            formatType(rs.getString("transaction_type")),
+                            rs.getString("payment_method"),
+                            rs.getString("payment_reference"),
+	                            nullableInt(rs, "sale_id"),
                             nullableLong(rs, "custom_order_id"),
                             currencyFormat.format(displayAmount),
                             formatStatus(rs.getString("payment_status")),

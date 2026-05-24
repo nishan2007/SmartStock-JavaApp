@@ -69,17 +69,7 @@ public class CustomOrderSlipRenderer {
 
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
             currentY = drawLabelLine(g, left, right, currentY, "CUSTOMER NAME:", data.customerName(), "DATE:", createdDate(data));
-            if (slipSettings.showOrderNumber() || slipSettings.showDueDate()) {
-                String leftValue = slipSettings.showOrderNumber() ? data.orderNumber() : "";
-                String rightLabel = slipSettings.showDueDate() ? "DUE:" : "";
-                String rightValue = slipSettings.showDueDate() && data.dueDate() != null ? DATE_FORMAT.format(data.dueDate()) : "";
-                currentY = drawLabelLine(g, left, right, currentY, "CONTACT NUMBER:", slipSettings.showCustomerPhone() ? data.customerPhone() : "", rightLabel, rightValue);
-                if (slipSettings.showOrderNumber()) {
-                    currentY = drawFullLine(g, left, right, currentY, "ORDER NUMBER:", leftValue);
-                }
-            } else if (slipSettings.showCustomerPhone()) {
-                currentY = drawFullLine(g, left, right, currentY, "CONTACT NUMBER:", data.customerPhone());
-            }
+            currentY = drawOptionalHeaderFields(g, left, right, currentY, data, slipSettings);
 
             currentY += 4;
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -140,6 +130,43 @@ public class CustomOrderSlipRenderer {
         }
         for (int i = 0; i < settings.blankDetailLines(); i++) {
             currentY = drawRuledText(g, left, right, currentY, "", lineHeight);
+        }
+        return currentY;
+    }
+
+    private static int drawOptionalHeaderFields(Graphics2D g, int left, int right, int y, CustomOrderSlipData data, CompanyCustomizationManager.CustomOrderSlipSettings settings) {
+        List<String[]> fields = new ArrayList<>();
+        if (settings.showCustomerPhone()) {
+            fields.add(new String[]{"CONTACT NUMBER:", data.customerPhone()});
+        }
+        if (settings.showCustomerAccount()) {
+            fields.add(new String[]{"ACCOUNT:", data.customerAccountNumber()});
+        }
+        if (settings.showOrderNumber()) {
+            fields.add(new String[]{"ORDER NUMBER:", data.orderNumber()});
+        }
+        if (settings.showDueDate() && data.dueDate() != null) {
+            fields.add(new String[]{"DUE:", DATE_FORMAT.format(data.dueDate())});
+        }
+        if (settings.showStore()) {
+            fields.add(new String[]{"STORE:", data.locationName()});
+        }
+        if (settings.showCashier()) {
+            fields.add(new String[]{"CASHIER:", data.takenByName()});
+        }
+        if (settings.showDevice()) {
+            fields.add(new String[]{"DEVICE:", data.deviceName()});
+        }
+
+        int currentY = y;
+        for (int i = 0; i < fields.size(); i += 2) {
+            String[] leftField = fields.get(i);
+            if (i + 1 < fields.size()) {
+                String[] rightField = fields.get(i + 1);
+                currentY = drawLabelLine(g, left, right, currentY, leftField[0], leftField[1], rightField[0], rightField[1]);
+            } else {
+                currentY = drawFullLine(g, left, right, currentY, leftField[0], leftField[1]);
+            }
         }
         return currentY;
     }

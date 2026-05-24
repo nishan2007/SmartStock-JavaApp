@@ -10,14 +10,11 @@ public class Main {
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored) {}
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
             ThemeManager.applyLookAndFeelDefaults();
             new WelcomeFrame().setVisible(true);
-          // new NewItem().setVisible(true);
-           // new EmployeeManagement().setVisible(true);
-           // new Roles_Permission().setVisible(true);
-           // new ViewSales().setVisible(true);
-           // new MainMenu().setVisible(true);
         });
     }
 }

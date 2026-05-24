@@ -53,9 +53,11 @@ public class DeviceManagement extends JFrame {
     });
     private final JTextArea detailsArea = new JTextArea();
     private final JTextArea notesArea = new JTextArea(3, 32);
+    private final JTextField receiptCodeField = new JTextField("0001");
     private final JCheckBox staySignedInBox = new JCheckBox("Allow this device to stay signed in after the app is closed");
     private final JLabel summaryLabel = new JLabel("Loading devices...");
     private final JButton saveApprovalButton = new JButton("Save Sign-In Setting");
+    private final JButton saveCodeButton = new JButton("Save Device Code");
     private final JButton blockButton = new JButton("Block Device");
     private final JButton refreshButton = new JButton("Refresh");
     private final JButton closeButton = new JButton("Close");
@@ -124,6 +126,7 @@ public class DeviceManagement extends JFrame {
                 BorderFactory.createLineBorder(new Color(209, 213, 219)),
                 new EmptyBorder(8, 8, 8, 8)
         ));
+        receiptCodeField.setFont(new Font("Monospaced", Font.BOLD, 13));
         staySignedInBox.setOpaque(false);
         staySignedInBox.setFont(new Font("SansSerif", Font.BOLD, 13));
 
@@ -133,11 +136,18 @@ public class DeviceManagement extends JFrame {
 
         JPanel notesPanel = new JPanel(new BorderLayout(0, 8));
         notesPanel.setOpaque(false);
+        JPanel codePanel = new JPanel(new BorderLayout(8, 0));
+        codePanel.setOpaque(false);
+        codePanel.add(new JLabel("Receipt Device Code"), BorderLayout.WEST);
+        codePanel.add(receiptCodeField, BorderLayout.CENTER);
+        codePanel.add(saveCodeButton, BorderLayout.EAST);
         JLabel notesLabel = new JLabel("Stay signed in / block note");
         notesLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         JPanel noteHeaderPanel = new JPanel();
         noteHeaderPanel.setLayout(new BoxLayout(noteHeaderPanel, BoxLayout.Y_AXIS));
         noteHeaderPanel.setOpaque(false);
+        noteHeaderPanel.add(codePanel);
+        noteHeaderPanel.add(Box.createVerticalStrut(8));
         noteHeaderPanel.add(staySignedInBox);
         noteHeaderPanel.add(Box.createVerticalStrut(8));
         noteHeaderPanel.add(notesLabel);
@@ -180,6 +190,7 @@ public class DeviceManagement extends JFrame {
         refreshButton.addActionListener(e -> loadDevices());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveApprovalButton.addActionListener(e -> saveApprovalSetting());
+        saveCodeButton.addActionListener(e -> saveDeviceCode());
         blockButton.addActionListener(e -> blockSelectedDevice());
         deviceTable.getSelectionModel().addListSelectionListener(this::handleSelectionChanged);
 
@@ -299,6 +310,7 @@ public class DeviceManagement extends JFrame {
     private void updateSelectedDevice(ManagedDevice device) {
         selectedDevice = device;
         detailsArea.setText(buildDetailsText(device));
+        receiptCodeField.setText(defaultText(device.getReceiptDeviceCode()));
         notesArea.setText(device.getStatusNotes() == null ? "" : device.getStatusNotes());
         staySignedInBox.setSelected(device.isApproved() && !device.isBlocked());
         loadSessionHistory(device.getDeviceId());
@@ -311,6 +323,7 @@ public class DeviceManagement extends JFrame {
                 + "Host Name: " + defaultText(device.getHostname()) + "\n"
                 + "Installation ID: " + defaultText(device.getInstallationId()) + "\n"
                 + "Device ID: " + defaultText(device.getDeviceId()) + "\n"
+                + "Receipt Device Code: " + defaultText(device.getReceiptDeviceCode()) + "\n"
                 + "Last User: " + defaultText(device.getLastUserName()) + "\n"
                 + "Last Store: " + defaultText(device.getLastStoreName()) + "\n"
                 + "First Seen: " + formatTimestamp(device.getFirstSeen()) + "\n"
@@ -463,6 +476,25 @@ public class DeviceManagement extends JFrame {
         }
     }
 
+    private void saveDeviceCode() {
+        if (selectedDevice == null) {
+            return;
+        }
+        try (Connection conn = DB.getConnection()) {
+            DeviceManagementService.updateDeviceReceiptCode(conn, selectedDevice.getDeviceId(), receiptCodeField.getText());
+            loadDevices();
+            JOptionPane.showMessageDialog(this, "Device code saved.");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not save device code.\n\n" + ex.getMessage(),
+                    "Device Management",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
     private void updateSummaryLabel() {
         int pending = 0;
         int staySignedIn = 0;
@@ -490,6 +522,7 @@ public class DeviceManagement extends JFrame {
         boolean hasSelection = selectedDevice != null;
         staySignedInBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveApprovalButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        saveCodeButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         blockButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
     }
 

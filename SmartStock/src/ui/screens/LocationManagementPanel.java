@@ -1,8 +1,6 @@
 package ui.screens;
 
 import data.DB;
-import ui.components.AppMenuBar;
-import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -18,11 +16,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class LocationManagement extends JFrame {
+public class LocationManagementPanel extends JPanel {
     private static final String DEFAULT_TIMEZONE = "America/New_York";
 
     private final JTextField searchField = new JTextField();
     private final JTextField nameField = new JTextField();
+    private final JTextField storeCodeField = new JTextField("0001");
     private final JTextArea addressArea = new JTextArea(4, 24);
     private final JComboBox<String> timezoneBox = new JComboBox<>();
     private final DefaultTableModel tableModel;
@@ -30,17 +29,12 @@ public class LocationManagement extends JFrame {
     private Integer selectedLocationId;
     private boolean hasTimezoneColumn;
 
-    public LocationManagement() {
-        setTitle("Location Management");
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+    public LocationManagementPanel() {
         setLayout(new BorderLayout(14, 14));
-        setJMenuBar(AppMenuBar.create(this, "LocationManagement"));
+        setBorder(new EmptyBorder(8, 8, 8, 8));
+        setOpaque(false);
 
-        JPanel root = new JPanel(new BorderLayout(14, 14));
-        root.setBorder(new EmptyBorder(18, 18, 18, 18));
-        root.setBackground(new Color(245, 247, 250));
-
-        tableModel = new DefaultTableModel(new Object[]{"ID", "Store Name", "Address", "Timezone"}, 0) {
+        tableModel = new DefaultTableModel(new Object[]{"ID", "Store Name", "Store Code", "Address", "Timezone"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -56,21 +50,18 @@ public class LocationManagement extends JFrame {
         });
 
         configureTimezoneBox();
-        root.add(buildHeaderPanel(), BorderLayout.NORTH);
-        root.add(new JScrollPane(locationTable), BorderLayout.CENTER);
-        root.add(buildEditorPanel(), BorderLayout.EAST);
-        add(root, BorderLayout.CENTER);
-
+        add(buildHeaderPanel(), BorderLayout.NORTH);
+        add(new JScrollPane(locationTable), BorderLayout.CENTER);
+        add(buildEditorPanel(), BorderLayout.EAST);
         loadLocations();
-        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
         JPanel panel = new JPanel(new BorderLayout(12, 8));
         panel.setOpaque(false);
 
-        JLabel titleLabel = new JLabel("Location Management");
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        JLabel titleLabel = new JLabel("Locations");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 24));
         titleLabel.setForeground(new Color(31, 41, 55));
 
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
@@ -126,13 +117,14 @@ public class LocationManagement extends JFrame {
         panel.add(editorTitle, gbc);
 
         addFormRow(panel, gbc, 1, "Name:", nameField);
-        addFormRow(panel, gbc, 2, "Address:", new JScrollPane(addressArea));
-        addFormRow(panel, gbc, 3, "Timezone:", timezoneBox);
+        addFormRow(panel, gbc, 2, "Store Code:", storeCodeField);
+        addFormRow(panel, gbc, 3, "Address:", new JScrollPane(addressArea));
+        addFormRow(panel, gbc, 4, "Timezone:", timezoneBox);
 
         JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for End of Day date boundaries and store reports.</div></html>");
         timezoneHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.gridx = 1;
-        gbc.gridy = 4;
+        gbc.gridy = 5;
         gbc.gridwidth = 1;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -146,7 +138,7 @@ public class LocationManagement extends JFrame {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 5;
+        gbc.gridy = 6;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -193,7 +185,7 @@ public class LocationManagement extends JFrame {
         tableModel.setRowCount(0);
         hasTimezoneColumn = hasColumn("locations", "timezone");
         String search = searchField.getText().trim();
-        String sql = "SELECT location_id, name, COALESCE(address, '') AS address"
+        String sql = "SELECT location_id, name, COALESCE(receipt_store_code, '0001') AS receipt_store_code, COALESCE(address, '') AS address"
                 + (hasTimezoneColumn ? ", COALESCE(timezone, ?) AS timezone" : ", ? AS timezone")
                 + " FROM locations"
                 + (search.isBlank() ? "" : " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?")
@@ -214,6 +206,7 @@ public class LocationManagement extends JFrame {
                     tableModel.addRow(new Object[]{
                             rs.getInt("location_id"),
                             rs.getString("name"),
+                            rs.getString("receipt_store_code"),
                             rs.getString("address"),
                             rs.getString("timezone")
                     });
@@ -252,12 +245,14 @@ public class LocationManagement extends JFrame {
         int modelRow = locationTable.convertRowIndexToModel(row);
         selectedLocationId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, 0)));
         nameField.setText(String.valueOf(tableModel.getValueAt(modelRow, 1)));
-        addressArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
-        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 3)));
+        storeCodeField.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
+        addressArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 3)));
+        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 4)));
     }
 
     private void saveLocation() {
         String name = nameField.getText().trim();
+        String storeCode = sanitizeStoreCode(storeCodeField.getText());
         String address = addressArea.getText().trim();
         String timezone = getTimezoneValue();
 
@@ -269,29 +264,34 @@ public class LocationManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Enter a valid timezone, such as America/New_York.", "Invalid Timezone", JOptionPane.WARNING_MESSAGE);
             return;
         }
+        if (storeCode.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Store code is required (0001-9999).");
+            return;
+        }
 
         String sql;
         if (selectedLocationId == null) {
             sql = hasTimezoneColumn
-                    ? "INSERT INTO locations (name, address, timezone) VALUES (?, ?, ?)"
-                    : "INSERT INTO locations (name, address) VALUES (?, ?)";
+                    ? "INSERT INTO locations (name, receipt_store_code, address, timezone) VALUES (?, ?, ?, ?)"
+                    : "INSERT INTO locations (name, receipt_store_code, address) VALUES (?, ?, ?)";
         } else {
             sql = hasTimezoneColumn
-                    ? "UPDATE locations SET name = ?, address = ?, timezone = ? WHERE location_id = ?"
-                    : "UPDATE locations SET name = ?, address = ? WHERE location_id = ?";
+                    ? "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, timezone = ? WHERE location_id = ?"
+                    : "UPDATE locations SET name = ?, receipt_store_code = ?, address = ? WHERE location_id = ?";
         }
 
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+            PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
-            ps.setString(2, emptyToNull(address));
+            ps.setString(2, storeCode);
+            ps.setString(3, emptyToNull(address));
             if (hasTimezoneColumn) {
-                ps.setString(3, timezone);
+                ps.setString(4, timezone);
                 if (selectedLocationId != null) {
-                    ps.setInt(4, selectedLocationId);
+                    ps.setInt(5, selectedLocationId);
                 }
             } else if (selectedLocationId != null) {
-                ps.setInt(3, selectedLocationId);
+                ps.setInt(4, selectedLocationId);
             }
 
             ps.executeUpdate();
@@ -329,8 +329,23 @@ public class LocationManagement extends JFrame {
         selectedLocationId = null;
         locationTable.clearSelection();
         nameField.setText("");
+        storeCodeField.setText("0001");
         addressArea.setText("");
         timezoneBox.setSelectedItem(DEFAULT_TIMEZONE);
         nameField.requestFocusInWindow();
+    }
+
+    private String sanitizeStoreCode(String value) {
+        if (value == null) {
+            return "";
+        }
+        String digits = value.replaceAll("\\D+", "");
+        if (digits.isBlank()) {
+            return "";
+        }
+        int parsed = Integer.parseInt(digits);
+        if (parsed < 1) parsed = 1;
+        if (parsed > 9999) parsed = 9999;
+        return String.format("%04d", parsed);
     }
 }

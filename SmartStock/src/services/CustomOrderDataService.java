@@ -1,6 +1,7 @@
 package services;
 
 import data.DB;
+import models.CashDrawerContext;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -224,10 +225,11 @@ public final class CustomOrderDataService {
                     order_notes, total_amount, amount_paid, balance_due, payment_method,
                     payment_reference, payment_status, taken_by_user_id, taken_by_name,
                     location_id, location_name, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id,
                     minimum_deposit_required, deposit_override_reason,
                     deposit_override_by_user_id, deposit_override_by_name
                 )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String lineSql = """
                 INSERT INTO custom_order_lines (
@@ -279,15 +281,17 @@ public final class CustomOrderDataService {
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name
+                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name,
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?)
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name
+                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection()) {
@@ -304,6 +308,12 @@ public final class CustomOrderDataService {
                 boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
                 if (hasAccountBalanceDue) {
                     validateAndChargeCustomerAccount(conn, customerId, request.balanceDue());
+                }
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                boolean cashUpfrontPayment = request.amountPaid().compareTo(BigDecimal.ZERO) > 0
+                        && "CASH".equalsIgnoreCase(blankToNull(request.paymentMethod()));
+                if (cashUpfrontPayment) {
+                    cashDrawer = CashDrawerService.requireActiveCashSession(conn);
                 }
                 orderPs.setString(1, orderNumber);
                 orderPs.setInt(2, customerId);
@@ -327,10 +337,13 @@ public final class CustomOrderDataService {
                 orderPs.setString(16, blankToNull(request.locationName()));
                 orderPs.setString(17, blankToNull(request.deviceId()));
                 orderPs.setString(18, blankToNull(request.deviceName()));
-                orderPs.setBigDecimal(19, defaultZero(request.minimumDepositRequired()));
-                orderPs.setString(20, blankToNull(request.depositOverrideReason()));
-                setNullableInteger(orderPs, 21, request.depositOverrideByUserId());
-                orderPs.setString(22, blankToNull(request.depositOverrideByName()));
+                setNullableLong(orderPs, 19, cashDrawer.cashDrawerId());
+                orderPs.setString(20, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(orderPs, 21, cashDrawer.sessionId());
+                orderPs.setBigDecimal(22, defaultZero(request.minimumDepositRequired()));
+                orderPs.setString(23, blankToNull(request.depositOverrideReason()));
+                setNullableInteger(orderPs, 24, request.depositOverrideByUserId());
+                orderPs.setString(25, blankToNull(request.depositOverrideByName()));
                 orderPs.executeUpdate();
 
                 long orderId;
@@ -350,6 +363,9 @@ public final class CustomOrderDataService {
                     paymentPs.setString(6, request.takenByName());
                     paymentPs.setString(7, blankToNull(request.deviceId()));
                     paymentPs.setString(8, blankToNull(request.deviceName()));
+                    setNullableLong(paymentPs, 9, cashDrawer.cashDrawerId());
+                    paymentPs.setString(10, blankToNull(cashDrawer.drawerName()));
+                    setNullableLong(paymentPs, 11, cashDrawer.sessionId());
                     paymentPs.executeUpdate();
                 }
                 BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
@@ -372,6 +388,11 @@ public final class CustomOrderDataService {
                 accountTransactionPs.setString(6, request.takenByName());
                 accountTransactionPs.setString(7, blankToNull(request.deviceId()));
                 accountTransactionPs.setString(8, blankToNull(request.deviceName()));
+                accountTransactionPs.setString(9, blankToNull(request.paymentMethod()));
+                accountTransactionPs.setString(10, blankToNull(request.paymentReference()));
+                setNullableLong(accountTransactionPs, 11, cashDrawer.cashDrawerId());
+                accountTransactionPs.setString(12, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(accountTransactionPs, 13, cashDrawer.sessionId());
                 accountTransactionPs.executeUpdate();
                 CustomOrderAuditService.recordAudit(conn, orderId, "CREATE", "order", null, orderNumber, null);
                 CustomOrderAuditService.recordStatus(conn, orderId, null, "NEW", "Order created");

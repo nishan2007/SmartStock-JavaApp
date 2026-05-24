@@ -9,6 +9,7 @@ public record CustomOrderSlipData(
         String orderNumber,
         String customerName,
         String customerPhone,
+        String customerAccountNumber,
         LocalDate dueDate,
         Timestamp createdAt,
         String takenByName,

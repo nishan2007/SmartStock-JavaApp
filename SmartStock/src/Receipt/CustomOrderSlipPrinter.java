@@ -6,6 +6,9 @@ import managers.HardwareSettingsManager;
 import javax.print.PrintException;
 import javax.print.PrintService;
 import javax.print.PrintServiceLookup;
+import javax.print.Doc;
+import javax.print.DocFlavor;
+import javax.print.SimpleDoc;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.print.PageFormat;
@@ -35,12 +38,18 @@ public class CustomOrderSlipPrinter {
             return;
         }
 
-        PrintService service = resolvePrintService();
+        PrinterSelection printerSelection = resolvePrinterSelection();
+        PrintService service = printerSelection.service();
         if (service == null) {
             throw new PrintException("No printer is configured for custom order slips.");
         }
 
         CompanyCustomizationManager.ReceiptSettings receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
+        if (printerSelection.printFormat() != HardwareSettingsManager.PrintFormat.LETTER) {
+            printReceipt40ToService(data, service, receiptSettings, slipSettings);
+            return;
+        }
+
         BufferedImage logo = CompanyCustomizationManager.loadCompanyLogo(receiptSettings);
         PrinterJob job = PrinterJob.getPrinterJob();
         try {
@@ -57,19 +66,67 @@ public class CustomOrderSlipPrinter {
         }
     }
 
-    private static PrintService resolvePrintService() throws PrintException {
+    public static void printToPosPrinter(CustomOrderSlipData data,
+                                         HardwareSettingsManager.PosPrinter printer,
+                                         HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
+        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        if (!slipSettings.enabled()) {
+            return;
+        }
+
+        PrintService service = printer == null ? PrintServiceLookup.lookupDefaultPrintService() : HardwareSettingsManager.findPrintService(printer.systemName());
+        if (service == null) {
+            throw new PrintException("No printer is configured for custom order slips.");
+        }
+
+        CompanyCustomizationManager.ReceiptSettings receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
+        HardwareSettingsManager.PrintFormat resolvedFormat = printFormat == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printFormat;
+        if (resolvedFormat != HardwareSettingsManager.PrintFormat.LETTER) {
+            printReceipt40ToService(data, service, receiptSettings, slipSettings);
+            return;
+        }
+
+        BufferedImage logo = CompanyCustomizationManager.loadCompanyLogo(receiptSettings);
+        PrinterJob job = PrinterJob.getPrinterJob();
+        try {
+            job.setPrintService(service);
+            PageFormat pageFormat = createLetterPageFormat(job);
+            job.setPrintable((graphics, format, pageIndex) -> printPage(graphics, format, pageIndex, data, receiptSettings, slipSettings, logo), pageFormat);
+            job.print();
+        } catch (PrinterException ex) {
+            throw new PrintException(ex);
+        }
+    }
+
+    public static String format40ColumnPreview(CustomOrderSlipData data,
+                                               CompanyCustomizationManager.ReceiptSettings receiptSettings,
+                                               CompanyCustomizationManager.CustomOrderSlipSettings slipSettings) {
+        return CustomOrderSlipFormatter.format40Column(data, receiptSettings, slipSettings);
+    }
+
+    private static void printReceipt40ToService(CustomOrderSlipData data,
+                                                PrintService service,
+                                                CompanyCustomizationManager.ReceiptSettings receiptSettings,
+                                                CompanyCustomizationManager.CustomOrderSlipSettings slipSettings) throws PrintException {
+        byte[] bytes = CustomOrderSlipFormatter.formatEscPos40Column(data, receiptSettings, slipSettings);
+        DocFlavor flavor = DocFlavor.BYTE_ARRAY.AUTOSENSE;
+        Doc doc = new SimpleDoc(bytes, flavor, null);
+        service.createPrintJob().print(doc, null);
+    }
+
+    private static PrinterSelection resolvePrinterSelection() throws PrintException {
         try {
             HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
             if (printer != null) {
                 PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
                 if (service != null) {
-                    return service;
+                    return new PrinterSelection(service, printer.printFormat());
                 }
             }
         } catch (Exception ex) {
             throw new PrintException(ex);
         }
-        return PrintServiceLookup.lookupDefaultPrintService();
+        return new PrinterSelection(PrintServiceLookup.lookupDefaultPrintService(), HardwareSettingsManager.PrintFormat.RECEIPT_40);
     }
 
     private static int printPage(Graphics graphics,
@@ -101,5 +158,8 @@ public class CustomOrderSlipPrinter {
         pageFormat.setPaper(paper);
         pageFormat.setOrientation(PageFormat.PORTRAIT);
         return pageFormat;
+    }
+
+    private record PrinterSelection(PrintService service, HardwareSettingsManager.PrintFormat printFormat) {
     }
 }

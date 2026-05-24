@@ -98,6 +98,7 @@ public class PermissionManager {
         return switch (screenName) {
             case "MainMenu" -> hasPermission("MAKE_SALE")
                     || hasPermission("END_OF_DAY")
+                    || hasPermission("BALANCE_DRAWER")
                     || hasPermission("VIEW_SALES")
                     || hasPermission("PROCESS_RETURNS")
                     || hasPermission("VIEW_INVENTORY")
@@ -118,10 +119,10 @@ public class PermissionManager {
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("DEVICE_MANAGEMENT")
+                    || hasPermission("CASH_DRAWER_MANAGEMENT")
                     || hasPermission("MACHINE_MANAGEMENT")
                     || hasPermission("PARTS_MANAGEMENT")
                     || hasPermission("MAINTENANCE_MANAGEMENT")
-                    || hasPermission("LOCATION_MANAGEMENT")
                     || hasPermission("COMPANY_PREFERENCES")
                     || hasPermission("COMPANY_CUSTOMIZATION")
                     || hasPermission("HARDWARE_SETUP")
@@ -136,6 +137,7 @@ public class PermissionManager {
             case "VendorList" -> hasPermission("VENDOR_MANAGEMENT");
             case "ViewSales" -> hasPermission("VIEW_SALES");
             case "ReturnSale" -> hasPermission("PROCESS_RETURNS");
+            case "BalanceDraw" -> hasPermission("BALANCE_DRAWER");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
             case "CustomOrders" -> hasPermission("CREATE_CUSTOM_ORDER");
@@ -152,11 +154,14 @@ public class PermissionManager {
             case "MachineManagement" -> hasPermission("MACHINE_MANAGEMENT");
             case "PartsManagement" -> hasPermission("PARTS_MANAGEMENT");
             case "MaintenanceManagement" -> hasPermission("MAINTENANCE_MANAGEMENT");
-            case "LocationManagement" -> hasPermission("LOCATION_MANAGEMENT");
-            case "LocalDeviceSettings" -> hasPermission("LOCAL_DEVICE_SETTINGS");
-            case "HardwareSetup" -> hasPermission("HARDWARE_SETUP");
             case "CompanyCustomization" -> hasPermission("COMPANY_PREFERENCES")
-                    || hasPermission("COMPANY_CUSTOMIZATION");
+                    || hasPermission("COMPANY_CUSTOMIZATION")
+                    || hasPermission("LOCATION_MANAGEMENT")
+                    || hasPermission("CASH_DRAWER_MANAGEMENT");
+            case "WorkstationPreferences" -> hasPermission("COMPANY_PREFERENCES")
+                    || hasPermission("COMPANY_CUSTOMIZATION")
+                    || hasPermission("LOCAL_DEVICE_SETTINGS")
+                    || hasPermission("HARDWARE_SETUP");
             default -> true;
         };
     }

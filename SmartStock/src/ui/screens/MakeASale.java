@@ -7,7 +7,10 @@ import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import data.DB;
+import models.CashDrawerContext;
+import services.CashDrawerService;
 import services.DeviceContextService;
+import services.ManagerApprovalService;
 import services.SaleAuditService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -47,6 +50,10 @@ public class MakeASale extends JFrame {
     private static final int CART_COL_PRODUCT_TYPE = 9;
     private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
+    private static final String SALE_DISCOUNT_OVERRIDE_PERMISSION = "SALE_DISCOUNT_OVERRIDE";
+    private static final String MAKE_SALE_PERMISSION = "MAKE_SALE";
+    private static final String HOLD_CART_PERMISSION = "MAKE_SALE";
+    private static final String RESUME_HOLD_PERMISSION = "MAKE_SALE";
     private static final int SEARCH_CONTROL_HEIGHT = 28;
 
     private JTextField searchField;
@@ -71,6 +78,7 @@ public class MakeASale extends JFrame {
     private JButton checkoutPrintBtn;
     private JButton holdCartBtn;
     private JButton resumeHeldCartBtn;
+    private JLabel overrideStatusLabel;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
     private JLabel companyNameLabel;
@@ -86,6 +94,16 @@ public class MakeASale extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
+    private SwingWorker<java.util.List<Object[]>, Void> searchWorker;
+    private SwingWorker<java.util.List<Object[]>, Void> productCacheWorker;
+    private long latestSearchRequestId = 0L;
+    private volatile java.util.List<Object[]> productSearchCache = java.util.Collections.emptyList();
+    private int cachedProductLocationId = -1;
+    private boolean suppressDiscountFieldEvents = false;
+    private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
+    private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
+    private final java.util.Map<Integer, PendingPriceApproval> pendingPriceOverrideApprovals = new java.util.HashMap<>();
+    private final java.util.Map<Integer, PendingDiscountApproval> pendingItemDiscountApprovals = new java.util.HashMap<>();
     private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
     private boolean updatingCustomerAccountFilter = false;
 
@@ -226,9 +244,9 @@ public class MakeASale extends JFrame {
 	       ) {
 	           @Override
 	           public boolean isCellEditable(int row, int column) {
-	               return (column == CART_COL_PRICE && canChangeSaleItemPrice())
+	               return (column == CART_COL_PRICE)
 	                       || column == CART_COL_QTY
-	                       || (column == CART_COL_ITEM_DISCOUNT && canApplySaleDiscount());
+	                       || (column == CART_COL_ITEM_DISCOUNT);
 	           }
        };
        cartTable = new JTable(cartModel);
@@ -325,18 +343,27 @@ public class MakeASale extends JFrame {
        actionPanel.add(checkoutBtn);
        actionPanel.add(checkoutPrintBtn);
 
+       overrideStatusLabel = new JLabel("No active override approvals");
+       overrideStatusLabel.setForeground(new Color(71, 85, 105));
+       overrideStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+
        JPanel bottomTopPanel = new JPanel(new BorderLayout(8, 4));
        bottomTopPanel.setOpaque(false);
        bottomTopPanel.add(transactionPanel, BorderLayout.WEST);
        bottomTopPanel.add(totalsPanel, BorderLayout.EAST);
+       JPanel footerPanel = new JPanel(new BorderLayout(8, 6));
+       footerPanel.setOpaque(false);
+       footerPanel.add(overrideStatusLabel, BorderLayout.WEST);
+       footerPanel.add(actionPanel, BorderLayout.EAST);
        bottomPanel.add(bottomTopPanel, BorderLayout.CENTER);
-       bottomPanel.add(actionPanel, BorderLayout.SOUTH);
+       bottomPanel.add(footerPanel, BorderLayout.SOUTH);
 
        panel.add(bottomPanel, BorderLayout.SOUTH);
 
        //Add panel to frame
        add(panel);
        refreshPermissionButtons();
+       warmProductSearchCacheInBackground();
 
        //Action Listeners
        newItemBtn.addActionListener(new ActionListener() {
@@ -349,7 +376,8 @@ public class MakeASale extends JFrame {
                    JOptionPane.showMessageDialog(MakeASale.this, "No store is selected for this session.");
                    return;
                }
-               if (WindowHelper.focusIfAlreadyOpen(NewItem.class)) {
+               if (WindowHelper.focusIfAlreadyOpen(
+                       NewItem.class)) {
                    return;
                }
                WindowHelper.showPosWindow(new NewItem(SessionManager.getCurrentLocationId()), MakeASale.this);
@@ -443,15 +471,21 @@ public class MakeASale extends JFrame {
            searchProducts(false);
        });
        configureCustomerAccountSearch();
-       cartModel.addTableModelListener(e -> {
-           if (updatingCart) {
-               return;
-           }
-	           if (e.getColumn() == CART_COL_PRICE
-	                   || e.getColumn() == CART_COL_QTY
-	                   || e.getColumn() == CART_COL_ITEM_DISCOUNT
-	                   || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
-	               updateLineTotals();
+	       cartModel.addTableModelListener(e -> {
+	           if (updatingCart) {
+	               return;
+	           }
+               if (e.getColumn() == CART_COL_PRICE) {
+                   handlePriceEditOverrideAtCart(e.getFirstRow());
+               }
+               if (e.getColumn() == CART_COL_ITEM_DISCOUNT) {
+                   handleItemDiscountEditOverrideAtCart(e.getFirstRow());
+               }
+		           if (e.getColumn() == CART_COL_PRICE
+		                   || e.getColumn() == CART_COL_QTY
+		                   || e.getColumn() == CART_COL_ITEM_DISCOUNT
+		                   || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
+		               updateLineTotals();
 	           }
 	       });
        checkoutBtn.addActionListener(new ActionListener() {
@@ -462,12 +496,21 @@ public class MakeASale extends JFrame {
        checkoutPrintBtn.addActionListener(e -> checkout(true));
        holdCartBtn.addActionListener(e -> holdCurrentCart());
        resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
-       addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
+	       addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
 	       discountPercentField.getDocument().addDocumentListener(new DocumentListener() {
 	           private void refreshTotals() {
+                   if (suppressDiscountFieldEvents) {
+                       return;
+                   }
 	               SwingUtilities.invokeLater(() -> {
+                       if (suppressDiscountFieldEvents) {
+                           return;
+                       }
 	                   if (!canApplySaleDiscount()) {
-	                       discountPercentField.setText("0");
+                           String current = discountPercentField.getText() == null ? "" : discountPercentField.getText().trim();
+                           if (!"0".equals(current)) {
+                               setDiscountFieldValue("0");
+                           }
 	                   }
 	                   updateOverallTotal();
 	               });
@@ -962,11 +1005,8 @@ public class MakeASale extends JFrame {
 	        if (discountPercentField != null) {
 	            discountPercentField.setEnabled(canApplySaleDiscount());
 	            if (!canApplySaleDiscount()) {
-	                discountPercentField.setText("0");
+                    setDiscountFieldValue("0");
 	            }
-	        }
-	        if (cartModel != null && !canChangeSaleItemPrice()) {
-	            restoreUnauthorizedCartPrices();
 	        }
 	    }
 
@@ -1112,66 +1152,193 @@ public class MakeASale extends JFrame {
     }
 
     private void searchProducts(boolean showMessages) {
-        String searchText = searchField.getText().trim();
+        final String searchText = searchField.getText().trim();
 
         if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
             return;
         }
 
-        String sql = """
-            SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
-                   COALESCE(p.product_type, 'INVENTORY') AS product_type,
-                   COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-            FROM products p
-            LEFT JOIN inventory i
-                ON p.product_id = i.product_id
-               AND i.location_id = ?
-            WHERE (? = '' OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
-            ORDER BY p.name
-            LIMIT 250
-            """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, SessionManager.getCurrentLocationId());
-            ps.setString(2, searchText);
-            ps.setString(3, "%" + searchText + "%");
-            ps.setString(4, "%" + searchText + "%");
-            ps.setString(5, "%" + searchText + "%");
-
-            ResultSet rs = ps.executeQuery();
-
-            java.util.List<Object[]> rows = new java.util.ArrayList<>();
-
-            while (rs.next()) {
-                rows.add(new Object[]{
-                        rs.getInt("product_id"),
-                        rs.getString("name"),
-                        rs.getString("size"),
-                        rs.getString("description"),
-                        rs.getString("sku"),
-                        rs.getDouble("price"),
-                        rs.getString("product_type"),
-                        rs.getInt("quantity_on_hand")
-                });
-            }
-
-            if (rows.isEmpty()) {
-                closeSearchPopup();
-                if (showMessages) {
-                    JOptionPane.showMessageDialog(this, searchText.isEmpty() ? "No products found for this store." : "No matching products found.");
-                }
-                return;
-            }
-
-            showSearchResultsPopup(rows);
-
-        } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Database error: " + e.getMessage());
+        final int locationId = SessionManager.getCurrentLocationId();
+        warmProductSearchCacheInBackground();
+        final long requestId = ++latestSearchRequestId;
+        if (searchWorker != null && !searchWorker.isDone()) {
+            searchWorker.cancel(true);
         }
+
+        searchWorker = new SwingWorker<>() {
+            @Override
+            protected java.util.List<Object[]> doInBackground() throws Exception {
+                java.util.List<Object[]> cachedRows = tryFilterCachedProducts(locationId, searchText);
+                if (cachedRows != null) {
+                    return cachedRows;
+                }
+                String sql = """
+                    SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
+                           COALESCE(p.product_type, 'INVENTORY') AS product_type,
+                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
+                    FROM products p
+                    LEFT JOIN inventory i
+                        ON p.product_id = i.product_id
+                       AND i.location_id = ?
+                    WHERE (? = '' OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
+                    ORDER BY p.name
+                    LIMIT 250
+                    """;
+
+                try (Connection conn = DB.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setInt(1, locationId);
+                    ps.setString(2, searchText);
+                    ps.setString(3, "%" + searchText + "%");
+                    ps.setString(4, "%" + searchText + "%");
+                    ps.setString(5, "%" + searchText + "%");
+
+                    java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            if (isCancelled()) {
+                                return rows;
+                            }
+                            rows.add(new Object[]{
+                                    rs.getInt("product_id"),
+                                    rs.getString("name"),
+                                    rs.getString("size"),
+                                    rs.getString("description"),
+                                    rs.getString("sku"),
+                                    rs.getDouble("price"),
+                                    rs.getString("product_type"),
+                                    rs.getInt("quantity_on_hand")
+                            });
+                        }
+                    }
+                    return rows;
+                }
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || requestId != latestSearchRequestId || !isDisplayable()) {
+                    return;
+                }
+                try {
+                    java.util.List<Object[]> rows = get();
+                    if (rows.isEmpty()) {
+                        closeSearchPopup();
+                        if (showMessages) {
+                            JOptionPane.showMessageDialog(MakeASale.this,
+                                    searchText.isEmpty() ? "No products found for this store." : "No matching products found.");
+                        }
+                        return;
+                    }
+                    showSearchResultsPopup(rows);
+                } catch (Exception e) {
+                    JOptionPane.showMessageDialog(MakeASale.this, "Database error: " + e.getMessage());
+                }
+            }
+        };
+        searchWorker.execute();
     }
+
+    private java.util.List<Object[]> tryFilterCachedProducts(int locationId, String searchText) {
+        if (cachedProductLocationId != locationId || productSearchCache.isEmpty()) {
+            return null;
+        }
+        String normalized = searchText == null ? "" : searchText.trim().toLowerCase();
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        for (Object[] row : productSearchCache) {
+            if (rows.size() >= 250) {
+                break;
+            }
+            if (normalized.isEmpty() || cachedRowMatches(row, normalized)) {
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private boolean cachedRowMatches(Object[] row, String normalized) {
+        String name = rowValue(row, 1);
+        String size = rowValue(row, 2);
+        String sku = rowValue(row, 4);
+        return name.contains(normalized) || size.contains(normalized) || sku.contains(normalized);
+    }
+
+    private String rowValue(Object[] row, int index) {
+        if (row == null || index < 0 || index >= row.length || row[index] == null) {
+            return "";
+        }
+        return String.valueOf(row[index]).toLowerCase();
+    }
+
+    private void warmProductSearchCacheInBackground() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId == null) {
+            return;
+        }
+        if (cachedProductLocationId == locationId && !productSearchCache.isEmpty()) {
+            return;
+        }
+        if (productCacheWorker != null && !productCacheWorker.isDone()) {
+            return;
+        }
+
+        final int loadLocationId = locationId;
+        productCacheWorker = new SwingWorker<>() {
+            @Override
+            protected java.util.List<Object[]> doInBackground() throws Exception {
+                String sql = """
+                    SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
+                           COALESCE(p.product_type, 'INVENTORY') AS product_type,
+                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
+                    FROM products p
+                    LEFT JOIN inventory i
+                        ON p.product_id = i.product_id
+                       AND i.location_id = ?
+                    ORDER BY p.name
+                    """;
+
+                try (Connection conn = DB.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setInt(1, loadLocationId);
+                    java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            if (isCancelled()) {
+                                return rows;
+                            }
+                            rows.add(new Object[]{
+                                    rs.getInt("product_id"),
+                                    rs.getString("name"),
+                                    rs.getString("size"),
+                                    rs.getString("description"),
+                                    rs.getString("sku"),
+                                    rs.getDouble("price"),
+                                    rs.getString("product_type"),
+                                    rs.getInt("quantity_on_hand")
+                            });
+                        }
+                    }
+                    return rows;
+                }
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled()) {
+                    return;
+                }
+                try {
+                    productSearchCache = get();
+                    cachedProductLocationId = loadLocationId;
+                } catch (Exception ignored) {
+                    // Keep fallback search path active if cache warm-up fails.
+                }
+            }
+        };
+        productCacheWorker.execute();
+    }
+
 
     private void showSearchResultsPopup(java.util.List<Object[]> rows) {
         if (searchPopup == null) {
@@ -1189,7 +1356,7 @@ public class MakeASale extends JFrame {
 
             searchResultsTable = new JTable(resultsModel);
             searchResultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-            searchResultsTable.setAutoCreateRowSorter(true);
+            searchResultsTable.setAutoCreateRowSorter(false);
             searchResultsTable.setRowHeight(24);
             JTableHeader header = searchResultsTable.getTableHeader();
             header.setReorderingAllowed(false);
@@ -1240,7 +1407,6 @@ public class MakeASale extends JFrame {
         }
 
         searchPopup.show(searchField, 0, searchField.getHeight());
-        searchField.requestFocusInWindow();
     }
 
     private void addSelectedSearchResultToCart() {
@@ -1303,7 +1469,6 @@ public class MakeASale extends JFrame {
 
                 cartModel.setValueAt(newQty, i, CART_COL_QTY);
                 updateLineTotals();
-                configureCartTableColumns();
                 return;
             }
         }
@@ -1336,6 +1501,102 @@ public class MakeASale extends JFrame {
         return "INVENTORY".equals(normalizeProductType(productType));
     }
 
+    private void handlePriceEditOverrideAtCart(int row) {
+        if (row < 0 || row >= cartModel.getRowCount()) {
+            return;
+        }
+        int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+        if (productId <= 0) {
+            return;
+        }
+
+        BigDecimal enteredPrice = parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_PRICE));
+        BigDecimal catalogPrice = parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_ORIGINAL_PRICE));
+        if (enteredPrice.compareTo(catalogPrice) == 0) {
+            pendingPriceOverrideApprovals.remove(productId);
+            return;
+        }
+        if (canChangeSaleItemPrice()) {
+            pendingPriceOverrideApprovals.remove(productId);
+            return;
+        }
+        PendingPriceApproval existingApproval = pendingPriceOverrideApprovals.get(productId);
+        if (existingApproval != null && existingApproval.approvedPrice().compareTo(enteredPrice) == 0) {
+            return;
+        }
+
+        String productName = String.valueOf(cartModel.getValueAt(row, CART_COL_NAME));
+        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                this,
+                CHANGE_SALE_ITEM_PRICE_PERMISSION,
+                "Price Override",
+                "Reason for price override on " + productName + ":"
+        );
+        if (approval == null) {
+            updatingCart = true;
+            try {
+                cartModel.setValueAt(catalogPrice, row, CART_COL_PRICE);
+            } finally {
+                updatingCart = false;
+            }
+            pendingPriceOverrideApprovals.remove(productId);
+            updateLineTotals();
+            return;
+        }
+
+        pendingPriceOverrideApprovals.put(productId, new PendingPriceApproval(enteredPrice, approval));
+        if (overrideStatusLabel != null) {
+            overrideStatusLabel.setText("Price override approved by: " + approval.approvedByName());
+        }
+    }
+
+    private void handleItemDiscountEditOverrideAtCart(int row) {
+        if (row < 0 || row >= cartModel.getRowCount()) {
+            return;
+        }
+        int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+        if (productId <= 0) {
+            return;
+        }
+        BigDecimal discountPercent = parsePercentOrZero(cartModel.getValueAt(row, CART_COL_ITEM_DISCOUNT));
+        if (discountPercent.compareTo(BigDecimal.ZERO) <= 0) {
+            pendingItemDiscountApprovals.remove(productId);
+            return;
+        }
+        if (canApplySaleDiscount()) {
+            pendingItemDiscountApprovals.remove(productId);
+            return;
+        }
+        PendingDiscountApproval existingApproval = pendingItemDiscountApprovals.get(productId);
+        if (existingApproval != null && existingApproval.approvedDiscountPercent().compareTo(discountPercent) == 0) {
+            return;
+        }
+
+        String productName = String.valueOf(cartModel.getValueAt(row, CART_COL_NAME));
+        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                this,
+                APPLY_SALE_DISCOUNT_PERMISSION,
+                "Item Discount Override",
+                "Reason for item discount on " + productName + ":"
+        );
+        if (approval == null) {
+            updatingCart = true;
+            try {
+                cartModel.setValueAt(BigDecimal.ZERO, row, CART_COL_ITEM_DISCOUNT);
+            } finally {
+                updatingCart = false;
+            }
+            pendingItemDiscountApprovals.remove(productId);
+            updateLineTotals();
+            return;
+        }
+
+        pendingItemDiscountApprovals.put(productId, new PendingDiscountApproval(discountPercent, approval));
+        if (overrideStatusLabel != null) {
+            overrideStatusLabel.setText("Item discount approved by: " + approval.approvedByName());
+        }
+    }
+
     private String getCartProductType(int row) {
         if (cartModel.getColumnCount() <= CART_COL_PRODUCT_TYPE) {
             return "INVENTORY";
@@ -1343,31 +1604,11 @@ public class MakeASale extends JFrame {
         return normalizeProductType(String.valueOf(cartModel.getValueAt(row, CART_COL_PRODUCT_TYPE)));
     }
 
-    private void restoreUnauthorizedCartPrices() {
-        if (cartModel == null || updatingCart) {
-            return;
-        }
-
-        updatingCart = true;
-        try {
-            for (int i = 0; i < cartModel.getRowCount(); i++) {
-                Object originalPrice = cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE);
-                if (originalPrice != null) {
-                    cartModel.setValueAt(parseMoneyOrZero(originalPrice), i, CART_COL_PRICE);
-                }
-            }
-        } finally {
-            updatingCart = false;
-        }
-        updateLineTotals();
-    }
     private void updateLineTotals() {
         updatingCart = true;
         try {
             for (int i = 0; i < cartModel.getRowCount(); i++) {
-                Object priceValue = canChangeSaleItemPrice()
-                        ? cartModel.getValueAt(i, CART_COL_PRICE)
-                        : cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE);
+                Object priceValue = cartModel.getValueAt(i, CART_COL_PRICE);
                 Object qtyValue = cartModel.getValueAt(i, CART_COL_QTY);
                 Object itemDiscountValue = cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT);
 
@@ -1388,7 +1629,12 @@ public class MakeASale extends JFrame {
                 }
 
                 itemDiscountPercent = parsePercentOrZero(itemDiscountValue);
-                if (!canApplySaleDiscount()) {
+                int productId = parseIntOrDefault(cartModel.getValueAt(i, CART_COL_ID), -1);
+                PendingDiscountApproval pendingDiscountApproval = pendingItemDiscountApprovals.get(productId);
+                if (!canApplySaleDiscount()
+                        && itemDiscountPercent.compareTo(BigDecimal.ZERO) > 0
+                        && (pendingDiscountApproval == null
+                        || pendingDiscountApproval.approvedDiscountPercent().compareTo(itemDiscountPercent) != 0)) {
                     itemDiscountPercent = BigDecimal.ZERO;
                 }
 
@@ -1429,9 +1675,6 @@ public class MakeASale extends JFrame {
         BigDecimal total = BigDecimal.ZERO;
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             BigDecimal price = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE));
-            if (!canChangeSaleItemPrice()) {
-                price = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
-            }
             int qty = parseIntOrDefault(cartModel.getValueAt(i, CART_COL_QTY), 0);
             total = total.add(price.multiply(BigDecimal.valueOf(qty)));
         }
@@ -1475,6 +1718,23 @@ public class MakeASale extends JFrame {
             return percent;
         } catch (NumberFormatException ex) {
             return BigDecimal.ZERO;
+        }
+    }
+
+    private void setDiscountFieldValue(String value) {
+        if (discountPercentField == null) {
+            return;
+        }
+        String next = value == null ? "" : value;
+        String current = discountPercentField.getText();
+        if (next.equals(current)) {
+            return;
+        }
+        suppressDiscountFieldEvents = true;
+        try {
+            discountPercentField.setText(next);
+        } finally {
+            suppressDiscountFieldEvents = false;
         }
     }
 
@@ -1749,6 +2009,10 @@ public class MakeASale extends JFrame {
     }
 
     private void checkout(boolean showReceiptPreview) {
+        if (!PermissionManager.requirePermission(MAKE_SALE_PERMISSION, this, "Checkout")) {
+            refreshPermissionButtons();
+            return;
+        }
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
@@ -1763,6 +2027,30 @@ public class MakeASale extends JFrame {
             discountPercentField.setText("0");
             updateOverallTotal();
             return;
+        }
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        BigDecimal discountLimit = saleSafetySettings.discountLimitPercent() == null
+                ? BigDecimal.valueOf(5)
+                : saleSafetySettings.discountLimitPercent();
+        String saleDiscountOverrideReason = null;
+        Integer saleDiscountOverrideByUserId = null;
+        String saleDiscountOverrideByName = null;
+        if (discountPercent.compareTo(discountLimit) > 0) {
+            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                    this,
+                    SALE_DISCOUNT_OVERRIDE_PERMISSION,
+                    "Sale Discount Override",
+                    "Reason for discount override:"
+            );
+            if (approval == null) {
+                return;
+            }
+            saleDiscountOverrideReason = approval.reason();
+            saleDiscountOverrideByUserId = approval.approvedByUserId();
+            saleDiscountOverrideByName = approval.approvedByName();
+            if (overrideStatusLabel != null) {
+                overrideStatusLabel.setText("Discount override approved by: " + saleDiscountOverrideByName);
+            }
         }
 
         String paymentMethod = selectedPaymentMethod;
@@ -1811,6 +2099,22 @@ public class MakeASale extends JFrame {
             int locationId = SessionManager.getCurrentLocationId();
 
             try {
+                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
+                if (cashPayment) {
+                    try {
+                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
+                    } catch (SQLException ex) {
+                        conn.setAutoCommit(true);
+                        JOptionPane.showMessageDialog(
+                                this,
+                                ex.getMessage(),
+                                "Cash Drawer Required",
+                                JOptionPane.WARNING_MESSAGE
+                        );
+                        return;
+                    }
+                }
+
                 BigDecimal subtotalAmount = getCartGrossSubtotal();
                 BigDecimal itemDiscountTotal = getItemDiscountTotal();
                 BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
@@ -1818,6 +2122,10 @@ public class MakeASale extends JFrame {
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                 BigDecimal saleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
                 BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
+                if (saleTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                    JOptionPane.showMessageDialog(this, "Sale total must be greater than zero.");
+                    return;
+                }
                 BigDecimal saleDiscountMultiplier = BigDecimal.ONE.subtract(
                         discountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
                 );
@@ -1848,10 +2156,15 @@ public class MakeASale extends JFrame {
                                 payment_reference,
 	                            transaction_source,
                                 device_id,
-                                device_name,
+                                cash_drawer_id,
+                                cash_drawer_name,
+                                cash_drawer_session_id,
+                                discount_override_reason,
+                                discount_override_by_user_id,
+                                discount_override_by_name,
                                 completed_at
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	                        """;
                 int saleId;
 
@@ -1876,9 +2189,14 @@ public class MakeASale extends JFrame {
 		                    saleStmt.setBigDecimal(14, discountPercent);
 		                    saleStmt.setBigDecimal(15, discountAmount);
                             saleStmt.setString(16, paymentReference.isBlank() ? null : paymentReference);
-		                    saleStmt.setString(17, "Java_app");
+	                    saleStmt.setString(17, "Java_app");
                             saleStmt.setString(18, DeviceContextService.currentDeviceId());
-                            saleStmt.setString(19, DeviceContextService.currentDeviceName());
+                            setNullableLong(saleStmt, 19, cashDrawer.cashDrawerId());
+                            saleStmt.setString(20, cashDrawer.drawerName());
+                            setNullableLong(saleStmt, 21, cashDrawer.sessionId());
+                            saleStmt.setString(22, saleDiscountOverrideReason);
+                            setNullableInteger(saleStmt, 23, saleDiscountOverrideByUserId);
+                            saleStmt.setString(24, saleDiscountOverrideByName);
 	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -1899,6 +2217,7 @@ public class MakeASale extends JFrame {
                         "receipt=" + receipt.receiptNumber()
                                 + "; payment_method=" + paymentMethod
                                 + "; payment_status=" + paymentStatus
+                                + (cashDrawer.drawerName() == null ? "" : "; cash_drawer=" + cashDrawer.drawerName())
                                 + "; subtotal=" + subtotalAmount
                                 + "; discount=" + discountAmount
                                 + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
@@ -1947,9 +2266,12 @@ public class MakeASale extends JFrame {
                             original_unit_price,
                             discount_percent,
                             discount_amount,
+                            price_override_reason,
+                            price_override_by_user_id,
+                            price_override_by_name,
                             product_type
                         )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                        """;
 	                String insertMovementSql = """
                             INSERT INTO inventory_movements (
@@ -1965,25 +2287,47 @@ public class MakeASale extends JFrame {
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
                      PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
                      PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql)) {
+                    java.util.List<String> lineOverrideApprovals = new java.util.ArrayList<>();
 
 	                    for (int i = 0; i < cartModel.getRowCount(); i++) {
-		                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
-		                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
-	                        String productType = getCartProductType(i);
+                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
+                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
+                        if (qty <= 0) {
+                            throw new SQLException("Quantity must be greater than zero for product " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
+                        }
+                        String productType = getCartProductType(i);
                             BigDecimal catalogPrice = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
-	                        BigDecimal enteredPrice = canChangeSaleItemPrice()
-	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
-	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
+	                        BigDecimal enteredPrice = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE));
 		                        BigDecimal itemDiscountPercent = parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT));
 		                        BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
 		                                itemDiscountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
 		                        );
 		                        BigDecimal itemDiscountedPrice = enteredPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
 		                        BigDecimal chargedPrice = itemDiscountedPrice.multiply(saleDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
-		                        BigDecimal itemDiscountAmount = enteredPrice
+                            BigDecimal itemDiscountAmount = enteredPrice
 		                                .multiply(BigDecimal.valueOf(qty))
 		                                .multiply(itemDiscountPercent)
 		                                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+
+                            boolean priceOverridden = enteredPrice.compareTo(catalogPrice) != 0;
+                            String priceOverrideReason = null;
+                            Integer priceOverrideByUserId = null;
+                            String priceOverrideByName = null;
+                            boolean priceOverrideApproved = false;
+                            if (priceOverridden) {
+                                if (!canChangeSaleItemPrice()) {
+                                    PendingPriceApproval pendingApproval = pendingPriceOverrideApprovals.get(productId);
+                                    if (pendingApproval == null || pendingApproval.approvedPrice().compareTo(enteredPrice) != 0) {
+                                        throw new SQLException("Price override approval is required in cart for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
+                                    }
+                                    ManagerApprovalService.ApprovalResult approval = pendingApproval.approval();
+                                    priceOverrideReason = approval.reason();
+                                    priceOverrideByUserId = approval.approvedByUserId();
+                                    priceOverrideByName = approval.approvedByName();
+                                    priceOverrideApproved = true;
+                                    lineOverrideApprovals.add(cartModel.getValueAt(i, CART_COL_NAME) + " by " + priceOverrideByName);
+                                }
+                            }
 
 		                        itemStmt.setInt(1, saleId);
 		                        itemStmt.setInt(2, productId);
@@ -1992,7 +2336,10 @@ public class MakeASale extends JFrame {
 		                        itemStmt.setBigDecimal(5, catalogPrice);
 		                        itemStmt.setBigDecimal(6, itemDiscountPercent);
 		                        itemStmt.setBigDecimal(7, itemDiscountAmount);
-		                        itemStmt.setString(8, productType);
+		                        itemStmt.setString(8, priceOverrideReason);
+                                setNullableInteger(itemStmt, 9, priceOverrideByUserId);
+                                itemStmt.setString(10, priceOverrideByName);
+		                        itemStmt.setString(11, productType);
 		                        itemStmt.executeUpdate();
                             int saleItemId;
                             try (ResultSet itemKeys = itemStmt.getGeneratedKeys()) {
@@ -2026,8 +2373,25 @@ public class MakeASale extends JFrame {
                                         null,
                                         "Manual line price change during sale."
                                 );
+                                if (priceOverrideApproved) {
+                                    SaleAuditService.record(
+                                            conn, saleId, saleItemId, null, null, null, productId, locationId,
+                                            "PRICE_OVERRIDE_APPROVED", "SALE_ITEM", "price_override_by",
+                                            null, priceOverrideByName,
+                                            enteredPrice.subtract(catalogPrice).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP),
+                                            qty,
+                                            priceOverrideReason,
+                                            "Price override approval captured."
+                                    );
+                                }
                             }
                             if (itemDiscountPercent.compareTo(BigDecimal.ZERO) > 0 || itemDiscountAmount.compareTo(BigDecimal.ZERO) > 0) {
+                                if (!canApplySaleDiscount()) {
+                                    PendingDiscountApproval discountApproval = pendingItemDiscountApprovals.get(productId);
+                                    if (discountApproval == null || discountApproval.approvedDiscountPercent().compareTo(itemDiscountPercent) != 0) {
+                                        throw new SQLException("Item discount approval is required in cart for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
+                                    }
+                                }
                                 SaleAuditService.record(
                                         conn, saleId, saleItemId, null, null, null, productId, locationId,
                                         "ITEM_DISCOUNT_APPLIED", "SALE_ITEM", "discount_percent",
@@ -2076,10 +2440,29 @@ public class MakeASale extends JFrame {
                             );
                         }
                     }
+                    if (!lineOverrideApprovals.isEmpty() && overrideStatusLabel != null) {
+                        overrideStatusLabel.setText("Price override approvals: " + String.join("; ", lineOverrideApprovals));
+                    }
+                }
+
+                if (saleDiscountOverrideReason != null) {
+                    SaleAuditService.record(
+                            conn, saleId, null, null, null,
+                            selectedCustomer == null ? null : selectedCustomer.customerId,
+                            null, locationId,
+                            "SALE_DISCOUNT_OVERRIDE", "SALE", "discount_override_by",
+                            null, saleDiscountOverrideByName,
+                            discountAmount, null,
+                            saleDiscountOverrideReason,
+                            "Discount override approval captured."
+                    );
                 }
 
                 conn.commit();
 	                String successMessage = "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId;
+                    if (cashDrawer.drawerName() != null && !cashDrawer.drawerName().isBlank()) {
+                        successMessage += "\nCash Drawer: " + cashDrawer.drawerName();
+                    }
 	                BigDecimal changeDue = BigDecimal.ZERO;
 	                if (cashPayment) {
 	                    changeDue = cashCollected.subtract(saleTotal).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
@@ -2105,9 +2488,11 @@ public class MakeASale extends JFrame {
 	                } else {
 	                    JOptionPane.showMessageDialog(this, successMessage);
 	                }
-	                cartModel.setRowCount(0);
-	                discountPercentField.setText("0");
-	                clearHeldCartSelection();
+		                cartModel.setRowCount(0);
+                        pendingPriceOverrideApprovals.clear();
+                        pendingItemDiscountApprovals.clear();
+		                discountPercentField.setText("0");
+		                clearHeldCartSelection();
                     if (paymentReferenceField != null) {
                         paymentReferenceField.setText("");
                     }
@@ -2129,6 +2514,10 @@ public class MakeASale extends JFrame {
     }
 
     private void holdCurrentCart() {
+        if (!PermissionManager.requirePermission(HOLD_CART_PERMISSION, this, "Hold Cart")) {
+            refreshPermissionButtons();
+            return;
+        }
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
@@ -2140,6 +2529,11 @@ public class MakeASale extends JFrame {
 
         String holdName = JOptionPane.showInputDialog(this, "Hold name / note:", "Held Cart");
         if (holdName == null) {
+            return;
+        }
+        holdName = holdName.trim();
+        if (holdName.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Hold name is required.");
             return;
         }
 
@@ -2199,7 +2593,7 @@ public class MakeASale extends JFrame {
                     } else {
                         holdStmt.setInt(4, selectedCustomer.customerId);
 	                    }
-	                    holdStmt.setString(5, holdName.trim());
+                    holdStmt.setString(5, holdName);
 	                    holdStmt.setString(6, selectedPaymentMethod == null ? "" : selectedPaymentMethod);
 	                    holdStmt.setBigDecimal(7, subtotalAmount);
 	                    holdStmt.setBigDecimal(8, discountPercent);
@@ -2245,8 +2639,10 @@ public class MakeASale extends JFrame {
 
                 conn.commit();
 	                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
-	                cartModel.setRowCount(0);
-	                clearHeldCartSelection();
+		                cartModel.setRowCount(0);
+                        pendingPriceOverrideApprovals.clear();
+                        pendingItemDiscountApprovals.clear();
+		                clearHeldCartSelection();
                 configureCartTableColumns();
                 updateOverallTotal();
             } catch (Exception ex) {
@@ -2261,6 +2657,10 @@ public class MakeASale extends JFrame {
     }
 
     private void resumeHeldCart() {
+        if (!PermissionManager.requirePermission(RESUME_HOLD_PERMISSION, this, "Resume Held Cart")) {
+            refreshPermissionButtons();
+            return;
+        }
         if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
             return;
@@ -2491,6 +2891,8 @@ public class MakeASale extends JFrame {
     }
 
     private void clearHeldCartSelection() {
+        pendingPriceOverrideApprovals.clear();
+        pendingItemDiscountApprovals.clear();
         applyCustomerAccountFilter("", false);
         customerAccountBox.setSelectedItem("");
         if (customerAccountBox.getEditor() != null) {
@@ -2513,6 +2915,14 @@ public class MakeASale extends JFrame {
             ps.setNull(index, java.sql.Types.INTEGER);
         } else {
             ps.setInt(index, value);
+        }
+    }
+
+    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
         }
     }
 
