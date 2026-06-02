@@ -20,6 +20,9 @@ public class ReceiptData {
     private final BigDecimal subtotalAmount;
     private final BigDecimal discountPercent;
     private final BigDecimal discountAmount;
+    private final BigDecimal vatAmount;
+    private final BigDecimal vatRatePercent;
+    private final String vatMode;
     private final BigDecimal totalAmount;
     private final BigDecimal amountPaid;
     private final BigDecimal returnedAmount;
@@ -41,6 +44,9 @@ public class ReceiptData {
             BigDecimal subtotalAmount,
             BigDecimal discountPercent,
             BigDecimal discountAmount,
+            BigDecimal vatAmount,
+            BigDecimal vatRatePercent,
+            String vatMode,
             BigDecimal totalAmount,
             BigDecimal amountPaid,
             BigDecimal returnedAmount,
@@ -61,6 +67,9 @@ public class ReceiptData {
         this.subtotalAmount = money(subtotalAmount);
         this.discountPercent = money(discountPercent);
         this.discountAmount = money(discountAmount);
+        this.vatAmount = money(vatAmount);
+        this.vatRatePercent = money(vatRatePercent);
+        this.vatMode = vatMode == null ? "" : vatMode;
         this.totalAmount = money(totalAmount);
         this.amountPaid = money(amountPaid);
         this.returnedAmount = money(returnedAmount);
@@ -119,6 +128,18 @@ public class ReceiptData {
 
     public BigDecimal getDiscountAmount() {
         return discountAmount;
+    }
+
+    public BigDecimal getVatAmount() {
+        return vatAmount;
+    }
+
+    public BigDecimal getVatRatePercent() {
+        return vatRatePercent;
+    }
+
+    public String getVatMode() {
+        return vatMode;
     }
 
     public BigDecimal getTotalAmount() {

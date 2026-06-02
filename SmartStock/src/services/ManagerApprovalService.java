@@ -104,14 +104,14 @@ public final class ManagerApprovalService {
                 FROM users u
                 WHERE LOWER(u.username) = LOWER(?)
                    OR LOWER(u.email) = LOWER(?)
-                   OR LOWER(u.badge_id) = LOWER(?)
+                   OR UPPER(REGEXP_REPLACE(COALESCE(u.badge_id, ''), '[^a-zA-Z0-9]', '', 'g')) = ?
                 LIMIT 1
                 """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, loginIdentifier);
             ps.setString(2, loginIdentifier);
-            ps.setString(3, loginIdentifier);
+            ps.setString(3, BadgeCredentialService.normalizeBadge(loginIdentifier));
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
                     throw new IllegalStateException("Manager account not found.");

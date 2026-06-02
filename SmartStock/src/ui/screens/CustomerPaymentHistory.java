@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import services.CustomerAccountLedgerService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -150,13 +151,13 @@ public class CustomerPaymentHistory extends JFrame {
         BigDecimal totalPayments = BigDecimal.ZERO;
         BigDecimal totalApplied = BigDecimal.ZERO;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setString(2, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(3, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
+        try (Connection conn = DB.getConnection()) {
+            CustomerAccountLedgerService.ensureSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+                ps.setString(2, StoreTimeZoneHelper.getStoreZoneId());
+                ps.setInt(3, customerId);
+                try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     int transactionId = rs.getInt("transaction_id");
                     String paymentId = rs.getString("payment_id");
@@ -192,6 +193,7 @@ public class CustomerPaymentHistory extends JFrame {
 	                            formatTimestamp(rs.getTimestamp("charge_date"))
 	                    });
                     rowCount++;
+                }
                 }
             }
 

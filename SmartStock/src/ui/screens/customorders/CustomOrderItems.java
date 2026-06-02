@@ -296,7 +296,7 @@ public class CustomOrderItems extends JFrame {
         JPanel buttons = new JPanel(new GridLayout(2, 2, 8, 8));
         saveOrUpdateButton = new JButton("Save Item");
         JButton variantsButton = new JButton("Sizes / Variants");
-        JButton deleteButton = new JButton("Delete Item");
+        JButton deleteButton = new JButton("Deactivate Item");
         JButton clearButton = new JButton("Clear");
         buttons.add(saveOrUpdateButton);
         buttons.add(variantsButton);
@@ -445,7 +445,7 @@ public class CustomOrderItems extends JFrame {
 
         JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
         JButton saveButton = new JButton("Save Material");
-        JButton deleteButton = new JButton("Delete Material");
+        JButton deleteButton = new JButton("Deactivate Material");
         JButton clearButton = new JButton("Clear");
         saveButton.addActionListener(e -> savePrintMaterial());
         deleteButton.addActionListener(e -> deletePrintMaterial());
@@ -498,7 +498,7 @@ public class CustomOrderItems extends JFrame {
 
         JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
         JButton saveButton = new JButton("Save Size");
-        JButton deleteButton = new JButton("Delete Size");
+        JButton deleteButton = new JButton("Deactivate Size");
         JButton clearButton = new JButton("Clear");
         saveButton.addActionListener(e -> savePrintPreset());
         deleteButton.addActionListener(e -> deletePrintPreset());
@@ -564,7 +564,7 @@ public class CustomOrderItems extends JFrame {
 
         JPanel buttons = new JPanel(new GridLayout(1, 3, 8, 8));
         JButton saveButton = new JButton("Save Placement");
-        JButton deleteButton = new JButton("Delete Placement");
+        JButton deleteButton = new JButton("Deactivate Placement");
         JButton clearButton = new JButton("Clear");
         saveButton.addActionListener(e -> saveDesignPlacement());
         deleteButton.addActionListener(e -> deleteDesignPlacement());
@@ -744,7 +744,7 @@ public class CustomOrderItems extends JFrame {
                 """;
         String updateSql = """
                 UPDATE custom_order_print_materials
-                SET material_name = ?, description = ?, is_active = ?
+                SET material_name = ?, description = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE print_material_id = ?
                 """;
         try (Connection conn = DB.getConnection();
@@ -765,21 +765,25 @@ public class CustomOrderItems extends JFrame {
 
     private void deletePrintMaterial() {
         if (selectedPrintMaterialId == null) {
-            JOptionPane.showMessageDialog(this, "Select a material to delete.");
+            JOptionPane.showMessageDialog(this, "Select a material to deactivate.");
             return;
         }
-        int confirm = JOptionPane.showConfirmDialog(this, "Delete this material and its preset sizes?", "Delete Print Material", JOptionPane.YES_NO_OPTION);
+        int confirm = JOptionPane.showConfirmDialog(this, "Deactivate this material? Preset sizes remain on file, but the material will stop appearing as an active option.", "Deactivate Print Material", JOptionPane.YES_NO_OPTION);
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_print_materials WHERE print_material_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement("""
+                     UPDATE custom_order_print_materials
+                     SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                     WHERE print_material_id = ?
+                     """)) {
             ps.setLong(1, selectedPrintMaterialId);
             ps.executeUpdate();
             clearPrintMaterialForm();
             loadPrintMaterials();
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to delete print material: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to deactivate print material: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -862,7 +866,7 @@ public class CustomOrderItems extends JFrame {
                 """;
         String updateSql = """
                 UPDATE custom_order_print_size_presets
-                SET preset_name = ?, pricing_mode = ?, fixed_price = ?, is_active = ?
+                SET preset_name = ?, pricing_mode = ?, fixed_price = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE print_size_preset_id = ?
                 """;
         try (Connection conn = DB.getConnection();
@@ -890,17 +894,21 @@ public class CustomOrderItems extends JFrame {
 
     private void deletePrintPreset() {
         if (selectedPrintPresetId == null) {
-            JOptionPane.showMessageDialog(this, "Select a preset size to delete.");
+            JOptionPane.showMessageDialog(this, "Select a preset size to deactivate.");
             return;
         }
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_print_size_presets WHERE print_size_preset_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement("""
+                     UPDATE custom_order_print_size_presets
+                     SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                     WHERE print_size_preset_id = ?
+                     """)) {
             ps.setLong(1, selectedPrintPresetId);
             ps.executeUpdate();
             clearPrintPresetForm();
             loadPrintPresets(selectedPrintMaterialId);
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to delete print size: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to deactivate print size: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -1019,21 +1027,25 @@ public class CustomOrderItems extends JFrame {
 
     private void deleteDesignPlacement() {
         if (selectedDesignPlacementId == null) {
-            JOptionPane.showMessageDialog(this, "Select a placement to delete.");
+            JOptionPane.showMessageDialog(this, "Select a placement to deactivate.");
             return;
         }
-        int confirm = JOptionPane.showConfirmDialog(this, "Delete this design placement?", "Delete Design Placement", JOptionPane.YES_NO_OPTION);
+        int confirm = JOptionPane.showConfirmDialog(this, "Deactivate this design placement?", "Deactivate Design Placement", JOptionPane.YES_NO_OPTION);
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_design_placements WHERE design_placement_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement("""
+                     UPDATE custom_order_design_placements
+                     SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                     WHERE design_placement_id = ?
+                     """)) {
             ps.setLong(1, selectedDesignPlacementId);
             ps.executeUpdate();
             clearDesignPlacementForm();
             loadDesignPlacements();
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to delete design placement: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to deactivate design placement: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -1497,14 +1509,14 @@ public class CustomOrderItems extends JFrame {
 
     private void deleteSelectedItem() {
         if (selectedCustomItemId == null) {
-            JOptionPane.showMessageDialog(this, "Select an item to delete.");
+            JOptionPane.showMessageDialog(this, "Select an item to deactivate.");
             return;
         }
         String itemName = itemNameField.getText().trim();
         int choice = JOptionPane.showConfirmDialog(
                 this,
-                "Delete " + (itemName.isEmpty() ? "this item" : "\"" + itemName + "\"") + "?\n\nThis will also delete its variants and extra barcodes. Items already used on saved orders cannot be deleted.",
-                "Delete Custom Order Item",
+                "Deactivate " + (itemName.isEmpty() ? "this item" : "\"" + itemName + "\"") + "?\n\nSaved order history will be kept, and the item will stop appearing as an active option.",
+                "Deactivate Custom Order Item",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE
         );
@@ -1512,29 +1524,24 @@ public class CustomOrderItems extends JFrame {
             return;
         }
 
-        String sql = "DELETE FROM custom_order_items WHERE custom_item_id = ?";
+        String sql = """
+                UPDATE custom_order_items
+                SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                WHERE custom_item_id = ?
+                """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, selectedCustomItemId);
-            int deleted = ps.executeUpdate();
-            if (deleted == 0) {
-                JOptionPane.showMessageDialog(this, "Item was not found or was already deleted.");
+            int updated = ps.executeUpdate();
+            if (updated == 0) {
+                JOptionPane.showMessageDialog(this, "Item was not found or was already inactive.");
             } else {
                 clearForm();
                 loadItems();
-                JOptionPane.showMessageDialog(this, "Custom order item deleted.");
+                JOptionPane.showMessageDialog(this, "Custom order item deactivated.");
             }
         } catch (SQLException ex) {
-            if ("23503".equals(ex.getSQLState())) {
-                JOptionPane.showMessageDialog(
-                        this,
-                        "This item is already used on an order, so it cannot be deleted.\n\nUncheck Active instead if you no longer want it available.",
-                        "Cannot Delete Item",
-                        JOptionPane.WARNING_MESSAGE
-                );
-            } else {
-                JOptionPane.showMessageDialog(this, "Failed to delete item: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-            }
+            JOptionPane.showMessageDialog(this, "Failed to deactivate item: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

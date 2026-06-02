@@ -29,6 +29,7 @@ public class MainMenu extends JFrame {
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
     private final JButton balanceDrawButton;
+    private final JButton balanceSheetButton;
     private final JButton ordersManagerDashboardButton;
     private final JButton endOfDayButton;
     private final JButton ordersEndOfDayButton;
@@ -92,6 +93,7 @@ public class MainMenu extends JFrame {
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
         returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/ViewSales.png"));
         balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/ViewSales.png"));
+        balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/ViewSales.png"));
         ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/ViewSales.png"));
         endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/ViewSales.png"));
         ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/ViewSales.png"));
@@ -142,7 +144,8 @@ public class MainMenu extends JFrame {
         sectionStackPanel.add(createSectionPanel(
                 "Operations",
                 new Color(15, 118, 110),
-                balanceDrawButton
+                balanceDrawButton,
+                balanceSheetButton
         ));
         sectionStackPanel.add(Box.createVerticalStrut(18));
         sectionStackPanel.add(createSectionPanel(
@@ -407,6 +410,9 @@ public class MainMenu extends JFrame {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
         boolean canBalanceDrawer = PermissionManager.hasPermission("BALANCE_DRAWER");
+        boolean canBalanceSheet = PermissionManager.hasPermission("BALANCE_SHEET")
+                || PermissionManager.hasPermission("END_OF_DAY")
+                || PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
@@ -441,6 +447,7 @@ public class MainMenu extends JFrame {
         makeSaleButton.setEnabled(canMakeSale);
         returnSaleButton.setEnabled(canProcessReturns);
         balanceDrawButton.setEnabled(canBalanceDrawer);
+        balanceSheetButton.setEnabled(canBalanceSheet);
         ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
         endOfDayButton.setEnabled(canEndOfDay);
         ordersEndOfDayButton.setEnabled(canOrdersEndOfDay);
@@ -490,6 +497,16 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openBalanceDraw(this);
+        });
+        balanceSheetButton.addActionListener(e -> {
+            boolean canBalanceSheet = PermissionManager.hasPermission("BALANCE_SHEET")
+                    || PermissionManager.hasPermission("END_OF_DAY")
+                    || PermissionManager.hasPermission("PAYROLL_DASHBOARD");
+            if (!canBalanceSheet) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Balance Sheet.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openBalanceSheet(this);
         });
         ordersManagerDashboardButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {

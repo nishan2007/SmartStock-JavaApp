@@ -1,7 +1,10 @@
 package ui.screens;
 
 import managers.SupabaseSessionManager;
+import services.BadgeCredentialService;
 import services.DeviceService;
+import services.LocalAuthCacheService;
+import services.StoreHydrationService;
 import managers.SessionManager;
 import data.DB;
 import ui.helpers.ThemeManager;
@@ -13,6 +16,8 @@ import javax.swing.plaf.basic.BasicComboBoxUI;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -41,6 +46,9 @@ public class Login extends JFrame {
     private JPasswordField passwordField;
     private JButton loginButton;
     private JButton clearButton;
+    private long badgeEntryStartedAtMillis;
+    private long badgeEntryLastKeyAtMillis;
+    private int badgeEntryKeyCount;
 
     public Login() {
         setTitle("SmartStock Login");
@@ -74,6 +82,22 @@ public class Login extends JFrame {
         panel.add(buttonPanel, BorderLayout.SOUTH);
 
         add(panel);
+
+        usernameField.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyTyped(KeyEvent e) {
+                if (Character.isISOControl(e.getKeyChar())) {
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                if (badgeEntryStartedAtMillis == 0 || now - badgeEntryLastKeyAtMillis > 250) {
+                    badgeEntryStartedAtMillis = now;
+                    badgeEntryKeyCount = 0;
+                }
+                badgeEntryLastKeyAtMillis = now;
+                badgeEntryKeyCount++;
+            }
+        });
 
         loginButton.addActionListener(new ActionListener() {
             @Override
@@ -109,6 +133,10 @@ public class Login extends JFrame {
                        u.username,
                        u.full_name,
                        u.email,
+                       u.badge_id,
+                       u.date_of_birth,
+                       u.badge_secret_salt,
+                       u.badge_secret_hash,
                        u.auth_user_id,
                        u.is_active,
                        COALESCE(r.role_name, 'USER') AS role
@@ -116,7 +144,7 @@ public class Login extends JFrame {
                 LEFT JOIN roles r ON u.role_id = r.role_id
                 WHERE LOWER(u.username) = LOWER(?)
                    OR LOWER(u.email) = LOWER(?)
-                   OR LOWER(u.badge_id) = LOWER(?)
+                   OR UPPER(REGEXP_REPLACE(COALESCE(u.badge_id, ''), '[^a-zA-Z0-9]', '', 'g')) = ?
                 """;
         String storesSql = """
                 SELECT l.location_id,
@@ -133,7 +161,7 @@ public class Login extends JFrame {
 
             userPs.setString(1, loginIdentifier);
             userPs.setString(2, loginIdentifier);
-            userPs.setString(3, loginIdentifier);
+            userPs.setString(3, BadgeCredentialService.normalizeBadge(loginIdentifier));
 
             try (ResultSet userRs = userPs.executeQuery()) {
                 if (!userRs.next()) {
@@ -148,6 +176,20 @@ public class Login extends JFrame {
                 String authUserId = userRs.getString("auth_user_id");
                 boolean isActive = userRs.getBoolean("is_active");
                 String role = userRs.getString("role");
+                boolean matchedByBadge = BadgeCredentialService.normalizeBadge(loginIdentifier)
+                        .equals(BadgeCredentialService.normalizeBadge(userRs.getString("badge_id")))
+                        && !loginIdentifier.equalsIgnoreCase(foundUsername)
+                        && (email == null || !loginIdentifier.equalsIgnoreCase(email));
+                if (matchedByBadge
+                        && BadgeCredentialService.looksLikeGeneratedBadge(loginIdentifier)
+                        && !isLikelyScannerBadgeEntry(loginIdentifier)) {
+                    JOptionPane.showMessageDialog(this, "Generated badge IDs must be scanned or swiped.");
+                    return;
+                }
+                if (matchedByBadge && !BadgeCredentialService.verify(loginIdentifier, userRs)) {
+                    JOptionPane.showMessageDialog(this, "Badge scan could not be verified.");
+                    return;
+                }
 
                 if (!isActive) {
                     JOptionPane.showMessageDialog(this, "This employee account is inactive.");
@@ -166,28 +208,28 @@ public class Login extends JFrame {
 
                 SupabaseLoginResult authResult = authenticateWithSupabase(email.trim(), password);
                 if (!authResult.success) {
+                    if (isReachabilityAuthFailure(authResult.message)
+                            && tryOfflineCachedLogin(conn, loginIdentifier, password)) {
+                        openMainMenu();
+                        return;
+                    }
                     JOptionPane.showMessageDialog(this, authResult.message);
                     return;
                 }
 
-                List<LocationOption> locations = new ArrayList<>();
-
-                try (PreparedStatement storesPs = conn.prepareStatement(storesSql)) {
-                    storesPs.setInt(1, userId);
-
-                    try (ResultSet storesRs = storesPs.executeQuery()) {
-                        while (storesRs.next()) {
-                            locations.add(new LocationOption(
-                                    storesRs.getInt("location_id"),
-                                    storesRs.getString("name"),
-                                    storesRs.getString("timezone")
-                            ));
-                        }
-                    }
+                String storeRefreshWarning = null;
+                List<LocationOption> locations = loadLocations(conn, storesSql, userId);
+                if (locations.isEmpty()) {
+                    storeRefreshWarning = refreshAssignedStoresIfPossible(conn, userId);
+                    locations = loadLocations(conn, storesSql, userId);
                 }
 
                 if (locations.isEmpty()) {
-                    JOptionPane.showMessageDialog(this, "This user has no assigned stores.");
+                    String message = "This user has no assigned stores available locally.";
+                    if (storeRefreshWarning != null) {
+                        message += "\n\nCloud refresh also failed: " + storeRefreshWarning;
+                    }
+                    JOptionPane.showMessageDialog(this, message);
                     return;
                 }
 
@@ -213,6 +255,8 @@ public class Login extends JFrame {
                 SupabaseSessionManager.setSession(SessionManager.getCurrentAccessToken(), SessionManager.getCurrentRefreshToken());
                 DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
                 SupabaseSessionManager.savePersistedSession(SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
+                offerLocalPinCache(conn, userId, foundUsername, fullName, email, userRs.getString("badge_id"), role, selectedLocation);
+                hydrateSelectedStoreInBackground(selectedLocation.locationId);
 
                 JOptionPane.showMessageDialog(
                         this,
@@ -289,18 +333,15 @@ public class Login extends JFrame {
                             throw new IllegalStateException("Stored employee account is inactive.");
                         }
 
-                        List<LocationOption> locations = new ArrayList<>();
-                        try (PreparedStatement storesPs = conn.prepareStatement(storesSql)) {
-                            storesPs.setInt(1, persistedSession.userId());
-                            try (ResultSet storesRs = storesPs.executeQuery()) {
-                                while (storesRs.next()) {
-                                    locations.add(new LocationOption(
-                                            storesRs.getInt("location_id"),
-                                            storesRs.getString("name"),
-                                            storesRs.getString("timezone")
-                                    ));
-                                }
+                        String hydrationWarning = null;
+                        List<LocationOption> locations = loadLocations(conn, storesSql, persistedSession.userId());
+                        if (locations.isEmpty()) {
+                            try {
+                                StoreHydrationService.refreshAssignedStores(conn, persistedSession.userId());
+                            } catch (SQLException ex) {
+                                hydrationWarning = ex.getMessage();
                             }
+                            locations = loadLocations(conn, storesSql, persistedSession.userId());
                         }
 
                         LocationOption selectedLocation = findLocation(locations, persistedSession.locationId());
@@ -316,7 +357,8 @@ public class Login extends JFrame {
                                 userRs.getString("username"),
                                 userRs.getString("full_name"),
                                 userRs.getString("role"),
-                                selectedLocation
+                                selectedLocation,
+                                hydrationWarning
                         );
 
                         applySession(result);
@@ -333,6 +375,16 @@ public class Login extends JFrame {
                 try {
                     AutoSignInResult result = get();
                     if (result != null) {
+                        if (result.hydrationWarning != null && !result.hydrationWarning.isBlank()) {
+                            JOptionPane.showMessageDialog(
+                                    Login.this,
+                                    "Signed in with data currently available on this local server.\n\nCloud store refresh warning: "
+                                            + result.hydrationWarning,
+                                    "Store Data Refresh",
+                                    JOptionPane.WARNING_MESSAGE
+                            );
+                        }
+                        hydrateSelectedStoreInBackground(result.location.locationId);
                         openMainMenu();
                         return;
                     }
@@ -363,6 +415,126 @@ public class Login extends JFrame {
         SessionManager.setCurrentLocationId(result.location.locationId);
         SessionManager.setCurrentLocationName(result.location.locationName);
         SessionManager.setCurrentLocationTimezone(result.location.timezone);
+    }
+
+    private boolean isLikelyScannerBadgeEntry(String loginIdentifier) {
+        String normalized = BadgeCredentialService.normalizeBadge(loginIdentifier);
+        if (!BadgeCredentialService.looksLikeGeneratedBadge(normalized)) {
+            return true;
+        }
+        long elapsed = badgeEntryLastKeyAtMillis - badgeEntryStartedAtMillis;
+        return badgeEntryKeyCount >= Math.min(loginIdentifier.length(), normalized.length())
+                && elapsed >= 0
+                && elapsed <= 1_200;
+    }
+
+    private boolean tryOfflineCachedLogin(Connection conn, String loginIdentifier, String enteredSecret) throws Exception {
+        if (!LocalAuthCacheService.shouldUseLocalAuthCache()) {
+            return false;
+        }
+        LocalAuthCacheService.CachedUser cached = LocalAuthCacheService.verify(conn, loginIdentifier, enteredSecret.toCharArray());
+        if (cached == null) {
+            return false;
+        }
+        SessionManager.setCurrentUserId(cached.userId());
+        SessionManager.setCurrentUsername(cached.username());
+        SessionManager.setCurrentUserDisplayName((cached.fullName() == null || cached.fullName().isBlank()) ? cached.username() : cached.fullName());
+        SessionManager.setCurrentRole(cached.roleName());
+        SessionManager.setCurrentLocationId(cached.locationId());
+        SessionManager.setCurrentLocationName(cached.locationName());
+        SessionManager.setCurrentLocationTimezone(cached.locationTimezone());
+        DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
+        JOptionPane.showMessageDialog(this,
+                "Offline login successful.\nUser: " + SessionManager.getCurrentUserDisplayName()
+                        + "\nStore: " + SessionManager.getCurrentLocationName(),
+                "Offline Login",
+                JOptionPane.INFORMATION_MESSAGE);
+        return true;
+    }
+
+    private String refreshAssignedStoresIfPossible(Connection conn, int userId) {
+        try {
+            StoreHydrationService.refreshAssignedStores(conn, userId);
+            return null;
+        } catch (SQLException ex) {
+            return ex.getMessage();
+        }
+    }
+
+    private List<LocationOption> loadLocations(Connection conn, String storesSql, int userId) throws SQLException {
+        List<LocationOption> locations = new ArrayList<>();
+        try (PreparedStatement storesPs = conn.prepareStatement(storesSql)) {
+            storesPs.setInt(1, userId);
+            try (ResultSet storesRs = storesPs.executeQuery()) {
+                while (storesRs.next()) {
+                    locations.add(new LocationOption(
+                            storesRs.getInt("location_id"),
+                            storesRs.getString("name"),
+                            storesRs.getString("timezone")
+                    ));
+                }
+            }
+        }
+        return locations;
+    }
+
+    private void hydrateSelectedStoreInBackground(int locationId) {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() {
+                try (Connection conn = DB.getConnection()) {
+                    StoreHydrationService.hydrateSelectedStore(conn, locationId);
+                } catch (SQLException ex) {
+                    System.err.println("Background store refresh failed: " + ex.getMessage());
+                }
+                return null;
+            }
+        };
+        worker.execute();
+    }
+
+    private void offerLocalPinCache(Connection conn, int userId, String username, String fullName, String email, String badgeId,
+                                    String role, LocationOption location) {
+        if (!LocalAuthCacheService.shouldUseLocalAuthCache()) {
+            return;
+        }
+        JPasswordField pinField = new JPasswordField();
+        JPasswordField confirmField = new JPasswordField();
+        JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
+        panel.add(new JLabel("Create a local offline PIN for this register/store."));
+        panel.add(new JLabel("PIN"));
+        panel.add(pinField);
+        panel.add(new JLabel("Confirm PIN"));
+        panel.add(confirmField);
+        int choice = JOptionPane.showConfirmDialog(this, panel, "Offline Login PIN", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+        char[] pin = pinField.getPassword();
+        char[] confirm = confirmField.getPassword();
+        if (pin.length < 4 || !java.util.Arrays.equals(pin, confirm)) {
+            JOptionPane.showMessageDialog(this, "Offline PIN was not saved. Use at least 4 characters and confirm it exactly.");
+            return;
+        }
+        try {
+            LocalAuthCacheService.saveUser(conn, new LocalAuthCacheService.CachedUser(
+                    userId,
+                    username,
+                    fullName,
+                    email,
+                    badgeId,
+                    role,
+                    location.locationId,
+                    location.locationName,
+                    location.timezone
+            ), pin);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Offline PIN could not be saved: " + ex.getMessage(), "Offline Login PIN", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    private boolean isReachabilityAuthFailure(String message) {
+        return message != null && message.startsWith("Unable to reach Supabase Auth:");
     }
 
     private LocationOption findLocation(List<LocationOption> locations, Integer locationId) {
@@ -605,19 +777,24 @@ public class Login extends JFrame {
         private final String fullName;
         private final String role;
         private final LocationOption location;
+        private String hydrationWarning;
 
-        private AutoSignInResult(int userId, String username, String fullName, String role, LocationOption location) {
+        private AutoSignInResult(int userId, String username, String fullName, String role, LocationOption location, String hydrationWarning) {
             this.userId = userId;
             this.username = username;
             this.fullName = fullName;
             this.role = role;
             this.location = location;
+            this.hydrationWarning = hydrationWarning;
         }
     }
 
     private void clearFields() {
         usernameField.setText("");
         passwordField.setText("");
+        badgeEntryStartedAtMillis = 0;
+        badgeEntryLastKeyAtMillis = 0;
+        badgeEntryKeyCount = 0;
         SessionManager.clearSessionState();
         SupabaseSessionManager.clearSession();
         usernameField.requestFocusInWindow();

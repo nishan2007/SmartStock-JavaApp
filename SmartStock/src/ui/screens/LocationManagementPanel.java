@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import services.OfflineWriteGuard;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -251,6 +252,12 @@ public class LocationManagementPanel extends JPanel {
     }
 
     private void saveLocation() {
+        try {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Location setup");
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         String name = nameField.getText().trim();
         String storeCode = sanitizeStoreCode(storeCodeField.getText());
         String address = addressArea.getText().trim();

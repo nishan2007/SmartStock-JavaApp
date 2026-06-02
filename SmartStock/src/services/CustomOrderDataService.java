@@ -14,6 +14,7 @@ import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public final class CustomOrderDataService {
     private CustomOrderDataService() {
@@ -229,7 +230,7 @@ public final class CustomOrderDataService {
                     minimum_deposit_required, deposit_override_reason,
                     deposit_override_by_user_id, deposit_override_by_name
                 )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String lineSql = """
                 INSERT INTO custom_order_lines (
@@ -288,10 +289,10 @@ public final class CustomOrderDataService {
                 """;
         String accountTransactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, custom_order_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    customer_id, custom_order_id, location_id, amount, transaction_type, note, user_name, device_id, device_name,
                     payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (Connection conn = DB.getConnection()) {
@@ -304,6 +305,7 @@ public final class CustomOrderDataService {
                  PreparedStatement refreshParentPs = conn.prepareStatement(refreshVariantParentSql);
                  PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
                  PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
+                DeviceContextService.requireOrdersAllowed(conn);
                 int customerId = resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
                 boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
                 if (hasAccountBalanceDue) {
@@ -382,17 +384,18 @@ public final class CustomOrderDataService {
                         + ", order_number=" + orderNumber;
                 accountTransactionPs.setInt(1, customerId);
                 accountTransactionPs.setLong(2, orderId);
-                accountTransactionPs.setBigDecimal(3, accountHistoryAmount);
-                accountTransactionPs.setString(4, accountHistoryType);
-                accountTransactionPs.setString(5, accountHistoryNote);
-                accountTransactionPs.setString(6, request.takenByName());
-                accountTransactionPs.setString(7, blankToNull(request.deviceId()));
-                accountTransactionPs.setString(8, blankToNull(request.deviceName()));
-                accountTransactionPs.setString(9, blankToNull(request.paymentMethod()));
-                accountTransactionPs.setString(10, blankToNull(request.paymentReference()));
-                setNullableLong(accountTransactionPs, 11, cashDrawer.cashDrawerId());
-                accountTransactionPs.setString(12, blankToNull(cashDrawer.drawerName()));
-                setNullableLong(accountTransactionPs, 13, cashDrawer.sessionId());
+                setNullableInteger(accountTransactionPs, 3, request.locationId());
+                accountTransactionPs.setBigDecimal(4, accountHistoryAmount);
+                accountTransactionPs.setString(5, accountHistoryType);
+                accountTransactionPs.setString(6, accountHistoryNote);
+                accountTransactionPs.setString(7, request.takenByName());
+                accountTransactionPs.setString(8, blankToNull(request.deviceId()));
+                accountTransactionPs.setString(9, blankToNull(request.deviceName()));
+                accountTransactionPs.setString(10, blankToNull(request.paymentMethod()));
+                accountTransactionPs.setString(11, blankToNull(request.paymentReference()));
+                setNullableLong(accountTransactionPs, 12, cashDrawer.cashDrawerId());
+                accountTransactionPs.setString(13, blankToNull(cashDrawer.drawerName()));
+                setNullableLong(accountTransactionPs, 14, cashDrawer.sessionId());
                 accountTransactionPs.executeUpdate();
                 CustomOrderAuditService.recordAudit(conn, orderId, "CREATE", "order", null, orderNumber, null);
                 CustomOrderAuditService.recordStatus(conn, orderId, null, "NEW", "Order created");
@@ -477,6 +480,28 @@ public final class CustomOrderDataService {
                 itemSoldPs.executeBatch();
                 variantSoldPs.executeBatch();
                 refreshParentPs.executeBatch();
+                SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_CREATED", Map.of(
+                        "custom_order_id", orderId,
+                        "order_number", orderNumber,
+                        "customer_id", customerId,
+                        "location_id", request.locationId() == null ? "" : request.locationId(),
+                        "device_id", String.valueOf(request.deviceId()),
+                        "total_amount", request.total(),
+                        "amount_paid", request.amountPaid(),
+                        "balance_due", request.balanceDue(),
+                        "payment_status", request.paymentStatus()
+                ));
+                if (request.amountPaid().compareTo(BigDecimal.ZERO) > 0) {
+                    SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_PAYMENT_CREATED", Map.of(
+                            "custom_order_id", orderId,
+                            "order_number", orderNumber,
+                            "customer_id", customerId,
+                            "payment_amount", request.amountPaid(),
+                            "payment_method", String.valueOf(request.paymentMethod()),
+                            "location_id", request.locationId() == null ? "" : request.locationId(),
+                            "device_id", String.valueOf(request.deviceId())
+                    ));
+                }
                 conn.commit();
                 return orderNumber;
             } catch (SQLException ex) {
@@ -568,6 +593,7 @@ public final class CustomOrderDataService {
     }
 
     private static void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal chargeAmount) throws SQLException {
+        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
         String lockSql = """
                 SELECT current_balance, credit_limit, is_active
                 FROM customer_accounts

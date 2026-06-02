@@ -198,6 +198,40 @@ public class CompanyCustomizationManager {
         cachedCustomOrderSlipSettings = settings;
     }
 
+    public static BadgeTemplateSettings loadBadgeTemplateSettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (Objects.equals(locationId, cachedBadgeTemplateLocationId) && cachedBadgeTemplateSettings != null) {
+            return cachedBadgeTemplateSettings;
+        }
+        if (locationId != null) {
+            try {
+                BadgeTemplateSettings dbSettings = loadBadgeTemplateSettingsFromDb(locationId);
+                if (dbSettings != null) {
+                    saveLocalBadgeTemplateSettings(dbSettings);
+                    cachedBadgeTemplateLocationId = locationId;
+                    cachedBadgeTemplateSettings = dbSettings;
+                    return dbSettings;
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+        BadgeTemplateSettings localSettings = loadLocalBadgeTemplateSettings();
+        cachedBadgeTemplateLocationId = locationId;
+        cachedBadgeTemplateSettings = localSettings;
+        return localSettings;
+    }
+
+    public static void saveBadgeTemplateSettings(BadgeTemplateSettings settings) throws IOException, SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            saveBadgeTemplateSettingsToDb(locationId, settings);
+        }
+        saveLocalBadgeTemplateSettings(settings);
+        cachedBadgeTemplateLocationId = locationId;
+        cachedBadgeTemplateSettings = settings;
+    }
+
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT company_name,
@@ -211,6 +245,9 @@ public class CompanyCustomizationManager {
                        COALESCE(show_sku, TRUE) AS show_sku,
                        COALESCE(show_item_discount, TRUE) AS show_item_discount,
                        COALESCE(show_payment_status, TRUE) AS show_payment_status,
+                       COALESCE(vat_enabled, FALSE) AS vat_enabled,
+                       COALESCE(vat_use_department_rates, FALSE) AS vat_use_department_rates,
+                       COALESCE(vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
                        COALESCE(next_receipt_counter, 1) AS next_receipt_counter
                 FROM company_customization
                 WHERE location_id = ?
@@ -236,6 +273,9 @@ public class CompanyCustomizationManager {
                         rs.getBoolean("show_sku"),
                         rs.getBoolean("show_item_discount"),
                         rs.getBoolean("show_payment_status"),
+                        rs.getBoolean("vat_enabled"),
+                        rs.getBoolean("vat_use_department_rates"),
+                        rs.getBigDecimal("vat_fixed_rate_percent"),
                         rs.getInt("next_receipt_counter")
                 );
             }
@@ -257,10 +297,13 @@ public class CompanyCustomizationManager {
                     show_sku,
                     show_item_discount,
                     show_payment_status,
+                    vat_enabled,
+                    vat_use_department_rates,
+                    vat_fixed_rate_percent,
                     next_receipt_counter,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     company_name = EXCLUDED.company_name,
                     receipt_header_line = EXCLUDED.receipt_header_line,
@@ -273,6 +316,9 @@ public class CompanyCustomizationManager {
                     show_sku = EXCLUDED.show_sku,
                     show_item_discount = EXCLUDED.show_item_discount,
                     show_payment_status = EXCLUDED.show_payment_status,
+                    vat_enabled = EXCLUDED.vat_enabled,
+                    vat_use_department_rates = EXCLUDED.vat_use_department_rates,
+                    vat_fixed_rate_percent = EXCLUDED.vat_fixed_rate_percent,
                     next_receipt_counter = EXCLUDED.next_receipt_counter,
                     updated_at = NOW()
                 """;
@@ -291,7 +337,10 @@ public class CompanyCustomizationManager {
             ps.setBoolean(10, settings.showSku());
             ps.setBoolean(11, settings.showItemDiscount());
             ps.setBoolean(12, settings.showPaymentStatus());
-            ps.setInt(13, settings.nextReceiptCounter());
+            ps.setBoolean(13, settings.vatEnabled());
+            ps.setBoolean(14, settings.vatUseDepartmentRates());
+            ps.setBigDecimal(15, settings.vatFixedRatePercent());
+            ps.setInt(16, settings.nextReceiptCounter());
             ps.executeUpdate();
         }
     }
@@ -529,6 +578,122 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static BadgeTemplateSettings loadBadgeTemplateSettingsFromDb(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(badge_template_company_name, company_name, 'SmartStock') AS company_name,
+                       COALESCE(badge_template_logo_url, receipt_logo_url, '') AS logo_path,
+                       COALESCE(badge_template_quote, '"Sales goes up and down, Service is Forever"') AS quote_line,
+                       COALESCE(badge_template_signatory_name, 'Authorized Signature') AS signatory_name,
+                       COALESCE(badge_template_signatory_title, 'Management') AS signatory_title,
+                       COALESCE(badge_template_back_instructions, 'Scan or swipe this badge for SmartStock access.') AS back_instructions,
+                       COALESCE(badge_template_show_quote, TRUE) AS show_quote,
+                       COALESCE(badge_template_show_employee_id, TRUE) AS show_employee_id,
+                       COALESCE(badge_template_show_issue_date, TRUE) AS show_issue_date,
+                       COALESCE(badge_template_show_barcode, TRUE) AS show_barcode,
+                       COALESCE(badge_template_show_badge_text, TRUE) AS show_badge_text,
+                       COALESCE(badge_template_magstripe_enabled, FALSE) AS magstripe_enabled,
+                       COALESCE(badge_template_magstripe_track1, '{badge_id}') AS magstripe_track1,
+                       COALESCE(badge_template_magstripe_track2, '{badge_id}') AS magstripe_track2,
+                       COALESCE(badge_template_magstripe_track3, '') AS magstripe_track3,
+                       COALESCE(badge_template_magstripe_command, '') AS magstripe_command
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new BadgeTemplateSettings(
+                        rs.getString("company_name"),
+                        rs.getString("logo_path"),
+                        rs.getString("quote_line"),
+                        rs.getString("signatory_name"),
+                        rs.getString("signatory_title"),
+                        rs.getString("back_instructions"),
+                        rs.getBoolean("show_quote"),
+                        rs.getBoolean("show_employee_id"),
+                        rs.getBoolean("show_issue_date"),
+                        rs.getBoolean("show_barcode"),
+                        rs.getBoolean("show_badge_text"),
+                        rs.getBoolean("magstripe_enabled"),
+                        rs.getString("magstripe_track1"),
+                        rs.getString("magstripe_track2"),
+                        rs.getString("magstripe_track3"),
+                        rs.getString("magstripe_command")
+                );
+            }
+        }
+    }
+
+    private static void saveBadgeTemplateSettingsToDb(int locationId, BadgeTemplateSettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    badge_template_company_name,
+                    badge_template_logo_url,
+                    badge_template_quote,
+                    badge_template_signatory_name,
+                    badge_template_signatory_title,
+                    badge_template_back_instructions,
+                    badge_template_show_quote,
+                    badge_template_show_employee_id,
+                    badge_template_show_issue_date,
+                    badge_template_show_barcode,
+                    badge_template_show_badge_text,
+                    badge_template_magstripe_enabled,
+                    badge_template_magstripe_track1,
+                    badge_template_magstripe_track2,
+                    badge_template_magstripe_track3,
+                    badge_template_magstripe_command,
+                    updated_at
+                )
+                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    badge_template_company_name = EXCLUDED.badge_template_company_name,
+                    badge_template_logo_url = EXCLUDED.badge_template_logo_url,
+                    badge_template_quote = EXCLUDED.badge_template_quote,
+                    badge_template_signatory_name = EXCLUDED.badge_template_signatory_name,
+                    badge_template_signatory_title = EXCLUDED.badge_template_signatory_title,
+                    badge_template_back_instructions = EXCLUDED.badge_template_back_instructions,
+                    badge_template_show_quote = EXCLUDED.badge_template_show_quote,
+                    badge_template_show_employee_id = EXCLUDED.badge_template_show_employee_id,
+                    badge_template_show_issue_date = EXCLUDED.badge_template_show_issue_date,
+                    badge_template_show_barcode = EXCLUDED.badge_template_show_barcode,
+                    badge_template_show_badge_text = EXCLUDED.badge_template_show_badge_text,
+                    badge_template_magstripe_enabled = EXCLUDED.badge_template_magstripe_enabled,
+                    badge_template_magstripe_track1 = EXCLUDED.badge_template_magstripe_track1,
+                    badge_template_magstripe_track2 = EXCLUDED.badge_template_magstripe_track2,
+                    badge_template_magstripe_track3 = EXCLUDED.badge_template_magstripe_track3,
+                    badge_template_magstripe_command = EXCLUDED.badge_template_magstripe_command,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setString(2, settings.companyName());
+            ps.setString(3, settings.logoPath());
+            ps.setString(4, settings.quoteLine());
+            ps.setString(5, settings.signatoryName());
+            ps.setString(6, settings.signatoryTitle());
+            ps.setString(7, settings.backInstructions());
+            ps.setBoolean(8, settings.showQuote());
+            ps.setBoolean(9, settings.showEmployeeId());
+            ps.setBoolean(10, settings.showIssueDate());
+            ps.setBoolean(11, settings.showBarcode());
+            ps.setBoolean(12, settings.showBadgeText());
+            ps.setBoolean(13, settings.magStripeEnabled());
+            ps.setString(14, settings.magStripeTrack1());
+            ps.setString(15, settings.magStripeTrack2());
+            ps.setString(16, settings.magStripeTrack3());
+            ps.setString(17, settings.magStripeCommand());
+            ps.executeUpdate();
+        }
+    }
+
     private static ReceiptSettings loadLocalReceiptSettings() {
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
@@ -551,6 +716,9 @@ public class CompanyCustomizationManager {
                 Boolean.parseBoolean(properties.getProperty("receipt.show_sku", "true")),
                 Boolean.parseBoolean(properties.getProperty("receipt.show_item_discount", "true")),
                 Boolean.parseBoolean(properties.getProperty("receipt.show_payment_status", "true")),
+                Boolean.parseBoolean(properties.getProperty("receipt.vat_enabled", "false")),
+                Boolean.parseBoolean(properties.getProperty("receipt.vat_use_department_rates", "false")),
+                parsePercent(properties.getProperty("receipt.vat_fixed_rate_percent", "0")),
                 parseIntInRange(properties.getProperty("receipt.next_receipt_counter", "1"), 1, 999999, 1)
         );
     }
@@ -619,6 +787,35 @@ public class CompanyCustomizationManager {
         );
     }
 
+    private static BadgeTemplateSettings loadLocalBadgeTemplateSettings() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        return new BadgeTemplateSettings(
+                properties.getProperty("badge_template.company_name", properties.getProperty("receipt.company_name", "SmartStock")),
+                properties.getProperty("badge_template.logo_path", properties.getProperty("receipt.logo_path", "")),
+                properties.getProperty("badge_template.quote", "\"Sales goes up and down, Service is Forever\""),
+                properties.getProperty("badge_template.signatory_name", "Authorized Signature"),
+                properties.getProperty("badge_template.signatory_title", "Management"),
+                properties.getProperty("badge_template.back_instructions", "Scan or swipe this badge for SmartStock access."),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_quote", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_employee_id", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_issue_date", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_barcode", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_badge_text", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.magstripe_enabled", "false")),
+                properties.getProperty("badge_template.magstripe_track1", "{badge_id}"),
+                properties.getProperty("badge_template.magstripe_track2", "{badge_id}"),
+                properties.getProperty("badge_template.magstripe_track3", ""),
+                properties.getProperty("badge_template.magstripe_command", "")
+        );
+    }
+
     private static void saveLocalReceiptSettings(ReceiptSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
         Properties properties = new Properties();
@@ -638,6 +835,9 @@ public class CompanyCustomizationManager {
         properties.setProperty("receipt.show_sku", String.valueOf(settings.showSku()));
         properties.setProperty("receipt.show_item_discount", String.valueOf(settings.showItemDiscount()));
         properties.setProperty("receipt.show_payment_status", String.valueOf(settings.showPaymentStatus()));
+        properties.setProperty("receipt.vat_enabled", String.valueOf(settings.vatEnabled()));
+        properties.setProperty("receipt.vat_use_department_rates", String.valueOf(settings.vatUseDepartmentRates()));
+        properties.setProperty("receipt.vat_fixed_rate_percent", settings.vatFixedRatePercent().toPlainString());
         properties.setProperty("receipt.next_receipt_counter", String.valueOf(settings.nextReceiptCounter()));
 
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
@@ -704,6 +904,35 @@ public class CompanyCustomizationManager {
         }
         properties.setProperty("sales.discount_limit_percent", settings.discountLimitPercent().toPlainString());
         properties.setProperty("sales.return_approval_limit", settings.returnApprovalLimit().toPlainString());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
+    private static void saveLocalBadgeTemplateSettings(BadgeTemplateSettings settings) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
+        properties.setProperty("badge_template.company_name", settings.companyName());
+        properties.setProperty("badge_template.logo_path", settings.logoPath());
+        properties.setProperty("badge_template.quote", settings.quoteLine());
+        properties.setProperty("badge_template.signatory_name", settings.signatoryName());
+        properties.setProperty("badge_template.signatory_title", settings.signatoryTitle());
+        properties.setProperty("badge_template.back_instructions", settings.backInstructions());
+        properties.setProperty("badge_template.show_quote", String.valueOf(settings.showQuote()));
+        properties.setProperty("badge_template.show_employee_id", String.valueOf(settings.showEmployeeId()));
+        properties.setProperty("badge_template.show_issue_date", String.valueOf(settings.showIssueDate()));
+        properties.setProperty("badge_template.show_barcode", String.valueOf(settings.showBarcode()));
+        properties.setProperty("badge_template.show_badge_text", String.valueOf(settings.showBadgeText()));
+        properties.setProperty("badge_template.magstripe_enabled", String.valueOf(settings.magStripeEnabled()));
+        properties.setProperty("badge_template.magstripe_track1", settings.magStripeTrack1());
+        properties.setProperty("badge_template.magstripe_track2", settings.magStripeTrack2());
+        properties.setProperty("badge_template.magstripe_track3", settings.magStripeTrack3());
+        properties.setProperty("badge_template.magstripe_command", settings.magStripeCommand());
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -805,6 +1034,8 @@ public class CompanyCustomizationManager {
     private static SaleSafetySettings cachedSaleSafetySettings;
     private static Integer cachedCustomOrderSlipLocationId;
     private static CustomOrderSlipSettings cachedCustomOrderSlipSettings;
+    private static Integer cachedBadgeTemplateLocationId;
+    private static BadgeTemplateSettings cachedBadgeTemplateSettings;
 
     private static String getExtension(String fileName) {
         int dotIndex = fileName == null ? -1 : fileName.lastIndexOf('.');
@@ -918,6 +1149,9 @@ public class CompanyCustomizationManager {
             boolean showSku,
             boolean showItemDiscount,
             boolean showPaymentStatus,
+            boolean vatEnabled,
+            boolean vatUseDepartmentRates,
+            java.math.BigDecimal vatFixedRatePercent,
             int nextReceiptCounter
     ) {
         public ReceiptSettings {
@@ -925,6 +1159,12 @@ public class CompanyCustomizationManager {
             headerLine = Objects.requireNonNullElse(headerLine, "").trim();
             footerLine = clean(footerLine, "Thank you");
             logoPath = Objects.requireNonNullElse(logoPath, "").trim();
+            vatFixedRatePercent = vatFixedRatePercent == null ? java.math.BigDecimal.ZERO : vatFixedRatePercent;
+            if (vatFixedRatePercent.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                vatFixedRatePercent = java.math.BigDecimal.ZERO;
+            } else if (vatFixedRatePercent.compareTo(java.math.BigDecimal.valueOf(100)) > 0) {
+                vatFixedRatePercent = java.math.BigDecimal.valueOf(100);
+            }
             if (nextReceiptCounter < 1) {
                 nextReceiptCounter = 1;
             }
@@ -991,6 +1231,43 @@ public class CompanyCustomizationManager {
             } else if (blankDetailLines > 20) {
                 blankDetailLines = 20;
             }
+        }
+
+        private static String clean(String value, String fallback) {
+            String cleaned = Objects.requireNonNullElse(value, "").trim();
+            return cleaned.isBlank() ? fallback : cleaned;
+        }
+    }
+
+    public record BadgeTemplateSettings(
+            String companyName,
+            String logoPath,
+            String quoteLine,
+            String signatoryName,
+            String signatoryTitle,
+            String backInstructions,
+            boolean showQuote,
+            boolean showEmployeeId,
+            boolean showIssueDate,
+            boolean showBarcode,
+            boolean showBadgeText,
+            boolean magStripeEnabled,
+            String magStripeTrack1,
+            String magStripeTrack2,
+            String magStripeTrack3,
+            String magStripeCommand
+    ) {
+        public BadgeTemplateSettings {
+            companyName = clean(companyName, "SmartStock");
+            logoPath = Objects.requireNonNullElse(logoPath, "").trim();
+            quoteLine = clean(quoteLine, "\"Sales goes up and down, Service is Forever\"");
+            signatoryName = clean(signatoryName, "Authorized Signature");
+            signatoryTitle = clean(signatoryTitle, "Management");
+            backInstructions = clean(backInstructions, "Scan or swipe this badge for SmartStock access.");
+            magStripeTrack1 = clean(magStripeTrack1, "{badge_id}");
+            magStripeTrack2 = clean(magStripeTrack2, "{badge_id}");
+            magStripeTrack3 = Objects.requireNonNullElse(magStripeTrack3, "").trim();
+            magStripeCommand = Objects.requireNonNullElse(magStripeCommand, "").trim();
         }
 
         private static String clean(String value, String fallback) {

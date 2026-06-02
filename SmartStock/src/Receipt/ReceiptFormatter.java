@@ -82,6 +82,9 @@ public class ReceiptFormatter {
         if (receipt.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
             appendPair(builder, "Discount", money(receipt.getDiscountAmount()), width);
         }
+        if (receipt.getVatAmount().compareTo(BigDecimal.ZERO) > 0) {
+            appendPair(builder, vatLabel(receipt), money(receipt.getVatAmount()), width);
+        }
         appendPair(builder, "Total", money(receipt.getTotalAmount()), width);
         appendPair(builder, "Payment", receipt.getPaymentMethod(), width);
         if (settings.showPaymentStatus()) {
@@ -141,6 +144,14 @@ public class ReceiptFormatter {
 
     private static String money(BigDecimal value) {
         return CURRENCY.format(value == null ? BigDecimal.ZERO : value);
+    }
+
+    private static String vatLabel(ReceiptData receipt) {
+        if ("FIXED".equalsIgnoreCase(receipt.getVatMode())
+                && receipt.getVatRatePercent().compareTo(BigDecimal.ZERO) > 0) {
+            return "VAT " + receipt.getVatRatePercent().stripTrailingZeros().toPlainString() + "%";
+        }
+        return "VAT";
     }
 
     private static String repeat(String value, int width) {

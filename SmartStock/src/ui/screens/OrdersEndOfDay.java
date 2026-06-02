@@ -257,7 +257,7 @@ public class OrdersEndOfDay extends JFrame {
                 ORDER BY device_name
                 """;
         String drawerSql = """
-                SELECT DISTINCT COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'Unassigned') AS drawer_name
+                SELECT DISTINCT COALESCE(NULLIF(TRIM(p.cash_drawer_name), ''), 'Unassigned') AS drawer_name
                 FROM custom_order_payments p
                 JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
                 WHERE co.location_id = ?

@@ -5,6 +5,9 @@ import ui.screens.customorders.EditCustomItem;
 import managers.PermissionManager;
 import managers.SessionManager;
 import data.DB;
+import services.DeviceContextService;
+import services.OfflineWriteGuard;
+import services.ReferenceDataSyncService;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
@@ -24,6 +27,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class EditItem extends JFrame {
@@ -564,6 +568,23 @@ public class EditItem extends JFrame {
         return String.join("\n", barcodes);
     }
 
+    private Set<String> loadAdditionalBarcodeSet(Connection conn, int productId) throws SQLException {
+        Set<String> barcodes = new LinkedHashSet<>();
+        String sql = "SELECT barcode FROM product_barcodes WHERE product_id = ? ORDER BY barcode";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, productId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String barcode = rs.getString("barcode");
+                    if (barcode != null && !barcode.isBlank()) {
+                        barcodes.add(barcode);
+                    }
+                }
+            }
+        }
+        return barcodes;
+    }
+
     private int getCurrentInventoryQuantity(Connection conn, int productId, int locationId) throws SQLException {
         String sql = "SELECT quantity_on_hand FROM inventory WHERE product_id = ? AND location_id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -584,7 +605,13 @@ public class EditItem extends JFrame {
             return;
         }
 
-        String sql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
+        String sql = """
+                INSERT INTO inventory_movements (
+                    product_id, location_id, change_qty, reason, note, user_name,
+                    user_id, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, productId);
@@ -593,11 +620,28 @@ public class EditItem extends JFrame {
             ps.setString(4, "MANUAL_ADJUSTMENT");
             ps.setString(5, "Manual adjustment from Edit Item");
             ps.setString(6, SessionManager.getCurrentUserDisplayName());
+            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
+            ps.setString(8, DeviceContextService.currentDeviceId());
+            ps.setString(9, DeviceContextService.currentDeviceName());
             ps.executeUpdate();
         }
     }
 
+    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
+        }
+    }
+
     private void saveChanges() {
+        try {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Product setup");
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         if (selectedProductId == -1) {
             JOptionPane.showMessageDialog(this, "No product selected.");
             return;
@@ -696,7 +740,7 @@ public class EditItem extends JFrame {
             return;
         }
 
-        String updateProductSql = "UPDATE products SET name = ?, size = NULLIF(?, ''), sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ? WHERE product_id = ?";
+        String updateProductSql = "UPDATE products SET name = ?, size = NULLIF(?, ''), sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?";
         String upsertInventorySql = """
                 INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
                 VALUES (?, ?, ?, ?)
@@ -705,8 +749,15 @@ public class EditItem extends JFrame {
                     quantity_on_hand = EXCLUDED.quantity_on_hand,
                     reorder_level = EXCLUDED.reorder_level
                 """;
-        String deleteBarcodesSql = "DELETE FROM product_barcodes WHERE product_id = ?";
-        String insertBarcodeSql = "INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)";
+        String deleteBarcodesSql = "DELETE FROM product_barcodes WHERE product_id = ? AND barcode = ?";
+        String insertBarcodeSql = """
+                INSERT INTO product_barcodes (product_id, barcode)
+                VALUES (?, ?)
+                ON CONFLICT (barcode)
+                DO UPDATE SET
+                    product_id = EXCLUDED.product_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """;
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -754,8 +805,16 @@ public class EditItem extends JFrame {
                     logManualInventoryAdjustment(conn, selectedProductId, selectedLocationId, previousQuantity, quantity);
                 }
 
-                deletePs.setInt(1, selectedProductId);
-                deletePs.executeUpdate();
+                Set<String> existingBarcodes = loadAdditionalBarcodeSet(conn, selectedProductId);
+                Set<String> removedBarcodes = new LinkedHashSet<>(existingBarcodes);
+                removedBarcodes.removeAll(extraBarcodes);
+                for (String removedBarcode : removedBarcodes) {
+                    ReferenceDataSyncService.recordTombstone(conn, "product_barcodes", Map.of("barcode", removedBarcode));
+                    deletePs.setInt(1, selectedProductId);
+                    deletePs.setString(2, removedBarcode);
+                    deletePs.addBatch();
+                }
+                deletePs.executeBatch();
 
                 for (String extraBarcode : extraBarcodes) {
                     insertPs.setInt(1, selectedProductId);

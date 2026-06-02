@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import services.CustomerAccountLedgerService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -130,9 +131,10 @@ public class CustomerTransactionHistory extends JFrame {
 		                       COALESCE(t.transaction_type, '') AS transaction_type,
                        COALESCE(t.payment_method, '') AS payment_method,
                        COALESCE(t.payment_reference, '') AS payment_reference,
-	                       t.sale_id,
+                       t.sale_id,
 	                       t.custom_order_id,
                        COALESCE(t.amount, 0) AS ledger_amount,
+                       %s AS balance_delta,
                        CASE
                            WHEN t.custom_order_id IS NOT NULL
                                 AND COALESCE(t.transaction_type, '') IN ('CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_CREDIT')
@@ -147,20 +149,20 @@ public class CustomerTransactionHistory extends JFrame {
                 LEFT JOIN custom_orders co ON t.custom_order_id = co.custom_order_id
                 WHERE t.customer_id = ?
                 ORDER BY t.created_at DESC, t.transaction_id DESC
-                """;
+                """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
 
         int count = 0;
         BigDecimal totalCharges = BigDecimal.ZERO;
         BigDecimal totalPayments = BigDecimal.ZERO;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
+        try (Connection conn = DB.getConnection()) {
+            CustomerAccountLedgerService.ensureSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
+                ps.setInt(2, customerId);
+                try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    BigDecimal ledgerAmount = defaultZero(rs.getBigDecimal("ledger_amount"));
+                    BigDecimal ledgerAmount = defaultZero(rs.getBigDecimal("balance_delta"));
                     BigDecimal displayAmount = defaultZero(rs.getBigDecimal("display_amount"));
                     if (ledgerAmount.compareTo(BigDecimal.ZERO) >= 0) {
                         totalCharges = totalCharges.add(ledgerAmount);
@@ -186,6 +188,7 @@ public class CustomerTransactionHistory extends JFrame {
                             rs.getString("note")
                     });
                     count++;
+                }
                 }
             }
 

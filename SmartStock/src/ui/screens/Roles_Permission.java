@@ -3,6 +3,8 @@ package ui.screens;
 import managers.PermissionManager;
 import ui.helpers.WindowHelper;
 import data.DB;
+import services.OfflineWriteGuard;
+import services.ReferenceDataSyncService;
 import ui.components.AppMenuBar;
 
 
@@ -599,6 +601,7 @@ public class Roles_Permission extends JFrame {
         if (selected == null) return;
 
         try (Connection conn = DB.getConnection()) {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Role and permission");
 
             conn.setAutoCommit(false);
             ensureSelectedPermissionsExist(conn);
@@ -606,51 +609,73 @@ public class Roles_Permission extends JFrame {
                 ensureSelectedMobilePermissionsExist(conn);
             }
 
-            // DELETE OLD
+            Set<Integer> existingPermissionIds = loadRolePermissionIds(conn, selected.id);
+            Map<String, Integer> selectedPermissionIds = loadSelectedPermissionIds(conn);
+            Set<Integer> removedPermissionIds = new HashSet<>(existingPermissionIds);
+            removedPermissionIds.removeAll(selectedPermissionIds.values());
+
             try (PreparedStatement delete = conn.prepareStatement(
-                    "DELETE FROM role_permissions WHERE role_id = ?")) {
-                delete.setInt(1, selected.id);
-                delete.executeUpdate();
+                    "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?")) {
+                for (Integer permissionId : removedPermissionIds) {
+                    ReferenceDataSyncService.recordTombstone(conn, "role_permissions", Map.of(
+                            "role_id", selected.id,
+                            "permission_id", permissionId
+                    ));
+                    delete.setInt(1, selected.id);
+                    delete.setInt(2, permissionId);
+                    delete.addBatch();
+                }
+                delete.executeBatch();
             }
 
-            // INSERT NEW
             String insertSql = """
                     INSERT INTO role_permissions (role_id, permission_id)
                     SELECT ?, permission_id FROM permissions WHERE UPPER(permission_key) = UPPER(?)
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
                     """;
 
             try (PreparedStatement insert = conn.prepareStatement(insertSql)) {
 
-                for (Map.Entry<String, JCheckBox> entry : permissionCheckboxes.entrySet()) {
-                    if (entry.getValue().isSelected()) {
-                        insert.setInt(1, selected.id);
-                        insert.setString(2, entry.getKey());
-                        insert.addBatch();
-                    }
+                for (String permissionKey : selectedPermissionIds.keySet()) {
+                    insert.setInt(1, selected.id);
+                    insert.setString(2, permissionKey);
+                    insert.addBatch();
                 }
 
                 insert.executeBatch();
             }
 
             if (mobilePermissionsAvailable) {
+                Set<String> existingMobileKeys = loadRoleMobilePermissionKeys(conn, selected.id);
+                Set<String> selectedMobileKeys = selectedMobilePermissionKeys();
+                Set<String> removedMobileKeys = new HashSet<>(existingMobileKeys);
+                removedMobileKeys.removeAll(selectedMobileKeys);
+
                 try (PreparedStatement delete = conn.prepareStatement(
-                        "DELETE FROM role_mobile_permissions WHERE role_id = ?")) {
-                    delete.setInt(1, selected.id);
-                    delete.executeUpdate();
+                        "DELETE FROM role_mobile_permissions WHERE role_id = ? AND permission_key = ?")) {
+                    for (String permissionKey : removedMobileKeys) {
+                        ReferenceDataSyncService.recordTombstone(conn, "role_mobile_permissions", Map.of(
+                                "role_id", selected.id,
+                                "permission_key", permissionKey
+                        ));
+                        delete.setInt(1, selected.id);
+                        delete.setString(2, permissionKey);
+                        delete.addBatch();
+                    }
+                    delete.executeBatch();
                 }
 
                 String mobileInsertSql = """
                         INSERT INTO role_mobile_permissions (role_id, permission_key)
                         SELECT ?, permission_key FROM mobile_permissions WHERE permission_key = ?
+                        ON CONFLICT (role_id, permission_key) DO NOTHING
                         """;
 
                 try (PreparedStatement insert = conn.prepareStatement(mobileInsertSql)) {
-                    for (Map.Entry<String, JCheckBox> entry : mobilePermissionCheckboxes.entrySet()) {
-                        if (entry.getValue().isSelected()) {
-                            insert.setInt(1, selected.id);
-                            insert.setString(2, entry.getKey());
-                            insert.addBatch();
-                        }
+                    for (String permissionKey : selectedMobileKeys) {
+                        insert.setInt(1, selected.id);
+                        insert.setString(2, permissionKey);
+                        insert.addBatch();
                     }
                     insert.executeBatch();
                 }
@@ -686,6 +711,61 @@ public class Roles_Permission extends JFrame {
                 }
             }
         }
+    }
+
+    private Set<Integer> loadRolePermissionIds(Connection conn, int roleId) throws SQLException {
+        Set<Integer> permissionIds = new HashSet<>();
+        try (PreparedStatement ps = conn.prepareStatement("SELECT permission_id FROM role_permissions WHERE role_id = ?")) {
+            ps.setInt(1, roleId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    permissionIds.add(rs.getInt("permission_id"));
+                }
+            }
+        }
+        return permissionIds;
+    }
+
+    private Map<String, Integer> loadSelectedPermissionIds(Connection conn) throws SQLException {
+        Map<String, Integer> permissionIds = new LinkedHashMap<>();
+        String sql = "SELECT permission_id FROM permissions WHERE UPPER(permission_key) = UPPER(?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Map.Entry<String, JCheckBox> entry : permissionCheckboxes.entrySet()) {
+                if (!entry.getValue().isSelected()) {
+                    continue;
+                }
+                ps.setString(1, entry.getKey());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        permissionIds.put(entry.getKey(), rs.getInt("permission_id"));
+                    }
+                }
+            }
+        }
+        return permissionIds;
+    }
+
+    private Set<String> loadRoleMobilePermissionKeys(Connection conn, int roleId) throws SQLException {
+        Set<String> permissionKeys = new HashSet<>();
+        try (PreparedStatement ps = conn.prepareStatement("SELECT permission_key FROM role_mobile_permissions WHERE role_id = ?")) {
+            ps.setInt(1, roleId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    permissionKeys.add(rs.getString("permission_key"));
+                }
+            }
+        }
+        return permissionKeys;
+    }
+
+    private Set<String> selectedMobilePermissionKeys() {
+        Set<String> permissionKeys = new HashSet<>();
+        for (Map.Entry<String, JCheckBox> entry : mobilePermissionCheckboxes.entrySet()) {
+            if (entry.getValue().isSelected()) {
+                permissionKeys.add(entry.getKey());
+            }
+        }
+        return permissionKeys;
     }
 
     private void ensureSelectedMobilePermissionsExist(Connection conn) throws SQLException {
@@ -812,10 +892,12 @@ public class Roles_Permission extends JFrame {
         permissions.put("PROCESS_RETURNS", "Process Returns");
         permissions.put("END_OF_DAY", "End of Day");
         permissions.put("BALANCE_DRAWER", "Balance Draw");
+        permissions.put("BALANCE_SHEET", "Balance Sheet");
         permissions.put("VIEW_SALES", "View Sales");
         permissions.put("NEW_ITEM", "Add Item");
         permissions.put("EDIT_ITEM", "Edit Item");
         permissions.put("RECEIVING_INVENTORY", "Receiving Inventory");
+        permissions.put("RECEIVING_STOCK_OVERRIDE", "Receiving Stock Override");
         permissions.put("VIEW_RECEIVING_HISTORY", "View Receiving History");
         permissions.put("STORE_TRANSFER", "Store Transfer");
         permissions.put("VIEW_INVENTORY", "View Inventory");
@@ -847,6 +929,7 @@ public class Roles_Permission extends JFrame {
         permissions.put("EMPLOYEE_MANAGEMENT", "Employee Management");
         permissions.put("TIME_CLOCK", "Time Clock");
         permissions.put("TIME_CLOCK_MANAGEMENT", "Time Clock Management");
+        permissions.put("TIME_CLOCK_OVERRIDE", "Time Clock Override");
         permissions.put("PAYROLL_DASHBOARD", "Payroll Dashboard");
         permissions.put("ROLE_MANAGEMENT", "Roles & Permission");
         permissions.put("LOCATION_MANAGEMENT", "Location Management");
@@ -871,10 +954,12 @@ public class Roles_Permission extends JFrame {
         descriptions.put("PROCESS_RETURNS", "Allows creating and completing return transactions.");
         descriptions.put("END_OF_DAY", "Allows running end-of-day reconciliation and closeout tasks.");
         descriptions.put("BALANCE_DRAWER", "Allows balancing drawer sessions and submitting counted cash totals.");
+        descriptions.put("BALANCE_SHEET", "Allows viewing balance sheet totals and logging business expenses.");
         descriptions.put("VIEW_SALES", "Allows viewing past sales and related transaction history.");
         descriptions.put("NEW_ITEM", "Allows creating new inventory items.");
         descriptions.put("EDIT_ITEM", "Allows editing existing inventory item details.");
         descriptions.put("RECEIVING_INVENTORY", "Allows receiving stock into inventory quantities.");
+        descriptions.put("RECEIVING_STOCK_OVERRIDE", "Allows correcting counted shelf/storage stock during receiving with an audit trail.");
         descriptions.put("VIEW_RECEIVING_HISTORY", "Allows viewing historical receiving records.");
         descriptions.put("STORE_TRANSFER", "Allows sending and receiving inventory store transfers.");
         descriptions.put("VIEW_INVENTORY", "Allows viewing the inventory list and stock levels.");
@@ -906,6 +991,7 @@ public class Roles_Permission extends JFrame {
         descriptions.put("EMPLOYEE_MANAGEMENT", "Allows creating and managing employee records.");
         descriptions.put("TIME_CLOCK", "Allows clock-in/clock-out actions.");
         descriptions.put("TIME_CLOCK_MANAGEMENT", "Allows viewing and correcting staff time clock records.");
+        descriptions.put("TIME_CLOCK_OVERRIDE", "Allows approving additional employee time clock sessions after a completed session on the same day.");
         descriptions.put("PAYROLL_DASHBOARD", "Allows viewing payroll and labor summary dashboards.");
         descriptions.put("ROLE_MANAGEMENT", "Allows editing role definitions and assigning permissions.");
         descriptions.put("LOCATION_MANAGEMENT", "Allows creating and editing store locations.");
@@ -931,6 +1017,7 @@ public class Roles_Permission extends JFrame {
         groups.put("PROCESS_RETURNS", "Sales");
         groups.put("END_OF_DAY", "Sales");
         groups.put("BALANCE_DRAWER", "Sales");
+        groups.put("BALANCE_SHEET", "Sales");
         groups.put("VIEW_SALES", "Sales");
         groups.put("CUSTOMER_ACCOUNTS", "Sales");
         groups.put("SET_CREDIT_LIMIT", "Sales");
@@ -954,6 +1041,7 @@ public class Roles_Permission extends JFrame {
         groups.put("NEW_ITEM", "Inventory");
         groups.put("EDIT_ITEM", "Inventory");
         groups.put("RECEIVING_INVENTORY", "Inventory");
+        groups.put("RECEIVING_STOCK_OVERRIDE", "Inventory");
         groups.put("VIEW_RECEIVING_HISTORY", "Inventory");
         groups.put("STORE_TRANSFER", "Inventory");
         groups.put("VIEW_INVENTORY", "Inventory");
@@ -968,6 +1056,7 @@ public class Roles_Permission extends JFrame {
         groups.put("EMPLOYEE_MANAGEMENT", "People");
         groups.put("TIME_CLOCK", "People");
         groups.put("TIME_CLOCK_MANAGEMENT", "People");
+        groups.put("TIME_CLOCK_OVERRIDE", "People");
         groups.put("PAYROLL_DASHBOARD", "People");
 
         groups.put("ROLE_MANAGEMENT", "Administration");

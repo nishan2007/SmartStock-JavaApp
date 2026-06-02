@@ -1,0 +1,507 @@
+package services;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public final class BaseSchemaInstaller {
+    private BaseSchemaInstaller() {
+    }
+
+    public static void ensureSchema(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS roles (
+                        role_id SERIAL PRIMARY KEY,
+                        role_name TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS permissions (
+                        permission_id SERIAL PRIMARY KEY,
+                        permission_key TEXT NOT NULL UNIQUE,
+                        permission_name TEXT,
+                        description TEXT,
+                        permission_group TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS role_permissions (
+                        role_id INTEGER NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+                        permission_id INTEGER NOT NULL REFERENCES permissions(permission_id) ON DELETE CASCADE,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (role_id, permission_id)
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS mobile_permissions (
+                        permission_key TEXT PRIMARY KEY,
+                        permission_name TEXT,
+                        description TEXT,
+                        permission_group TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS role_mobile_permissions (
+                        role_id INTEGER NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+                        permission_key TEXT NOT NULL REFERENCES mobile_permissions(permission_key) ON DELETE CASCADE,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (role_id, permission_key)
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS locations (
+                        location_id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        address TEXT,
+                        receipt_store_code TEXT,
+                        timezone TEXT NOT NULL DEFAULT 'America/New_York',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id SERIAL PRIMARY KEY,
+                        username TEXT NOT NULL UNIQUE,
+                        password_hash TEXT,
+                        first_name TEXT,
+                        middle_name TEXT,
+                        last_name TEXT,
+                        full_name TEXT,
+                        email TEXT,
+                        phone TEXT,
+                        date_of_birth DATE,
+                        badge_id TEXT,
+                        badge_secret_salt TEXT,
+                        badge_secret_hash TEXT,
+                        badge_generated_at TIMESTAMPTZ,
+                        compensation_type TEXT,
+                        salary NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        role_id INTEGER REFERENCES roles(role_id),
+                        auth_user_id UUID,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        deactivated_at TIMESTAMPTZ,
+                        deactivated_by_user_id INTEGER,
+                        deactivated_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS user_locations (
+                        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, location_id)
+                    )
+                    """);
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_salt TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE user_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE FUNCTION set_users_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' THEN
+                            NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                        ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                            NEW.updated_at = CURRENT_TIMESTAMP;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                    """);
+            stmt.executeUpdate("DROP TRIGGER IF EXISTS users_set_updated_at ON users");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE TRIGGER users_set_updated_at
+                    BEFORE INSERT OR UPDATE ON users
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_users_updated_at()
+                    """);
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE FUNCTION set_user_locations_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' THEN
+                            NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                        ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                            NEW.updated_at = CURRENT_TIMESTAMP;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                    """);
+            stmt.executeUpdate("DROP TRIGGER IF EXISTS user_locations_set_updated_at ON user_locations");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE TRIGGER user_locations_set_updated_at
+                    BEFORE INSERT OR UPDATE ON user_locations
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_user_locations_updated_at()
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS users_updated_at_idx ON users(updated_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS users_badge_normalized_idx ON users(UPPER(REGEXP_REPLACE(COALESCE(badge_id, ''), '[^a-zA-Z0-9]', '', 'g')))");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS user_locations_updated_at_idx ON user_locations(updated_at DESC)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS categories (
+                        category_id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        vat_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("ALTER TABLE categories ADD COLUMN IF NOT EXISTS vat_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_vat_rate_percent_chk");
+            stmt.executeUpdate("ALTER TABLE categories ADD CONSTRAINT categories_vat_rate_percent_chk CHECK (vat_rate_percent >= 0 AND vat_rate_percent <= 100)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS vendors (
+                        vendor_id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        contact_name TEXT,
+                        phone TEXT,
+                        email TEXT,
+                        address TEXT,
+                        notes TEXT,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS products (
+                        product_id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        size TEXT,
+                        sku TEXT,
+                        barcode TEXT,
+                        description TEXT,
+                        cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        price NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        product_type TEXT NOT NULL DEFAULT 'INVENTORY',
+                        category_id INTEGER REFERENCES categories(category_id),
+                        vendor_id INTEGER REFERENCES vendors(vendor_id),
+                        image_url TEXT,
+                        created_by_user_id INTEGER REFERENCES users(user_id),
+                        created_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS product_barcodes (
+                        product_barcode_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+                        barcode TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(barcode)
+                    )
+                    """);
+            stmt.executeUpdate("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            stmt.executeUpdate("ALTER TABLE product_barcodes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            stmt.executeUpdate("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'product_barcodes'
+                              AND column_name = 'barcode_id'
+                        ) AND NOT EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'product_barcodes'
+                              AND column_name = 'product_barcode_id'
+                        ) THEN
+                            ALTER TABLE product_barcodes RENAME COLUMN barcode_id TO product_barcode_id;
+                        END IF;
+                    END
+                    $$
+                    """);
+            stmt.executeUpdate("""
+                    DELETE FROM product_barcodes older
+                    USING product_barcodes newer
+                    WHERE older.barcode = newer.barcode
+                      AND older.product_barcode_id < newer.product_barcode_id
+                    """);
+            stmt.executeUpdate("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM pg_constraint con
+                            JOIN pg_class rel ON rel.oid = con.conrelid
+                            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                            WHERE nsp.nspname = 'public'
+                              AND rel.relname = 'product_barcodes'
+                              AND con.contype = 'u'
+                              AND pg_get_constraintdef(con.oid) = 'UNIQUE (barcode)'
+                        ) THEN
+                            DROP INDEX IF EXISTS product_barcodes_barcode_uidx;
+                        ELSIF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_index i
+                            JOIN pg_class rel ON rel.oid = i.indrelid
+                            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                            JOIN pg_class idx ON idx.oid = i.indexrelid
+                            WHERE nsp.nspname = 'public'
+                              AND rel.relname = 'product_barcodes'
+                              AND i.indisunique
+                              AND pg_get_indexdef(idx.oid) ILIKE '%(barcode)%'
+                        ) THEN
+                            CREATE UNIQUE INDEX product_barcodes_barcode_uidx
+                            ON product_barcodes(barcode);
+                        END IF;
+                    END
+                    $$
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_product_barcodes_product_id ON product_barcodes(product_id)");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE FUNCTION set_products_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' THEN
+                            NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                        ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                            NEW.updated_at = CURRENT_TIMESTAMP;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                    """);
+            stmt.executeUpdate("DROP TRIGGER IF EXISTS products_set_updated_at ON products");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE TRIGGER products_set_updated_at
+                    BEFORE INSERT OR UPDATE ON products
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_products_updated_at()
+                    """);
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE FUNCTION set_product_barcodes_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' THEN
+                            NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                        ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                            NEW.updated_at = CURRENT_TIMESTAMP;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                    """);
+            stmt.executeUpdate("DROP TRIGGER IF EXISTS product_barcodes_set_updated_at ON product_barcodes");
+            stmt.executeUpdate("""
+                    CREATE OR REPLACE TRIGGER product_barcodes_set_updated_at
+                    BEFORE INSERT OR UPDATE ON product_barcodes
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_product_barcodes_updated_at()
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products(updated_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS product_barcodes_updated_at_idx ON product_barcodes(updated_at DESC)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS inventory (
+                        product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+                        quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+                        reorder_level INTEGER NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (product_id, location_id)
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS receiving_batches (
+                        receive_id TEXT PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        user_id INTEGER REFERENCES users(user_id),
+                        user_name TEXT,
+                        receive_device_id TEXT,
+                        receive_sequence INTEGER,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sales (
+                        sale_id SERIAL PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        user_id INTEGER REFERENCES users(user_id),
+                        customer_id INTEGER,
+                        total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'COMPLETED',
+                        payment_method TEXT,
+                        payment_status TEXT,
+                        amount_paid NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        user_name TEXT,
+                        receipt_number TEXT,
+                        receipt_device_id TEXT,
+                        receipt_sequence INTEGER,
+                        subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        discount_percent NUMERIC(6,2) NOT NULL DEFAULT 0,
+                        discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        vat_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        vat_rate_percent NUMERIC(6,2) NOT NULL DEFAULT 0,
+                        vat_mode TEXT NOT NULL DEFAULT '',
+                        payment_reference TEXT,
+                        transaction_source TEXT,
+                        device_id TEXT,
+                        completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(12, 2) NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS vat_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS vat_mode TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_vat_amount_chk");
+            stmt.executeUpdate("ALTER TABLE sales ADD CONSTRAINT sales_vat_amount_chk CHECK (vat_amount >= 0)");
+            stmt.executeUpdate("ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_vat_rate_percent_chk");
+            stmt.executeUpdate("ALTER TABLE sales ADD CONSTRAINT sales_vat_rate_percent_chk CHECK (vat_rate_percent >= 0 AND vat_rate_percent <= 100)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sale_items (
+                        sale_item_id SERIAL PRIMARY KEY,
+                        sale_id INTEGER NOT NULL REFERENCES sales(sale_id) ON DELETE CASCADE,
+                        product_id INTEGER REFERENCES products(product_id),
+                        quantity INTEGER NOT NULL DEFAULT 1,
+                        unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        original_unit_price NUMERIC(12,2),
+                        discount_percent NUMERIC(6,2) NOT NULL DEFAULT 0,
+                        discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        price_override_reason TEXT,
+                        price_override_by_user_id INTEGER REFERENCES users(user_id),
+                        price_override_by_name TEXT,
+                        product_type TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS inventory_movements (
+                        movement_id BIGSERIAL PRIMARY KEY,
+                        product_id INTEGER REFERENCES products(product_id),
+                        location_id INTEGER REFERENCES locations(location_id),
+                        change_qty INTEGER NOT NULL DEFAULT 0,
+                        reason TEXT,
+                        note TEXT,
+                        user_name TEXT,
+                        sale_id INTEGER REFERENCES sales(sale_id),
+                        sale_item_id INTEGER REFERENCES sale_items(sale_item_id),
+                        device_id TEXT,
+                        device_name TEXT,
+                        user_id INTEGER REFERENCES users(user_id),
+                        receive_id TEXT,
+                        receive_device_id TEXT,
+                        receive_sequence INTEGER,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS customer_accounts (
+                        customer_id SERIAL PRIMARY KEY,
+                        account_number TEXT,
+                        name TEXT NOT NULL,
+                        customer_type_id INTEGER,
+                        phone TEXT,
+                        email TEXT,
+                        credit_limit NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        current_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        is_business BOOLEAN NOT NULL DEFAULT FALSE,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_notes TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS customer_account_transactions (
+                        transaction_id BIGSERIAL PRIMARY KEY,
+                        customer_id INTEGER REFERENCES customer_accounts(customer_id),
+                        sale_id INTEGER REFERENCES sales(sale_id),
+                        custom_order_id BIGINT,
+                        payment_id TEXT,
+                        location_id INTEGER,
+                        amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        transaction_type TEXT NOT NULL,
+                        note TEXT,
+                        user_name TEXT,
+                        device_id TEXT,
+                        device_name TEXT,
+                        payment_method TEXT,
+                        payment_reference TEXT,
+                        cash_drawer_id BIGINT,
+                        cash_drawer_name TEXT,
+                        cash_drawer_session_id BIGINT,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS customer_account_payment_allocations (
+                        allocation_id BIGSERIAL PRIMARY KEY,
+                        payment_transaction_id BIGINT NOT NULL REFERENCES customer_account_transactions(transaction_id) ON DELETE CASCADE,
+                        customer_id INTEGER NOT NULL REFERENCES customer_accounts(customer_id),
+                        sale_id INTEGER REFERENCES sales(sale_id),
+                        custom_order_id BIGINT,
+                        amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            ensureUpdatedAtTableSchema(stmt, "role_permissions");
+            ensureUpdatedAtTableSchema(stmt, "role_mobile_permissions");
+            ensureUpdatedAtTableSchema(stmt, "roles");
+            ensureUpdatedAtTableSchema(stmt, "locations");
+            ensureUpdatedAtTableSchema(stmt, "users");
+            ensureUpdatedAtTableSchema(stmt, "user_locations");
+            ensureUpdatedAtTableSchema(stmt, "products");
+            ensureUpdatedAtTableSchema(stmt, "product_barcodes");
+            ensureUpdatedAtTableSchema(stmt, "inventory");
+            ensureUpdatedAtTableSchema(stmt, "customer_accounts");
+            services.CustomerAccountLedgerService.ensureSchema(conn);
+            stmt.execute("SELECT setval(pg_get_serial_sequence('roles', 'role_id'), COALESCE((SELECT MAX(role_id) FROM roles), 1), (SELECT COUNT(*) FROM roles) > 0)");
+            stmt.execute("SELECT setval(pg_get_serial_sequence('locations', 'location_id'), COALESCE((SELECT MAX(location_id) FROM locations), 1), (SELECT COUNT(*) FROM locations) > 0)");
+            stmt.executeUpdate("INSERT INTO roles (role_name, description) VALUES ('ADMIN', 'Administrator'), ('MANAGER', 'Manager'), ('USER', 'User') ON CONFLICT (role_name) DO NOTHING");
+            stmt.executeUpdate("INSERT INTO locations (name, receipt_store_code, timezone) SELECT 'Default Store', '0001', 'America/New_York' WHERE NOT EXISTS (SELECT 1 FROM locations)");
+        }
+    }
+
+    private static void ensureUpdatedAtTableSchema(Statement stmt, String table) throws SQLException {
+        String functionName = "set_" + table + "_updated_at";
+        String triggerName = table + "_set_updated_at";
+        String indexName = table + "_updated_at_idx";
+        stmt.executeUpdate("ALTER TABLE " + quote(table) + " ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+        stmt.executeUpdate("""
+                CREATE OR REPLACE FUNCTION %s()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF TG_OP = 'INSERT' THEN
+                        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                        NEW.updated_at = CURRENT_TIMESTAMP;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """.formatted(quote(functionName)));
+        stmt.executeUpdate("DROP TRIGGER IF EXISTS " + quote(triggerName) + " ON " + quote(table));
+        stmt.executeUpdate("""
+                CREATE OR REPLACE TRIGGER %s
+                BEFORE INSERT OR UPDATE ON %s
+                FOR EACH ROW
+                EXECUTE FUNCTION %s()
+                """.formatted(quote(triggerName), quote(table), quote(functionName)));
+        stmt.executeUpdate("CREATE INDEX IF NOT EXISTS " + quote(indexName) + " ON " + quote(table) + "(updated_at DESC)");
+    }
+
+    private static String quote(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+}

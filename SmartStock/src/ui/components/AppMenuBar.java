@@ -1,5 +1,7 @@
 package ui.components;
 import services.DeviceService;
+import services.StoreHydrationService;
+import services.SyncWorker;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -8,7 +10,9 @@ import data.DB;
 import ui.screens.CompanyCustomization;
 import ui.screens.customorders.CustomOrderItems;
 import ui.screens.BalanceDraw;
+import ui.screens.BalanceSheet;
 import ui.screens.CustomerAccounts;
+import ui.screens.DatabaseSetup;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
@@ -29,6 +33,7 @@ import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
 import ui.screens.StoreTransfer;
+import ui.screens.SyncStatus;
 import ui.screens.TimeClock;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
@@ -44,6 +49,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -63,6 +69,7 @@ public class AppMenuBar {
         JMenuItem makeSaleItem = new JMenuItem("Make a Sale");
         JMenuItem returnSaleItem = new JMenuItem("Returns");
         JMenuItem balanceDrawItem = new JMenuItem("Balance Draw");
+        JMenuItem balanceSheetItem = new JMenuItem("Balance Sheet");
         JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Manager Dashboard");
         JMenuItem endOfDayItem = new JMenuItem("End of Day");
         JMenuItem ordersEndOfDayItem = new JMenuItem("Orders End Of Day");
@@ -93,6 +100,9 @@ public class AppMenuBar {
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
         boolean canBalanceDrawer = PermissionManager.hasPermission("BALANCE_DRAWER");
+        boolean canBalanceSheet = PermissionManager.hasPermission("BALANCE_SHEET")
+                || PermissionManager.hasPermission("END_OF_DAY")
+                || PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
         boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
@@ -125,7 +135,7 @@ public class AppMenuBar {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -138,6 +148,9 @@ public class AppMenuBar {
         }
         if (!canBalanceDrawer || "BalanceDraw".equalsIgnoreCase(screenKey)) {
             balanceDrawItem.setEnabled(false);
+        }
+        if (!canBalanceSheet || "BalanceSheet".equalsIgnoreCase(screenKey)) {
+            balanceSheetItem.setEnabled(false);
         }
         if (!canOrdersManagerDashboard || "OrdersManagerDashboard".equalsIgnoreCase(screenKey)) {
             ordersManagerDashboardItem.setEnabled(false);
@@ -508,6 +521,19 @@ public class AppMenuBar {
             }
         });
 
+        balanceSheetItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!canBalanceSheet) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Balance Sheet.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(BalanceSheet.class)) {
+                    return;
+                }
+                NavigationManager.openBalanceSheet(parent);
+            }
+        });
+
         rolesPermissionItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("ROLE_MANAGEMENT", parent, "Roles & Permission")) {
@@ -591,6 +617,7 @@ public class AppMenuBar {
         pointOfSaleMenu.add(customerAccountsItem);
 
         operationsMenu.add(balanceDrawItem);
+        operationsMenu.add(balanceSheetItem);
 
         ordersMenu.add(ordersManagerDashboardItem);
         ordersMenu.add(customOrdersItem);
@@ -621,6 +648,9 @@ public class AppMenuBar {
 
         JMenu sessionMenu = new JMenu("Session");
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
+        JMenuItem syncNowItem = new JMenuItem("Sync Now");
+        JMenuItem syncStatusItem = new JMenuItem("Sync Status");
+        JMenuItem databaseSetupItem = new JMenuItem("Database Setup");
         JMenuItem closeItem = new JMenuItem("Close");
         JMenuItem logoutItem = new JMenuItem("Logout");
 
@@ -631,6 +661,21 @@ public class AppMenuBar {
         changeStoreItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 showChangeLocationDialog(parent, currentScreen);
+            }
+        });
+        syncNowItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                runManualSync(parent, syncNowItem);
+            }
+        });
+        syncStatusItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                new SyncStatus().setVisible(true);
+            }
+        });
+        databaseSetupItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                new DatabaseSetup(parent).setVisible(true);
             }
         });
         closeItem.addActionListener(new ActionListener() {
@@ -658,6 +703,9 @@ public class AppMenuBar {
 
 
         sessionMenu.add(changeStoreItem);
+        sessionMenu.add(syncNowItem);
+        sessionMenu.add(syncStatusItem);
+        sessionMenu.add(databaseSetupItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
         sessionMenu.add(logoutItem);
@@ -672,6 +720,77 @@ public class AppMenuBar {
         menuBar.add(sessionMenu);
 
         return menuBar;
+    }
+
+    private static void runManualSync(Component parent, JMenuItem syncNowItem) {
+        syncNowItem.setEnabled(false);
+        syncNowItem.setText("Syncing...");
+        SwingWorker<SyncWorker.SyncStatus, Void> worker = new SwingWorker<>() {
+            @Override
+            protected SyncWorker.SyncStatus doInBackground() {
+                return SyncWorker.runOnceNow();
+            }
+
+            @Override
+            protected void done() {
+                syncNowItem.setEnabled(true);
+                syncNowItem.setText("Sync Now");
+                try {
+                    SyncWorker.SyncStatus status = get();
+                    JOptionPane.showMessageDialog(
+                            parent,
+                            formatSyncStatus(status),
+                            "Manual Sync",
+                            status.lastError() == null ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE
+                    );
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(
+                            parent,
+                            rootCauseMessage(ex),
+                            "Manual Sync",
+                            JOptionPane.ERROR_MESSAGE
+                    );
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private static String formatSyncStatus(SyncWorker.SyncStatus status) {
+        String currentSync = status.currentSync() != null && status.currentSync().running()
+                ? "Running by " + status.currentSync().ownerLabel() + " since " + formatInstant(status.currentSync().acquiredAt())
+                : "Idle";
+        String backgroundSync = status.serviceInfo() == null
+                ? "Unknown"
+                : status.serviceInfo().status() + " (" + nullToDash(status.serviceInfo().message()) + ")";
+        return "Message: " + nullToDash(status.message())
+                + "\nCloud reachable: " + (status.cloudReachable() ? "yes" : "no")
+                + "\nBackground service: " + backgroundSync
+                + "\nIn-app sync: " + (SyncWorker.isStarted() ? "running while UI is open" : "not running")
+                + "\nCurrent sync: " + currentSync
+                + "\nLast pushed: " + status.lastPushed()
+                + "\nPending events: " + status.pendingCount()
+                + "\nFailed events: " + status.failedCount()
+                + "\nOpen conflicts: " + status.conflictCount()
+                + "\nLast success: " + formatInstant(status.lastSuccess())
+                + "\nLast error: " + nullToDash(status.lastError());
+    }
+
+    private static String formatInstant(Instant instant) {
+        return instant == null ? "Never" : instant.toString();
+    }
+
+    private static String nullToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private static String rootCauseMessage(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor.getCause() != null) {
+            cursor = cursor.getCause();
+        }
+        String message = cursor.getMessage();
+        return message == null || message.isBlank() ? cursor.toString() : message;
     }
 
     private static boolean hasCompanyPreferencesPermission() {
@@ -725,6 +844,7 @@ public class AppMenuBar {
             );
             return;
         }
+        refreshAssignedStoresForPicker(parent);
         List<StoreOption> allowedStores = getAllowedStoresFromSession();
 
         if (allowedStores.isEmpty()) {
@@ -755,6 +875,9 @@ public class AppMenuBar {
         if (result == JOptionPane.OK_OPTION) {
             StoreOption selected = (StoreOption) storeCombo.getSelectedItem();
             if (selected != null) {
+                if (!hydrateStoreOrConfirmLocal(parent, selected.id)) {
+                    return;
+                }
                 boolean updated = setCurrentStoreInSession(selected.id);
 
                 if (updated) {
@@ -775,6 +898,59 @@ public class AppMenuBar {
                 }
             }
         }
+    }
+
+    private static void refreshAssignedStoresForPicker(Component parent) {
+        try (Connection conn = DB.getConnection()) {
+            StoreHydrationService.refreshAssignedStores(conn, SessionManager.getCurrentUserId());
+        } catch (SQLException ex) {
+            showWrappedMessageDialog(
+                    parent,
+                    "Could not refresh assigned stores from cloud. Showing stores currently available on this local server.\n\n" + ex.getMessage(),
+                    "Store Data Refresh",
+                    JOptionPane.WARNING_MESSAGE
+            );
+        }
+    }
+
+    private static boolean hydrateStoreOrConfirmLocal(Component parent, int storeId) {
+        try (Connection conn = DB.getConnection()) {
+            StoreHydrationService.hydrateSelectedStore(conn, storeId);
+            return true;
+        } catch (SQLException ex) {
+            int choice = showWrappedConfirmDialog(
+                    parent,
+                    "Cloud store refresh failed for the selected store.\n\n"
+                            + ex.getMessage()
+                            + "\n\nContinue with only the data currently available on this local server?",
+                    "Store Data Refresh",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            return choice == JOptionPane.YES_OPTION;
+        }
+    }
+
+    private static void showWrappedMessageDialog(Component parent, String message, String title, int messageType) {
+        JOptionPane.showMessageDialog(parent, wrappedMessage(message), title, messageType);
+    }
+
+    private static int showWrappedConfirmDialog(Component parent, String message, String title, int optionType, int messageType) {
+        return JOptionPane.showConfirmDialog(parent, wrappedMessage(message), title, optionType, messageType);
+    }
+
+    private static JComponent wrappedMessage(String message) {
+        JTextArea area = new JTextArea(message);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setOpaque(false);
+        area.setColumns(72);
+        area.setRows(Math.min(14, Math.max(4, message.length() / 80)));
+        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setPreferredSize(new java.awt.Dimension(640, Math.min(260, Math.max(120, area.getRows() * 22))));
+        return scrollPane;
     }
 
     private static void refreshCurrentScreen(JFrame parent, String currentScreen) {

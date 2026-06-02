@@ -9,9 +9,11 @@ import managers.SessionManager;
 import data.DB;
 import models.CashDrawerContext;
 import services.CashDrawerService;
+import services.CustomerAccountLedgerService;
 import services.DeviceContextService;
 import services.ManagerApprovalService;
 import services.SaleAuditService;
+import services.SyncOutboxService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
@@ -35,6 +37,7 @@ import java.net.URL;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
 
 
 public class MakeASale extends JFrame {
@@ -48,6 +51,7 @@ public class MakeASale extends JFrame {
     private static final int CART_COL_LINE_TOTAL = 7;
     private static final int CART_COL_ORIGINAL_PRICE = 8;
     private static final int CART_COL_PRODUCT_TYPE = 9;
+    private static final int CART_COL_DEPARTMENT_ID = 10;
     private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
     private static final String SALE_DISCOUNT_OVERRIDE_PERMISSION = "SALE_DISCOUNT_OVERRIDE";
@@ -63,6 +67,7 @@ public class MakeASale extends JFrame {
     private JLabel totalLabel;
     private JLabel subtotalLabel;
     private JLabel discountAmountLabel;
+    private JLabel vatAmountLabel;
     private JTextField discountPercentField;
     private ButtonGroup paymentMethodGroup;
     private JToggleButton cashPaymentButton;
@@ -102,6 +107,13 @@ public class MakeASale extends JFrame {
     private boolean suppressDiscountFieldEvents = false;
     private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
     private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
+    private record VatCalculation(BigDecimal amount, BigDecimal ratePercent, String mode) {
+        private VatCalculation {
+            amount = amount == null ? BigDecimal.ZERO : amount.setScale(2, RoundingMode.HALF_UP);
+            ratePercent = ratePercent == null ? BigDecimal.ZERO : ratePercent.setScale(2, RoundingMode.HALF_UP);
+            mode = mode == null ? "" : mode;
+        }
+    }
     private final java.util.Map<Integer, PendingPriceApproval> pendingPriceOverrideApprovals = new java.util.HashMap<>();
     private final java.util.Map<Integer, PendingDiscountApproval> pendingItemDiscountApprovals = new java.util.HashMap<>();
     private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
@@ -239,7 +251,7 @@ public class MakeASale extends JFrame {
 
 	       // Cart table
 	       cartModel = new DefaultTableModel(
-	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type"},
+	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type", "Department ID"},
 	               0
 	       ) {
 	           @Override
@@ -329,6 +341,8 @@ public class MakeASale extends JFrame {
 	       totalsPanel.add(subtotalLabel);
 	       discountAmountLabel = createTotalLabel("Discount: $0.00", false);
 	       totalsPanel.add(discountAmountLabel);
+	       vatAmountLabel = createTotalLabel("VAT: $0.00", false);
+	       totalsPanel.add(vatAmountLabel);
 	       totalLabel = createTotalLabel("Overall Total: $0.00", true);
 	       totalsPanel.add(totalLabel);
 
@@ -1019,7 +1033,7 @@ public class MakeASale extends JFrame {
     }
 
     private void configureCartTableColumns() {
-        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 10) {
+        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 11) {
             return;
         }
 
@@ -1071,6 +1085,10 @@ public class MakeASale extends JFrame {
         columnModel.getColumn(CART_COL_PRODUCT_TYPE).setMinWidth(0);
         columnModel.getColumn(CART_COL_PRODUCT_TYPE).setMaxWidth(0);
         columnModel.getColumn(CART_COL_PRODUCT_TYPE).setPreferredWidth(0);
+
+        columnModel.getColumn(CART_COL_DEPARTMENT_ID).setMinWidth(0);
+        columnModel.getColumn(CART_COL_DEPARTMENT_ID).setMaxWidth(0);
+        columnModel.getColumn(CART_COL_DEPARTMENT_ID).setPreferredWidth(0);
 
         updateDescriptionRowHeights();
     }
@@ -1176,6 +1194,7 @@ public class MakeASale extends JFrame {
                 String sql = """
                     SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
                            COALESCE(p.product_type, 'INVENTORY') AS product_type,
+                           p.category_id,
                            COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
                     FROM products p
                     LEFT JOIN inventory i
@@ -1208,6 +1227,7 @@ public class MakeASale extends JFrame {
                                     rs.getString("sku"),
                                     rs.getDouble("price"),
                                     rs.getString("product_type"),
+                                    rs.getObject("category_id"),
                                     rs.getInt("quantity_on_hand")
                             });
                         }
@@ -1290,6 +1310,7 @@ public class MakeASale extends JFrame {
                 String sql = """
                     SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
                            COALESCE(p.product_type, 'INVENTORY') AS product_type,
+                           p.category_id,
                            COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
                     FROM products p
                     LEFT JOIN inventory i
@@ -1315,6 +1336,7 @@ public class MakeASale extends JFrame {
                                     rs.getString("sku"),
                                     rs.getDouble("price"),
                                     rs.getString("product_type"),
+                                    rs.getObject("category_id"),
                                     rs.getInt("quantity_on_hand")
                             });
                         }
@@ -1346,7 +1368,7 @@ public class MakeASale extends JFrame {
             searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
             searchPopup.setFocusable(false);
 
-            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Stock"};
+            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -1401,6 +1423,9 @@ public class MakeASale extends JFrame {
         searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(80);
         searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(100);
         searchResultsTable.getColumnModel().getColumn(6).setPreferredWidth(70);
+        searchResultsTable.getColumnModel().getColumn(7).setMinWidth(0);
+        searchResultsTable.getColumnModel().getColumn(7).setMaxWidth(0);
+        searchResultsTable.getColumnModel().getColumn(7).setPreferredWidth(0);
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);
@@ -1426,6 +1451,7 @@ public class MakeASale extends JFrame {
         String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
         double price = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 5)).doubleValue();
         String productType = normalizeProductType(String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 6)));
+        Integer departmentId = parseNullableInt(searchResultsTable.getModel().getValueAt(selectedRow, 7));
 
         String qtyText = JOptionPane.showInputDialog(this, "Enter quantity:", "1");
         if (qtyText == null) {
@@ -1440,7 +1466,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        addToCart(productId, displayNameWithSize(name, size), description, sku, price, qty, productType);
+        addToCart(productId, displayNameWithSize(name, size), description, sku, price, qty, productType, departmentId);
         closeSearchPopup();
         searchField.requestFocusInWindow();
         searchField.selectAll();
@@ -1459,7 +1485,7 @@ public class MakeASale extends JFrame {
         return name + " (" + size + ")";
     }
 
-    private void addToCart(int productId, String name, String description, String sku, double price, int qty, String productType) {
+    private void addToCart(int productId, String name, String description, String sku, double price, int qty, String productType, Integer departmentId) {
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             int existingProductId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 
@@ -1483,10 +1509,26 @@ public class MakeASale extends JFrame {
                 BigDecimal.ZERO,
                 price * qty,
                 BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
-                normalizeProductType(productType)
+                normalizeProductType(productType),
+                departmentId
         });
         updateLineTotals();
         configureCartTableColumns();
+    }
+
+    private Integer parseNullableInt(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank() || "null".equalsIgnoreCase(text)) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private String normalizeProductType(String value) {
@@ -1692,9 +1734,96 @@ public class MakeASale extends JFrame {
     }
 
     private BigDecimal getFinalTotalAmount() {
+        try (Connection conn = DB.getConnection()) {
+            return getFinalTotalAmount(conn);
+        } catch (SQLException ex) {
+            return getPreVatSaleTotal(getDiscountPercent()).setScale(2, RoundingMode.HALF_UP);
+        }
+    }
+
+    private BigDecimal getFinalTotalAmount(Connection conn) throws SQLException {
+        BigDecimal discountPercent = getDiscountPercent();
+        BigDecimal preVatTotal = getPreVatSaleTotal(discountPercent);
+        return preVatTotal.add(calculateVat(conn, discountPercent).amount()).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal getPreVatSaleTotal(BigDecimal discountPercent) {
         BigDecimal subtotal = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal discountAmount = getDiscountAmount(subtotal);
+        BigDecimal cleanDiscountPercent = discountPercent == null ? BigDecimal.ZERO : discountPercent;
+        BigDecimal discountAmount = subtotal.multiply(cleanDiscountPercent)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         return subtotal.subtract(discountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private VatCalculation calculateVat(Connection conn, BigDecimal saleDiscountPercent) throws SQLException {
+        CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+        if (!settings.vatEnabled()) {
+            return new VatCalculation(BigDecimal.ZERO, BigDecimal.ZERO, "");
+        }
+        BigDecimal preVatTotal = getPreVatSaleTotal(saleDiscountPercent);
+        if (preVatTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return new VatCalculation(BigDecimal.ZERO, BigDecimal.ZERO, settings.vatUseDepartmentRates() ? "DEPARTMENT" : "FIXED");
+        }
+        if (!settings.vatUseDepartmentRates()) {
+            BigDecimal amount = preVatTotal.multiply(settings.vatFixedRatePercent())
+                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            return new VatCalculation(amount, settings.vatFixedRatePercent(), "FIXED");
+        }
+
+        Map<Integer, BigDecimal> departmentRates = loadDepartmentVatRates(conn);
+        BigDecimal saleDiscountMultiplier = BigDecimal.ONE.subtract(
+                (saleDiscountPercent == null ? BigDecimal.ZERO : saleDiscountPercent)
+                        .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
+        );
+        BigDecimal vatAmount = BigDecimal.ZERO;
+        for (int i = 0; i < cartModel.getRowCount(); i++) {
+            Integer departmentId = parseNullableInt(cartModel.getValueAt(i, CART_COL_DEPARTMENT_ID));
+            BigDecimal rate = departmentId == null ? BigDecimal.ZERO : departmentRates.getOrDefault(departmentId, BigDecimal.ZERO);
+            if (rate.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            BigDecimal lineAfterItemDiscount = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_LINE_TOTAL));
+            BigDecimal taxableLine = lineAfterItemDiscount.multiply(saleDiscountMultiplier).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+            vatAmount = vatAmount.add(taxableLine.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
+        }
+        BigDecimal effectiveRate = preVatTotal.compareTo(BigDecimal.ZERO) == 0
+                ? BigDecimal.ZERO
+                : vatAmount.multiply(BigDecimal.valueOf(100)).divide(preVatTotal, 2, RoundingMode.HALF_UP);
+        return new VatCalculation(vatAmount, effectiveRate, "DEPARTMENT");
+    }
+
+    private Map<Integer, BigDecimal> loadDepartmentVatRates(Connection conn) throws SQLException {
+        java.util.Map<Integer, BigDecimal> rates = new java.util.HashMap<>();
+        if (!hasColumn(conn, "categories", "vat_rate_percent")) {
+            return rates;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT category_id, COALESCE(vat_rate_percent, 0) AS vat_rate_percent FROM categories")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rates.put(rs.getInt("category_id"), rs.getBigDecimal("vat_rate_percent"));
+                }
+            }
+        }
+        return rates;
+    }
+
+    private boolean hasColumn(Connection conn, String tableName, String columnName) {
+        String sql = """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                  AND column_name = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableName);
+            ps.setString(2, columnName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException ex) {
+            return false;
+        }
     }
 
     private BigDecimal getDiscountPercent() {
@@ -1878,21 +2007,23 @@ public class MakeASale extends JFrame {
                 ORDER BY ca.name
                 """;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (Connection conn = DB.getConnection()) {
+            CustomerAccountLedgerService.repairAllBalances(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
 
-            while (rs.next()) {
-                customerAccountOptions.add(new CustomerAccountOption(
-                        rs.getInt("customer_id"),
-                        rs.getString("account_number"),
-                        rs.getString("customer_name"),
-                        rs.getBigDecimal("credit_limit"),
-                        rs.getBigDecimal("current_balance"),
-                        rs.getBigDecimal("available_credit"),
-                        rs.getBoolean("is_business"),
-                        rs.getString("customer_type_name")
-                ));
+                while (rs.next()) {
+                    customerAccountOptions.add(new CustomerAccountOption(
+                            rs.getInt("customer_id"),
+                            rs.getString("account_number"),
+                            rs.getString("customer_name"),
+                            rs.getBigDecimal("credit_limit"),
+                            rs.getBigDecimal("current_balance"),
+                            rs.getBigDecimal("available_credit"),
+                            rs.getBoolean("is_business"),
+                            rs.getString("customer_type_name")
+                    ));
+                }
             }
             applyCustomerAccountFilter("", false);
             if (selectedBeforeReload != null) {
@@ -2099,6 +2230,19 @@ public class MakeASale extends JFrame {
             int locationId = SessionManager.getCurrentLocationId();
 
             try {
+                try {
+                    DeviceContextService.requireSalesAllowed(conn);
+                } catch (SQLException ex) {
+                    conn.setAutoCommit(true);
+                    JOptionPane.showMessageDialog(
+                            this,
+                            ex.getMessage(),
+                            "Device Access Required",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    return;
+                }
+
                 CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
                 if (cashPayment) {
                     try {
@@ -2120,7 +2264,9 @@ public class MakeASale extends JFrame {
                 BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
                 BigDecimal saleLevelDiscountAmount = lineSubtotalAfterItemDiscounts.multiply(discountPercent)
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                BigDecimal saleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal preVatSaleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+                VatCalculation vat = calculateVat(conn, discountPercent);
+                BigDecimal saleTotal = preVatSaleTotal.add(vat.amount()).setScale(2, RoundingMode.HALF_UP);
                 BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
                 if (saleTotal.compareTo(BigDecimal.ZERO) <= 0) {
                     JOptionPane.showMessageDialog(this, "Sale total must be greater than zero.");
@@ -2136,6 +2282,7 @@ public class MakeASale extends JFrame {
                 ReceiptNumberManager.ReceiptNumber receipt = ReceiptNumberManager.nextReceipt(locationId);
                 String paymentStatus = chargeCustomerAccount ? "UNPAID" : "PAID";
                 BigDecimal amountPaid = chargeCustomerAccount ? BigDecimal.ZERO : saleTotal;
+                repairSalesSequence(conn);
                 String insertSaleSql = """
                         INSERT INTO sales (
                             location_id,
@@ -2153,6 +2300,9 @@ public class MakeASale extends JFrame {
 	                            subtotal_amount,
 	                            discount_percent,
 	                            discount_amount,
+                                vat_amount,
+                                vat_rate_percent,
+                                vat_mode,
                                 payment_reference,
 	                            transaction_source,
                                 device_id,
@@ -2164,7 +2314,7 @@ public class MakeASale extends JFrame {
                                 discount_override_by_name,
                                 completed_at
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	                        """;
                 int saleId;
 
@@ -2188,15 +2338,18 @@ public class MakeASale extends JFrame {
 		                    saleStmt.setBigDecimal(13, subtotalAmount);
 		                    saleStmt.setBigDecimal(14, discountPercent);
 		                    saleStmt.setBigDecimal(15, discountAmount);
-                            saleStmt.setString(16, paymentReference.isBlank() ? null : paymentReference);
-	                    saleStmt.setString(17, "Java_app");
-                            saleStmt.setString(18, DeviceContextService.currentDeviceId());
-                            setNullableLong(saleStmt, 19, cashDrawer.cashDrawerId());
-                            saleStmt.setString(20, cashDrawer.drawerName());
-                            setNullableLong(saleStmt, 21, cashDrawer.sessionId());
-                            saleStmt.setString(22, saleDiscountOverrideReason);
-                            setNullableInteger(saleStmt, 23, saleDiscountOverrideByUserId);
-                            saleStmt.setString(24, saleDiscountOverrideByName);
+                            saleStmt.setBigDecimal(16, vat.amount());
+                            saleStmt.setBigDecimal(17, vat.ratePercent());
+                            saleStmt.setString(18, vat.mode());
+                            saleStmt.setString(19, paymentReference.isBlank() ? null : paymentReference);
+	                    saleStmt.setString(20, "Java_app");
+                            saleStmt.setString(21, DeviceContextService.currentDeviceId());
+                            setNullableLong(saleStmt, 22, cashDrawer.cashDrawerId());
+                            saleStmt.setString(23, cashDrawer.drawerName());
+                            setNullableLong(saleStmt, 24, cashDrawer.sessionId());
+                            saleStmt.setString(25, saleDiscountOverrideReason);
+                            setNullableInteger(saleStmt, 26, saleDiscountOverrideByUserId);
+                            saleStmt.setString(27, saleDiscountOverrideByName);
 	                    saleStmt.executeUpdate();
 
                     try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
@@ -2220,6 +2373,7 @@ public class MakeASale extends JFrame {
                                 + (cashDrawer.drawerName() == null ? "" : "; cash_drawer=" + cashDrawer.drawerName())
                                 + "; subtotal=" + subtotalAmount
                                 + "; discount=" + discountAmount
+                                + "; vat=" + vat.amount()
                                 + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
                 );
                 if (discountPercent.compareTo(BigDecimal.ZERO) > 0 || discountAmount.compareTo(BigDecimal.ZERO) > 0) {
@@ -2281,7 +2435,7 @@ public class MakeASale extends JFrame {
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """;
                 String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ? AND quantity_on_hand >= ?";
+                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ?";
 
                 try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql, Statement.RETURN_GENERATED_KEYS);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
@@ -2410,10 +2564,7 @@ public class MakeASale extends JFrame {
                             updateInventoryStmt.setInt(1, qty);
                             updateInventoryStmt.setInt(2, productId);
                             updateInventoryStmt.setInt(3, locationId);
-                            updateInventoryStmt.setInt(4, qty);
-                            if (updateInventoryStmt.executeUpdate() == 0) {
-                                throw new SQLException("Not enough inventory for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
-                            }
+                            updateInventoryStmt.executeUpdate();
 
                             movementStmt.setInt(1, productId);
                             movementStmt.setInt(2, locationId);
@@ -2458,6 +2609,17 @@ public class MakeASale extends JFrame {
                     );
                 }
 
+                SyncOutboxService.recordEvent(conn, "SALE_COMPLETED", Map.of(
+                        "sale_id", saleId,
+                        "receipt_number", receipt.receiptNumber(),
+                        "location_id", locationId,
+                        "user_id", SessionManager.getCurrentUserId(),
+                        "device_id", String.valueOf(DeviceContextService.currentDeviceId()),
+                        "payment_method", paymentMethod,
+                        "payment_status", paymentStatus,
+                        "total_amount", saleTotal,
+                        "cash_drawer_session_id", cashDrawer.sessionId() == null ? "" : cashDrawer.sessionId()
+                ));
                 conn.commit();
 	                String successMessage = "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId;
                     if (cashDrawer.drawerName() != null && !cashDrawer.drawerName().isBlank()) {
@@ -2809,17 +2971,19 @@ public class MakeASale extends JFrame {
 	        }
 
         String itemsSql = """
-                SELECT product_id,
-                       product_name,
-                       description,
-                       sku,
-                       unit_price,
-                       quantity,
+                SELECT hci.product_id,
+                       hci.product_name,
+                       hci.description,
+                       hci.sku,
+                       hci.unit_price,
+                       hci.quantity,
                        COALESCE(discount_percent, 0) AS discount_percent,
-                       COALESCE(product_type, 'INVENTORY') AS product_type
-                FROM held_cart_items
-                WHERE held_cart_id = ?
-                ORDER BY held_cart_item_id
+                       COALESCE(hci.product_type, 'INVENTORY') AS product_type,
+                       p.category_id
+                FROM held_cart_items hci
+                LEFT JOIN products p ON p.product_id = hci.product_id
+                WHERE hci.held_cart_id = ?
+                ORDER BY hci.held_cart_item_id
                 """;
 
         cartModel.setRowCount(0);
@@ -2843,7 +3007,8 @@ public class MakeASale extends JFrame {
 	                            itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent,
 	                            lineGross.subtract(lineDiscount).max(BigDecimal.ZERO),
 	                            BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
-	                            normalizeProductType(rs.getString("product_type"))
+	                            normalizeProductType(rs.getString("product_type")),
+                                rs.getObject("category_id")
 	                    });
                 }
             }
@@ -2865,9 +3030,24 @@ public class MakeASale extends JFrame {
     }
 
     private void deleteHeldCart(Connection conn, int heldCartId) throws SQLException {
-        String sql = "DELETE FROM held_carts WHERE held_cart_id = ?";
+        String sql = """
+                UPDATE held_carts
+                SET status = 'RESUMED',
+                    resumed_at = CURRENT_TIMESTAMP,
+                    resumed_by_user_id = ?,
+                    resumed_by_name = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE held_cart_id = ?
+                """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, heldCartId);
+            Integer userId = SessionManager.getCurrentUserId();
+            if (userId == null) {
+                ps.setNull(1, java.sql.Types.INTEGER);
+            } else {
+                ps.setInt(1, userId);
+            }
+            ps.setString(2, SessionManager.getCurrentUserDisplayName());
+            ps.setInt(3, heldCartId);
             ps.executeUpdate();
         }
     }
@@ -2927,6 +3107,7 @@ public class MakeASale extends JFrame {
     }
 
     private void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal saleTotal) throws SQLException {
+        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
         String lockSql = """
                 SELECT current_balance, credit_limit, is_active
                 FROM customer_accounts
@@ -2969,20 +3150,21 @@ public class MakeASale extends JFrame {
     private void insertCustomerAccountTransaction(Connection conn, int customerId, int saleId, BigDecimal amount, String type, String note) throws SQLException {
         String sql = """
 	                INSERT INTO customer_account_transactions (
-	                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name
+	                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name
 	                )
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, customerId);
             ps.setInt(2, saleId);
-	            ps.setBigDecimal(3, amount);
-	            ps.setString(4, type);
-	            ps.setString(5, note);
-	            ps.setString(6, SessionManager.getCurrentUserDisplayName());
-                ps.setString(7, DeviceContextService.currentDeviceId());
-                ps.setString(8, DeviceContextService.currentDeviceName());
+            setNullableInteger(ps, 3, SessionManager.getCurrentLocationId());
+	            ps.setBigDecimal(4, amount);
+	            ps.setString(5, type);
+	            ps.setString(6, note);
+	            ps.setString(7, SessionManager.getCurrentUserDisplayName());
+                ps.setString(8, DeviceContextService.currentDeviceId());
+                ps.setString(9, DeviceContextService.currentDeviceName());
 	            ps.executeUpdate();
         }
         SaleAuditService.record(
@@ -2993,19 +3175,42 @@ public class MakeASale extends JFrame {
         );
     }
 
+    private void repairSalesSequence(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT setval(
+                    pg_get_serial_sequence('sales', 'sale_id'),
+                    COALESCE((SELECT MAX(sale_id) FROM sales), 1),
+                    COALESCE((SELECT MAX(sale_id) FROM sales), 0) > 0
+                )
+                """)) {
+            ps.executeQuery();
+        }
+    }
+
     private void updateOverallTotal() {
         BigDecimal subtotal = getCartGrossSubtotal();
         BigDecimal afterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal itemDiscountAmount = getItemDiscountTotal();
         BigDecimal saleDiscountAmount = getDiscountAmount(afterItemDiscounts);
         BigDecimal discountAmount = itemDiscountAmount.add(saleDiscountAmount).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal vatAmount = BigDecimal.ZERO;
         BigDecimal total = subtotal.subtract(discountAmount).max(BigDecimal.ZERO);
+        try (Connection conn = DB.getConnection()) {
+            VatCalculation vat = calculateVat(conn, getDiscountPercent());
+            vatAmount = vat.amount();
+            total = total.add(vatAmount).setScale(2, RoundingMode.HALF_UP);
+        } catch (SQLException ex) {
+            total = total.setScale(2, RoundingMode.HALF_UP);
+        }
 
         if (subtotalLabel != null) {
             subtotalLabel.setText(String.format("Subtotal: $%.2f", subtotal.doubleValue()));
         }
         if (discountAmountLabel != null) {
             discountAmountLabel.setText(String.format("Discount: $%.2f", discountAmount.doubleValue()));
+        }
+        if (vatAmountLabel != null) {
+            vatAmountLabel.setText(String.format("VAT: $%.2f", vatAmount.doubleValue()));
         }
         totalLabel.setText(String.format("Overall Total: $%.2f", total.doubleValue()));
     }

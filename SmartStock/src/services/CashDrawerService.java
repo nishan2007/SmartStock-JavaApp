@@ -89,6 +89,46 @@ public final class CashDrawerService {
         return drawer;
     }
 
+    public static CashDrawerContext ensureDefaultDrawerForCurrentDevice(Connection conn) throws SQLException {
+        ensureSchema(conn);
+        Integer locationId = SessionManager.getCurrentLocationId();
+        String deviceId = DeviceContextService.currentDeviceId();
+        if (locationId == null) {
+            throw new SQLException("No store is selected for this session.");
+        }
+        if (deviceId == null || deviceId.isBlank()) {
+            throw new SQLException("This register does not have an approved device ID.");
+        }
+
+        CashDrawerContext existing = resolveDrawerForDevice(conn, locationId, deviceId);
+        if (existing.isAssigned()) {
+            return existing;
+        }
+
+        List<CashDrawer> activeDrawers = listDrawers(conn, locationId, false);
+        long drawerId;
+        if (activeDrawers.isEmpty()) {
+            drawerId = saveDrawer(
+                    conn,
+                    null,
+                    locationId,
+                    "Main Drawer",
+                    "Auto-created for this register.",
+                    floatMixTotal(DEFAULT_FLOAT_MIX),
+                    DEFAULT_FLOAT_MIX,
+                    true,
+                    SessionManager.getCurrentUserId()
+            );
+        } else if (activeDrawers.size() == 1) {
+            drawerId = activeDrawers.get(0).getCashDrawerId();
+        } else {
+            throw new SQLException("This store has multiple active drawers. Open Company Preferences > Cash Drawer Manager and assign this device to one drawer.");
+        }
+
+        assignDevice(conn, drawerId, locationId, deviceId, SessionManager.getCurrentUserId(), "Auto-assigned by Balance Draw.");
+        return resolveDrawerForDevice(conn, locationId, deviceId);
+    }
+
     public static List<CashDrawer> listDrawers(Connection conn, Integer locationId, boolean includeInactive) throws SQLException {
         ensureSchema(conn);
         StringBuilder sql = new StringBuilder("""
@@ -303,7 +343,16 @@ public final class CashDrawerService {
             ps.setString(2, deviceId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return mapSession(rs);
+                    CashDrawerSession opened = mapSession(rs);
+                    SyncOutboxService.recordEvent(conn, "CASH_DRAWER_SESSION_OPENED", Map.of(
+                            "cash_drawer_session_id", opened.sessionId(),
+                            "cash_drawer_id", opened.cashDrawerId(),
+                            "location_id", opened.locationId(),
+                            "device_id", String.valueOf(opened.deviceId()),
+                            "opened_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId(),
+                            "opening_cash", opened.openingCash()
+                    ));
+                    return opened;
                 }
             }
         }
@@ -421,6 +470,17 @@ public final class CashDrawerService {
             ps.setLong(3, sessionId);
             ps.executeUpdate();
         }
+        SyncOutboxService.recordEvent(conn, "CASH_DRAWER_HANDOVER_CREATED", Map.of(
+                "cash_drawer_handover_id", handover.handoverId(),
+                "cash_drawer_session_id", handover.sessionId(),
+                "cash_drawer_id", session.cashDrawerId(),
+                "location_id", session.locationId(),
+                "from_user_name", String.valueOf(handover.fromUserName()),
+                "to_user_name", String.valueOf(handover.toUserName()),
+                "expected_cash", handover.expectedCash(),
+                "counted_cash", handover.countedCash(),
+                "variance", handover.variance()
+        ));
         return handover;
     }
 
@@ -476,7 +536,19 @@ public final class CashDrawerService {
             ps.setLong(13, sessionId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return mapSession(rs);
+                    CashDrawerSession closed = mapSession(rs);
+                    SyncOutboxService.recordEvent(conn, "CASH_DRAWER_SESSION_CLOSED", Map.of(
+                            "cash_drawer_session_id", closed.sessionId(),
+                            "cash_drawer_id", closed.cashDrawerId(),
+                            "location_id", closed.locationId(),
+                            "device_id", String.valueOf(closed.deviceId()),
+                            "expected_cash", expectedCash,
+                            "counted_cash", cleanCountedCash,
+                            "cash_to_remove", cashToRemove,
+                            "variance", variance,
+                            "closed_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                    ));
+                    return closed;
                 }
             }
         }
@@ -723,8 +795,48 @@ public final class CashDrawerService {
                 return;
             }
             try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS cash_drawers (
+                            cash_drawer_id BIGSERIAL PRIMARY KEY,
+                            location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                            drawer_name TEXT NOT NULL,
+                            description TEXT,
+                            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                            created_by_user_id INTEGER REFERENCES users(user_id),
+                            updated_by_user_id INTEGER REFERENCES users(user_id),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """);
+                stmt.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS cash_drawer_device_assignments (
+                            assignment_id BIGSERIAL PRIMARY KEY,
+                            cash_drawer_id BIGINT NOT NULL REFERENCES cash_drawers(cash_drawer_id) ON DELETE CASCADE,
+                            location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                            device_id UUID NOT NULL REFERENCES devices(device_id),
+                            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                            assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            assigned_by_user_id INTEGER REFERENCES users(user_id),
+                            unassigned_at TIMESTAMPTZ,
+                            unassigned_by_user_id INTEGER REFERENCES users(user_id),
+                            notes TEXT,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """);
                 stmt.executeUpdate("ALTER TABLE cash_drawers ADD COLUMN IF NOT EXISTS starting_cash_amount NUMERIC(12,2) NOT NULL DEFAULT 20000.00");
                 stmt.executeUpdate("ALTER TABLE cash_drawers ADD COLUMN IF NOT EXISTS float_mix JSONB NOT NULL DEFAULT '" + floatMixToJson(DEFAULT_FLOAT_MIX) + "'::jsonb");
+                stmt.executeUpdate("ALTER TABLE cash_drawer_device_assignments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+                ensureUpdatedAtTableSchema(stmt, "cash_drawers");
+                ensureUpdatedAtTableSchema(stmt, "cash_drawer_device_assignments");
+                stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS cash_drawer_one_active_device_assignment_idx ON cash_drawer_device_assignments(location_id, device_id) WHERE is_active = TRUE");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawers_location_idx ON cash_drawers(location_id, is_active, drawer_name)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_assignments_drawer_idx ON cash_drawer_device_assignments(cash_drawer_id, is_active)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_assignments_device_idx ON cash_drawer_device_assignments(device_id, location_id, is_active)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_cash_drawers_created_by_user ON cash_drawers(created_by_user_id) WHERE created_by_user_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_cash_drawers_updated_by_user ON cash_drawers(updated_by_user_id) WHERE updated_by_user_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_cash_drawer_assignments_location_drawer ON cash_drawer_device_assignments(location_id, cash_drawer_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_cash_drawer_assignments_assigned_by_user ON cash_drawer_device_assignments(assigned_by_user_id) WHERE assigned_by_user_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_cash_drawer_assignments_unassigned_by_user ON cash_drawer_device_assignments(unassigned_by_user_id) WHERE unassigned_by_user_id IS NOT NULL");
                 stmt.executeUpdate("""
                         CREATE TABLE IF NOT EXISTS cash_drawer_sessions (
                             cash_drawer_session_id BIGSERIAL PRIMARY KEY,
@@ -843,6 +955,17 @@ public final class CashDrawerService {
                         """);
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_drawer_idx ON cash_drawer_sessions(cash_drawer_id, opened_at DESC)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_location_idx ON cash_drawer_sessions(location_id, status, opened_at DESC)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_device_fk_idx ON cash_drawer_sessions(device_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_opened_by_user_fk_idx ON cash_drawer_sessions(opened_by_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_main_cashier_user_fk_idx ON cash_drawer_sessions(main_cashier_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_current_cashier_user_fk_idx ON cash_drawer_sessions(current_cashier_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_closed_by_user_fk_idx ON cash_drawer_sessions(closed_by_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_sessions_balanced_by_user_fk_idx ON cash_drawer_sessions(balanced_by_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_drawer_fk_idx ON cash_drawer_handovers(cash_drawer_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_location_fk_idx ON cash_drawer_handovers(location_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_device_fk_idx ON cash_drawer_handovers(device_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_from_user_fk_idx ON cash_drawer_handovers(from_user_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_to_user_fk_idx ON cash_drawer_handovers(to_user_id)");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT REFERENCES cash_drawer_sessions(cash_drawer_session_id)");
@@ -860,6 +983,13 @@ public final class CashDrawerService {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT REFERENCES cash_drawer_sessions(cash_drawer_session_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sales_cash_drawer_session_created ON sales(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sale_returns_cash_drawer_created ON sale_returns(cash_drawer_id, created_at DESC) WHERE cash_drawer_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sale_returns_cash_drawer_session_created ON sale_returns(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_orders_cash_drawer_created ON custom_orders(cash_drawer_id, created_at DESC) WHERE cash_drawer_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_orders_cash_drawer_session_created ON custom_orders(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_order_payments_cash_drawer_session_created ON custom_order_payments(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_customer_transactions_cash_drawer_session_created ON customer_account_transactions(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
                 stmt.executeUpdate("""
                         INSERT INTO permissions (permission_key, permission_name)
                         SELECT 'BALANCE_DRAWER', 'Balance Draw'
@@ -1139,6 +1269,38 @@ public final class CashDrawerService {
 
     private static String blankToNull(String value) {
         return value == null || value.trim().isEmpty() ? null : value.trim();
+    }
+
+    private static void ensureUpdatedAtTableSchema(Statement stmt, String table) throws SQLException {
+        String functionName = "set_" + table + "_updated_at";
+        String triggerName = table + "_set_updated_at";
+        String indexName = table + "_updated_at_idx";
+        stmt.executeUpdate("ALTER TABLE " + quote(table) + " ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+        stmt.executeUpdate("""
+                CREATE OR REPLACE FUNCTION %s()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF TG_OP = 'INSERT' THEN
+                        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                        NEW.updated_at = CURRENT_TIMESTAMP;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """.formatted(quote(functionName)));
+        stmt.executeUpdate("DROP TRIGGER IF EXISTS " + quote(triggerName) + " ON " + quote(table));
+        stmt.executeUpdate("""
+                CREATE OR REPLACE TRIGGER %s
+                BEFORE INSERT OR UPDATE ON %s
+                FOR EACH ROW
+                EXECUTE FUNCTION %s()
+                """.formatted(quote(triggerName), quote(table), quote(functionName)));
+        stmt.executeUpdate("CREATE INDEX IF NOT EXISTS " + quote(indexName) + " ON " + quote(table) + "(updated_at DESC)");
+    }
+
+    private static String quote(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
     public record StoreOption(Integer id, String name) {

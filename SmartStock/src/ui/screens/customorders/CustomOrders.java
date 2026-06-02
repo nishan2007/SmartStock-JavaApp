@@ -33,6 +33,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -1139,6 +1140,12 @@ public class CustomOrders extends JFrame {
         String paymentStatus = upfrontPaid.compareTo(BigDecimal.ZERO) == 0
                 ? "UNPAID"
                 : balanceDue.compareTo(BigDecimal.ZERO) == 0 ? "PAID" : "PARTIAL";
+        try (Connection conn = DB.getConnection()) {
+            DeviceContextService.requireOrdersAllowed(conn);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Device Access Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         try {
             String orderNumber = CustomOrderDataService.saveCustomOrder(new OrderSaveRequest(
                     customer,
@@ -1904,6 +1911,7 @@ public class CustomOrders extends JFrame {
         }
         String lockSql = """
                 SELECT custom_order_id, order_number, customer_id,
+                       location_id,
                        COALESCE(total_amount, 0) AS total_amount,
                        COALESCE(amount_paid, 0) AS amount_paid,
                        COALESCE(balance_due, 0) AS balance_due
@@ -1984,12 +1992,13 @@ public class CustomOrders extends JFrame {
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
+            ensureCustomOrderMovementAuditColumns(conn);
             try (PreparedStatement lockPs = conn.prepareStatement(lockSql);
                  PreparedStatement linePs = conn.prepareStatement(lineSql);
                  PreparedStatement paymentMistakeUpdatePs = conn.prepareStatement(paymentMistakeUpdateSql);
                  PreparedStatement orderAdjustmentUpdatePs = conn.prepareStatement(orderAdjustmentUpdateSql);
                  PreparedStatement refundPs = conn.prepareStatement(refundSql);
-                 PreparedStatement lineReturnPs = conn.prepareStatement(lineReturnSql);
+                 PreparedStatement lineReturnPs = conn.prepareStatement(lineReturnSql, Statement.RETURN_GENERATED_KEYS);
                  PreparedStatement lineUpdatePs = conn.prepareStatement(lineUpdateSql);
                  PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
                 lockPs.setLong(1, orderId);
@@ -1997,6 +2006,7 @@ public class CustomOrders extends JFrame {
                 BigDecimal amountPaid;
                 BigDecimal balanceDue;
                 int customerId;
+                Integer orderLocationId;
                 String orderNumber;
                 try (ResultSet rs = lockPs.executeQuery()) {
                     if (!rs.next()) {
@@ -2008,6 +2018,7 @@ public class CustomOrders extends JFrame {
                     amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
                     balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
                     customerId = rs.getInt("customer_id");
+                    orderLocationId = rs.getObject("location_id", Integer.class);
                     orderNumber = rs.getString("order_number");
                 }
 
@@ -2152,6 +2163,13 @@ public class CustomOrders extends JFrame {
                     lineReturnPs.setString(15, blankToNull(DeviceContextService.currentDeviceId()));
                     lineReturnPs.setString(16, blankToNull(DeviceContextService.currentDeviceName()));
                     lineReturnPs.executeUpdate();
+                    long lineReturnId;
+                    try (ResultSet returnKeys = lineReturnPs.getGeneratedKeys()) {
+                        if (!returnKeys.next()) {
+                            throw new SQLException("Failed to create custom order return movement reference.");
+                        }
+                        lineReturnId = returnKeys.getLong(1);
+                    }
 
                     if (!paymentMistakeRefund) {
                         lineUpdatePs.setBigDecimal(1, row.refundAmount());
@@ -2159,7 +2177,7 @@ public class CustomOrders extends JFrame {
                         lineUpdatePs.setBigDecimal(3, row.refundAmount());
                         lineUpdatePs.setLong(4, row.lineId());
                         lineUpdatePs.executeUpdate();
-                        restockReturnedLine(conn, row);
+                        restockReturnedLine(conn, row, orderId, orderLocationId, lineReturnId, orderNumber, reason);
                     }
                 }
 
@@ -4134,10 +4152,19 @@ public class CustomOrders extends JFrame {
         };
     }
 
-    private void restockReturnedLine(Connection conn, LineReturnRow row) throws SQLException {
+    private void restockReturnedLine(
+            Connection conn,
+            LineReturnRow row,
+            long orderId,
+            Integer locationId,
+            long lineReturnId,
+            String orderNumber,
+            String reason
+    ) throws SQLException {
         if (!"RESTOCK".equals(row.restockAction())) {
             return;
         }
+        ensureCustomOrderMovementAuditColumns(conn);
         BigDecimal restockQty = BigDecimal.ONE;
         String itemSql = """
                 UPDATE custom_order_items
@@ -4165,23 +4192,100 @@ public class CustomOrders extends JFrame {
                 WHERE custom_item_id = ?
                   AND has_variants = TRUE
                 """;
+        String itemMovementSql = """
+                INSERT INTO custom_order_item_movements (
+                    custom_item_id, location_id, change_qty, reason, note, user_name,
+                    user_id, device_id, device_name, custom_order_id, custom_order_line_id,
+                    custom_order_line_return_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        String variantMovementSql = """
+                INSERT INTO custom_order_item_movements (
+                    custom_item_id, custom_variant_id, variant_name, location_id,
+                    change_qty, reason, note, user_name, user_id, device_id, device_name,
+                    custom_order_id, custom_order_line_id, custom_order_line_return_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        String movementNote = "custom_order_id=" + orderId
+                + "; custom_order_line_id=" + row.lineId()
+                + "; custom_order_line_return_id=" + lineReturnId
+                + "; order_number=" + orderNumber
+                + "; reason=" + reason;
         if (row.variantId() != null) {
             try (PreparedStatement variantPs = conn.prepareStatement(variantSql);
-                 PreparedStatement parentPs = conn.prepareStatement(parentSql)) {
+                 PreparedStatement parentPs = conn.prepareStatement(parentSql);
+                 PreparedStatement movementPs = conn.prepareStatement(variantMovementSql)) {
                 variantPs.setBigDecimal(1, restockQty);
                 variantPs.setBigDecimal(2, restockQty);
                 variantPs.setLong(3, row.variantId());
-                variantPs.executeUpdate();
+                if (variantPs.executeUpdate() == 0) {
+                    return;
+                }
                 parentPs.setLong(1, row.itemId());
                 parentPs.executeUpdate();
+                movementPs.setLong(1, row.itemId());
+                movementPs.setLong(2, row.variantId());
+                movementPs.setString(3, row.variantName());
+                setNullableInteger(movementPs, 4, locationId);
+                movementPs.setBigDecimal(5, restockQty);
+                movementPs.setString(6, "RETURN_RESTOCK");
+                movementPs.setString(7, movementNote);
+                movementPs.setString(8, SessionManager.getCurrentUserDisplayName());
+                setNullableInteger(movementPs, 9, SessionManager.getCurrentUserId());
+                movementPs.setString(10, blankToNull(DeviceContextService.currentDeviceId()));
+                movementPs.setString(11, blankToNull(DeviceContextService.currentDeviceName()));
+                movementPs.setLong(12, orderId);
+                movementPs.setLong(13, row.lineId());
+                movementPs.setLong(14, lineReturnId);
+                movementPs.executeUpdate();
             }
         } else {
-            try (PreparedStatement itemPs = conn.prepareStatement(itemSql)) {
+            try (PreparedStatement itemPs = conn.prepareStatement(itemSql);
+                 PreparedStatement movementPs = conn.prepareStatement(itemMovementSql)) {
                 itemPs.setBigDecimal(1, restockQty);
                 itemPs.setBigDecimal(2, restockQty);
                 itemPs.setLong(3, row.itemId());
-                itemPs.executeUpdate();
+                if (itemPs.executeUpdate() == 0) {
+                    return;
+                }
+                movementPs.setLong(1, row.itemId());
+                setNullableInteger(movementPs, 2, locationId);
+                movementPs.setBigDecimal(3, restockQty);
+                movementPs.setString(4, "RETURN_RESTOCK");
+                movementPs.setString(5, movementNote);
+                movementPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                setNullableInteger(movementPs, 7, SessionManager.getCurrentUserId());
+                movementPs.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
+                movementPs.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+                movementPs.setLong(10, orderId);
+                movementPs.setLong(11, row.lineId());
+                movementPs.setLong(12, lineReturnId);
+                movementPs.executeUpdate();
             }
+        }
+    }
+
+    private void ensureCustomOrderMovementAuditColumns(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_name TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_device_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_sequence INTEGER");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS custom_order_id BIGINT REFERENCES custom_orders(custom_order_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS custom_order_line_id BIGINT REFERENCES custom_order_lines(custom_order_line_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS custom_order_line_return_id BIGINT REFERENCES custom_order_line_returns(custom_order_line_return_id)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_location_idx ON custom_order_item_movements(location_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_user_idx ON custom_order_item_movements(user_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_device_idx ON custom_order_item_movements(device_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_receive_idx ON custom_order_item_movements(receive_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_order_idx ON custom_order_item_movements(custom_order_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_line_idx ON custom_order_item_movements(custom_order_line_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_line_return_idx ON custom_order_item_movements(custom_order_line_return_id, created_at DESC)");
         }
     }
 

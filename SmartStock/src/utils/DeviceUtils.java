@@ -34,7 +34,7 @@ public class DeviceUtils {
         info.setInstallationId(installationId);
         info.setFingerprint(fingerprint);
         info.setHostname(hostname);
-        info.setDeviceName(hostname);
+        info.setDeviceName(preferredDeviceName(localUsername, hostname));
         info.setOsName(osName);
         info.setOsVersion(osVersion);
         info.setOsArch(osArch);
@@ -44,6 +44,16 @@ public class DeviceUtils {
         info.setMacAddresses(macAddresses);
 
         return info;
+    }
+
+    private static String preferredDeviceName(String localUsername, String hostname) {
+        if (localUsername != null && !localUsername.isBlank()) {
+            return localUsername.trim();
+        }
+        if (hostname != null && !hostname.isBlank()) {
+            return hostname.trim();
+        }
+        return "Unknown";
     }
 
     private static String getOrCreateInstallationId() {

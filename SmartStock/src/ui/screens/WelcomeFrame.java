@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import data.DatabaseConfig;
 import managers.SupabaseSessionManager;
 import ui.helpers.ThemeManager;
 
@@ -11,7 +12,10 @@ import java.sql.Connection;
 public class WelcomeFrame extends JFrame {
 
     private final JLabel statusLabel = new JLabel("Status: Not checked");
+    private final JLabel modeLabel = new JLabel();
     private final JButton testBtn = new JButton("Test Database Connection");
+    private final JButton setupBtn = new JButton("Database Setup");
+    private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Continue");
 
     public WelcomeFrame() {
@@ -28,7 +32,13 @@ public class WelcomeFrame extends JFrame {
 
         continueBtn.setEnabled(false);
 
+        refreshModeLabel();
         testBtn.addActionListener(e -> testConnection());
+        setupBtn.addActionListener(e -> {
+            new DatabaseSetup(this).setVisible(true);
+            SwingUtilities.invokeLater(this::refreshModeLabel);
+        });
+        syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> {
             new Login().setVisible(true);
             dispose();
@@ -43,13 +53,22 @@ public class WelcomeFrame extends JFrame {
 
         JPanel center = new JPanel();
         center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+        modeLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         statusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         testBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+        setupBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+        syncStatusBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
         continueBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+        center.add(modeLabel);
+        center.add(Box.createVerticalStrut(8));
         center.add(statusLabel);
         center.add(Box.createVerticalStrut(10));
         center.add(testBtn);
+        center.add(Box.createVerticalStrut(10));
+        center.add(setupBtn);
+        center.add(Box.createVerticalStrut(10));
+        center.add(syncStatusBtn);
         center.add(Box.createVerticalStrut(10));
         center.add(continueBtn);
 
@@ -63,8 +82,30 @@ public class WelcomeFrame extends JFrame {
         SwingUtilities.invokeLater(this::continueIfStoredSessionExists);
     }
 
+    private void refreshModeLabel() {
+        DatabaseConfig config = DatabaseConfig.load();
+        String dbText = config.jdbcUrl() == null || config.jdbcUrl().isBlank() ? "Not configured" : config.jdbcUrl();
+        modeLabel.setText("Mode: " + config.mode() + " | DB: " + dbText);
+    }
+
     private void continueIfStoredSessionExists() {
         if (!SupabaseSessionManager.hasPersistedSession()) {
+            return;
+        }
+        try (Connection ignored = DB.getConnection()) {
+            // Continue only after the configured database is reachable.
+        } catch (Exception ex) {
+            statusLabel.setText("Status: Database setup required");
+            testBtn.setEnabled(true);
+            continueBtn.setEnabled(false);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Saved sign-in was found, but the database is not ready yet.\n\n"
+                            + getRootCauseMessage(ex)
+                            + "\n\nOpen Database Setup, save the connection, then test it.",
+                    "Database Setup Required",
+                    JOptionPane.WARNING_MESSAGE
+            );
             return;
         }
 
@@ -73,6 +114,16 @@ public class WelcomeFrame extends JFrame {
         continueBtn.setEnabled(false);
         new Login();
         dispose();
+    }
+
+    private String getRootCauseMessage(Exception ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() == null || cause.getMessage().isBlank()
+                ? cause.getClass().getSimpleName()
+                : cause.getMessage();
     }
 
     private void testConnection() {
@@ -97,10 +148,10 @@ public class WelcomeFrame extends JFrame {
                 testBtn.setEnabled(true);
                 try {
                     get(); // will throw if connection failed
-                    statusLabel.setText("Status: Connected ✅");
+                    statusLabel.setText("Status: Connected");
                     continueBtn.setEnabled(true);
                 } catch (Exception ex) {
-                    statusLabel.setText("Status: Failed ❌");
+                    statusLabel.setText("Status: Failed");
                     continueBtn.setEnabled(false);
                     JOptionPane.showMessageDialog(WelcomeFrame.this,
                             "Database connection failed:\n" + ex.getCause().getMessage(),

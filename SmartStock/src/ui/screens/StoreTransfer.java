@@ -4,6 +4,8 @@ import data.DB;
 import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
+import services.DeviceContextService;
+import services.SyncOutboxService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -21,6 +23,7 @@ import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class StoreTransfer extends JFrame {
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
@@ -401,6 +404,13 @@ public class StoreTransfer extends JFrame {
             conn.setAutoCommit(false);
             try {
                 long transferId = createTransfer(conn, sourceLocationId, destination, items);
+                SyncOutboxService.recordEvent(conn, "STORE_TRANSFER_CREATED", Map.of(
+                        "transfer_id", transferId,
+                        "source_location_id", sourceLocationId,
+                        "destination_location_id", destination.locationId,
+                        "line_count", items.size(),
+                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                ));
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Transfer sent successfully.\nTransfer ID: " + transferId + "\nThe receiving store must verify it before stock is added.");
                 transferModel.setRowCount(0);
@@ -432,7 +442,13 @@ public class StoreTransfer extends JFrame {
         String insertTransferItemSql = "INSERT INTO store_transfer_items (transfer_id, product_id, quantity) VALUES (?, ?, ?)";
         String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
         String subtractInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ? AND quantity_on_hand >= ?";
-        String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
+        String insertMovementSql = """
+                INSERT INTO inventory_movements (
+                    product_id, location_id, change_qty, reason, note, user_name,
+                    user_id, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
 
         long transferId;
         try (PreparedStatement transferStmt = conn.prepareStatement(insertTransferSql, Statement.RETURN_GENERATED_KEYS)) {
@@ -485,6 +501,9 @@ public class StoreTransfer extends JFrame {
                 movementStmt.setString(4, "TRANSFER_OUT");
                 movementStmt.setString(5, note);
                 movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
+                setNullableInteger(movementStmt, 7, SessionManager.getCurrentUserId());
+                movementStmt.setString(8, DeviceContextService.currentDeviceId());
+                movementStmt.setString(9, DeviceContextService.currentDeviceName());
                 movementStmt.addBatch();
 
             }
@@ -620,6 +639,19 @@ public class StoreTransfer extends JFrame {
             conn.setAutoCommit(false);
             try {
                 String receiveId = receiveTransfer(conn, transferId, locationId);
+                SyncOutboxService.recordEvent(conn, "INVENTORY_RECEIVED", Map.of(
+                        "source", "STORE_TRANSFER",
+                        "transfer_id", transferId,
+                        "receive_id", receiveId,
+                        "location_id", locationId,
+                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                ));
+                SyncOutboxService.recordEvent(conn, "INVENTORY_MOVEMENT_CREATED", Map.of(
+                        "source", "STORE_TRANSFER_RECEIVE",
+                        "transfer_id", transferId,
+                        "receive_id", receiveId,
+                        "location_id", locationId
+                ));
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Transfer received successfully.\nReceive ID: " + receiveId);
                 loadIncomingTransfers();
@@ -706,11 +738,14 @@ public class StoreTransfer extends JFrame {
                     reason,
                     note,
                     user_name,
+                    user_id,
+                    device_id,
+                    device_name,
                     receive_id,
                     receive_device_id,
                     receive_sequence
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String updateTransferSql = """
                 UPDATE store_transfers
@@ -768,9 +803,12 @@ public class StoreTransfer extends JFrame {
                 movementStmt.setString(4, "INVENTORY_ENTRY");
                 movementStmt.setString(5, "transfer_id=" + transferId + "; from_location_id=" + fromLocationId + "; received_by_user_id=" + SessionManager.getCurrentUserId());
                 movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                movementStmt.setString(7, receive.receiveId());
-                movementStmt.setString(8, receive.deviceId());
-                movementStmt.setInt(9, receive.sequence());
+                setNullableInteger(movementStmt, 7, SessionManager.getCurrentUserId());
+                movementStmt.setString(8, DeviceContextService.currentDeviceId());
+                movementStmt.setString(9, DeviceContextService.currentDeviceName());
+                movementStmt.setString(10, receive.receiveId());
+                movementStmt.setString(11, receive.deviceId());
+                movementStmt.setInt(12, receive.sequence());
                 movementStmt.addBatch();
             }
 

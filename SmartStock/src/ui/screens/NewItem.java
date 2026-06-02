@@ -4,6 +4,8 @@ import ui.screens.customorders.NewCustomItem;
 
 import data.DB;
 import managers.SessionManager;
+import services.DeviceContextService;
+import services.OfflineWriteGuard;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
 import ui.components.RoundedBorder;
@@ -315,6 +317,12 @@ public class NewItem extends JFrame {
     }
 
     private void saveItem() {
+        try {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Product setup");
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         String name = nameField.getText().trim();
         String size = sizeField.getText().trim();
         String sku = skuField.getText().trim();
@@ -402,8 +410,21 @@ public class NewItem extends JFrame {
                 ON CONFLICT (product_id, location_id)
                 DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand
                 """;
-        String insertBarcodeSql = "INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)";
-        String insertMovementSql = "INSERT INTO inventory_movements (product_id, location_id, change_qty, reason, note, user_name) VALUES (?, ?, ?, ?, ?, ?)";
+        String insertBarcodeSql = """
+                INSERT INTO product_barcodes (product_id, barcode)
+                VALUES (?, ?)
+                ON CONFLICT (barcode)
+                DO UPDATE SET
+                    product_id = EXCLUDED.product_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """;
+        String insertMovementSql = """
+                INSERT INTO inventory_movements (
+                    product_id, location_id, change_qty, reason, note, user_name,
+                    user_id, device_id, device_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -459,6 +480,7 @@ public class NewItem extends JFrame {
                     movementPs.setString(4, "NEW_ITEM");
                     movementPs.setString(5, "Starting quantity for new item");
                     movementPs.setString(6, SessionManager.getCurrentUserDisplayName());
+                    setCurrentUserDeviceMovementParameters(movementPs, 7, 8, 9);
                     movementPs.executeUpdate();
                 }
 
@@ -494,6 +516,17 @@ public class NewItem extends JFrame {
             ps.setInt(userIdParameter, SessionManager.getCurrentUserId());
         }
         ps.setString(userNameParameter, SessionManager.getCurrentUserDisplayName());
+    }
+
+    private void setCurrentUserDeviceMovementParameters(PreparedStatement ps, int userIdParameter,
+                                                        int deviceIdParameter, int deviceNameParameter) throws SQLException {
+        if (SessionManager.getCurrentUserId() == null) {
+            ps.setNull(userIdParameter, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(userIdParameter, SessionManager.getCurrentUserId());
+        }
+        ps.setString(deviceIdParameter, DeviceContextService.currentDeviceId());
+        ps.setString(deviceNameParameter, DeviceContextService.currentDeviceName());
     }
 
     private void clearFields() {

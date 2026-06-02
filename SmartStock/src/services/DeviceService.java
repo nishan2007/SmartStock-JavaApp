@@ -46,7 +46,7 @@ public class DeviceService {
                             update devices
                             set
                                 device_fingerprint = ?,
-                                device_name = ?,
+                                device_name = COALESCE(NULLIF(TRIM(device_name), ''), ?),
                                 hostname = ?,
                                 os_name = ?,
                                 os_version = ?,
@@ -113,8 +113,28 @@ public class DeviceService {
                                 is_blocked,
                                 approved_at,
                                 approved_by_user_id,
-                                receipt_device_code
-                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, ?, ?, ?, false, ?, ?, '0001')
+                                receipt_device_code,
+                                allow_sales,
+                                allow_orders
+                            ) values (
+                                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                current_timestamp,
+                                current_timestamp,
+                                ?, ?, ?, false, ?, ?,
+                                (
+                                    select lpad(candidate::text, 4, '0')
+                                    from generate_series(1, 9999) as candidate
+                                    where not exists (
+                                        select 1
+                                        from devices d
+                                        where d.receipt_device_code = lpad(candidate::text, 4, '0')
+                                    )
+                                    order by candidate
+                                    limit 1
+                                ),
+                                true,
+                                true
+                            )
                             returning device_id
                             """;
 

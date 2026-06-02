@@ -128,7 +128,7 @@ public class PayrollDashboard extends JFrame {
         metricsPanel.add(totalPayLabel);
 
         summaryModel = new DefaultTableModel(
-                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Total Pay", "Paid", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
+                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
                 0
         ) {
             @Override
@@ -323,7 +323,9 @@ public class PayrollDashboard extends JFrame {
                     summary.daysWorked(),
                     formatHours(summary.totalHours()),
                     CURRENCY_FORMAT.format(summary.totalPay()),
-                    summary.paid() ? "Paid" : "Unpaid",
+                    CURRENCY_FORMAT.format(summary.paidAmount()),
+                    CURRENCY_FORMAT.format(summary.amountDue()),
+                    payrollStatus(summary),
                     formatDateTime(summary.paidAt()),
                     summary.paidByName(),
                     formatCompensationType(summary.compensationType()),
@@ -375,12 +377,19 @@ public class PayrollDashboard extends JFrame {
         }
 
         PayrollSummary summary = renderedSummaries.get(modelRow);
+        if (summary.amountDue().compareTo(BigDecimal.ZERO) <= 0) {
+            JOptionPane.showMessageDialog(this, "This payroll period is already fully paid.", "Payroll", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
         String message = "Mark payroll as paid for:\n\n"
                 + summary.employeeName() + "\n"
                 + formatPayPeriod(summary.payPeriodStart(), summary.payPeriodEnd()) + "\n"
-                + "Total Pay: " + CURRENCY_FORMAT.format(summary.totalPay());
-        if (summary.paid()) {
-            message += "\n\nThis pay period is already marked paid. Marking it again will update the paid time and totals.";
+                + "Total Earned: " + CURRENCY_FORMAT.format(summary.totalPay()) + "\n"
+                + "Already Paid: " + CURRENCY_FORMAT.format(summary.paidAmount()) + "\n"
+                + "Amount Due: " + CURRENCY_FORMAT.format(summary.amountDue());
+        if (!summary.paid() && summary.paidAmount().compareTo(BigDecimal.ZERO) > 0) {
+            message += "\n\nThis will create a supplemental payroll payment for the additional amount due.";
         }
 
         int result = JOptionPane.showConfirmDialog(this, message, "Mark Payroll Paid", JOptionPane.YES_NO_OPTION);
@@ -476,6 +485,16 @@ public class PayrollDashboard extends JFrame {
 
     private static String formatDateTime(LocalDateTime value) {
         return value == null ? "" : value.format(DATE_TIME_FORMAT);
+    }
+
+    private static String payrollStatus(PayrollSummary summary) {
+        if (summary.paid()) {
+            return "Paid";
+        }
+        if (summary.paidAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return "Additional Due";
+        }
+        return "Unpaid";
     }
 
     private static String formatHours(BigDecimal hours) {

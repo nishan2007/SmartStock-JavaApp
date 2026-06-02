@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class DeviceManagementService {
@@ -35,6 +36,8 @@ public final class DeviceManagementService {
                        COALESCE(last_store.name, '') AS last_store_name,
                        COALESCE(d.is_approved, false) AS is_approved,
                        COALESCE(d.is_blocked, false) AS is_blocked,
+                       COALESCE(d.allow_sales, true) AS allow_sales,
+                       COALESCE(d.allow_orders, true) AS allow_orders,
                        d.first_seen,
                        d.last_seen,
                        d.approved_at,
@@ -95,6 +98,8 @@ public final class DeviceManagementService {
                         rs.getString("last_store_name"),
                         rs.getBoolean("is_approved"),
                         rs.getBoolean("is_blocked"),
+                        rs.getBoolean("allow_sales"),
+                        rs.getBoolean("allow_orders"),
                         rs.getTimestamp("first_seen"),
                         rs.getTimestamp("last_seen"),
                         rs.getTimestamp("approved_at"),
@@ -153,11 +158,21 @@ public final class DeviceManagementService {
         return sessions;
     }
 
-    public static void updateDeviceApproval(Connection conn, String deviceId, Integer actingUserId, boolean approved, String notes) throws SQLException {
+    public static void updateDeviceApproval(
+            Connection conn,
+            String deviceId,
+            Integer actingUserId,
+            boolean approved,
+            boolean allowSales,
+            boolean allowOrders,
+            String notes
+    ) throws SQLException {
         String sql = """
                 UPDATE devices
                 SET is_approved = ?,
                     is_blocked = FALSE,
+                    allow_sales = ?,
+                    allow_orders = ?,
                     approved_at = ?,
                     approved_by_user_id = ?,
                     blocked_at = NULL,
@@ -168,21 +183,31 @@ public final class DeviceManagementService {
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setBoolean(1, approved);
+            ps.setBoolean(2, allowSales);
+            ps.setBoolean(3, allowOrders);
             if (approved) {
-                ps.setTimestamp(2, new java.sql.Timestamp(System.currentTimeMillis()));
+                ps.setTimestamp(4, new java.sql.Timestamp(System.currentTimeMillis()));
             } else {
-                ps.setNull(2, Types.TIMESTAMP);
+                ps.setNull(4, Types.TIMESTAMP);
             }
 
             if (actingUserId == null) {
-                ps.setNull(3, Types.INTEGER);
+                ps.setNull(5, Types.INTEGER);
             } else {
-                ps.setInt(3, actingUserId);
+                ps.setInt(5, actingUserId);
             }
-            ps.setString(4, normalizeNotes(notes));
-            ps.setObject(5, UUID.fromString(deviceId));
+            ps.setString(6, normalizeNotes(notes));
+            ps.setObject(7, UUID.fromString(deviceId));
             ps.executeUpdate();
         }
+
+        SyncOutboxService.recordEvent(conn, "DEVICE_ACCESS_UPDATED", Map.of(
+                "device_id", deviceId,
+                "is_approved", approved,
+                "is_blocked", false,
+                "allow_sales", allowSales,
+                "allow_orders", allowOrders
+        ));
     }
 
     public static void blockDevice(Connection conn, String deviceId, Integer actingUserId, String notes) throws SQLException {
@@ -190,6 +215,8 @@ public final class DeviceManagementService {
                 UPDATE devices
                 SET is_blocked = TRUE,
                     is_approved = FALSE,
+                    allow_sales = FALSE,
+                    allow_orders = FALSE,
                     blocked_at = CURRENT_TIMESTAMP,
                     blocked_by_user_id = ?,
                     status_notes = ?
@@ -219,6 +246,14 @@ public final class DeviceManagementService {
             sessionPs.setObject(1, UUID.fromString(deviceId));
             sessionPs.executeUpdate();
         }
+
+        SyncOutboxService.recordEvent(conn, "DEVICE_ACCESS_UPDATED", Map.of(
+                "device_id", deviceId,
+                "is_approved", false,
+                "is_blocked", true,
+                "allow_sales", false,
+                "allow_orders", false
+        ));
     }
 
     public static void updateDeviceReceiptCode(Connection conn, String deviceId, String receiptCode) throws SQLException {
@@ -229,6 +264,19 @@ public final class DeviceManagementService {
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, sanitizeCode(receiptCode));
+            ps.setObject(2, UUID.fromString(deviceId));
+            ps.executeUpdate();
+        }
+    }
+
+    public static void updateDeviceFriendlyName(Connection conn, String deviceId, String deviceName) throws SQLException {
+        String sql = """
+                UPDATE devices
+                SET device_name = ?
+                WHERE device_id = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, normalizeNotes(deviceName));
             ps.setObject(2, UUID.fromString(deviceId));
             ps.executeUpdate();
         }

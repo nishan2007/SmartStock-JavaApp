@@ -264,7 +264,7 @@ public class EditCustomItem extends JPanel {
         JPanel buttons = new JPanel(new GridLayout(2, 2, 8, 8));
         JButton saveVariantButton = new JButton("Save Variant");
         JButton updateVariantButton = new JButton("Update Variant");
-        JButton deleteVariantButton = new JButton("Delete Variant");
+        JButton deleteVariantButton = new JButton("Deactivate Variant");
         JButton clearVariantButton = new JButton("Clear");
         saveVariantButton.addActionListener(e -> {
             if (saveVariant(false)) {
@@ -704,16 +704,20 @@ public class EditCustomItem extends JPanel {
 
     private void deleteSelectedVariant() {
         if (selectedVariantId == null) {
-            JOptionPane.showMessageDialog(this, "Select a variant to delete.");
+            JOptionPane.showMessageDialog(this, "Select a variant to deactivate.");
             return;
         }
-        int choice = JOptionPane.showConfirmDialog(this, "Delete this variant?", "Delete Variant", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        int choice = JOptionPane.showConfirmDialog(this, "Deactivate this variant? Saved order history will be kept.", "Deactivate Variant", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.YES_OPTION) {
             return;
         }
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
-            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM custom_order_item_variants WHERE custom_variant_id = ?")) {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    UPDATE custom_order_item_variants
+                    SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                    WHERE custom_variant_id = ?
+                    """)) {
                 ps.setLong(1, selectedVariantId);
                 ps.executeUpdate();
                 refreshVariantTrackedTotals(conn, selectedCustomItemId);
@@ -729,7 +733,7 @@ public class EditCustomItem extends JPanel {
             loadItems();
             selectItemById(selectedCustomItemId);
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to delete variant: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to deactivate variant: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

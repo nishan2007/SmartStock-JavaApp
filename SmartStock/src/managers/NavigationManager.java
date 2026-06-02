@@ -3,6 +3,7 @@ package managers;
 import data.DB;
 import services.DeviceService;
 import ui.screens.BalanceDraw;
+import ui.screens.BalanceSheet;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
@@ -55,6 +56,7 @@ public final class NavigationManager {
         MAKE_SALE,
         RETURN_SALE,
         BALANCE_DRAW,
+        BALANCE_SHEET,
         ORDERS_MANAGER_DASHBOARD,
         END_OF_DAY,
         ORDERS_END_OF_DAY,
@@ -114,6 +116,10 @@ public final class NavigationManager {
 
     public static void openBalanceDraw(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.BALANCE_DRAW));
+    }
+
+    public static void openBalanceSheet(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.BALANCE_SHEET));
     }
 
     public static void openOrdersManagerDashboard(JFrame parent) {
@@ -226,6 +232,7 @@ public final class NavigationManager {
             case MAKE_SALE -> new MakeASale();
             case RETURN_SALE -> new ReturnSale();
             case BALANCE_DRAW -> new BalanceDraw();
+            case BALANCE_SHEET -> new BalanceSheet();
             case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
             case END_OF_DAY -> new EndOfDay();
             case ORDERS_END_OF_DAY -> new OrdersEndOfDay();
@@ -265,6 +272,7 @@ public final class NavigationManager {
             case "MakeASale" -> ScreenType.MAKE_SALE;
             case "ReturnSale" -> ScreenType.RETURN_SALE;
             case "BalanceDraw" -> ScreenType.BALANCE_DRAW;
+            case "BalanceSheet" -> ScreenType.BALANCE_SHEET;
             case "OrdersManagerDashboard" -> ScreenType.ORDERS_MANAGER_DASHBOARD;
             case "EndOfDay" -> ScreenType.END_OF_DAY;
             case "OrdersEndOfDay" -> ScreenType.ORDERS_END_OF_DAY;

@@ -4,6 +4,9 @@ import data.DB;
 import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
+import services.DeviceContextService;
+import services.ManagerApprovalService;
+import services.SyncOutboxService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -26,6 +29,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class EnterInventory extends JFrame {
     private JTextField searchField;
@@ -102,17 +106,18 @@ public class EnterInventory extends JFrame {
         searchPanel.add(searchRow, BorderLayout.SOUTH);
 
         inventoryModel = new DefaultTableModel(
-                new Object[]{"Type", "ID", "Name", "Description", "SKU / Code", "Current Stock", "Qty to Add", "New Stock"},
+                new Object[]{"Type", "ID", "Name", "Description", "SKU / Code", "System Stock", "Counted Stock", "Qty to Add", "New Stock"},
                 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 6;
+                return column == 6 || column == 7;
             }
         };
         inventoryTable = new JTable(inventoryModel);
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         inventoryTable.getColumnModel().getColumn(6).setCellEditor(new DefaultCellEditor(new JTextField()));
+        inventoryTable.getColumnModel().getColumn(7).setCellEditor(new DefaultCellEditor(new JTextField()));
         configureInventoryTableColumns();
 
         JScrollPane inventoryScrollPane = new JScrollPane(inventoryTable);
@@ -189,7 +194,7 @@ public class EnterInventory extends JFrame {
             if (updatingInventoryRows) {
                 return;
             }
-            if (e.getColumn() == 6 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
+            if (e.getColumn() == 6 || e.getColumn() == 7 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
                 updateNewStockTotals();
             }
         });
@@ -239,7 +244,7 @@ public class EnterInventory extends JFrame {
     }
 
     private void configureInventoryTableColumns() {
-        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 8) {
+        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 9) {
             return;
         }
 
@@ -261,9 +266,11 @@ public class EnterInventory extends JFrame {
         columnModel.getColumn(5).setMinWidth(90);
         columnModel.getColumn(5).setMaxWidth(120);
         columnModel.getColumn(6).setMinWidth(80);
-        columnModel.getColumn(6).setMaxWidth(110);
+        columnModel.getColumn(6).setMaxWidth(120);
         columnModel.getColumn(7).setMinWidth(80);
         columnModel.getColumn(7).setMaxWidth(110);
+        columnModel.getColumn(8).setMinWidth(80);
+        columnModel.getColumn(8).setMaxWidth(110);
         updateDescriptionRowHeights();
     }
 
@@ -559,17 +566,17 @@ public class EnterInventory extends JFrame {
             String existingType = inventoryModel.getValueAt(i, 0).toString();
             int existingItemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
             if (existingType.equals(itemType) && existingItemId == itemId) {
-                int existingQty = Integer.parseInt(inventoryModel.getValueAt(i, 6).toString());
+                int existingQty = Integer.parseInt(inventoryModel.getValueAt(i, 7).toString());
                 int newQty = existingQty + qty;
-                inventoryModel.setValueAt(newQty, i, 6);
-                inventoryModel.setValueAt(currentStock + newQty, i, 7);
+                inventoryModel.setValueAt(newQty, i, 7);
+                inventoryModel.setValueAt(parseInt(inventoryModel.getValueAt(i, 6), currentStock) + newQty, i, 8);
                 updateTotalUnitsLabel();
                 configureInventoryTableColumns();
                 return;
             }
         }
 
-        inventoryModel.addRow(new Object[]{itemType, itemId, name, description, sku, currentStock, qty, currentStock + qty});
+        inventoryModel.addRow(new Object[]{itemType, itemId, name, description, sku, currentStock, currentStock, qty, currentStock + qty});
         updateNewStockTotals();
         configureInventoryTableColumns();
     }
@@ -578,10 +585,11 @@ public class EnterInventory extends JFrame {
         updatingInventoryRows = true;
         try {
             for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                int currentStock = parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
-                int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 6), 1);
-                inventoryModel.setValueAt(qtyToAdd, i, 6);
-                inventoryModel.setValueAt(currentStock + qtyToAdd, i, 7);
+                int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+                int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 7), 1);
+                inventoryModel.setValueAt(countedStock, i, 6);
+                inventoryModel.setValueAt(qtyToAdd, i, 7);
+                inventoryModel.setValueAt(countedStock + qtyToAdd, i, 8);
             }
             updateTotalUnitsLabel();
             updateDescriptionRowHeights();
@@ -600,10 +608,27 @@ public class EnterInventory extends JFrame {
         }
     }
 
+    private int parseNonNegativeInt(Object value, int fallback) {
+        try {
+            int parsed = Integer.parseInt(value.toString().trim());
+            return parsed >= 0 ? parsed : fallback;
+        } catch (Exception ex) {
+            return fallback;
+        }
+    }
+
+    private int parseInt(Object value, int fallback) {
+        try {
+            return Integer.parseInt(value.toString().trim());
+        } catch (Exception ex) {
+            return fallback;
+        }
+    }
+
     private void updateTotalUnitsLabel() {
         int total = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            total += parsePositiveInt(inventoryModel.getValueAt(i, 6), 0);
+            total += parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
         }
         totalUnitsLabel.setText("Units to Add: " + total);
     }
@@ -698,11 +723,17 @@ public class EnterInventory extends JFrame {
 
         updateNewStockTotals();
         int locationId = SessionManager.getCurrentLocationId();
+        ensureReceivingStockOverridePermissionAvailable();
+        StockOverrideAuthorization stockOverrideAuthorization = requestStockOverrideAuthorizationIfNeeded();
+        if (stockOverrideAuthorization == null && hasStockCountOverrides()) {
+            return;
+        }
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
 
             try {
+                ensureMovementAuditColumns(conn);
                 ReceiptNumberManager.ReceiveNumber receive = ReceiptNumberManager.nextReceive(locationId);
                 String insertReceivingBatchSql = """
                         INSERT INTO receiving_batches (
@@ -721,15 +752,19 @@ public class EnterInventory extends JFrame {
                 String insertCustomItemMovementSql = """
                         INSERT INTO custom_order_item_movements (
                             custom_item_id,
+                            location_id,
                             change_qty,
                             reason,
                             note,
                             user_name,
+                            user_id,
+                            device_id,
+                            device_name,
                             receive_id,
                             receive_device_id,
                             receive_sequence
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """;
                 String updateCustomVariantSql = "UPDATE custom_order_item_variants SET quantity_on_hand = quantity_on_hand + ?, updated_at = CURRENT_TIMESTAMP WHERE custom_variant_id = ?";
                 String insertCustomVariantMovementSql = """
@@ -737,15 +772,19 @@ public class EnterInventory extends JFrame {
                             custom_item_id,
                             custom_variant_id,
                             variant_name,
+                            location_id,
                             change_qty,
                             reason,
                             note,
                             user_name,
+                            user_id,
+                            device_id,
+                            device_name,
                             receive_id,
                             receive_device_id,
                             receive_sequence
                         )
-                        SELECT custom_item_id, custom_variant_id, variant_name, ?, ?, ?, ?, ?, ?, ?
+                        SELECT custom_item_id, custom_variant_id, variant_name, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         FROM custom_order_item_variants
                         WHERE custom_variant_id = ?
                         """;
@@ -757,11 +796,14 @@ public class EnterInventory extends JFrame {
                             reason,
 	                            note,
 	                            user_name,
+                            user_id,
+                            device_id,
+                            device_name,
 	                            receive_id,
 	                            receive_device_id,
 	                            receive_sequence
 	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """;
 
                 try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
@@ -773,6 +815,8 @@ public class EnterInventory extends JFrame {
                      PreparedStatement customVariantMovementStmt = conn.prepareStatement(insertCustomVariantMovementSql);
                      PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
                     List<StockExpectation> expectations = new ArrayList<>();
+                    String movementDeviceId = DeviceContextService.currentDeviceId();
+                    String movementDeviceName = DeviceContextService.currentDeviceName();
 
 	                    receivingBatchStmt.setString(1, receive.receiveId());
 	                    receivingBatchStmt.setInt(2, locationId);
@@ -786,76 +830,177 @@ public class EnterInventory extends JFrame {
                         String itemType = inventoryModel.getValueAt(i, 0).toString();
                         int itemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
                         String itemName = String.valueOf(inventoryModel.getValueAt(i, 2));
-                        int qty = parsePositiveInt(inventoryModel.getValueAt(i, 6), 0);
+                        int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
+                        int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+                        int qty = parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
                         if (qty <= 0) {
                             throw new SQLException("Quantity must be greater than zero for " + itemType + " " + itemId + ".");
                         }
-                        int currentStock = parsePositiveInt(inventoryModel.getValueAt(i, 5), 0);
-                        expectations.add(new StockExpectation(itemType, itemId, itemName, currentStock + qty));
+                        int stockAdjustment = countedStock - systemStock;
+                        if (stockAdjustment != 0 && stockOverrideAuthorization == null) {
+                            throw new SQLException("Stock count override approval is required for " + itemName + ".");
+                        }
+                        expectations.add(new StockExpectation(itemType, itemId, itemName, countedStock + qty));
 
                         if ("Custom Item".equals(itemType)) {
+                            if (stockAdjustment != 0) {
+                                updateCustomItemStmt.setInt(1, stockAdjustment);
+                                updateCustomItemStmt.setInt(2, itemId);
+                                if (updateCustomItemStmt.executeUpdate() == 0) {
+                                    throw new SQLException("Custom item " + itemId + " no longer exists.");
+                                }
+                                fillCustomItemMovement(
+                                        customItemMovementStmt,
+                                        itemId,
+                                        locationId,
+                                        stockAdjustment,
+                                        "RECEIVING_STOCK_OVERRIDE",
+                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
+                                        stockOverrideAuthorization.approvedByName(),
+                                        stockOverrideAuthorization.approvedByUserId(),
+                                        movementDeviceId,
+                                        movementDeviceName,
+                                        receive
+                                );
+                                customItemMovementStmt.executeUpdate();
+                            }
+
                             updateCustomItemStmt.setInt(1, qty);
                             updateCustomItemStmt.setInt(2, itemId);
                             if (updateCustomItemStmt.executeUpdate() == 0) {
                                 throw new SQLException("Custom item " + itemId + " no longer exists.");
                             }
 
-                            customItemMovementStmt.setInt(1, itemId);
-                            customItemMovementStmt.setInt(2, qty);
-                            customItemMovementStmt.setString(3, "INVENTORY_ENTRY");
-                            customItemMovementStmt.setString(4, "entered_by_user_id=" + SessionManager.getCurrentUserId());
-                            customItemMovementStmt.setString(5, SessionManager.getCurrentUserDisplayName());
-                            customItemMovementStmt.setString(6, receive.receiveId());
-                            customItemMovementStmt.setString(7, receive.deviceId());
-                            customItemMovementStmt.setInt(8, receive.sequence());
+                            fillCustomItemMovement(
+                                    customItemMovementStmt,
+                                    itemId,
+                                    locationId,
+                                    qty,
+                                    "INVENTORY_ENTRY",
+                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
+                                    SessionManager.getCurrentUserDisplayName(),
+                                    SessionManager.getCurrentUserId(),
+                                    movementDeviceId,
+                                    movementDeviceName,
+                                    receive
+                            );
                             customItemMovementStmt.executeUpdate();
                         } else if ("Custom Variant".equals(itemType)) {
+                            if (stockAdjustment != 0) {
+                                updateCustomVariantStmt.setInt(1, stockAdjustment);
+                                updateCustomVariantStmt.setInt(2, itemId);
+                                if (updateCustomVariantStmt.executeUpdate() == 0) {
+                                    throw new SQLException("Custom variant " + itemId + " no longer exists.");
+                                }
+                                fillCustomVariantMovement(
+                                        customVariantMovementStmt,
+                                        locationId,
+                                        stockAdjustment,
+                                        "RECEIVING_STOCK_OVERRIDE",
+                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
+                                        stockOverrideAuthorization.approvedByName(),
+                                        stockOverrideAuthorization.approvedByUserId(),
+                                        movementDeviceId,
+                                        movementDeviceName,
+                                        receive,
+                                        itemId
+                                );
+                                if (customVariantMovementStmt.executeUpdate() == 0) {
+                                    throw new SQLException("Failed to record stock override for custom variant " + itemId + ".");
+                                }
+                            }
+
                             updateCustomVariantStmt.setInt(1, qty);
                             updateCustomVariantStmt.setInt(2, itemId);
                             if (updateCustomVariantStmt.executeUpdate() == 0) {
                                 throw new SQLException("Custom variant " + itemId + " no longer exists.");
                             }
 
-                            customVariantMovementStmt.setInt(1, qty);
-                            customVariantMovementStmt.setString(2, "INVENTORY_ENTRY");
-                            customVariantMovementStmt.setString(3, "entered_by_user_id=" + SessionManager.getCurrentUserId());
-                            customVariantMovementStmt.setString(4, SessionManager.getCurrentUserDisplayName());
-                            customVariantMovementStmt.setString(5, receive.receiveId());
-                            customVariantMovementStmt.setString(6, receive.deviceId());
-                            customVariantMovementStmt.setInt(7, receive.sequence());
-                            customVariantMovementStmt.setInt(8, itemId);
+                            fillCustomVariantMovement(
+                                    customVariantMovementStmt,
+                                    locationId,
+                                    qty,
+                                    "INVENTORY_ENTRY",
+                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
+                                    SessionManager.getCurrentUserDisplayName(),
+                                    SessionManager.getCurrentUserId(),
+                                    movementDeviceId,
+                                    movementDeviceName,
+                                    receive,
+                                    itemId
+                            );
                             if (customVariantMovementStmt.executeUpdate() == 0) {
                                 throw new SQLException("Failed to record movement for custom variant " + itemId + ".");
                             }
                         } else {
                             ensureInventoryStmt.setInt(1, itemId);
                             ensureInventoryStmt.setInt(2, locationId);
-                            ensureInventoryStmt.addBatch();
+                            ensureInventoryStmt.executeUpdate();
+
+                            if (stockAdjustment != 0) {
+                                updateInventoryStmt.setInt(1, stockAdjustment);
+                                updateInventoryStmt.setInt(2, itemId);
+                                updateInventoryStmt.setInt(3, locationId);
+                                if (updateInventoryStmt.executeUpdate() == 0) {
+                                    throw new SQLException("Inventory row for product " + itemId + " no longer exists.");
+                                }
+                                fillInventoryMovement(
+                                        movementStmt,
+                                        itemId,
+                                        locationId,
+                                        stockAdjustment,
+                                        "RECEIVING_STOCK_OVERRIDE",
+                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
+                                        stockOverrideAuthorization.approvedByName(),
+                                        stockOverrideAuthorization.approvedByUserId(),
+                                        movementDeviceId,
+                                        movementDeviceName,
+                                        receive
+                                );
+                                movementStmt.executeUpdate();
+                            }
 
                             updateInventoryStmt.setInt(1, qty);
                             updateInventoryStmt.setInt(2, itemId);
                             updateInventoryStmt.setInt(3, locationId);
-                            updateInventoryStmt.addBatch();
+                            if (updateInventoryStmt.executeUpdate() == 0) {
+                                throw new SQLException("Inventory row for product " + itemId + " no longer exists.");
+                            }
 
-                            movementStmt.setInt(1, itemId);
-                            movementStmt.setInt(2, locationId);
-                            movementStmt.setInt(3, qty);
-                            movementStmt.setString(4, "INVENTORY_ENTRY");
-                            movementStmt.setString(5, "entered_by_user_id=" + SessionManager.getCurrentUserId());
-                            movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                            movementStmt.setString(7, receive.receiveId());
-                            movementStmt.setString(8, receive.deviceId());
-                            movementStmt.setInt(9, receive.sequence());
-                            movementStmt.addBatch();
+                            fillInventoryMovement(
+                                    movementStmt,
+                                    itemId,
+                                    locationId,
+                                    qty,
+                                    "INVENTORY_ENTRY",
+                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
+                                    SessionManager.getCurrentUserDisplayName(),
+                                    SessionManager.getCurrentUserId(),
+                                    movementDeviceId,
+                                    movementDeviceName,
+                                    receive
+                            );
+                            movementStmt.executeUpdate();
                         }
                     }
 
-                    ensureInventoryStmt.executeBatch();
-                    updateInventoryStmt.executeBatch();
-                    movementStmt.executeBatch();
                     verifyExpectedStock(conn, locationId, expectations);
                 }
 
+                SyncOutboxService.recordEvent(conn, "INVENTORY_RECEIVED", Map.of(
+                        "receive_id", receive.receiveId(),
+                        "location_id", locationId,
+                        "device_id", receive.deviceId(),
+                        "receive_sequence", receive.sequence(),
+                        "line_count", inventoryModel.getRowCount(),
+                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                ));
+                SyncOutboxService.recordEvent(conn, "INVENTORY_MOVEMENT_CREATED", Map.of(
+                        "source", "ENTER_INVENTORY",
+                        "receive_id", receive.receiveId(),
+                        "location_id", locationId,
+                        "line_count", inventoryModel.getRowCount()
+                ));
                 conn.commit();
                 JOptionPane.showMessageDialog(this, "Inventory added successfully.\nReceive ID: " + receive.receiveId());
                 inventoryModel.setRowCount(0);
@@ -873,6 +1018,280 @@ public class EnterInventory extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Inventory entry failed: " + ex.getMessage());
         }
+    }
+
+    private boolean hasStockCountOverrides() {
+        for (int i = 0; i < inventoryModel.getRowCount(); i++) {
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
+            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            if (systemStock != countedStock) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void ensureReceivingStockOverridePermissionAvailable() {
+        String insertPermissionSql = """
+                INSERT INTO permissions (permission_key, permission_name, description, permission_group)
+                VALUES (
+                    'RECEIVING_STOCK_OVERRIDE',
+                    'Receiving Stock Override',
+                    'Allows correcting counted shelf/storage stock during receiving with an audit trail.',
+                    'Inventory'
+                )
+                ON CONFLICT (permission_key) DO UPDATE
+                SET permission_name = COALESCE(NULLIF(permissions.permission_name, ''), EXCLUDED.permission_name),
+                    description = COALESCE(NULLIF(permissions.description, ''), EXCLUDED.description),
+                    permission_group = COALESCE(NULLIF(permissions.permission_group, ''), EXCLUDED.permission_group)
+                """;
+        String grantSql = """
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT r.role_id, p.permission_id
+                FROM roles r
+                JOIN permissions p ON UPPER(p.permission_key) = 'RECEIVING_STOCK_OVERRIDE'
+                WHERE UPPER(r.role_name) IN ('ADMIN', 'MANAGER')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM role_permissions rp
+                      WHERE rp.role_id = r.role_id
+                        AND rp.permission_id = p.permission_id
+                  )
+                """;
+        try (Connection conn = DB.getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(insertPermissionSql);
+            stmt.executeUpdate(grantSql);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Unable to prepare receiving override permission: " + ex.getMessage());
+        }
+    }
+
+    private StockOverrideAuthorization requestStockOverrideAuthorizationIfNeeded() {
+        if (!hasStockCountOverrides()) {
+            return null;
+        }
+
+        String summary = stockOverrideSummary();
+        if (currentUserHasPermission("RECEIVING_STOCK_OVERRIDE")) {
+            JTextArea reasonArea = new JTextArea(4, 32);
+            reasonArea.setLineWrap(true);
+            reasonArea.setWrapStyleWord(true);
+
+            JPanel panel = new JPanel(new BorderLayout(6, 6));
+            panel.add(new JLabel("<html>Confirm counted shelf/storage stock before receiving:<br>" + summary + "</html>"), BorderLayout.NORTH);
+            panel.add(new JScrollPane(reasonArea), BorderLayout.CENTER);
+
+            int result = JOptionPane.showConfirmDialog(
+                    this,
+                    panel,
+                    "Receiving Stock Override",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (result != JOptionPane.OK_OPTION) {
+                return null;
+            }
+
+            String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
+            if (reason.isBlank()) {
+                JOptionPane.showMessageDialog(this, "A stock override reason is required.", "Reason Required", JOptionPane.WARNING_MESSAGE);
+                return null;
+            }
+
+            return new StockOverrideAuthorization(
+                    SessionManager.getCurrentUserId(),
+                    SessionManager.getCurrentUserDisplayName(),
+                    reason
+            );
+        }
+
+        try {
+            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                    this,
+                    "RECEIVING_STOCK_OVERRIDE",
+                    "Receiving Stock Override",
+                    "Reason for correcting counted shelf/storage stock:"
+            );
+            if (approval == null) {
+                return null;
+            }
+            return new StockOverrideAuthorization(approval.approvedByUserId(), approval.approvedByName(), approval.reason());
+        } catch (IllegalStateException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Override Approval Failed", JOptionPane.WARNING_MESSAGE);
+            return null;
+        }
+    }
+
+    private String stockOverrideSummary() {
+        StringBuilder summary = new StringBuilder("<ul>");
+        int count = 0;
+        for (int i = 0; i < inventoryModel.getRowCount(); i++) {
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
+            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            if (systemStock == countedStock) {
+                continue;
+            }
+            String itemName = String.valueOf(inventoryModel.getValueAt(i, 2));
+            summary.append("<li>")
+                    .append(escapeHtml(itemName))
+                    .append(": system ")
+                    .append(systemStock)
+                    .append(", counted ")
+                    .append(countedStock)
+                    .append("</li>");
+            count++;
+            if (count == 5) {
+                break;
+            }
+        }
+        if (count < countStockOverrideRows()) {
+            summary.append("<li>...and ")
+                    .append(countStockOverrideRows() - count)
+                    .append(" more</li>");
+        }
+        summary.append("</ul>");
+        return summary.toString();
+    }
+
+    private int countStockOverrideRows() {
+        int count = 0;
+        for (int i = 0; i < inventoryModel.getRowCount(); i++) {
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
+            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            if (systemStock != countedStock) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean currentUserHasPermission(String permissionKey) {
+        if (permissionKey == null || permissionKey.isBlank()) {
+            return false;
+        }
+        String sql = """
+                SELECT 1
+                FROM users u
+                JOIN roles r ON r.role_id = u.role_id
+                JOIN role_permissions rp ON rp.role_id = r.role_id
+                JOIN permissions p ON p.permission_id = rp.permission_id
+                WHERE u.user_id = ?
+                  AND UPPER(p.permission_key) = UPPER(?)
+                LIMIT 1
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, SessionManager.getCurrentUserId());
+            ps.setString(2, permissionKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException ex) {
+            return PermissionManager.hasPermission(permissionKey);
+        }
+    }
+
+    private String stockOverrideNote(int systemStock, int countedStock, StockOverrideAuthorization authorization) {
+        return "system_stock=" + systemStock
+                + "; counted_stock=" + countedStock
+                + "; reason=" + authorization.reason()
+                + "; approved_by_user_id=" + authorization.approvedByUserId()
+                + "; approved_by_name=" + authorization.approvedByName()
+                + "; entered_by_user_id=" + SessionManager.getCurrentUserId();
+    }
+
+    private void fillInventoryMovement(
+            PreparedStatement movementStmt,
+            int itemId,
+            int locationId,
+            int changeQty,
+            String reason,
+            String note,
+            String userName,
+            Integer userId,
+            String deviceId,
+            String deviceName,
+            ReceiptNumberManager.ReceiveNumber receive
+    ) throws SQLException {
+        movementStmt.setInt(1, itemId);
+        movementStmt.setInt(2, locationId);
+        movementStmt.setInt(3, changeQty);
+        movementStmt.setString(4, reason);
+        movementStmt.setString(5, note);
+        movementStmt.setString(6, userName);
+        setNullableInteger(movementStmt, 7, userId);
+        movementStmt.setString(8, deviceId);
+        movementStmt.setString(9, deviceName);
+        movementStmt.setString(10, receive.receiveId());
+        movementStmt.setString(11, receive.deviceId());
+        movementStmt.setInt(12, receive.sequence());
+    }
+
+    private void fillCustomItemMovement(
+            PreparedStatement movementStmt,
+            int itemId,
+            int locationId,
+            int changeQty,
+            String reason,
+            String note,
+            String userName,
+            Integer userId,
+            String deviceId,
+            String deviceName,
+            ReceiptNumberManager.ReceiveNumber receive
+    ) throws SQLException {
+        movementStmt.setInt(1, itemId);
+        movementStmt.setInt(2, locationId);
+        movementStmt.setInt(3, changeQty);
+        movementStmt.setString(4, reason);
+        movementStmt.setString(5, note);
+        movementStmt.setString(6, userName);
+        setNullableInteger(movementStmt, 7, userId);
+        movementStmt.setString(8, deviceId);
+        movementStmt.setString(9, deviceName);
+        movementStmt.setString(10, receive.receiveId());
+        movementStmt.setString(11, receive.deviceId());
+        movementStmt.setInt(12, receive.sequence());
+    }
+
+    private void fillCustomVariantMovement(
+            PreparedStatement movementStmt,
+            int locationId,
+            int changeQty,
+            String reason,
+            String note,
+            String userName,
+            Integer userId,
+            String deviceId,
+            String deviceName,
+            ReceiptNumberManager.ReceiveNumber receive,
+            int variantId
+    ) throws SQLException {
+        movementStmt.setInt(1, locationId);
+        movementStmt.setInt(2, changeQty);
+        movementStmt.setString(3, reason);
+        movementStmt.setString(4, note);
+        movementStmt.setString(5, userName);
+        setNullableInteger(movementStmt, 6, userId);
+        movementStmt.setString(7, deviceId);
+        movementStmt.setString(8, deviceName);
+        movementStmt.setString(9, receive.receiveId());
+        movementStmt.setString(10, receive.deviceId());
+        movementStmt.setInt(11, receive.sequence());
+        movementStmt.setInt(12, variantId);
+    }
+
+    private String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     private void verifyExpectedStock(Connection conn, int locationId, List<StockExpectation> expectations) throws SQLException {
@@ -916,6 +1335,35 @@ public class EnterInventory extends JFrame {
             return rs.getInt("quantity_on_hand");
         }
     }
+
+    private static void ensureMovementAuditColumns(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
+            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS device_id TEXT");
+            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS device_name TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_name TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_device_id TEXT");
+            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_sequence INTEGER");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_user_idx ON custom_order_item_movements(user_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_device_idx ON custom_order_item_movements(device_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_location_idx ON custom_order_item_movements(location_id, created_at DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_receive_idx ON custom_order_item_movements(receive_id, created_at DESC)");
+        }
+    }
+
+    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
+        }
+    }
+
+    private record StockOverrideAuthorization(Integer approvedByUserId, String approvedByName, String reason) {}
 
     private record StockExpectation(String itemType, int itemId, String itemName, int expectedNewStock) {}
 }

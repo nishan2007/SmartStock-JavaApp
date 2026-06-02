@@ -19,6 +19,8 @@ public class ManagedDevice {
     private final String lastStoreName;
     private final boolean approved;
     private final boolean blocked;
+    private final boolean allowSales;
+    private final boolean allowOrders;
     private final Timestamp firstSeen;
     private final Timestamp lastSeen;
     private final Timestamp approvedAt;
@@ -49,6 +51,8 @@ public class ManagedDevice {
             String lastStoreName,
             boolean approved,
             boolean blocked,
+            boolean allowSales,
+            boolean allowOrders,
             Timestamp firstSeen,
             Timestamp lastSeen,
             Timestamp approvedAt,
@@ -78,6 +82,8 @@ public class ManagedDevice {
         this.lastStoreName = lastStoreName;
         this.approved = approved;
         this.blocked = blocked;
+        this.allowSales = allowSales;
+        this.allowOrders = allowOrders;
         this.firstSeen = firstSeen;
         this.lastSeen = lastSeen;
         this.approvedAt = approvedAt;
@@ -108,6 +114,8 @@ public class ManagedDevice {
     public String getLastStoreName() { return lastStoreName; }
     public boolean isApproved() { return approved; }
     public boolean isBlocked() { return blocked; }
+    public boolean isAllowSales() { return allowSales; }
+    public boolean isAllowOrders() { return allowOrders; }
     public Timestamp getFirstSeen() { return firstSeen; }
     public Timestamp getLastSeen() { return lastSeen; }
     public Timestamp getApprovedAt() { return approvedAt; }

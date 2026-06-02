@@ -17,7 +17,10 @@ public class SaleReceiptPanel extends JPanel {
                             JCheckBox showCustomerBox,
                             JCheckBox showSkuBox,
                             JCheckBox showItemDiscountBox,
-                            JCheckBox showPaymentStatusBox) {
+                            JCheckBox showPaymentStatusBox,
+                            JCheckBox vatEnabledBox,
+                            JCheckBox vatUseDepartmentRatesBox,
+                            JTextField vatFixedRatePercentField) {
         setLayout(new GridBagLayout());
         setBackground(Color.WHITE);
         setBorder(BorderFactory.createCompoundBorder(
@@ -34,7 +37,8 @@ public class SaleReceiptPanel extends JPanel {
         addRow(this, 3, "Receipt Counter Start", receiptStartCounterField);
         addRow(this, 4, "Discount Limit (%)", saleDiscountLimitPercentField);
         addRow(this, 5, "Return Approval Over", saleReturnApprovalLimitField);
-        addRow(this, 6, "Config File", configPathField);
+        addRow(this, 6, "Fixed VAT (%)", vatFixedRatePercentField);
+        addRow(this, 7, "Config File", configPathField);
 
         JPanel optionsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
         optionsPanel.setOpaque(false);
@@ -45,7 +49,9 @@ public class SaleReceiptPanel extends JPanel {
         optionsPanel.add(showSkuBox);
         optionsPanel.add(showItemDiscountBox);
         optionsPanel.add(showPaymentStatusBox);
-        addWide(this, optionsPanel, 7);
+        optionsPanel.add(vatEnabledBox);
+        optionsPanel.add(vatUseDepartmentRatesBox);
+        addWide(this, optionsPanel, 8);
     }
 
     private static void addRow(JPanel panel, int row, String label, JComponent field) {

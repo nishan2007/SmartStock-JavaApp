@@ -10,6 +10,7 @@ import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
+import services.OfflineWriteGuard;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 import ui.screens.companyprefs.CompanyIdentityPanel;
@@ -60,6 +61,9 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
+    private final JCheckBox vatEnabledBox = new JCheckBox("Enable VAT");
+    private final JCheckBox vatUseDepartmentRatesBox = new JCheckBox("Use department VAT rates");
+    private final JTextField vatFixedRatePercentField = new JTextField("0", 8);
     private final JTextField saleDiscountLimitPercentField = new JTextField("5", 8);
     private final JTextField saleReturnApprovalLimitField = new JTextField("0.00", 8);
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
@@ -424,7 +428,10 @@ public class CompanyCustomization extends JFrame {
                 showCustomerBox,
                 showSkuBox,
                 showItemDiscountBox,
-                showPaymentStatusBox
+                showPaymentStatusBox,
+                vatEnabledBox,
+                vatUseDepartmentRatesBox,
+                vatFixedRatePercentField
         );
     }
 
@@ -548,6 +555,9 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.setSelected(settings.showSku());
         showItemDiscountBox.setSelected(settings.showItemDiscount());
         showPaymentStatusBox.setSelected(settings.showPaymentStatus());
+        vatEnabledBox.setSelected(settings.vatEnabled());
+        vatUseDepartmentRatesBox.setSelected(settings.vatUseDepartmentRates());
+        vatFixedRatePercentField.setText(settings.vatFixedRatePercent().stripTrailingZeros().toPlainString());
         receiptStartCounterField.setText(String.valueOf(settings.nextReceiptCounter()));
         CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
@@ -565,6 +575,7 @@ public class CompanyCustomization extends JFrame {
 
     private void saveSettings() {
         try {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Company preference");
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
             CompanyCustomizationManager.SaleSafetySettings existingSaleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
@@ -627,8 +638,20 @@ public class CompanyCustomization extends JFrame {
                 showSkuBox.isSelected(),
                 showItemDiscountBox.isSelected(),
                 showPaymentStatusBox.isSelected(),
+                vatEnabledBox.isSelected(),
+                vatUseDepartmentRatesBox.isSelected(),
+                parsePercentField(vatFixedRatePercentField.getText(), "Fixed VAT percent"),
                 parsePositiveCounter(receiptStartCounterField.getText())
         );
+    }
+
+    private BigDecimal parsePercentField(String value, String label) {
+        String text = value == null ? "" : value.trim();
+        BigDecimal percent = text.isBlank() ? BigDecimal.ZERO : new BigDecimal(text.replace("%", "").trim());
+        if (percent.compareTo(BigDecimal.ZERO) < 0 || percent.compareTo(BigDecimal.valueOf(100)) > 0) {
+            throw new IllegalArgumentException(label + " must be between 0 and 100.");
+        }
+        return percent;
     }
 
     private int parsePositiveCounter(String value) {
@@ -784,6 +807,7 @@ public class CompanyCustomization extends JFrame {
         headerLineField.getDocument().addDocumentListener(previewDocumentListener);
         footerLineField.getDocument().addDocumentListener(previewDocumentListener);
         receiptStartCounterField.getDocument().addDocumentListener(previewDocumentListener);
+        vatFixedRatePercentField.getDocument().addDocumentListener(previewDocumentListener);
         logoPathField.getDocument().addDocumentListener(previewDocumentListener);
 
         showLogoBox.addActionListener(e -> refreshSamplePreview());
@@ -793,6 +817,8 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.addActionListener(e -> refreshSamplePreview());
         showItemDiscountBox.addActionListener(e -> refreshSamplePreview());
         showPaymentStatusBox.addActionListener(e -> refreshSamplePreview());
+        vatEnabledBox.addActionListener(e -> refreshSamplePreview());
+        vatUseDepartmentRatesBox.addActionListener(e -> refreshSamplePreview());
 
         slipEnabledBox.addActionListener(e -> refreshSlipPreview());
         slipAutoPrintBox.addActionListener(e -> refreshSlipPreview());
@@ -893,11 +919,14 @@ public class CompanyCustomization extends JFrame {
                 new BigDecimal("22.50"),
                 new BigDecimal("5.00"),
                 new BigDecimal("1.13"),
+                new BigDecimal("3.20"),
+                new BigDecimal("15.00"),
+                "FIXED",
                 new BigDecimal("21.37"),
-                new BigDecimal("21.37"),
+                new BigDecimal("24.57"),
                 BigDecimal.ZERO,
                 new BigDecimal("25.00"),
-                new BigDecimal("3.63"),
+                new BigDecimal("0.43"),
                 List.of(
                         new ReceiptItem("Salted Chips", "CHIP-001", 2, new BigDecimal("2.50"), new BigDecimal("2.38"), new BigDecimal("5.00"), new BigDecimal("4.76")),
                         new ReceiptItem("Sparkling Water", "DRINK-010", 3, new BigDecimal("1.50"), new BigDecimal("1.43"), new BigDecimal("0.00"), new BigDecimal("4.29")),

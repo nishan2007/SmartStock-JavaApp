@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.CompanyCustomizationManager;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -16,11 +17,14 @@ import java.sql.SQLException;
 public class DepartmentList extends JFrame {
     private final JTextField searchField = new JTextField();
     private final JTextField nameField = new JTextField();
+    private final JTextField vatRatePercentField = new JTextField("0", 8);
     private final JTextArea descriptionArea = new JTextArea(4, 24);
     private final DefaultTableModel tableModel;
     private final JTable departmentTable;
     private Integer selectedDepartmentId;
     private boolean hasDescriptionColumn;
+    private boolean hasVatColumn;
+    private boolean departmentVatEditable;
 
     public DepartmentList() {
         setTitle("Department List");
@@ -32,7 +36,7 @@ public class DepartmentList extends JFrame {
         root.setBorder(new EmptyBorder(18, 18, 18, 18));
         root.setBackground(new Color(245, 247, 250));
 
-        tableModel = new DefaultTableModel(new Object[]{"ID", "Department", "Description"}, 0) {
+        tableModel = new DefaultTableModel(new Object[]{"ID", "Department", "VAT %", "Description"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -52,6 +56,7 @@ public class DepartmentList extends JFrame {
         root.add(buildEditorPanel(), BorderLayout.EAST);
         add(root, BorderLayout.CENTER);
 
+        updateVatEditState();
         loadDepartments();
         WindowHelper.configurePosWindow(this);
     }
@@ -116,7 +121,8 @@ public class DepartmentList extends JFrame {
         panel.add(editorTitle, gbc);
 
         addFormRow(panel, gbc, 1, "Name:", nameField);
-        addFormRow(panel, gbc, 2, "Description:", new JScrollPane(descriptionArea));
+        addFormRow(panel, gbc, 2, "VAT %:", vatRatePercentField);
+        addFormRow(panel, gbc, 3, "Description:", new JScrollPane(descriptionArea));
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttonPanel.setOpaque(false);
@@ -125,7 +131,7 @@ public class DepartmentList extends JFrame {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -160,8 +166,11 @@ public class DepartmentList extends JFrame {
     private void loadDepartments() {
         tableModel.setRowCount(0);
         hasDescriptionColumn = hasColumn("categories", "description");
+        hasVatColumn = hasColumn("categories", "vat_rate_percent");
+        updateVatEditState();
         String search = searchField.getText().trim();
         String sql = "SELECT category_id, name"
+                + (hasVatColumn ? ", COALESCE(vat_rate_percent, 0) AS vat_rate_percent" : ", 0 AS vat_rate_percent")
                 + (hasDescriptionColumn ? ", COALESCE(description, '') AS description" : ", '' AS description")
                 + " FROM categories"
                 + (search.isBlank() ? "" : hasDescriptionColumn ? " WHERE name ILIKE ? OR COALESCE(description, '') ILIKE ?" : " WHERE name ILIKE ?")
@@ -181,6 +190,7 @@ public class DepartmentList extends JFrame {
                     tableModel.addRow(new Object[]{
                             rs.getInt("category_id"),
                             rs.getString("name"),
+                            rs.getBigDecimal("vat_rate_percent"),
                             rs.getString("description")
                     });
                 }
@@ -218,11 +228,19 @@ public class DepartmentList extends JFrame {
         int modelRow = departmentTable.convertRowIndexToModel(row);
         selectedDepartmentId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, 0)));
         nameField.setText(String.valueOf(tableModel.getValueAt(modelRow, 1)));
-        descriptionArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
+        vatRatePercentField.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
+        descriptionArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 3)));
     }
 
     private void saveDepartment() {
         String name = nameField.getText().trim();
+        java.math.BigDecimal vatRatePercent = departmentVatEditable ? parseVatRate() : currentSelectedVatRate();
+        if (departmentVatEditable && vatRatePercent == null) {
+            return;
+        }
+        if (vatRatePercent == null) {
+            vatRatePercent = java.math.BigDecimal.ZERO;
+        }
         String description = descriptionArea.getText().trim();
         if (name.isBlank()) {
             JOptionPane.showMessageDialog(this, "Department name is required.");
@@ -231,22 +249,42 @@ public class DepartmentList extends JFrame {
 
         String sql;
         if (selectedDepartmentId == null) {
-            sql = hasDescriptionColumn
+            sql = hasVatColumn && hasDescriptionColumn
+                    ? "INSERT INTO categories (name, vat_rate_percent, description) VALUES (?, ?, ?)"
+                    : hasVatColumn
+                    ? "INSERT INTO categories (name, vat_rate_percent) VALUES (?, ?)"
+                    : hasDescriptionColumn
                     ? "INSERT INTO categories (name, description) VALUES (?, ?)"
                     : "INSERT INTO categories (name) VALUES (?)";
         } else {
-            sql = hasDescriptionColumn
+            sql = hasVatColumn && hasDescriptionColumn
+                    ? "UPDATE categories SET name = ?, vat_rate_percent = ?, description = ? WHERE category_id = ?"
+                    : hasVatColumn
+                    ? "UPDATE categories SET name = ?, vat_rate_percent = ? WHERE category_id = ?"
+                    : hasDescriptionColumn
                     ? "UPDATE categories SET name = ?, description = ? WHERE category_id = ?"
                     : "UPDATE categories SET name = ? WHERE category_id = ?";
         }
 
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+            PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
             if (selectedDepartmentId == null) {
-                if (hasDescriptionColumn) {
+                if (hasVatColumn && hasDescriptionColumn) {
+                    ps.setBigDecimal(2, vatRatePercent);
+                    ps.setString(3, description);
+                } else if (hasVatColumn) {
+                    ps.setBigDecimal(2, vatRatePercent);
+                } else if (hasDescriptionColumn) {
                     ps.setString(2, description);
                 }
+            } else if (hasVatColumn && hasDescriptionColumn) {
+                ps.setBigDecimal(2, vatRatePercent);
+                ps.setString(3, description);
+                ps.setInt(4, selectedDepartmentId);
+            } else if (hasVatColumn) {
+                ps.setBigDecimal(2, vatRatePercent);
+                ps.setInt(3, selectedDepartmentId);
             } else if (hasDescriptionColumn) {
                 ps.setString(2, description);
                 ps.setInt(3, selectedDepartmentId);
@@ -266,7 +304,55 @@ public class DepartmentList extends JFrame {
         selectedDepartmentId = null;
         departmentTable.clearSelection();
         nameField.setText("");
+        vatRatePercentField.setText("0");
         descriptionArea.setText("");
         nameField.requestFocusInWindow();
+    }
+
+    private void updateVatEditState() {
+        boolean enabled = false;
+        try {
+            CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+            enabled = settings.vatEnabled() && settings.vatUseDepartmentRates();
+        } catch (Exception ignored) {
+            enabled = false;
+        }
+        departmentVatEditable = enabled;
+        vatRatePercentField.setEnabled(enabled);
+        vatRatePercentField.setToolTipText(enabled
+                ? "Department VAT is enabled in Company Preferences."
+                : "Enable VAT and select department VAT rates in Company Preferences to edit this value.");
+    }
+
+    private java.math.BigDecimal currentSelectedVatRate() {
+        if (selectedDepartmentId == null) {
+            return java.math.BigDecimal.ZERO;
+        }
+        int selectedRow = departmentTable.getSelectedRow();
+        if (selectedRow < 0) {
+            return java.math.BigDecimal.ZERO;
+        }
+        int modelRow = departmentTable.convertRowIndexToModel(selectedRow);
+        Object value = tableModel.getValueAt(modelRow, 2);
+        try {
+            return new java.math.BigDecimal(value == null ? "0" : String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return java.math.BigDecimal.ZERO;
+        }
+    }
+
+    private java.math.BigDecimal parseVatRate() {
+        String text = vatRatePercentField.getText() == null ? "" : vatRatePercentField.getText().trim();
+        try {
+            java.math.BigDecimal rate = new java.math.BigDecimal(text.isBlank() ? "0" : text.replace("%", ""));
+            if (rate.compareTo(java.math.BigDecimal.ZERO) < 0 || rate.compareTo(java.math.BigDecimal.valueOf(100)) > 0) {
+                JOptionPane.showMessageDialog(this, "VAT percent must be between 0 and 100.");
+                return null;
+            }
+            return rate;
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "VAT percent must be a valid number.");
+            return null;
+        }
     }
 }

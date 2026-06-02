@@ -4,6 +4,7 @@ import data.DB;
 import managers.PermissionManager;
 import models.CashDrawerContext;
 import services.CashDrawerService;
+import services.CustomerAccountLedgerService;
 import services.DeviceContextService;
 import ui.components.AppMenuBar;
 import ui.components.CustomerTypeSelector;
@@ -259,26 +260,28 @@ public class CustomerAccounts extends JFrame {
                 ORDER BY ca.name
                 """;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (Connection conn = DB.getConnection()) {
+            CustomerAccountLedgerService.repairAllBalances(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
 
-            while (rs.next()) {
-                customerModel.addRow(new Object[]{
-                        rs.getInt("customer_id"),
-                        rs.getString("account_number"),
-                        rs.getString("customer_name"),
-                        rs.getObject("customer_type_id") == null ? "" : rs.getInt("customer_type_id"),
-                        rs.getString("customer_type_name"),
-                        rs.getString("customer_phone"),
-                        rs.getString("customer_email"),
-                        money(rs.getBigDecimal("credit_limit")),
-                        money(rs.getBigDecimal("current_balance")),
-                        money(rs.getBigDecimal("available_credit")),
-                        rs.getBoolean("is_business") ? "Business" : "Personal",
-                        rs.getBoolean("is_active"),
-                        rs.getString("account_notes")
-                });
+                while (rs.next()) {
+                    customerModel.addRow(new Object[]{
+                            rs.getInt("customer_id"),
+                            rs.getString("account_number"),
+                            rs.getString("customer_name"),
+                            rs.getObject("customer_type_id") == null ? "" : rs.getInt("customer_type_id"),
+                            rs.getString("customer_type_name"),
+                            rs.getString("customer_phone"),
+                            rs.getString("customer_email"),
+                            money(rs.getBigDecimal("credit_limit")),
+                            money(rs.getBigDecimal("current_balance")),
+                            money(rs.getBigDecimal("available_credit")),
+                            rs.getBoolean("is_business") ? "Business" : "Personal",
+                            rs.getBoolean("is_active"),
+                            rs.getString("account_notes")
+                    });
+                }
             }
 
         } catch (SQLException ex) {
@@ -872,6 +875,7 @@ public class CustomerAccounts extends JFrame {
     }
 
     private AccountSnapshot loadAccountForUpdate(Connection conn, int customerId) throws SQLException {
+        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
         String sql = """
                 SELECT current_balance, credit_limit, is_active
                 FROM customer_accounts
@@ -906,10 +910,10 @@ public class CustomerAccounts extends JFrame {
                                                         CashDrawerContext cashDrawer) throws SQLException {
         String sql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name,
+                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name,
                     payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, customerId);
@@ -918,17 +922,18 @@ public class CustomerAccounts extends JFrame {
             } else {
                 ps.setInt(2, saleId);
             }
-            ps.setBigDecimal(3, amount);
-            ps.setString(4, type);
-            ps.setString(5, note);
-            ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
-            ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
-            ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
-            ps.setString(9, blankToNull(paymentMethod));
-            ps.setString(10, blankToNull(paymentReference));
-            setNullableLong(ps, 11, cashDrawer == null ? null : cashDrawer.cashDrawerId());
-            ps.setString(12, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
-            setNullableLong(ps, 13, cashDrawer == null ? null : cashDrawer.sessionId());
+            setNullableInteger(ps, 3, managers.SessionManager.getCurrentLocationId());
+            ps.setBigDecimal(4, amount);
+            ps.setString(5, type);
+            ps.setString(6, note);
+            ps.setString(7, managers.SessionManager.getCurrentUserDisplayName());
+            ps.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
+            ps.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
+            ps.setString(10, blankToNull(paymentMethod));
+            ps.setString(11, blankToNull(paymentReference));
+            setNullableLong(ps, 12, cashDrawer == null ? null : cashDrawer.cashDrawerId());
+            ps.setString(13, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
+            setNullableLong(ps, 14, cashDrawer == null ? null : cashDrawer.sessionId());
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {

@@ -8,6 +8,7 @@ import managers.TimeClockManager.ClockStatus;
 import managers.TimeClockManager.TimeClockDashboard;
 import managers.TimeClockManager.TimeClockException;
 import managers.TimeClockManager.TimeClockRow;
+import services.ManagerApprovalService;
 import ui.components.AppMenuBar;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
@@ -398,7 +399,7 @@ public class TimeClock extends JFrame {
     }
 
     private void wireActions() {
-        clockInButton.addActionListener(e -> runPunch(TimeClockManager::clockIn, "Failed to clock in."));
+        clockInButton.addActionListener(e -> runPunch(this::clockInWithRequiredOverride, "Failed to clock in."));
         lunchStartButton.addActionListener(e -> runPunch(TimeClockManager::lunchStart, "Failed to punch lunch start."));
         lunchEndButton.addActionListener(e -> runPunch(TimeClockManager::lunchEnd, "Failed to punch lunch end."));
         clockOutButton.addActionListener(e -> runPunch(TimeClockManager::clockOut, "Failed to clock out."));
@@ -415,6 +416,29 @@ public class TimeClock extends JFrame {
             currentMonth = YearMonth.now();
             renderCalendar();
         });
+    }
+
+    private void clockInWithRequiredOverride() throws SQLException, TimeClockException {
+        if (!TimeClockManager.requiresMultipleSessionOverride()) {
+            TimeClockManager.clockIn();
+            return;
+        }
+
+        if (TimeClockManager.currentUserCanApproveMultipleSessionOverride()) {
+            TimeClockManager.clockIn();
+            return;
+        }
+
+        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                this,
+                TimeClockManager.MULTIPLE_SESSION_OVERRIDE_PERMISSION,
+                "Time Clock Multiple Session Override",
+                "Reason for allowing another time clock session today:"
+        );
+        if (approval == null) {
+            throw new TimeClockException("Clock in canceled. Manager approval is required after a completed session today.");
+        }
+        TimeClockManager.clockIn(approval);
     }
 
     private void runPunch(PunchAction action, String databaseErrorMessage) {

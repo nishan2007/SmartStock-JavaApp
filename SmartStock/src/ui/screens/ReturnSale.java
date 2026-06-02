@@ -6,9 +6,11 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import models.CashDrawerContext;
 import services.CashDrawerService;
+import services.CustomerAccountLedgerService;
 import services.DeviceContextService;
 import services.ManagerApprovalService;
 import services.SaleAuditService;
+import services.SyncOutboxService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -37,6 +39,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class ReturnSale extends JFrame {
     private static final String RETURN_OVERRIDE_PERMISSION = "RETURN_OVERRIDE";
@@ -772,6 +775,16 @@ public class ReturnSale extends JFrame {
             applyAccountReturn(conn, loadedSale.customerId(), returnTotal, returnId);
         }
 
+        SyncOutboxService.recordEvent(conn, "SALE_RETURN_CREATED", Map.of(
+                "return_id", returnId,
+                "sale_id", loadedSale.saleId(),
+                "location_id", loadedSale.locationId(),
+                "user_id", SessionManager.getCurrentUserId(),
+                "device_id", String.valueOf(deviceId),
+                "refund_method", String.valueOf(refundMethodBox.getSelectedItem()),
+                "refund_amount", returnTotal,
+                "cash_drawer_session_id", cashDrawer.sessionId() == null ? "" : cashDrawer.sessionId()
+        ));
         return returnId;
     }
 
@@ -814,6 +827,7 @@ public class ReturnSale extends JFrame {
     }
 
     private void applyAccountReturn(Connection conn, int customerId, BigDecimal returnTotal, long returnId) throws SQLException {
+        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
         BigDecimal currentBalance;
         try (PreparedStatement ps = conn.prepareStatement("SELECT current_balance FROM customer_accounts WHERE customer_id = ? FOR UPDATE")) {
             ps.setInt(1, customerId);
@@ -838,18 +852,19 @@ public class ReturnSale extends JFrame {
 
         String transactionSql = """
                 INSERT INTO customer_account_transactions (
-                    customer_id, sale_id, amount, transaction_type, note, user_name, device_id, device_name
+                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name
                 )
-                VALUES (?, ?, ?, 'RETURN', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'RETURN', ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(transactionSql)) {
             ps.setInt(1, customerId);
             ps.setInt(2, loadedSale.saleId());
-            ps.setBigDecimal(3, returnTotal.negate());
-            ps.setString(4, "Returned items. return_id=" + returnId + "; sale_id=" + loadedSale.saleId());
-            ps.setString(5, SessionManager.getCurrentUserDisplayName());
-            ps.setString(6, DeviceContextService.currentDeviceId());
-            ps.setString(7, DeviceContextService.currentDeviceName());
+            ps.setInt(3, loadedSale.locationId());
+            ps.setBigDecimal(4, returnTotal.negate());
+            ps.setString(5, "Returned items. return_id=" + returnId + "; sale_id=" + loadedSale.saleId());
+            ps.setString(6, SessionManager.getCurrentUserDisplayName());
+            ps.setString(7, DeviceContextService.currentDeviceId());
+            ps.setString(8, DeviceContextService.currentDeviceName());
             ps.executeUpdate();
         }
         SaleAuditService.record(

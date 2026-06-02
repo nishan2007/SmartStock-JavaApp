@@ -1,6 +1,9 @@
 package managers;
 
 import data.DB;
+import services.BalanceSheetService;
+import services.ManagerApprovalService;
+import services.SyncOutboxService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -8,6 +11,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -22,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 
 public final class TimeClockManager {
+    public static final String MULTIPLE_SESSION_OVERRIDE_PERMISSION = "TIME_CLOCK_OVERRIDE";
 
     private TimeClockManager() {
     }
@@ -39,8 +44,30 @@ public final class TimeClockManager {
         }
     }
 
-    public static void clockIn() throws SQLException, TimeClockException {
+    public static boolean requiresMultipleSessionOverride() throws SQLException {
         int userId = requireCurrentUserId();
+        LocalDate workDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
+        try (Connection conn = DB.getConnection()) {
+            ensureTimeClockOverrideSchema(conn);
+            return hasClosedSessionForDate(conn, userId, workDate);
+        }
+    }
+
+    public static boolean currentUserCanApproveMultipleSessionOverride() throws SQLException {
+        int userId = requireCurrentUserId();
+        try (Connection conn = DB.getConnection()) {
+            ensureTimeClockOverrideSchema(conn);
+            return userHasPermission(conn, userId, MULTIPLE_SESSION_OVERRIDE_PERMISSION);
+        }
+    }
+
+    public static void clockIn() throws SQLException, TimeClockException {
+        clockIn(null);
+    }
+
+    public static void clockIn(ManagerApprovalService.ApprovalResult approval) throws SQLException, TimeClockException {
+        int userId = requireCurrentUserId();
+        LocalDate workDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
 
         String sql = """
                 INSERT INTO employee_time_clock (
@@ -49,14 +76,22 @@ public final class TimeClockManager {
                     location_id,
                     location_name,
                     work_date,
-                    clock_in
+                    clock_in,
+                    multiple_session_override_required,
+                    multiple_session_override_reason,
+                    multiple_session_override_by_user_id,
+                    multiple_session_override_by_name
                 )
                 SELECT u.user_id,
                        COALESCE(u.full_name, u.username),
                        ?,
                        ?,
                        ?,
-                       CURRENT_TIMESTAMP
+                       CURRENT_TIMESTAMP,
+                       ?,
+                       ?,
+                       ?,
+                       ?
                 FROM users u
                 WHERE u.user_id = ?
                   AND NOT EXISTS (
@@ -68,15 +103,93 @@ public final class TimeClockManager {
                 """;
 
         try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            ensureTimeClockOverrideSchema(conn);
+            boolean requiresOverride = hasClosedSessionForDate(conn, userId, workDate);
+            boolean currentUserCanOverride = userHasPermission(conn, userId, MULTIPLE_SESSION_OVERRIDE_PERMISSION);
+            if (requiresOverride && !currentUserCanOverride && approval == null) {
+                throw new TimeClockException("Manager approval is required after a completed time clock session today.");
+            }
+
+            Integer overrideByUserId = null;
+            String overrideByName = null;
+            String overrideReason = null;
+            if (requiresOverride) {
+                if (approval != null) {
+                    overrideByUserId = approval.approvedByUserId();
+                    overrideByName = approval.approvedByName();
+                    overrideReason = approval.reason();
+                } else {
+                    overrideByUserId = userId;
+                    overrideByName = SessionManager.getCurrentUserDisplayName();
+                    overrideReason = "Current user has " + MULTIPLE_SESSION_OVERRIDE_PERMISSION + " permission.";
+                }
+            }
+
             setNullableInteger(ps, 1, SessionManager.getCurrentLocationId());
             ps.setString(2, SessionManager.getCurrentLocationName());
-            ps.setDate(3, java.sql.Date.valueOf(LocalDate.now(ZoneId.of(currentStoreZoneId()))));
-            ps.setInt(4, userId);
+            ps.setDate(3, java.sql.Date.valueOf(workDate));
+            ps.setBoolean(4, requiresOverride);
+            ps.setString(5, overrideReason);
+            setNullableInteger(ps, 6, overrideByUserId);
+            ps.setString(7, overrideByName);
+            ps.setInt(8, userId);
 
             int inserted = ps.executeUpdate();
             if (inserted == 0) {
                 throw new TimeClockException("You are already clocked in.");
+            }
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    SyncOutboxService.recordEvent(conn, "TIME_CLOCK_PUNCH_CREATED", Map.of(
+                            "clock_id", keys.getInt(1),
+                            "action", "CLOCK_IN",
+                            "multiple_session_override_required", requiresOverride,
+                            "override_by_user_id", overrideByUserId == null ? "" : overrideByUserId,
+                            "override_by_name", overrideByName == null ? "" : overrideByName,
+                            "override_reason", overrideReason == null ? "" : overrideReason,
+                            "user_id", userId,
+                            "location_id", SessionManager.getCurrentLocationId() == null ? "" : SessionManager.getCurrentLocationId()
+                    ));
+                }
+            }
+        }
+    }
+
+    private static boolean userHasPermission(Connection conn, int userId, String permissionKey) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM users u
+                JOIN roles r ON r.role_id = u.role_id
+                JOIN role_permissions rp ON rp.role_id = r.role_id
+                JOIN permissions p ON p.permission_id = rp.permission_id
+                WHERE u.user_id = ?
+                  AND UPPER(p.permission_key) = UPPER(?)
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, userId);
+            ps.setString(2, permissionKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean hasClosedSessionForDate(Connection conn, int userId, LocalDate workDate) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM employee_time_clock
+                WHERE user_id = ?
+                  AND work_date = ?
+                  AND clock_out IS NOT NULL
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, userId);
+            ps.setDate(2, java.sql.Date.valueOf(workDate));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
             }
         }
     }
@@ -110,6 +223,7 @@ public final class TimeClockManager {
                        COALESCE(u.salary, 0) AS salary,
                        tc.total_hours_worked,
                        tc.total_earned,
+                       tc.location_id,
                        COALESCE(tc.location_name, l.name, '') AS location_name
                 FROM employee_time_clock tc
                 LEFT JOIN users u ON u.user_id = tc.user_id
@@ -148,6 +262,7 @@ public final class TimeClockManager {
                             rs.getBigDecimal("salary"),
                             rs.getBigDecimal("total_hours_worked"),
                             rs.getBigDecimal("total_earned"),
+                            (Integer) rs.getObject("location_id"),
                             rs.getString("location_name")
                     ));
                 }
@@ -199,6 +314,7 @@ public final class TimeClockManager {
                     record.compensationType,
                     record.salary,
                     sessionPay,
+                    record.locationId,
                     record.locationName
             ));
         }
@@ -208,6 +324,7 @@ public final class TimeClockManager {
     public static PayrollDashboard loadPayrollDashboard() throws SQLException {
         try (Connection conn = DB.getConnection()) {
             List<TimeClockRow> rows = buildRows(loadRecords(conn, true));
+            ensurePayrollPaymentsSchema(conn);
             Map<String, PayrollPaymentStatus> paidStatuses = loadPayrollPaymentStatuses(conn);
             Map<String, PayrollSummary> summariesByKey = new HashMap<>();
             Map<String, Set<LocalDate>> workedDatesByKey = new HashMap<>();
@@ -232,12 +349,17 @@ public final class TimeClockManager {
                             payrollPay,
                             1,
                             row.compensationType(),
+                            row.locationId(),
                             row.locationName(),
-                            paidStatus != null,
+                            isFullyPaid(payrollPay, paidStatus),
                             paidStatus == null ? null : paidStatus.paidAt(),
-                            paidStatus == null ? "" : paidStatus.paidByName()
+                            paidStatus == null ? "" : paidStatus.paidByName(),
+                            paidStatus == null ? BigDecimal.ZERO : paidStatus.paidAmount(),
+                            amountDue(payrollPay, paidStatus)
                     ));
                 } else {
+                    BigDecimal totalPay = existing.totalPay().add(payrollPay);
+                    PayrollPaymentStatus paidStatus = paidStatuses.get(key);
                     summariesByKey.put(key, new PayrollSummary(
                             existing.userId(),
                             existing.employeeName(),
@@ -247,13 +369,16 @@ public final class TimeClockManager {
                             existing.payDate(),
                             workedDates.size(),
                             existing.totalHours().add(row.dailyHours()),
-                            existing.totalPay().add(payrollPay),
+                            totalPay,
                             existing.recordCount() + 1,
                             existing.compensationType(),
+                            mergeLocationId(existing.locationId(), row.locationId()),
                             mergeLocations(existing.locationName(), row.locationName()),
-                            existing.paid(),
-                            existing.paidAt(),
-                            existing.paidByName()
+                            isFullyPaid(totalPay, paidStatus),
+                            paidStatus == null ? null : paidStatus.paidAt(),
+                            paidStatus == null ? "" : paidStatus.paidByName(),
+                            paidStatus == null ? BigDecimal.ZERO : paidStatus.paidAmount(),
+                            amountDue(totalPay, paidStatus)
                     ));
                 }
             }
@@ -272,13 +397,19 @@ public final class TimeClockManager {
     }
 
     public static void markPayrollPaid(PayrollSummary summary) throws SQLException {
+        BigDecimal paymentAmount = defaultZero(summary.amountDue()).setScale(2, RoundingMode.HALF_UP);
+        if (paymentAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new SQLException("This payroll period is already fully paid.");
+        }
         String sql = """
                 INSERT INTO payroll_payments (
                     user_id,
+                    location_id,
                     employee_name,
                     employee_role,
                     pay_period_start,
                     pay_period_end,
+                    payment_number,
                     pay_date,
                     days_worked,
                     total_hours,
@@ -290,70 +421,101 @@ public final class TimeClockManager {
                     paid_by_user_id,
                     paid_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-                ON CONFLICT (user_id, pay_period_start, pay_period_end)
-                DO UPDATE SET
-                    employee_name = EXCLUDED.employee_name,
-                    employee_role = EXCLUDED.employee_role,
-                    pay_date = EXCLUDED.pay_date,
-                    days_worked = EXCLUDED.days_worked,
-                    total_hours = EXCLUDED.total_hours,
-                    total_pay = EXCLUDED.total_pay,
-                    record_count = EXCLUDED.record_count,
-                    compensation_type = EXCLUDED.compensation_type,
-                    location_name = EXCLUDED.location_name,
-                    paid_at = CURRENT_TIMESTAMP,
-                    paid_by_user_id = EXCLUDED.paid_by_user_id,
-                    paid_by_name = EXCLUDED.paid_by_name
+                SELECT ?, ?, ?, ?, ?, ?,
+                       COALESCE(MAX(payment_number), 0) + 1,
+                       ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?
+                FROM payroll_payments
+                WHERE user_id = ?
+                  AND pay_period_start = ?
+                  AND pay_period_end = ?
+                RETURNING payroll_payment_id
                 """;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, summary.userId());
-            ps.setString(2, summary.employeeName());
-            ps.setString(3, summary.employeeRole());
-            ps.setDate(4, java.sql.Date.valueOf(summary.payPeriodStart()));
-            ps.setDate(5, java.sql.Date.valueOf(summary.payPeriodEnd()));
-            ps.setDate(6, java.sql.Date.valueOf(summary.payDate()));
-            ps.setInt(7, summary.daysWorked());
-            ps.setBigDecimal(8, summary.totalHours());
-            ps.setBigDecimal(9, summary.totalPay());
-            ps.setInt(10, summary.recordCount());
-            ps.setString(11, summary.compensationType());
-            ps.setString(12, summary.locationName());
-            setNullableInteger(ps, 13, SessionManager.getCurrentUserId());
-            ps.setString(14, SessionManager.getCurrentUserDisplayName());
-            ps.executeUpdate();
+        try (Connection conn = DB.getConnection()) {
+            ensurePayrollPaymentsSchema(conn);
+            Integer payrollLocationId = summary.locationId() == null
+                    ? SessionManager.getCurrentLocationId()
+                    : summary.locationId();
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setInt(1, summary.userId());
+                setNullableInteger(ps, 2, payrollLocationId);
+                ps.setString(3, summary.employeeName());
+                ps.setString(4, summary.employeeRole());
+                ps.setDate(5, java.sql.Date.valueOf(summary.payPeriodStart()));
+                ps.setDate(6, java.sql.Date.valueOf(summary.payPeriodEnd()));
+                ps.setDate(7, java.sql.Date.valueOf(summary.payDate()));
+                ps.setInt(8, summary.daysWorked());
+                ps.setBigDecimal(9, summary.totalHours());
+                ps.setBigDecimal(10, paymentAmount);
+                ps.setInt(11, summary.recordCount());
+                ps.setString(12, summary.compensationType());
+                ps.setString(13, summary.locationName());
+                setNullableInteger(ps, 14, SessionManager.getCurrentUserId());
+                ps.setString(15, SessionManager.getCurrentUserDisplayName());
+                ps.setInt(16, summary.userId());
+                ps.setDate(17, java.sql.Date.valueOf(summary.payPeriodStart()));
+                ps.setDate(18, java.sql.Date.valueOf(summary.payPeriodEnd()));
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        LocalDate paidDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
+                        BalanceSheetService.recordPayrollExpense(
+                                rs.getLong("payroll_payment_id"),
+                                paymentAmount,
+                                summary.employeeName(),
+                                paidDate,
+                                "Pay period " + summary.payPeriodStart() + " - " + summary.payPeriodEnd()
+                                        + "; scheduled pay date " + summary.payDate(),
+                                payrollLocationId
+                        );
+                    }
+                }
+            }
         }
     }
 
     private static Map<String, PayrollPaymentStatus> loadPayrollPaymentStatuses(Connection conn) throws SQLException {
         Map<String, PayrollPaymentStatus> statuses = new HashMap<>();
         String sql = """
+                WITH ranked AS (
+                    SELECT user_id,
+                           pay_period_start,
+                           pay_period_end,
+                           COALESCE(total_pay, 0) AS payment_amount,
+                           (paid_at AT TIME ZONE ?) AS local_paid_at,
+                           paid_by_name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_id, pay_period_start, pay_period_end
+                               ORDER BY paid_at DESC, payment_number DESC, payroll_payment_id DESC
+                           ) AS latest_rank
+                    FROM payroll_payments
+                )
                 SELECT user_id,
                        pay_period_start,
                        pay_period_end,
-                       (paid_at AT TIME ZONE ?) AS local_paid_at,
-                       paid_by_name
-                FROM payroll_payments
+                       SUM(payment_amount) AS paid_amount,
+                       MAX(local_paid_at) AS local_paid_at,
+                       MAX(paid_by_name) FILTER (WHERE latest_rank = 1) AS paid_by_name
+                FROM ranked
+                GROUP BY user_id, pay_period_start, pay_period_end
                 """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, currentStoreZoneId());
             try (ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                statuses.put(
-                        payrollKey(
-                                rs.getInt("user_id"),
-                                rs.getDate("pay_period_start").toLocalDate(),
-                                rs.getDate("pay_period_end").toLocalDate()
-                        ),
-                        new PayrollPaymentStatus(
-                                toLocalDateTime(rs.getTimestamp("local_paid_at")),
-                                rs.getString("paid_by_name")
-                        )
-                );
-            }
+                while (rs.next()) {
+                    statuses.put(
+                            payrollKey(
+                                    rs.getInt("user_id"),
+                                    rs.getDate("pay_period_start").toLocalDate(),
+                                    rs.getDate("pay_period_end").toLocalDate()
+                            ),
+                            new PayrollPaymentStatus(
+                                    toLocalDateTime(rs.getTimestamp("local_paid_at")),
+                                    rs.getString("paid_by_name"),
+                                    defaultZero(rs.getBigDecimal("paid_amount"))
+                            )
+                    );
+                }
             }
         }
 
@@ -448,6 +610,12 @@ public final class TimeClockManager {
                 ps.setInt(1, current.clockId);
                 ps.executeUpdate();
             }
+            SyncOutboxService.recordEvent(conn, "TIME_CLOCK_PUNCH_CREATED", Map.of(
+                    "clock_id", current.clockId,
+                    "action", columnName.toUpperCase(),
+                    "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId(),
+                    "location_id", SessionManager.getCurrentLocationId() == null ? "" : SessionManager.getCurrentLocationId()
+            ));
         }
     }
 
@@ -588,6 +756,61 @@ public final class TimeClockManager {
         }
     }
 
+    private static void ensurePayrollPaymentsSchema(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_number INTEGER NOT NULL DEFAULT 1");
+            stmt.executeUpdate("DROP INDEX IF EXISTS payroll_payments_employee_period_idx");
+            stmt.executeUpdate("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS payroll_payments_employee_period_payment_idx
+                    ON payroll_payments(user_id, pay_period_start, pay_period_end, payment_number)
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS payroll_payments_location_paid_idx ON payroll_payments(location_id, paid_at DESC)");
+        }
+    }
+
+    private static void ensureTimeClockOverrideSchema(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_required BOOLEAN NOT NULL DEFAULT FALSE");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_reason TEXT");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_by_user_id INTEGER REFERENCES users(user_id)");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_by_name TEXT");
+            stmt.executeUpdate("INSERT INTO permissions (permission_key, permission_name) SELECT 'TIME_CLOCK_OVERRIDE', 'Time Clock Override' WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'TIME_CLOCK_OVERRIDE')");
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.role_id, p.permission_id
+                    FROM roles r
+                    JOIN permissions p ON UPPER(p.permission_key) = 'TIME_CLOCK_OVERRIDE'
+                    WHERE UPPER(r.role_name) IN ('ADMIN', 'MANAGER')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM role_permissions rp
+                          WHERE rp.role_id = r.role_id
+                            AND rp.permission_id = p.permission_id
+                      )
+                    """);
+        }
+    }
+
+    private static BigDecimal defaultZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static BigDecimal paidAmount(PayrollPaymentStatus status) {
+        return status == null ? BigDecimal.ZERO : defaultZero(status.paidAmount());
+    }
+
+    private static BigDecimal amountDue(BigDecimal totalPay, PayrollPaymentStatus status) {
+        BigDecimal due = defaultZero(totalPay).subtract(paidAmount(status));
+        return due.compareTo(BigDecimal.ZERO) <= 0 ? BigDecimal.ZERO : due.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static boolean isFullyPaid(BigDecimal totalPay, PayrollPaymentStatus status) {
+        return status != null
+                && paidAmount(status).compareTo(BigDecimal.ZERO) > 0
+                && paidAmount(status).compareTo(defaultZero(totalPay)) >= 0;
+    }
+
     private static String payrollKey(int userId, LocalDate payPeriodStart, LocalDate payPeriodEnd) {
         return userId + "|" + payPeriodStart + "|" + payPeriodEnd;
     }
@@ -617,15 +840,20 @@ public final class TimeClockManager {
             BigDecimal totalPay,
             int recordCount,
             String compensationType,
+            Integer locationId,
             String locationName,
             boolean paid,
             LocalDateTime paidAt,
-            String paidByName
+            String paidByName,
+            BigDecimal paidAmount,
+            BigDecimal amountDue
     ) {
         public PayrollSummary {
             if (paidByName == null) {
                 paidByName = "";
             }
+            paidAmount = defaultZero(paidAmount).setScale(2, RoundingMode.HALF_UP);
+            amountDue = defaultZero(amountDue).setScale(2, RoundingMode.HALF_UP);
         }
     }
 
@@ -656,6 +884,7 @@ public final class TimeClockManager {
             String compensationType,
             BigDecimal salary,
             BigDecimal totalPay,
+            Integer locationId,
             String locationName
     ) {
     }
@@ -669,7 +898,7 @@ public final class TimeClockManager {
     private record PayPeriod(LocalDate start, LocalDate end, LocalDate payDate) {
     }
 
-    private record PayrollPaymentStatus(LocalDateTime paidAt, String paidByName) {
+    private record PayrollPaymentStatus(LocalDateTime paidAt, String paidByName, BigDecimal paidAmount) {
     }
 
     private static String mergeLocations(String current, String next) {
@@ -699,6 +928,7 @@ public final class TimeClockManager {
             BigDecimal salary,
             BigDecimal totalHoursWorked,
             BigDecimal totalEarned,
+            Integer locationId,
             String locationName
     ) {
         private TimeRecord {
@@ -729,6 +959,16 @@ public final class TimeClockManager {
             return "DAILY".equalsIgnoreCase(compensationType);
         }
 
+    }
+
+    private static Integer mergeLocationId(Integer current, Integer next) {
+        if (current == null) {
+            return next;
+        }
+        if (next == null || current.equals(next)) {
+            return current;
+        }
+        return SessionManager.getCurrentLocationId();
     }
 
     private record CurrentClock(
