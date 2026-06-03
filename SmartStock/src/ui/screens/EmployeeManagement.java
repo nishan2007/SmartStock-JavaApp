@@ -2,10 +2,14 @@ package ui.screens;
 
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
+import managers.CompanyCustomizationManager;
 import services.OfflineWriteGuard;
 import services.BadgeCredentialService;
+import services.BadgePrintService;
+import services.EmployeePhotoService;
 import services.ReferenceDataSyncService;
 import ui.components.AppMenuBar;
+import ui.helpers.ProductImageHelper;
 import ui.helpers.WindowHelper;
 import data.DB;
 
@@ -24,6 +28,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -59,6 +66,8 @@ public class EmployeeManagement extends JFrame {
     private JTextField lastNameField;
     private JTextField emailField;
     private JTextField phoneField;
+    private JTextField employeePhotoField;
+    private JLabel employeePhotoPreviewLabel;
     private JTextField dateOfBirthField;
     private JTextField badgeIdField;
     private JComboBox<CompensationOption> compensationTypeBox;
@@ -71,6 +80,9 @@ public class EmployeeManagement extends JFrame {
     private JButton clearButton;
     private JButton refreshButton;
     private JButton deleteButton;
+    private JButton previewBadgeButton;
+    private JButton printBadgeButton;
+    private JButton writeMagStripeButton;
 
     private Integer selectedUserId = null;
     private String originalFirstName = "";
@@ -101,7 +113,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "DOB", "Badge ID", "Pay Type", "Salary", "Role", "Active"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -138,14 +150,19 @@ public class EmployeeManagement extends JFrame {
         }
         employeeTable.getColumnModel().getColumn(6).setPreferredWidth(180);
         employeeTable.getColumnModel().getColumn(7).setPreferredWidth(120);
-        employeeTable.getColumnModel().getColumn(8).setPreferredWidth(95);
-        employeeTable.getColumnModel().getColumn(9).setPreferredWidth(120);
-        employeeTable.getColumnModel().getColumn(10).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(11).setPreferredWidth(90);
+        TableColumn photoColumn = employeeTable.getColumnModel().getColumn(8);
+        photoColumn.setMinWidth(0);
+        photoColumn.setPreferredWidth(0);
+        photoColumn.setMaxWidth(0);
+        employeeTable.getColumnModel().getColumn(9).setPreferredWidth(95);
+        employeeTable.getColumnModel().getColumn(10).setPreferredWidth(120);
+        employeeTable.getColumnModel().getColumn(11).setPreferredWidth(80);
         employeeTable.getColumnModel().getColumn(12).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(13).setPreferredWidth(70);
-        employeeTable.getColumnModel().getColumn(13).setMinWidth(60);
-        employeeTable.getColumnModel().getColumn(13).setMaxWidth(80);
+        employeeTable.getColumnModel().getColumn(13).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(14).setPreferredWidth(90);
+        employeeTable.getColumnModel().getColumn(15).setPreferredWidth(70);
+        employeeTable.getColumnModel().getColumn(15).setMinWidth(60);
+        employeeTable.getColumnModel().getColumn(15).setMaxWidth(80);
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
@@ -158,6 +175,8 @@ public class EmployeeManagement extends JFrame {
         lastNameField = new JTextField();
         emailField = new JTextField();
         phoneField = new JTextField();
+        employeePhotoField = new JTextField();
+        employeePhotoField.setEditable(false);
         dateOfBirthField = new JTextField();
         dateOfBirthField.setToolTipText("Optional. Use YYYY-MM-DD. If present, it is included in the badge verification hash.");
         badgeIdField = new JTextField();
@@ -266,6 +285,15 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 7;
         gbc.weightx = 0;
+        formPanel.add(new JLabel("Badge Photo:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(buildPhotoSelectorPanel(), gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 8;
+        gbc.weightx = 0;
         formPanel.add(new JLabel("Date of Birth:"), gbc);
 
         gbc.gridx = 1;
@@ -273,7 +301,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(dateOfBirthField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 9;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Badge ID (auto):"), gbc);
 
@@ -282,7 +310,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(badgeIdField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 9;
+        gbc.gridy = 10;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Pay Type:"), gbc);
 
@@ -291,7 +319,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(compensationTypeBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 10;
+        gbc.gridy = 11;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Salary:"), gbc);
 
@@ -300,7 +328,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(salaryAmountField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 11;
+        gbc.gridy = 12;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Role:"), gbc);
 
@@ -309,7 +337,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 12;
+        gbc.gridy = 13;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
@@ -335,7 +363,7 @@ public class EmployeeManagement extends JFrame {
         storeIdColumn.setMaxWidth(90);
 
         gbc.gridx = 0;
-        gbc.gridy = 13;
+        gbc.gridy = 14;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.weighty = 0.0;
@@ -344,7 +372,7 @@ public class EmployeeManagement extends JFrame {
 
         gbc.gridwidth = 1;
         gbc.gridx = 0;
-        gbc.gridy = 14;
+        gbc.gridy = 15;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(Box.createVerticalGlue(), gbc);
@@ -356,6 +384,9 @@ public class EmployeeManagement extends JFrame {
         clearButton = new JButton("Clear");
         refreshButton = new JButton("Refresh");
         deleteButton = new JButton("Deactivate Employee");
+        previewBadgeButton = new JButton("Preview Badge");
+        printBadgeButton = new JButton("Print Badge");
+        writeMagStripeButton = new JButton("Write Stripe");
 
         Dimension compactButtonSize = new Dimension(145, 32);
         addButton.setPreferredSize(compactButtonSize);
@@ -369,6 +400,9 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(addButton);
         topButtonPanel.add(updateButton);
         topButtonPanel.add(deleteButton);
+        topButtonPanel.add(previewBadgeButton);
+        topButtonPanel.add(printBadgeButton);
+        topButtonPanel.add(writeMagStripeButton);
 
         bottomButtonPanel.add(clearButton);
         bottomButtonPanel.add(refreshButton);
@@ -404,6 +438,10 @@ public class EmployeeManagement extends JFrame {
                 deleteEmployee();
             }
         });
+
+        previewBadgeButton.addActionListener(e -> previewSelectedBadge());
+        printBadgeButton.addActionListener(e -> printSelectedBadge());
+        writeMagStripeButton.addActionListener(e -> writeSelectedMagStripe());
 
         clearButton.addActionListener(new ActionListener() {
             @Override
@@ -478,10 +516,185 @@ public class EmployeeManagement extends JFrame {
         });
 
         deleteButton.setEnabled(false);
+        previewBadgeButton.setEnabled(false);
+        printBadgeButton.setEnabled(false);
+        writeMagStripeButton.setEnabled(false);
         loadRoles();
         loadStoresForUser(null);
         loadEmployees();
         WindowHelper.showPosWindow(this);
+    }
+
+    private JPanel buildPhotoSelectorPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 0));
+        employeePhotoPreviewLabel = ProductImageHelper.createImagePreview("", 90, 110);
+        panel.add(employeePhotoPreviewLabel, BorderLayout.WEST);
+
+        JPanel fieldPanel = new JPanel(new BorderLayout(6, 4));
+        fieldPanel.add(employeePhotoField, BorderLayout.CENTER);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        JButton chooseButton = new JButton("Choose");
+        JButton previewButton = new JButton("Preview");
+        JButton clearButton = new JButton("Clear");
+        buttons.add(chooseButton);
+        buttons.add(previewButton);
+        buttons.add(clearButton);
+        fieldPanel.add(buttons, BorderLayout.SOUTH);
+        panel.add(fieldPanel, BorderLayout.CENTER);
+        chooseButton.addActionListener(e -> chooseEmployeePhoto());
+        previewButton.addActionListener(e -> refreshEmployeePhotoPreview());
+        clearButton.addActionListener(e -> {
+            employeePhotoField.setText("");
+            refreshEmployeePhotoPreview();
+        });
+        return panel;
+    }
+
+    private void chooseEmployeePhoto() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Employee Badge Photo");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Image Files", "png", "jpg", "jpeg", "gif", "bmp"));
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path source = chooser.getSelectedFile().toPath();
+        try {
+            Path targetDirectory = Path.of(System.getProperty("user.home"), ".smartstock", "employee-photos");
+            Files.createDirectories(targetDirectory);
+            String extension = extension(source.getFileName().toString());
+            String namePrefix = selectedUserId == null ? "pending" : "employee-" + selectedUserId;
+            Path target = targetDirectory.resolve(namePrefix + "-" + System.currentTimeMillis() + "." + extension);
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            employeePhotoField.setText(target.toString());
+            refreshEmployeePhotoPreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to copy employee photo.\n\n" + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void refreshEmployeePhotoPreview() {
+        if (employeePhotoPreviewLabel != null) {
+            ProductImageHelper.setPreviewImage(employeePhotoPreviewLabel, employeePhotoField.getText(), 90, 110);
+        }
+    }
+
+    private static String extension(String fileName) {
+        int dotIndex = fileName == null ? -1 : fileName.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
+            return "png";
+        }
+        return fileName.substring(dotIndex + 1).replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+    }
+
+    private void previewSelectedBadge() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            BadgePrintService.previewBadge(this, employee, CompanyCustomizationManager.loadBadgeTemplateSettings());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to preview badge.\n\n" + ex.getMessage(), "Badge Preview", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void printSelectedBadge() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            BadgePrintService.BadgePrintSide side = chooseBadgePrintSide();
+            if (side == null) {
+                return;
+            }
+            LocalDate expiryDate = chooseBadgeExpiryDate(side);
+            if (expiryDate == null) {
+                return;
+            }
+            BadgePrintService.printBadge(this, employee, CompanyCustomizationManager.loadBadgeTemplateSettings(), side, expiryDate);
+            loadEmployees();
+            selectEmployeeInTable(employee.userId());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to print badge.\n\n" + ex.getMessage(), "Badge Print", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private BadgePrintService.BadgePrintSide chooseBadgePrintSide() {
+        BadgePrintService.BadgePrintSide[] options = BadgePrintService.BadgePrintSide.values();
+        BadgePrintService.BadgePrintSide selected = (BadgePrintService.BadgePrintSide) JOptionPane.showInputDialog(
+                this,
+                "Which side do you want to print?",
+                "Print Badge",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                BadgePrintService.BadgePrintSide.BOTH
+        );
+        return selected;
+    }
+
+    private LocalDate chooseBadgeExpiryDate(BadgePrintService.BadgePrintSide side) {
+        LocalDate defaultDate = BadgePrintService.defaultExpiryDate();
+        if (side == null || !side.includesBack()) {
+            return defaultDate;
+        }
+        while (true) {
+            Object input = JOptionPane.showInputDialog(
+                    this,
+                    "Expiry date (YYYY-MM-DD):",
+                    "Badge Expiry Date",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    null,
+                    defaultDate.toString()
+            );
+            if (input == null) {
+                return null;
+            }
+            String value = input.toString().trim();
+            if (value.isBlank()) {
+                return defaultDate;
+            }
+            try {
+                return LocalDate.parse(value);
+            } catch (DateTimeParseException ex) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Enter the expiry date as YYYY-MM-DD.",
+                        "Invalid Expiry Date",
+                        JOptionPane.ERROR_MESSAGE
+                );
+            }
+        }
+    }
+
+    private void writeSelectedMagStripe() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            CompanyCustomizationManager.BadgeTemplateSettings settings = CompanyCustomizationManager.loadBadgeTemplateSettings();
+            String track1 = BadgePrintService.buildTrackData(settings.magStripeTrack1(), employee, settings);
+            String track2 = BadgePrintService.buildTrackData(settings.magStripeTrack2(), employee, settings);
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "Write magnetic stripe for " + employee.displayName() + "?\n\nTrack 1: " + track1 + "\nTrack 2: " + track2,
+                    "Write Magnetic Stripe",
+                    JOptionPane.OK_CANCEL_OPTION
+            );
+            if (confirm != JOptionPane.OK_OPTION) {
+                return;
+            }
+            String output = BadgePrintService.writeMagStripe(employee, settings);
+            JOptionPane.showMessageDialog(this, output, "Magnetic Stripe", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to write magnetic stripe.\n\n" + ex.getMessage(), "Magnetic Stripe", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private BadgePrintService.EmployeeBadgeData selectedBadgeData() throws Exception {
+        if (selectedUserId == null) {
+            throw new IllegalStateException("Select an employee first.");
+        }
+        String currentBadgeId = badgeIdField.getText().trim();
+        if (currentBadgeId.isEmpty()) {
+            throw new IllegalStateException("Save a badge ID for this employee before printing or writing a badge.");
+        }
+        return BadgePrintService.loadEmployeeBadgeData(selectedUserId);
     }
 
     private void loadRoles() {
@@ -521,8 +734,10 @@ public class EmployeeManagement extends JFrame {
                        u.last_name,
                        u.email,
                        u.phone,
+                       COALESCE(u.employee_photo_url, '') AS employee_photo_url,
                        u.date_of_birth,
                        u.badge_id,
+                       COALESCE(u.badge_print_count, 0) AS badge_print_count,
                        COALESCE(u.compensation_type, 'HOURLY') AS compensation_type,
                        COALESCE(u.salary, 0) AS salary,
                        COALESCE(r.role_name, 'USER') AS role,
@@ -546,8 +761,10 @@ public class EmployeeManagement extends JFrame {
                         rs.getString("last_name"),
                         rs.getString("email"),
                         rs.getString("phone"),
+                        rs.getString("employee_photo_url"),
                         rs.getDate("date_of_birth") == null ? "" : rs.getDate("date_of_birth").toLocalDate().toString(),
                         rs.getString("badge_id"),
+                        rs.getInt("badge_print_count"),
                         rs.getString("compensation_type"),
                         rs.getBigDecimal("salary"),
                         rs.getString("role"),
@@ -617,13 +834,15 @@ public class EmployeeManagement extends JFrame {
         updatingGeneratedUsername = false;
         emailField.setText(employeeModel.getValueAt(selectedRow, 6) == null ? "" : employeeModel.getValueAt(selectedRow, 6).toString());
         phoneField.setText(employeeModel.getValueAt(selectedRow, 7) == null ? "" : employeeModel.getValueAt(selectedRow, 7).toString());
-        dateOfBirthField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
-        badgeIdField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
-        selectCompensationType(employeeModel.getValueAt(selectedRow, 10) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 10).toString());
-        salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 11) == null ? "" : employeeModel.getValueAt(selectedRow, 11).toString());
-        selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 12)));
+        employeePhotoField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
+        refreshEmployeePhotoPreview();
+        dateOfBirthField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
+        badgeIdField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
+        selectCompensationType(employeeModel.getValueAt(selectedRow, 12) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 12).toString());
+        salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 13) == null ? "" : employeeModel.getValueAt(selectedRow, 13).toString());
+        selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 14)));
 
-        Object activeValue = employeeModel.getValueAt(selectedRow, 13);
+        Object activeValue = employeeModel.getValueAt(selectedRow, 15);
         activeCheckBox.setSelected(activeValue instanceof Boolean ? (Boolean) activeValue : true);
         originalFirstName = firstNameField.getText().trim();
         originalMiddleName = middleNameField.getText().trim();
@@ -636,6 +855,9 @@ public class EmployeeManagement extends JFrame {
         passwordField.setText("");
         loadStoresForUser(selectedUserId);
         deleteButton.setEnabled(true);
+        previewBadgeButton.setEnabled(true);
+        printBadgeButton.setEnabled(true);
+        writeMagStripeButton.setEnabled(true);
     }
 
     private void addEmployee() {
@@ -653,6 +875,7 @@ public class EmployeeManagement extends JFrame {
         String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
+        String employeePhotoUrl = employeePhotoField.getText().trim();
         LocalDate dateOfBirth = parseOptionalDateOfBirth();
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
@@ -697,6 +920,14 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
+        try {
+            employeePhotoUrl = EmployeePhotoService.uploadLocalPhotoIfNeeded(employeePhotoUrl, username);
+            employeePhotoField.setText(employeePhotoUrl);
+            refreshEmployeePhotoPreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -707,10 +938,10 @@ public class EmployeeManagement extends JFrame {
                 String sql = """
                         INSERT INTO users (
                             username, password_hash, first_name, middle_name, last_name, full_name,
-                            email, phone, date_of_birth, badge_id, badge_secret_salt, badge_secret_hash, badge_generated_at,
+                            email, phone, employee_photo_url, date_of_birth, badge_id, badge_secret_salt, badge_secret_hash, badge_generated_at,
                             compensation_type, salary, role_id, auth_user_id, is_active
                         )
-                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
+                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
                         RETURNING user_id
                         """;
 
@@ -723,15 +954,16 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(5, fullName);
                     ps.setString(6, email);
                     ps.setString(7, phoneNumber);
-                    ps.setDate(8, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(9, badgeId);
-                    ps.setString(10, badgeHash.salt());
-                    ps.setString(11, badgeHash.hash());
-                    ps.setObject(12, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(13, salary);
-                    ps.setString(14, role);
-                    ps.setString(15, normalizeUuid(authUserId));
-                    ps.setBoolean(16, isActive);
+                    ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
+                    ps.setDate(9, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
+                    ps.setString(10, badgeId);
+                    ps.setString(11, badgeHash.salt());
+                    ps.setString(12, badgeHash.hash());
+                    ps.setObject(13, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(14, salary);
+                    ps.setString(15, role);
+                    ps.setString(16, normalizeUuid(authUserId));
+                    ps.setBoolean(17, isActive);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (!rs.next()) {
                             throw new SQLException("Employee was not created.");
@@ -778,6 +1010,7 @@ public class EmployeeManagement extends JFrame {
         String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
+        String employeePhotoUrl = employeePhotoField.getText().trim();
         LocalDate dateOfBirth = parseOptionalDateOfBirth();
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
@@ -819,6 +1052,14 @@ public class EmployeeManagement extends JFrame {
         List<Integer> selectedLocationIds = getSelectedLocationIds();
         if (selectedLocationIds.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
+            return;
+        }
+        try {
+            employeePhotoUrl = EmployeePhotoService.uploadLocalPhotoIfNeeded(employeePhotoUrl, username);
+            employeePhotoField.setText(employeePhotoUrl);
+            refreshEmployeePhotoPreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -863,6 +1104,7 @@ public class EmployeeManagement extends JFrame {
                             full_name = ?,
                             email = ?,
                             phone = ?,
+                            employee_photo_url = ?,
                             date_of_birth = ?,
                             badge_id = ?,
                             badge_secret_salt = ?,
@@ -885,16 +1127,17 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(5, fullName);
                     ps.setString(6, email);
                     ps.setString(7, phoneNumber);
-                    ps.setDate(8, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(9, badgeId);
-                    ps.setString(10, badgeHash.salt());
-                    ps.setString(11, badgeHash.hash());
-                    ps.setObject(12, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(13, salary);
-                    ps.setString(14, role);
-                    ps.setString(15, normalizeUuid(authUserId));
-                    ps.setBoolean(16, isActive);
-                    ps.setInt(17, selectedUserId);
+                    ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
+                    ps.setDate(9, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
+                    ps.setString(10, badgeId);
+                    ps.setString(11, badgeHash.salt());
+                    ps.setString(12, badgeHash.hash());
+                    ps.setObject(13, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(14, salary);
+                    ps.setString(15, role);
+                    ps.setString(16, normalizeUuid(authUserId));
+                    ps.setBoolean(17, isActive);
+                    ps.setInt(18, selectedUserId);
                     ps.executeUpdate();
                 }
 
@@ -927,6 +1170,8 @@ public class EmployeeManagement extends JFrame {
         updatingGeneratedUsername = false;
         emailField.setText("");
         phoneField.setText("");
+        employeePhotoField.setText("");
+        refreshEmployeePhotoPreview();
         dateOfBirthField.setText("");
         badgeIdField.setText("");
         selectCompensationType("HOURLY");
@@ -945,6 +1190,9 @@ public class EmployeeManagement extends JFrame {
         storeSearchField.setText("");
         loadStoresForUser(null);
         deleteButton.setEnabled(false);
+        previewBadgeButton.setEnabled(false);
+        printBadgeButton.setEnabled(false);
+        writeMagStripeButton.setEnabled(false);
         usernameField.requestFocusInWindow();
     }
 

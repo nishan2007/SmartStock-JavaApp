@@ -56,11 +56,13 @@ public final class ServerProvisioningService {
                 SyncSchemaInstaller.ensureSchema(cloud);
                 int copiedRows = ReferenceDataSyncService.refreshFromCloud(local, cloud);
                 int historyRows = ReferenceDataSyncService.pullExistingLocationHistory(local, cloud, config.locationId());
+                int cachedImages = ImageCacheWarmupService.warmLocalCache(local);
                 ReceiptCounterSyncService.SeedResult receiptSeed =
                         ReceiptCounterSyncService.seedFromExistingReceipts(local, cloud, config.locationId());
                 steps.add("Verified cloud connection and installed cloud sync tables.");
                 steps.add("Pulled " + copiedRows + " reference rows from cloud into local database.");
                 steps.add("Pulled " + historyRows + " existing transaction/history rows from cloud into local database.");
+                steps.add("Cached " + cachedImages + " image/logo file(s) locally for offline use.");
                 steps.add("Seeded receipt counter from existing receipts for " + receiptSeed.locationsUpdated()
                         + " location(s); highest next receipt counter is " + receiptSeed.highestNextCounter() + ".");
             }

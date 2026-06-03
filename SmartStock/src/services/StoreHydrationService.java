@@ -39,6 +39,7 @@ public final class StoreHydrationService {
             if (includeHistory) {
                 rows += ReferenceDataSyncService.pullExistingLocationHistory(local, cloud, locationId);
             }
+            ImageCacheWarmupService.warmLocalCache(local);
             return HydrationResult.synced(rows);
         }
     }

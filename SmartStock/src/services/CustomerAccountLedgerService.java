@@ -37,15 +37,23 @@ public final class CustomerAccountLedgerService {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT");
                 ensureUpdatedAtTableSchema(stmt, "customer_account_transactions");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_payment_id_idx ON customer_account_transactions(payment_id)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_customer_created_idx ON customer_account_transactions(customer_id, created_at DESC)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_location_created_idx ON customer_account_transactions(location_id, created_at DESC)");
                 stmt.executeUpdate("""
                         UPDATE customer_account_transactions
                         SET payment_id = 'PAY-' || LPAD(transaction_id::text, 6, '0')
                         WHERE COALESCE(transaction_type, '') = 'PAYMENT'
                           AND COALESCE(payment_id, '') = ''
                         """);
+                stmt.executeUpdate("""
+                        UPDATE customer_account_transactions
+                        SET payment_id = NULL
+                        WHERE COALESCE(transaction_type, '') <> 'PAYMENT'
+                          AND TRIM(COALESCE(payment_id, '')) = ''
+                        """);
+                stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_account_transactions_payment_id ON customer_account_transactions(payment_id) WHERE payment_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_customer_created_idx ON customer_account_transactions(customer_id, created_at DESC)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_location_created_idx ON customer_account_transactions(location_id, created_at DESC)");
+                stmt.executeUpdate("DROP INDEX IF EXISTS customer_account_transactions_payment_id_idx");
+                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_account_transactions_location_created");
                 backfillTransactionLocations(stmt);
             }
             if (tableExists(conn, "customer_account_payment_allocations")) {
@@ -54,6 +62,8 @@ public final class CustomerAccountLedgerService {
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_payment_idx ON customer_account_payment_allocations(payment_transaction_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sale_idx ON customer_account_payment_allocations(sale_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_custom_order_idx ON customer_account_payment_allocations(custom_order_id)");
+                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_payment");
+                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_sale");
             }
         }
     }

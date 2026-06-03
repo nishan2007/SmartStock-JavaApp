@@ -74,11 +74,13 @@ public final class BaseSchemaInstaller {
                         full_name TEXT,
                         email TEXT,
                         phone TEXT,
+                        employee_photo_url TEXT,
                         date_of_birth DATE,
                         badge_id TEXT,
                         badge_secret_salt TEXT,
                         badge_secret_hash TEXT,
                         badge_generated_at TIMESTAMPTZ,
+                        badge_print_count INTEGER NOT NULL DEFAULT 0,
                         compensation_type TEXT,
                         salary NUMERIC(12,2) NOT NULL DEFAULT 0,
                         role_id INTEGER REFERENCES roles(role_id),
@@ -103,10 +105,12 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_photo_url TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_salt TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_print_count INTEGER NOT NULL DEFAULT 0");
             stmt.executeUpdate("ALTER TABLE user_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
             stmt.executeUpdate("""
                     CREATE OR REPLACE FUNCTION set_users_updated_at()

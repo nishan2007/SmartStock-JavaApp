@@ -102,6 +102,23 @@ public final class ReceiptCounterSyncService {
                         vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE,
                         vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
                         next_receipt_counter INTEGER NOT NULL DEFAULT 1,
+                        badge_template_company_name TEXT NOT NULL DEFAULT 'SmartStock',
+                        badge_template_logo_url TEXT NOT NULL DEFAULT '',
+                        badge_template_quote TEXT NOT NULL DEFAULT '"Sales goes up and down, Service is Forever"',
+                        badge_template_signatory_name TEXT NOT NULL DEFAULT 'Authorized Signature',
+                        badge_template_signatory_title TEXT NOT NULL DEFAULT 'Management',
+                        badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan or swipe this badge for SmartStock access.',
+                        badge_template_show_quote BOOLEAN NOT NULL DEFAULT TRUE,
+                        badge_template_show_employee_id BOOLEAN NOT NULL DEFAULT TRUE,
+                        badge_template_show_issue_date BOOLEAN NOT NULL DEFAULT TRUE,
+                        badge_template_show_barcode BOOLEAN NOT NULL DEFAULT TRUE,
+                        badge_template_show_badge_text BOOLEAN NOT NULL DEFAULT FALSE,
+                        badge_template_magstripe_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                        badge_template_magstripe_track1 TEXT NOT NULL DEFAULT '{badge_id}',
+                        badge_template_magstripe_track2 TEXT NOT NULL DEFAULT '{badge_id}',
+                        badge_template_magstripe_track3 TEXT NOT NULL DEFAULT '',
+                        badge_template_magstripe_command TEXT NOT NULL DEFAULT '',
+                        badge_template_layout_data TEXT NOT NULL DEFAULT '',
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (location_id)
                     )
@@ -110,6 +127,23 @@ public final class ReceiptCounterSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_company_name TEXT NOT NULL DEFAULT 'SmartStock'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_logo_url TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_quote TEXT NOT NULL DEFAULT '\"Sales goes up and down, Service is Forever\"'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_signatory_name TEXT NOT NULL DEFAULT 'Authorized Signature'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_signatory_title TEXT NOT NULL DEFAULT 'Management'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan or swipe this badge for SmartStock access.'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_quote BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_employee_id BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_issue_date BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_badge_text BOOLEAN NOT NULL DEFAULT FALSE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_enabled BOOLEAN NOT NULL DEFAULT FALSE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track1 TEXT NOT NULL DEFAULT '{badge_id}'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track2 TEXT NOT NULL DEFAULT '{badge_id}'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track3 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
         }
     }

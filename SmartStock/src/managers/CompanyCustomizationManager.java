@@ -1,16 +1,15 @@
 package managers;
 
 import data.DB;
+import utils.ImageCacheManager;
 import utils.ImageOptimizationHelper;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,8 +24,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class CompanyCustomizationManager {
     private static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "company_customization.properties");
@@ -34,6 +39,8 @@ public class CompanyCustomizationManager {
     private static final String COMPANY_LOGO_BUCKET = getConfig("COMPANY_LOGO_BUCKET", "Product Images");
     private static final long MAX_ORIGINAL_LOGO_BYTES = 8L * 1024L * 1024L;
     private static final long MAX_LOGO_UPLOAD_BYTES = 300L * 1024L;
+    private static final long MAX_BADGE_TEMPLATE_IMAGE_BYTES = 50L * 1024L * 1024L;
+    private static final Pattern STORAGE_NAME_PATTERN = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"");
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .build();
@@ -581,7 +588,7 @@ public class CompanyCustomizationManager {
     private static BadgeTemplateSettings loadBadgeTemplateSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT COALESCE(badge_template_company_name, company_name, 'SmartStock') AS company_name,
-                       COALESCE(badge_template_logo_url, receipt_logo_url, '') AS logo_path,
+                       COALESCE(NULLIF(badge_template_logo_url, ''), receipt_logo_url, '') AS logo_path,
                        COALESCE(badge_template_quote, '"Sales goes up and down, Service is Forever"') AS quote_line,
                        COALESCE(badge_template_signatory_name, 'Authorized Signature') AS signatory_name,
                        COALESCE(badge_template_signatory_title, 'Management') AS signatory_title,
@@ -590,12 +597,13 @@ public class CompanyCustomizationManager {
                        COALESCE(badge_template_show_employee_id, TRUE) AS show_employee_id,
                        COALESCE(badge_template_show_issue_date, TRUE) AS show_issue_date,
                        COALESCE(badge_template_show_barcode, TRUE) AS show_barcode,
-                       COALESCE(badge_template_show_badge_text, TRUE) AS show_badge_text,
+                       COALESCE(badge_template_show_badge_text, FALSE) AS show_badge_text,
                        COALESCE(badge_template_magstripe_enabled, FALSE) AS magstripe_enabled,
                        COALESCE(badge_template_magstripe_track1, '{badge_id}') AS magstripe_track1,
                        COALESCE(badge_template_magstripe_track2, '{badge_id}') AS magstripe_track2,
                        COALESCE(badge_template_magstripe_track3, '') AS magstripe_track3,
-                       COALESCE(badge_template_magstripe_command, '') AS magstripe_command
+                       COALESCE(badge_template_magstripe_command, '') AS magstripe_command,
+                       COALESCE(badge_template_layout_data, '') AS layout_data
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -622,7 +630,8 @@ public class CompanyCustomizationManager {
                         rs.getString("magstripe_track1"),
                         rs.getString("magstripe_track2"),
                         rs.getString("magstripe_track3"),
-                        rs.getString("magstripe_command")
+                        rs.getString("magstripe_command"),
+                        rs.getString("layout_data")
                 );
             }
         }
@@ -649,9 +658,10 @@ public class CompanyCustomizationManager {
                     badge_template_magstripe_track2,
                     badge_template_magstripe_track3,
                     badge_template_magstripe_command,
+                    badge_template_layout_data,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     badge_template_company_name = EXCLUDED.badge_template_company_name,
                     badge_template_logo_url = EXCLUDED.badge_template_logo_url,
@@ -669,6 +679,7 @@ public class CompanyCustomizationManager {
                     badge_template_magstripe_track2 = EXCLUDED.badge_template_magstripe_track2,
                     badge_template_magstripe_track3 = EXCLUDED.badge_template_magstripe_track3,
                     badge_template_magstripe_command = EXCLUDED.badge_template_magstripe_command,
+                    badge_template_layout_data = EXCLUDED.badge_template_layout_data,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -690,6 +701,7 @@ public class CompanyCustomizationManager {
             ps.setString(15, settings.magStripeTrack2());
             ps.setString(16, settings.magStripeTrack3());
             ps.setString(17, settings.magStripeCommand());
+            ps.setString(18, settings.layoutData());
             ps.executeUpdate();
         }
     }
@@ -798,7 +810,7 @@ public class CompanyCustomizationManager {
         }
         return new BadgeTemplateSettings(
                 properties.getProperty("badge_template.company_name", properties.getProperty("receipt.company_name", "SmartStock")),
-                properties.getProperty("badge_template.logo_path", properties.getProperty("receipt.logo_path", "")),
+                firstNonBlank(properties.getProperty("badge_template.logo_path"), properties.getProperty("receipt.logo_path"), ""),
                 properties.getProperty("badge_template.quote", "\"Sales goes up and down, Service is Forever\""),
                 properties.getProperty("badge_template.signatory_name", "Authorized Signature"),
                 properties.getProperty("badge_template.signatory_title", "Management"),
@@ -807,12 +819,13 @@ public class CompanyCustomizationManager {
                 Boolean.parseBoolean(properties.getProperty("badge_template.show_employee_id", "true")),
                 Boolean.parseBoolean(properties.getProperty("badge_template.show_issue_date", "true")),
                 Boolean.parseBoolean(properties.getProperty("badge_template.show_barcode", "true")),
-                Boolean.parseBoolean(properties.getProperty("badge_template.show_badge_text", "true")),
+                Boolean.parseBoolean(properties.getProperty("badge_template.show_badge_text", "false")),
                 Boolean.parseBoolean(properties.getProperty("badge_template.magstripe_enabled", "false")),
                 properties.getProperty("badge_template.magstripe_track1", "{badge_id}"),
                 properties.getProperty("badge_template.magstripe_track2", "{badge_id}"),
                 properties.getProperty("badge_template.magstripe_track3", ""),
-                properties.getProperty("badge_template.magstripe_command", "")
+                properties.getProperty("badge_template.magstripe_command", ""),
+                properties.getProperty("badge_template.layout_data", "")
         );
     }
 
@@ -933,6 +946,7 @@ public class CompanyCustomizationManager {
         properties.setProperty("badge_template.magstripe_track2", settings.magStripeTrack2());
         properties.setProperty("badge_template.magstripe_track3", settings.magStripeTrack3());
         properties.setProperty("badge_template.magstripe_command", settings.magStripeCommand());
+        properties.setProperty("badge_template.layout_data", settings.layoutData());
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -971,6 +985,18 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
     public static String uploadReceiptLogo(Path sourcePath) throws Exception {
         return uploadCompanyLogo(sourcePath);
     }
@@ -994,6 +1020,25 @@ public class CompanyCustomizationManager {
         return targetPath.toString();
     }
 
+    public static String uploadBadgeTemplateImage(Path sourcePath) throws Exception {
+        if (sourcePath == null || !Files.exists(sourcePath)) {
+            throw new IOException("Badge template image was not found.");
+        }
+
+        if (SessionManager.getCurrentLocationId() != null) {
+            return uploadOriginalBadgeTemplateImageToStorage(sourcePath, SessionManager.getCurrentLocationId());
+        }
+
+        String extension = getExtension(sourcePath.getFileName().toString());
+        if (extension.isBlank()) {
+            extension = "png";
+        }
+        Path targetPath = LOGO_DIRECTORY.resolve("badge-template-" + System.currentTimeMillis() + "." + extension.toLowerCase(Locale.ROOT));
+        Files.createDirectories(LOGO_DIRECTORY);
+        Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        return targetPath.toString();
+    }
+
     public static BufferedImage loadReceiptLogo(ReceiptSettings settings) {
         if (settings == null || !settings.showLogo() || settings.logoPath().isBlank()) {
             return null;
@@ -1008,21 +1053,18 @@ public class CompanyCustomizationManager {
         }
 
         try {
-            String logoPath = settings.logoPath();
-            if (isRemoteImageUrl(logoPath)) {
-                URL url = URI.create(logoPath).toURL();
-                return ImageIO.read(url);
-            } else {
-                Path path = Path.of(logoPath);
-                if (!Files.exists(path)) {
-                    return null;
-                }
-                return ImageIO.read(path.toFile());
-            }
+            return ImageCacheManager.loadImage(settings.logoPath());
         } catch (Exception ex) {
             ex.printStackTrace();
             return null;
         }
+    }
+
+    public static List<UploadedImageOption> listUploadedCompanyLogos() throws Exception {
+        Map<String, UploadedImageOption> options = new LinkedHashMap<>();
+        addLogoOptionsFromDatabase(options);
+        addLogoOptionsFromStorage(options);
+        return new ArrayList<>(options.values());
     }
 
     private static ReceiptSettings previewOverrideSettings;
@@ -1043,6 +1085,110 @@ public class CompanyCustomizationManager {
             return "";
         }
         return fileName.substring(dotIndex + 1);
+    }
+
+    private static void addLogoOptionsFromDatabase(Map<String, UploadedImageOption> options) {
+        String sql = """
+                SELECT DISTINCT logo_url
+                FROM (
+                    SELECT NULLIF(TRIM(receipt_logo_url), '') AS logo_url
+                    FROM company_customization
+                    UNION
+                    SELECT NULLIF(TRIM(badge_template_logo_url), '') AS logo_url
+                    FROM company_customization
+                ) logos
+                WHERE logo_url IS NOT NULL
+                ORDER BY logo_url DESC
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String url = rs.getString("logo_url");
+                if (isRemoteImageUrl(url)) {
+                    options.putIfAbsent(url, new UploadedImageOption(displayNameFromUrl(url), url));
+                }
+            }
+        } catch (Exception ex) {
+            // The Storage list below can still recover uploaded logo files.
+        }
+    }
+
+    private static void addLogoOptionsFromStorage(Map<String, UploadedImageOption> options) throws Exception {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            addLogoOptionsFromStoragePrefix(options, "company/location-" + locationId);
+        }
+    }
+
+    private static void addLogoOptionsFromStoragePrefix(Map<String, UploadedImageOption> options, String prefix) throws Exception {
+        String accessToken = SupabaseSessionManager.getValidAccessToken();
+        String encodedBucket = encodePathSegment(COMPANY_LOGO_BUCKET);
+        String requestBody = "{\"prefix\":\"" + jsonEscape(prefix) + "\",\"limit\":100,\"offset\":0,"
+                + "\"sortBy\":{\"column\":\"created_at\",\"order\":\"desc\"}}";
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
+                        + "/storage/v1/object/list/"
+                        + encodedBucket))
+                .timeout(Duration.ofSeconds(20))
+                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
+                .build();
+
+        HttpResponse<String> response = HTTP_CLIENT.send(
+                request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        );
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Supabase Storage returned HTTP "
+                    + response.statusCode()
+                    + " while listing company logos: "
+                    + response.body());
+        }
+
+        Matcher matcher = STORAGE_NAME_PATTERN.matcher(response.body());
+        while (matcher.find()) {
+            String name = unescapeJsonString(matcher.group(1));
+            if (name.isBlank() || name.contains("/")) {
+                continue;
+            }
+            String objectPath = prefix + "/" + name;
+            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
+                    + "/storage/v1/object/public/"
+                    + encodedBucket
+                    + "/"
+                    + encodeObjectPath(objectPath);
+            options.putIfAbsent(publicUrl, new UploadedImageOption(name, publicUrl));
+        }
+    }
+
+    private static String displayNameFromUrl(String url) {
+        try {
+            String path = URI.create(url).getPath();
+            int slash = path == null ? -1 : path.lastIndexOf('/');
+            if (slash >= 0 && slash < path.length() - 1) {
+                return path.substring(slash + 1);
+            }
+        } catch (Exception ex) {
+            // Use the full URL fallback below.
+        }
+        return url;
+    }
+
+    private static String jsonEscape(String value) {
+        return Objects.requireNonNullElse(value, "")
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"");
+    }
+
+    private static String unescapeJsonString(String value) {
+        return Objects.requireNonNullElse(value, "")
+                .replace("\\/", "/")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
     }
 
     private static String uploadReceiptLogoToStorage(File logoFile, int locationId) throws Exception {
@@ -1088,16 +1234,78 @@ public class CompanyCustomizationManager {
                         + response.body());
             }
 
-            return SupabaseSessionManager.getSupabaseUrl()
+            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
                     + "/storage/v1/object/public/"
                     + encodedBucket
                     + "/"
                     + encodedObjectPath;
+            ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());
+            return publicUrl;
         }
     }
 
+    private static String uploadOriginalBadgeTemplateImageToStorage(Path imagePath, int locationId) throws Exception {
+        long size = Files.size(imagePath);
+        if (size > MAX_BADGE_TEMPLATE_IMAGE_BYTES) {
+            throw new IOException("Badge template image is larger than " + (MAX_BADGE_TEMPLATE_IMAGE_BYTES / 1024 / 1024) + " MB.");
+        }
+
+        String filename = sanitizeFilename(imagePath.getFileName().toString());
+        String contentType = Files.probeContentType(imagePath);
+        if (contentType == null || contentType.isBlank()) {
+            contentType = switch (getExtension(filename).toLowerCase(Locale.ROOT)) {
+                case "jpg", "jpeg" -> "image/jpeg";
+                case "gif" -> "image/gif";
+                case "bmp" -> "image/bmp";
+                case "webp" -> "image/webp";
+                default -> "image/png";
+            };
+        }
+
+        String accessToken = SupabaseSessionManager.getValidAccessToken();
+        String objectPath = "company/location-" + locationId + "/badge-template-" + System.currentTimeMillis() + "-" + filename;
+        String encodedBucket = encodePathSegment(COMPANY_LOGO_BUCKET);
+        String encodedObjectPath = encodeObjectPath(objectPath);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
+                        + "/storage/v1/object/"
+                        + encodedBucket
+                        + "/"
+                        + encodedObjectPath))
+                .timeout(Duration.ofSeconds(45))
+                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", contentType)
+                .header("x-upsert", "true")
+                .POST(HttpRequest.BodyPublishers.ofFile(imagePath))
+                .build();
+
+        HttpResponse<String> response = HTTP_CLIENT.send(
+                request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        );
+
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Supabase Storage returned HTTP "
+                    + response.statusCode()
+                    + " while uploading badge template image to bucket "
+                    + COMPANY_LOGO_BUCKET
+                    + ": "
+                    + response.body());
+        }
+
+        String publicUrl = SupabaseSessionManager.getSupabaseUrl()
+                + "/storage/v1/object/public/"
+                + encodedBucket
+                + "/"
+                + encodedObjectPath;
+        ImageCacheManager.cacheUploadedImage(publicUrl, imagePath);
+        return publicUrl;
+    }
+
     private static boolean isRemoteImageUrl(String imageUrl) {
-        return imageUrl != null && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+        return ImageCacheManager.isRemoteImageUrl(imageUrl);
     }
 
     private static String sanitizeFilename(String filename) {
@@ -1135,6 +1343,18 @@ public class CompanyCustomizationManager {
             value = fallback;
         }
         return value;
+    }
+
+    public record UploadedImageOption(String name, String url) {
+        public UploadedImageOption {
+            name = Objects.requireNonNullElse(name, "").trim();
+            url = Objects.requireNonNullElse(url, "").trim();
+        }
+
+        @Override
+        public String toString() {
+            return name.isBlank() ? url : name;
+        }
     }
 
     public record ReceiptSettings(
@@ -1255,7 +1475,8 @@ public class CompanyCustomizationManager {
             String magStripeTrack1,
             String magStripeTrack2,
             String magStripeTrack3,
-            String magStripeCommand
+            String magStripeCommand,
+            String layoutData
     ) {
         public BadgeTemplateSettings {
             companyName = clean(companyName, "SmartStock");
@@ -1268,6 +1489,7 @@ public class CompanyCustomizationManager {
             magStripeTrack2 = clean(magStripeTrack2, "{badge_id}");
             magStripeTrack3 = Objects.requireNonNullElse(magStripeTrack3, "").trim();
             magStripeCommand = Objects.requireNonNullElse(magStripeCommand, "").trim();
+            layoutData = Objects.requireNonNullElse(layoutData, "").trim();
         }
 
         private static String clean(String value, String fallback) {

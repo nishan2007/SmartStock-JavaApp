@@ -1,16 +1,15 @@
 package ui.helpers;
 
 import managers.SupabaseSessionManager;
+import utils.ImageCacheManager;
 import utils.ImageOptimizationHelper;
 
-import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.io.File;
 import java.net.URI;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,7 +46,7 @@ public final class ProductImageHelper {
     }
 
     public static boolean isRemoteImageUrl(String imageUrl) {
-        return imageUrl != null && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+        return ImageCacheManager.isRemoteImageUrl(imageUrl);
     }
 
     public static String uploadLocalImageIfNeeded(String imageUrl) throws Exception {
@@ -85,13 +84,7 @@ public final class ProductImageHelper {
 
     private static ImageIcon loadScaledIcon(String imageUrl, int maxWidth, int maxHeight) {
         try {
-            Image image;
-            if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
-                URL url = URI.create(imageUrl).toURL();
-                image = ImageIO.read(url);
-            } else {
-                image = ImageIO.read(new File(imageUrl));
-            }
+            Image image = ImageCacheManager.loadImage(imageUrl);
 
             if (image == null) {
                 return null;
@@ -276,11 +269,13 @@ public final class ProductImageHelper {
                         + response.body());
             }
 
-            return SupabaseSessionManager.getSupabaseUrl()
+            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
                     + "/storage/v1/object/public/"
                     + encodedBucket
                     + "/"
                     + encodedObjectPath;
+            ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());
+            return publicUrl;
         }
     }
 

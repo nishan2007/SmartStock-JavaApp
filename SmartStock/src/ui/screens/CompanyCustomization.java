@@ -10,9 +10,11 @@ import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
+import services.BadgePrintService;
 import services.OfflineWriteGuard;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import utils.ImageCacheManager;
 import ui.screens.companyprefs.CompanyIdentityPanel;
 import ui.screens.companyprefs.CustomOrderDepositPanel;
 import ui.screens.companyprefs.CustomOrderReceiptPanel;
@@ -28,18 +30,23 @@ import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.io.File;
-import java.net.URI;
-import java.net.URL;
-import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class CompanyCustomization extends JFrame {
     public static final String NAV_COMPANY_IDENTITY = "Company Identity";
+    public static final String NAV_EMPLOYEE_BADGES = "Employee Badges";
     public static final String NAV_LOCATIONS = "Locations";
     public static final String NAV_CASH_DRAWER_MANAGER = "Cash Drawer Manager";
     private static final String NAV_SALE = "Sale";
@@ -47,6 +54,8 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
     private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
     private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
+    private static final int BADGE_CARD_WIDTH = 638;
+    private static final int BADGE_CARD_HEIGHT = 1013;
 
     private final JTextField companyNameField = new JTextField();
     private final JTextField headerLineField = new JTextField();
@@ -89,6 +98,58 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox slipShowPaymentReferenceBox = new JCheckBox("Payment reference");
     private final JCheckBox slipShowTakenByBox = new JCheckBox("Taken/delivered by");
     private final JCheckBox slipShowSignaturesBox = new JCheckBox("Signature lines");
+    private final JTextField badgeCompanyNameField = new JTextField();
+    private final JTextField badgeLogoPathField = new JTextField();
+    private final JTextField badgeQuoteField = new JTextField();
+    private final JTextField badgeSignatoryNameField = new JTextField();
+    private final JTextField badgeSignatoryTitleField = new JTextField();
+    private final JTextField badgeBackInstructionsField = new JTextField();
+    private final JCheckBox badgeShowQuoteBox = new JCheckBox("Quote");
+    private final JCheckBox badgeShowEmployeeIdBox = new JCheckBox("Employee ID");
+    private final JCheckBox badgeShowIssueDateBox = new JCheckBox("Issue date");
+    private final JCheckBox badgeShowBarcodeBox = new JCheckBox("Back barcode");
+    private final JCheckBox badgeShowBadgeTextBox = new JCheckBox("Badge ID text");
+    private final JCheckBox badgeMagStripeEnabledBox = new JCheckBox("Enable magnetic stripe writer");
+    private final JTextField badgeMagStripeTrack1Field = new JTextField();
+    private final JTextField badgeMagStripeTrack2Field = new JTextField();
+    private final JTextField badgeMagStripeTrack3Field = new JTextField();
+    private final JTextField badgeMagStripeCommandField = new JTextField();
+    private String badgeLayoutData = "";
+    private String badgeSelectedTemplateElementId = "";
+    private final Set<String> badgeSelectedTemplateElementIds = new LinkedHashSet<>();
+    private final Map<String, JCheckBox> badgeElementVisibilityBoxes = new LinkedHashMap<>();
+    private boolean updatingBadgeFontControls = false;
+    private final JComboBox<String> badgeFontFamilyBox = new JComboBox<>(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+    private final JComboBox<String> badgeFontStyleBox = new JComboBox<>(new String[]{"Regular", "Bold", "Italic", "Bold Italic"});
+    private final JComboBox<String> badgeFontWeightBox = new JComboBox<>(new String[]{"Regular", "Medium", "Semi Bold", "Bold", "Extra Bold", "Black"});
+    private final JSpinner badgeFontMaxSizeSpinner = new JSpinner(new SpinnerNumberModel(44, 8, 96, 1));
+    private final JComboBox<String> badgeTextAlignmentBox = new JComboBox<>(new String[]{"Left", "Center", "Right"});
+    private final JComboBox<String> badgeElementRotationBox = new JComboBox<>(new String[]{"0", "90", "180", "270"});
+    private final JSpinner badgeElementXSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 638, 1));
+    private final JSpinner badgeElementYSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 1013, 1));
+    private final JSpinner badgeElementWidthSpinner = new JSpinner(new SpinnerNumberModel(100, 24, 638, 1));
+    private final JSpinner badgeElementHeightSpinner = new JSpinner(new SpinnerNumberModel(40, 18, 1013, 1));
+    private final JTextField badgeCustomTextField = new JTextField();
+    private final JTextField badgeSignatureImageField = new JTextField();
+    private final JTextField badgeElementImageField = new JTextField();
+    private final JSlider badgeImageOpacitySlider = new JSlider(5, 100, 100);
+    private final JLabel badgeImageOpacityValueLabel = new JLabel("100%");
+    private final JButton badgeElementColorButton = new JButton("Choose");
+    private final JLabel badgeElementColorSwatch = new JLabel();
+    private final JCheckBox badgeTextAllCapsBox = new JCheckBox("All caps");
+    private final JCheckBox badgeTextOutlineBox = new JCheckBox("Text outline");
+    private final JButton badgeTextOutlineColorButton = new JButton("Choose");
+    private final JLabel badgeTextOutlineColorSwatch = new JLabel();
+    private final JCheckBox badgeTextBoxOutlineBox = new JCheckBox("Box outline");
+    private final JButton badgeTextBoxOutlineColorButton = new JButton("Choose");
+    private final JLabel badgeTextBoxOutlineColorSwatch = new JLabel();
+    private final JButton badgeAlignGroupCenterHButton = new JButton("Center H");
+    private final JButton badgeAlignGroupCenterVButton = new JButton("Center V");
+    private final JButton badgeAlignGroupCenterBothButton = new JButton("Center Both");
+    private final JComboBox<String> badgeNameLayoutBox = new JComboBox<>(new String[]{"One line", "Two lines"});
+    private final JLabel badgeSelectedElementLabel = new JLabel("Select an element");
+    private BadgeTemplateEditorPanel sampleBadgeFrontPanel;
+    private BadgeTemplateEditorPanel sampleBadgeBackPanel;
     private final JLabel logoPreviewLabel = new JLabel("No Logo", SwingConstants.CENTER);
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final CustomOrderSlipPreviewPanel sampleSlipPanel = new CustomOrderSlipPreviewPanel();
@@ -157,6 +218,7 @@ public class CompanyCustomization extends JFrame {
     private JComponent buildNavigationPanel() {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("Preferences");
         addNodeIfPermitted(root, NAV_COMPANY_IDENTITY);
+        addNodeIfPermitted(root, NAV_EMPLOYEE_BADGES);
         addNodeIfPermitted(root, NAV_LOCATIONS);
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
 
@@ -232,6 +294,9 @@ public class CompanyCustomization extends JFrame {
         if (canAccessPreferenceSection(NAV_COMPANY_IDENTITY)) {
             rightContentPanel.add(buildCompanyIdentityScreen(), NAV_COMPANY_IDENTITY);
         }
+        if (canAccessPreferenceSection(NAV_EMPLOYEE_BADGES)) {
+            rightContentPanel.add(buildEmployeeBadgesScreen(), NAV_EMPLOYEE_BADGES);
+        }
         if (canAccessPreferenceSection(NAV_LOCATIONS)) {
             rightContentPanel.add(buildLocationsEmbeddedScreen(), NAV_LOCATIONS);
         }
@@ -276,7 +341,7 @@ public class CompanyCustomization extends JFrame {
         return switch (key) {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING -> canEditCompanyPreferences();
             default -> false;
         };
@@ -293,6 +358,7 @@ public class CompanyCustomization extends JFrame {
         }
         for (String key : new String[]{
                 NAV_COMPANY_IDENTITY,
+                NAV_EMPLOYEE_BADGES,
                 NAV_LOCATIONS,
                 NAV_CASH_DRAWER_MANAGER,
                 NAV_SALE,
@@ -347,6 +413,1091 @@ public class CompanyCustomization extends JFrame {
         contentPanel.add(buildReceiptFormattingPanel(), BorderLayout.CENTER);
         contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
         return contentPanel;
+    }
+
+    private JPanel buildEmployeeBadgesScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        badgeLogoPathField.setEditable(false);
+        contentPanel.add(buildBadgeEditorLaunchPanel(), BorderLayout.NORTH);
+        contentPanel.add(buildBadgeMagStripePanel(), BorderLayout.CENTER);
+        return contentPanel;
+    }
+
+    private JPanel buildBadgeEditorLaunchPanel() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 12));
+        panel.setOpaque(false);
+        JButton openEditorButton = new JButton("Open Badge Template Editor");
+        openEditorButton.addActionListener(e -> openBadgeTemplateEditorDialog());
+        panel.add(openEditorButton);
+        return panel;
+    }
+
+    private JPanel buildBadgeMagStripePanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(229, 231, 235)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.insets = new Insets(0, 0, 8, 0);
+
+        JLabel title = new JLabel("Magnetic Stripe");
+        title.setFont(new Font("SansSerif", Font.BOLD, 16));
+        panel.add(title, gbc);
+        gbc.gridy++;
+        panel.add(badgeMagStripeEnabledBox, gbc);
+        gbc.gridy++;
+        addFullWidthPreferenceField(panel, gbc, "Track 1 template:", badgeMagStripeTrack1Field);
+        addFullWidthPreferenceField(panel, gbc, "Track 2 template:", badgeMagStripeTrack2Field);
+        addFullWidthPreferenceField(panel, gbc, "Track 3 template:", badgeMagStripeTrack3Field);
+        addFullWidthPreferenceField(panel, gbc, "Writer command:", badgeMagStripeCommandField);
+
+        JTextArea help = new JTextArea("Placeholders: {badge_id}, {employee_id}, {full_name}, {first_name}, {last_name}, {role}, {company}, {issued_date}, {track1}, {track2}, {track3}.");
+        help.setEditable(false);
+        help.setLineWrap(true);
+        help.setWrapStyleWord(true);
+        help.setOpaque(false);
+        help.setForeground(new Color(75, 85, 99));
+        help.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        gbc.insets = new Insets(4, 0, 0, 0);
+        panel.add(help, gbc);
+        gbc.gridy++;
+        gbc.weighty = 1;
+        panel.add(Box.createVerticalGlue(), gbc);
+        return panel;
+    }
+
+    private void addFullWidthPreferenceField(JPanel panel, GridBagConstraints gbc, String labelText, JComponent field) {
+        JLabel label = new JLabel(labelText);
+        label.setFont(new Font("SansSerif", Font.BOLD, 12));
+        gbc.insets = new Insets(8, 0, 2, 0);
+        panel.add(label, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 4, 0);
+        panel.add(field, gbc);
+        gbc.gridy++;
+    }
+
+    private void openBadgeTemplateEditorDialog() {
+        JDialog dialog = new JDialog(this, "Badge Template Editor", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        dialog.setLayout(new BorderLayout(12, 12));
+        dialog.getRootPane().setBorder(new EmptyBorder(14, 14, 14, 14));
+        dialog.add(buildBadgePreviewPanel(), BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JButton resetLayoutButton = new JButton("Reset Layout");
+        JButton closeButton = new JButton("Close");
+        resetLayoutButton.addActionListener(e -> {
+            badgeLayoutData = BadgePrintService.resetLayout();
+            updateBadgeFontControls();
+            refreshBadgeElementVisibilityControls();
+            refreshBadgePreview();
+        });
+        closeButton.addActionListener(e -> dialog.dispose());
+        buttons.add(resetLayoutButton);
+        buttons.add(closeButton);
+        dialog.add(buttons, BorderLayout.SOUTH);
+
+        refreshBadgePreview();
+        dialog.pack();
+        dialog.setSize(new Dimension(760, 760));
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
+    private JPanel buildBadgePreviewPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setPreferredSize(new Dimension(520, 680));
+        panel.setMinimumSize(new Dimension(500, 640));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        JLabel sectionLabel = new JLabel("Badge Template Editor");
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        JPanel headerPanel = new JPanel(new BorderLayout(12, 8));
+        headerPanel.setOpaque(false);
+        headerPanel.add(sectionLabel, BorderLayout.NORTH);
+        headerPanel.add(buildBadgeGroupAlignmentToolbar(), BorderLayout.SOUTH);
+        panel.add(headerPanel, BorderLayout.NORTH);
+
+        JTabbedPane previewTabs = new JTabbedPane();
+        sampleBadgeFrontPanel = new BadgeTemplateEditorPanel("front", 390);
+        sampleBadgeBackPanel = new BadgeTemplateEditorPanel("back", 390);
+        previewTabs.addTab("Front", new JScrollPane(sampleBadgeFrontPanel));
+        previewTabs.addTab("Back", new JScrollPane(sampleBadgeBackPanel));
+        JPanel editorBody = new JPanel(new BorderLayout(12, 0));
+        editorBody.setOpaque(false);
+        editorBody.add(buildBadgeElementVisibilityPanel(), BorderLayout.WEST);
+        editorBody.add(previewTabs, BorderLayout.CENTER);
+        JScrollPane settingsScrollPane = new JScrollPane(buildBadgeFontControlPanel());
+        settingsScrollPane.setBorder(BorderFactory.createLineBorder(new Color(229, 231, 235)));
+        settingsScrollPane.setPreferredSize(new Dimension(250, 0));
+        settingsScrollPane.setBackground(Color.WHITE);
+        settingsScrollPane.getViewport().setBackground(Color.WHITE);
+        settingsScrollPane.getViewport().setOpaque(true);
+        settingsScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        settingsScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        settingsScrollPane.getVerticalScrollBar().setUnitIncrement(14);
+        editorBody.add(settingsScrollPane, BorderLayout.EAST);
+        panel.add(editorBody, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel buildBadgeGroupAlignmentToolbar() {
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        toolbar.setOpaque(false);
+        JLabel label = new JLabel("Align selected:");
+        label.setForeground(new Color(17, 24, 39));
+        label.setFont(new Font("SansSerif", Font.BOLD, 12));
+        JButton centerHButton = new JButton("Center H");
+        JButton centerVButton = new JButton("Center V");
+        JButton centerBothButton = new JButton("Center Both");
+        centerHButton.addActionListener(e -> centerSelectedBadgeElements(true, false));
+        centerVButton.addActionListener(e -> centerSelectedBadgeElements(false, true));
+        centerBothButton.addActionListener(e -> centerSelectedBadgeElements(true, true));
+        toolbar.add(label);
+        toolbar.add(centerHButton);
+        toolbar.add(centerVButton);
+        toolbar.add(centerBothButton);
+        JLabel layerLabel = new JLabel("  Layer:");
+        layerLabel.setForeground(new Color(17, 24, 39));
+        layerLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        JButton sendBackButton = new JButton("Send Back");
+        JButton backwardButton = new JButton("Backward");
+        JButton forwardButton = new JButton("Forward");
+        JButton bringFrontButton = new JButton("Bring Front");
+        sendBackButton.addActionListener(e -> moveSelectedBadgeLayers("back"));
+        backwardButton.addActionListener(e -> moveSelectedBadgeLayers("backward"));
+        forwardButton.addActionListener(e -> moveSelectedBadgeLayers("forward"));
+        bringFrontButton.addActionListener(e -> moveSelectedBadgeLayers("front"));
+        toolbar.add(layerLabel);
+        toolbar.add(sendBackButton);
+        toolbar.add(backwardButton);
+        toolbar.add(forwardButton);
+        toolbar.add(bringFrontButton);
+        return toolbar;
+    }
+
+    private JPanel buildBadgeElementVisibilityPanel() {
+        badgeElementVisibilityBoxes.clear();
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setOpaque(true);
+        panel.setBackground(Color.WHITE);
+        panel.setPreferredSize(new Dimension(170, 0));
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(229, 231, 235)),
+                new EmptyBorder(10, 10, 10, 10)
+        ));
+
+        JLabel title = new JLabel("Elements");
+        title.setFont(new Font("SansSerif", Font.BOLD, 15));
+        title.setForeground(new Color(17, 24, 39));
+        panel.add(title, BorderLayout.NORTH);
+
+        JPanel list = new JPanel(new GridBagLayout());
+        list.setOpaque(true);
+        list.setBackground(Color.WHITE);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.insets = new Insets(2, 0, 2, 0);
+        int row = 0;
+        row = addBadgeVisibilityGroup(list, gbc, row, "Front", "front");
+        row = addBadgeVisibilityGroup(list, gbc, row, "Back", "back");
+        gbc.gridy = row;
+        gbc.weighty = 1;
+        list.add(Box.createVerticalGlue(), gbc);
+
+        JScrollPane scrollPane = new JScrollPane(list);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setOpaque(true);
+        scrollPane.setBackground(Color.WHITE);
+        scrollPane.getViewport().setOpaque(true);
+        scrollPane.getViewport().setBackground(Color.WHITE);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        panel.add(scrollPane, BorderLayout.CENTER);
+        refreshBadgeElementVisibilityControls();
+        return panel;
+    }
+
+    private int addBadgeVisibilityGroup(JPanel list, GridBagConstraints gbc, int row, String title, String side) {
+        JLabel label = new JLabel(title);
+        label.setFont(new Font("SansSerif", Font.BOLD, 12));
+        label.setForeground(new Color(75, 85, 99));
+        gbc.gridy = row++;
+        gbc.insets = new Insets(row == 1 ? 0 : 10, 0, 4, 0);
+        list.add(label, gbc);
+        gbc.insets = new Insets(1, 0, 1, 0);
+        for (BadgePrintService.BadgeElement element : BadgePrintService.elementsForSide(side)) {
+            JCheckBox box = new JCheckBox(element.label());
+            box.setOpaque(false);
+            box.setForeground(new Color(31, 41, 55));
+            box.addActionListener(e -> {
+                badgeLayoutData = BadgePrintService.updateElementVisible(badgeLayoutData, element.id(), box.isSelected());
+                if (!box.isSelected()) {
+                    badgeSelectedTemplateElementIds.remove(element.id());
+                    if (element.id().equals(badgeSelectedTemplateElementId)) {
+                        badgeSelectedTemplateElementId = badgeSelectedTemplateElementIds.stream().reduce((first, second) -> second).orElse("");
+                    }
+                    updateBadgeFontControls();
+                }
+                syncLegacyBadgeVisibilityFields();
+                refreshBadgePreview();
+            });
+            badgeElementVisibilityBoxes.put(element.id(), box);
+            gbc.gridy = row++;
+            list.add(box, gbc);
+        }
+        return row;
+    }
+
+    private JPanel buildBadgeFontControlPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setPreferredSize(new Dimension(230, 1040));
+        panel.setMinimumSize(new Dimension(230, 1040));
+        panel.setOpaque(true);
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(229, 231, 235)),
+                new EmptyBorder(12, 12, 12, 12)
+        ));
+
+        JLabel title = new JLabel("Element Settings");
+        title.setForeground(new Color(17, 24, 39));
+        title.setFont(new Font("SansSerif", Font.BOLD, 15));
+        badgeSelectedElementLabel.setForeground(new Color(75, 85, 99));
+        badgeSelectedElementLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        badgeFontFamilyBox.setMaximumRowCount(12);
+        badgeFontFamilyBox.setPrototypeDisplayValue("SansSerif Wide");
+        ((JSpinner.DefaultEditor) badgeFontMaxSizeSpinner.getEditor()).getTextField().setColumns(4);
+        badgeSignatureImageField.setEditable(false);
+        badgeElementImageField.setEditable(false);
+        badgeImageOpacitySlider.setPaintTicks(false);
+        badgeImageOpacitySlider.setPaintLabels(false);
+        badgeElementColorSwatch.setOpaque(true);
+        badgeElementColorSwatch.setPreferredSize(new Dimension(32, 24));
+        badgeElementColorSwatch.setBorder(BorderFactory.createLineBorder(new Color(156, 163, 175)));
+        badgeTextOutlineColorSwatch.setOpaque(true);
+        badgeTextOutlineColorSwatch.setPreferredSize(new Dimension(32, 24));
+        badgeTextOutlineColorSwatch.setBorder(BorderFactory.createLineBorder(new Color(156, 163, 175)));
+        badgeTextBoxOutlineColorSwatch.setOpaque(true);
+        badgeTextBoxOutlineColorSwatch.setPreferredSize(new Dimension(32, 24));
+        badgeTextBoxOutlineColorSwatch.setBorder(BorderFactory.createLineBorder(new Color(156, 163, 175)));
+        configureCompactSpinner(badgeElementXSpinner);
+        configureCompactSpinner(badgeElementYSpinner);
+        configureCompactSpinner(badgeElementWidthSpinner);
+        configureCompactSpinner(badgeElementHeightSpinner);
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.insets = new Insets(0, 0, 6, 0);
+        panel.add(title, gbc);
+        gbc.gridy++;
+        panel.add(badgeSelectedElementLabel, gbc);
+        gbc.gridy++;
+        JPanel exactPanel = new JPanel(new GridLayout(2, 4, 4, 4));
+        exactPanel.setOpaque(false);
+        exactPanel.add(new JLabel("X"));
+        exactPanel.add(new JLabel("Y"));
+        exactPanel.add(new JLabel("W"));
+        exactPanel.add(new JLabel("H"));
+        exactPanel.add(badgeElementXSpinner);
+        exactPanel.add(badgeElementYSpinner);
+        exactPanel.add(badgeElementWidthSpinner);
+        exactPanel.add(badgeElementHeightSpinner);
+        gbc.insets = new Insets(10, 0, 4, 0);
+        panel.add(new JLabel("Exact size"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(exactPanel, gbc);
+        gbc.gridy++;
+        JPanel alignGroupPanel = new JPanel(new GridLayout(1, 0, 4, 0));
+        alignGroupPanel.setOpaque(false);
+        alignGroupPanel.add(badgeAlignGroupCenterHButton);
+        alignGroupPanel.add(badgeAlignGroupCenterVButton);
+        alignGroupPanel.add(badgeAlignGroupCenterBothButton);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Align selected"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(alignGroupPanel, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(12, 0, 4, 0);
+        panel.add(new JLabel("Custom text"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(badgeCustomTextField, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Element image"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 4, 0);
+        panel.add(badgeElementImageField, gbc);
+        gbc.gridy++;
+        JPanel imageButtons = new JPanel(new GridLayout(1, 0, 4, 0));
+        imageButtons.setOpaque(false);
+        JButton uploadImageButton = new JButton("Upload");
+        JButton selectImageButton = new JButton("Select");
+        JButton clearImageButton = new JButton("Clear");
+        imageButtons.add(uploadImageButton);
+        imageButtons.add(selectImageButton);
+        imageButtons.add(clearImageButton);
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(imageButtons, gbc);
+        gbc.gridy++;
+        JPanel opacityPanel = new JPanel(new BorderLayout(6, 0));
+        opacityPanel.setOpaque(false);
+        opacityPanel.add(badgeImageOpacitySlider, BorderLayout.CENTER);
+        opacityPanel.add(badgeImageOpacityValueLabel, BorderLayout.EAST);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Image opacity"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(opacityPanel, gbc);
+        gbc.gridy++;
+        JPanel colorPanel = new JPanel(new BorderLayout(6, 0));
+        colorPanel.setOpaque(false);
+        colorPanel.add(badgeElementColorSwatch, BorderLayout.WEST);
+        colorPanel.add(badgeElementColorButton, BorderLayout.CENTER);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Color"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(colorPanel, gbc);
+        gbc.gridy++;
+        JPanel textOptionsPanel = new JPanel(new GridLayout(0, 1, 0, 2));
+        textOptionsPanel.setOpaque(false);
+        textOptionsPanel.add(badgeTextAllCapsBox);
+        textOptionsPanel.add(badgeTextOutlineBox);
+        textOptionsPanel.add(badgeTextBoxOutlineBox);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Text options"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(textOptionsPanel, gbc);
+        gbc.gridy++;
+        JPanel textOutlineColorPanel = new JPanel(new BorderLayout(6, 0));
+        textOutlineColorPanel.setOpaque(false);
+        textOutlineColorPanel.add(badgeTextOutlineColorSwatch, BorderLayout.WEST);
+        textOutlineColorPanel.add(badgeTextOutlineColorButton, BorderLayout.CENTER);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Text outline color"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(textOutlineColorPanel, gbc);
+        gbc.gridy++;
+        JPanel boxOutlineColorPanel = new JPanel(new BorderLayout(6, 0));
+        boxOutlineColorPanel.setOpaque(false);
+        boxOutlineColorPanel.add(badgeTextBoxOutlineColorSwatch, BorderLayout.WEST);
+        boxOutlineColorPanel.add(badgeTextBoxOutlineColorButton, BorderLayout.CENTER);
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Box outline color"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(boxOutlineColorPanel, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Name layout"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(badgeNameLayoutBox, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(12, 0, 4, 0);
+        panel.add(new JLabel("Family"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(badgeFontFamilyBox, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Style"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(badgeFontStyleBox, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Weight"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(badgeFontWeightBox, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Max size"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(badgeFontMaxSizeSpinner, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Alignment"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(badgeTextAlignmentBox, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(4, 0, 4, 0);
+        panel.add(new JLabel("Rotation"), gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(badgeElementRotationBox, gbc);
+        gbc.gridy++;
+        JTextArea help = new JTextArea("Text auto-fits to the selected box. Rotation works for selected elements at 0, 90, 180, or 270 degrees.");
+        help.setEditable(false);
+        help.setLineWrap(true);
+        help.setWrapStyleWord(true);
+        help.setOpaque(false);
+        help.setForeground(new Color(75, 85, 99));
+        help.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        panel.add(help, gbc);
+        gbc.gridy++;
+        gbc.weighty = 1;
+        panel.add(Box.createVerticalGlue(), gbc);
+
+        badgeFontFamilyBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeFontStyleBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeFontWeightBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeFontMaxSizeSpinner.addChangeListener(e -> applySelectedBadgeTextStyle());
+        badgeTextAlignmentBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeTextAllCapsBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeTextOutlineBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeTextBoxOutlineBox.addActionListener(e -> applySelectedBadgeTextStyle());
+        badgeElementRotationBox.addActionListener(e -> applySelectedBadgeElementRotation());
+        badgeElementXSpinner.addChangeListener(e -> applySelectedBadgeElementBounds());
+        badgeElementYSpinner.addChangeListener(e -> applySelectedBadgeElementBounds());
+        badgeElementWidthSpinner.addChangeListener(e -> applySelectedBadgeElementBounds());
+        badgeElementHeightSpinner.addChangeListener(e -> applySelectedBadgeElementBounds());
+        badgeAlignGroupCenterHButton.addActionListener(e -> centerSelectedBadgeElements(true, false));
+        badgeAlignGroupCenterVButton.addActionListener(e -> centerSelectedBadgeElements(false, true));
+        badgeAlignGroupCenterBothButton.addActionListener(e -> centerSelectedBadgeElements(true, true));
+        badgeCustomTextField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                applySelectedBadgeCustomText();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                applySelectedBadgeCustomText();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                applySelectedBadgeCustomText();
+            }
+        });
+        badgeImageOpacitySlider.addChangeListener(e -> applySelectedBadgeImageOpacity());
+        badgeElementColorButton.addActionListener(e -> chooseBadgeElementColor());
+        badgeTextOutlineColorButton.addActionListener(e -> chooseBadgeTextOutlineColor());
+        badgeTextBoxOutlineColorButton.addActionListener(e -> chooseBadgeTextBoxOutlineColor());
+        badgeNameLayoutBox.addActionListener(e -> applySelectedBadgeNameLayout());
+        uploadImageButton.addActionListener(e -> uploadBadgeElementImage());
+        selectImageButton.addActionListener(e -> selectBadgeElementImage());
+        clearImageButton.addActionListener(e -> clearBadgeElementImage());
+        styleBadgeEditorControls(panel);
+        updateBadgeFontControls();
+        return panel;
+    }
+
+    private static void styleBadgeEditorControls(Component component) {
+        Color labelColor = new Color(31, 41, 55);
+        Color mutedColor = new Color(75, 85, 99);
+        if (component instanceof JLabel label) {
+            label.setForeground(label.getFont().isBold() ? new Color(17, 24, 39) : labelColor);
+        } else if (component instanceof JCheckBox checkBox) {
+            checkBox.setForeground(labelColor);
+            checkBox.setOpaque(false);
+        } else if (component instanceof JTextArea textArea) {
+            textArea.setForeground(mutedColor);
+            textArea.setBackground(Color.WHITE);
+        } else if (component instanceof JPanel panel) {
+            if (panel.isOpaque()) {
+                panel.setBackground(Color.WHITE);
+            }
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                styleBadgeEditorControls(child);
+            }
+        }
+    }
+
+    private void updateBadgeFontControls() {
+        updatingBadgeFontControls = true;
+        try {
+            boolean textElement = BadgePrintService.isTextElement(badgeSelectedTemplateElementId);
+            boolean selectedElement = BadgePrintService.elementForId(badgeSelectedTemplateElementId) != null;
+            boolean editableTextElement = isBadgeSelectedTextEditable();
+            boolean opacityElement = BadgePrintService.isImageElement(badgeSelectedTemplateElementId);
+            boolean imageElement = opacityElement || "front.logo".equals(badgeSelectedTemplateElementId);
+            boolean colorElement = BadgePrintService.isColorElement(badgeSelectedTemplateElementId);
+            boolean nameElement = "front.name".equals(badgeSelectedTemplateElementId);
+            badgeFontFamilyBox.setEnabled(textElement);
+            badgeFontStyleBox.setEnabled(textElement);
+            badgeFontWeightBox.setEnabled(textElement);
+            badgeFontMaxSizeSpinner.setEnabled(textElement);
+            badgeTextAlignmentBox.setEnabled(textElement);
+            badgeTextAllCapsBox.setEnabled(textElement);
+            badgeTextOutlineBox.setEnabled(textElement);
+            badgeTextOutlineColorButton.setEnabled(textElement);
+            badgeTextBoxOutlineBox.setEnabled(textElement);
+            badgeTextBoxOutlineColorButton.setEnabled(textElement);
+            badgeElementRotationBox.setEnabled(selectedElement);
+            badgeCustomTextField.setEnabled(editableTextElement);
+            badgeElementImageField.setEnabled(imageElement);
+            badgeImageOpacitySlider.setEnabled(opacityElement);
+            badgeElementColorButton.setEnabled(colorElement);
+            badgeNameLayoutBox.setEnabled(nameElement);
+            badgeElementXSpinner.setEnabled(selectedElement);
+            badgeElementYSpinner.setEnabled(selectedElement);
+            badgeElementWidthSpinner.setEnabled(selectedElement);
+            badgeElementHeightSpinner.setEnabled(selectedElement);
+            badgeAlignGroupCenterHButton.setEnabled(selectedElement);
+            badgeAlignGroupCenterVButton.setEnabled(selectedElement);
+            badgeAlignGroupCenterBothButton.setEnabled(selectedElement);
+            if (!selectedElement) {
+                badgeSelectedElementLabel.setText("Select an element");
+                badgeCustomTextField.setText("");
+                badgeSignatureImageField.setText("");
+                badgeElementImageField.setText("");
+                badgeImageOpacitySlider.setValue(100);
+                badgeImageOpacityValueLabel.setText("100%");
+                badgeElementColorSwatch.setBackground(new Color(31, 41, 55));
+                badgeTextAllCapsBox.setSelected(false);
+                badgeTextOutlineBox.setSelected(false);
+                badgeTextOutlineColorSwatch.setBackground(Color.BLACK);
+                badgeTextBoxOutlineBox.setSelected(false);
+                badgeTextBoxOutlineColorSwatch.setBackground(new Color(17, 24, 39));
+                badgeNameLayoutBox.setSelectedItem("One line");
+                badgeElementXSpinner.setValue(0);
+                badgeElementYSpinner.setValue(0);
+                badgeElementWidthSpinner.setValue(100);
+                badgeElementHeightSpinner.setValue(40);
+                return;
+            }
+            CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+            BadgePrintService.BadgeElement element = BadgePrintService.elementForId(badgeSelectedTemplateElementId);
+            int selectedCount = badgeSelectedTemplateElementIds.size();
+            String label = element == null ? badgeSelectedTemplateElementId : element.label();
+            badgeSelectedElementLabel.setText(selectedCount > 1 ? selectedCount + " selected - " + label : label);
+            Rectangle rect = BadgePrintService.layoutRect(settings, badgeSelectedTemplateElementId);
+            badgeElementXSpinner.setValue(rect.x);
+            badgeElementYSpinner.setValue(rect.y);
+            badgeElementWidthSpinner.setValue(rect.width);
+            badgeElementHeightSpinner.setValue(rect.height);
+            badgeElementRotationBox.setSelectedItem(String.valueOf(BadgePrintService.elementRotation(settings, badgeSelectedTemplateElementId)));
+            badgeCustomTextField.setText(editableTextElement ? selectedBadgeTextValue(settings) : "");
+            String imagePath = "front.logo".equals(badgeSelectedTemplateElementId)
+                    ? badgeLogoPathField.getText()
+                    : imageElement ? BadgePrintService.elementImagePath(settings, badgeSelectedTemplateElementId) : "";
+            badgeSignatureImageField.setText("back.signature".equals(badgeSelectedTemplateElementId) ? imagePath : "");
+            badgeElementImageField.setText(imagePath);
+            int opacityPercent = Math.round(BadgePrintService.elementOpacity(settings, badgeSelectedTemplateElementId) * 100f);
+            badgeImageOpacitySlider.setValue(opacityPercent);
+            badgeImageOpacityValueLabel.setText(opacityPercent + "%");
+            badgeElementColorSwatch.setBackground(BadgePrintService.elementColor(settings, badgeSelectedTemplateElementId));
+            badgeNameLayoutBox.setSelectedItem("two".equals(BadgePrintService.nameLayout(settings)) ? "Two lines" : "One line");
+            if (textElement) {
+                BadgePrintService.BadgeTextStyle style = BadgePrintService.textStyle(settings, badgeSelectedTemplateElementId);
+                badgeFontFamilyBox.setSelectedItem(style.family());
+                badgeFontStyleBox.setSelectedItem(fontStyleLabel(style.style()));
+                badgeFontWeightBox.setSelectedItem(fontWeightLabel(style.weight()));
+                badgeFontMaxSizeSpinner.setValue(style.maxSize());
+                badgeTextAlignmentBox.setSelectedItem(alignmentLabel(style.alignment()));
+                badgeTextAllCapsBox.setSelected(style.allCaps());
+                badgeTextOutlineBox.setSelected(style.textOutline());
+                badgeTextOutlineColorSwatch.setBackground(colorFromHex(style.textOutlineColorHex(), Color.BLACK));
+                badgeTextBoxOutlineBox.setSelected(style.boxOutline());
+                badgeTextBoxOutlineColorSwatch.setBackground(colorFromHex(style.boxOutlineColorHex(), new Color(17, 24, 39)));
+            } else {
+                badgeTextAllCapsBox.setSelected(false);
+                badgeTextOutlineBox.setSelected(false);
+                badgeTextOutlineColorSwatch.setBackground(Color.BLACK);
+                badgeTextBoxOutlineBox.setSelected(false);
+                badgeTextBoxOutlineColorSwatch.setBackground(new Color(17, 24, 39));
+            }
+        } finally {
+            updatingBadgeFontControls = false;
+        }
+    }
+
+    private void refreshBadgeElementVisibilityControls() {
+        if (badgeElementVisibilityBoxes.isEmpty()) {
+            return;
+        }
+        CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+        for (Map.Entry<String, JCheckBox> entry : badgeElementVisibilityBoxes.entrySet()) {
+            entry.getValue().setSelected(BadgePrintService.elementVisible(settings, entry.getKey()));
+        }
+    }
+
+    private void syncLegacyBadgeVisibilityFields() {
+        CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+        badgeShowQuoteBox.setSelected(BadgePrintService.elementVisible(settings, "front.quote"));
+        badgeShowEmployeeIdBox.setSelected(BadgePrintService.elementVisible(settings, "back.employeeNumber"));
+        badgeShowIssueDateBox.setSelected(BadgePrintService.elementVisible(settings, "back.issueDate"));
+        badgeShowBarcodeBox.setSelected(BadgePrintService.elementVisible(settings, "back.barcode"));
+        badgeShowBadgeTextBox.setSelected(BadgePrintService.elementVisible(settings, "back.badgeText"));
+    }
+
+    private void applySelectedBadgeTextStyle() {
+        if (updatingBadgeFontControls || !BadgePrintService.isTextElement(badgeSelectedTemplateElementId)) {
+            return;
+        }
+        String family = String.valueOf(badgeFontFamilyBox.getSelectedItem());
+        int style = fontStyleValue(String.valueOf(badgeFontStyleBox.getSelectedItem()));
+        String weight = fontWeightValue(String.valueOf(badgeFontWeightBox.getSelectedItem()));
+        int maxSize = ((Number) badgeFontMaxSizeSpinner.getValue()).intValue();
+        String alignment = alignmentValue(String.valueOf(badgeTextAlignmentBox.getSelectedItem()));
+        badgeLayoutData = BadgePrintService.updateTextStyle(
+                badgeLayoutData,
+                badgeSelectedTemplateElementId,
+                new BadgePrintService.BadgeTextStyle(
+                        family,
+                        style,
+                        maxSize,
+                        alignment,
+                        weight,
+                        badgeTextAllCapsBox.isSelected(),
+                        badgeTextOutlineBox.isSelected(),
+                        colorToHex(badgeTextOutlineColorSwatch.getBackground()),
+                        badgeTextBoxOutlineBox.isSelected(),
+                        colorToHex(badgeTextBoxOutlineColorSwatch.getBackground())
+                )
+        );
+        refreshBadgePreview();
+    }
+
+    private boolean isBadgeSelectedTextEditable() {
+        return BadgePrintService.isCustomTextElement(badgeSelectedTemplateElementId)
+                || switch (badgeSelectedTemplateElementId) {
+                    case "front.logo", "front.quote", "back.instructions", "back.signature" -> true;
+                    default -> false;
+                };
+    }
+
+    private String selectedBadgeTextValue(CompanyCustomizationManager.BadgeTemplateSettings settings) {
+        return switch (badgeSelectedTemplateElementId) {
+            case "front.logo" -> badgeCompanyNameField.getText();
+            case "front.quote" -> badgeQuoteField.getText();
+            case "back.instructions" -> badgeBackInstructionsField.getText();
+            case "back.signature" -> {
+                String name = badgeSignatoryNameField.getText() == null ? "" : badgeSignatoryNameField.getText().trim();
+                String title = badgeSignatoryTitleField.getText() == null ? "" : badgeSignatoryTitleField.getText().trim();
+                yield title.isBlank() ? name : name + " | " + title;
+            }
+            default -> BadgePrintService.customText(settings, badgeSelectedTemplateElementId);
+        };
+    }
+
+    private void applySelectedBadgeTemplateText(String text) {
+        String cleanText = text == null ? "" : text;
+        switch (badgeSelectedTemplateElementId) {
+            case "front.logo" -> badgeCompanyNameField.setText(cleanText);
+            case "front.quote" -> badgeQuoteField.setText(cleanText);
+            case "back.instructions" -> badgeBackInstructionsField.setText(cleanText);
+            case "back.signature" -> {
+                String[] parts = cleanText.split("\\|", 2);
+                badgeSignatoryNameField.setText(parts.length > 0 ? parts[0].trim() : "");
+                if (parts.length > 1) {
+                    badgeSignatoryTitleField.setText(parts[1].trim());
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    private void applySelectedBadgeElementRotation() {
+        if (updatingBadgeFontControls || BadgePrintService.elementForId(badgeSelectedTemplateElementId) == null) {
+            return;
+        }
+        int rotation = Integer.parseInt(String.valueOf(badgeElementRotationBox.getSelectedItem()));
+        badgeLayoutData = BadgePrintService.updateElementRotation(badgeLayoutData, badgeSelectedTemplateElementId, rotation);
+        refreshBadgePreview();
+    }
+
+    private void applySelectedBadgeElementBounds() {
+        if (updatingBadgeFontControls || BadgePrintService.elementForId(badgeSelectedTemplateElementId) == null) {
+            return;
+        }
+        Rectangle updated = new Rectangle(
+                ((Number) badgeElementXSpinner.getValue()).intValue(),
+                ((Number) badgeElementYSpinner.getValue()).intValue(),
+                ((Number) badgeElementWidthSpinner.getValue()).intValue(),
+                ((Number) badgeElementHeightSpinner.getValue()).intValue()
+        );
+        badgeLayoutData = BadgePrintService.updateLayoutRect(badgeLayoutData, badgeSelectedTemplateElementId, updated);
+        refreshBadgePreview();
+    }
+
+    private void centerSelectedBadgeElements(boolean horizontal, boolean vertical) {
+        if (updatingBadgeFontControls || badgeSelectedTemplateElementIds.isEmpty()) {
+            return;
+        }
+        CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+        LinkedHashMap<String, Rectangle> selectedRects = new LinkedHashMap<>();
+        Rectangle groupBounds = null;
+        for (String elementId : badgeSelectedTemplateElementIds) {
+            if (BadgePrintService.elementForId(elementId) == null) {
+                continue;
+            }
+            Rectangle rect = BadgePrintService.layoutRect(settings, elementId);
+            selectedRects.put(elementId, rect);
+            groupBounds = groupBounds == null ? new Rectangle(rect) : groupBounds.union(rect);
+        }
+        if (selectedRects.isEmpty() || groupBounds == null) {
+            return;
+        }
+
+        int dx = horizontal ? ((BADGE_CARD_WIDTH - groupBounds.width) / 2) - groupBounds.x : 0;
+        int dy = vertical ? ((BADGE_CARD_HEIGHT - groupBounds.height) / 2) - groupBounds.y : 0;
+        if (dx == 0 && dy == 0) {
+            return;
+        }
+        for (Map.Entry<String, Rectangle> entry : selectedRects.entrySet()) {
+            Rectangle updated = new Rectangle(entry.getValue());
+            updated.x += dx;
+            updated.y += dy;
+            badgeLayoutData = BadgePrintService.updateLayoutRect(badgeLayoutData, entry.getKey(), updated);
+        }
+        refreshBadgePreview();
+        updateBadgeFontControls();
+    }
+
+    private void moveSelectedBadgeLayers(String direction) {
+        if (badgeSelectedTemplateElementIds.isEmpty()) {
+            return;
+        }
+        BadgePrintService.BadgeElement activeElement = BadgePrintService.elementForId(badgeSelectedTemplateElementId);
+        if (activeElement == null) {
+            return;
+        }
+        String side = activeElement.side();
+        CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+        List<String> orderedIds = BadgePrintService.elementsForSideInLayerOrder(settings, side).stream()
+                .map(BadgePrintService.BadgeElement::id)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        Set<String> selectedIds = new LinkedHashSet<>();
+        for (String elementId : badgeSelectedTemplateElementIds) {
+            BadgePrintService.BadgeElement element = BadgePrintService.elementForId(elementId);
+            if (element != null && side.equals(element.side())) {
+                selectedIds.add(elementId);
+            }
+        }
+        if (selectedIds.isEmpty()) {
+            return;
+        }
+
+        switch (direction) {
+            case "front" -> {
+                orderedIds.removeIf(selectedIds::contains);
+                orderedIds.addAll(selectedIds);
+            }
+            case "back" -> {
+                orderedIds.removeIf(selectedIds::contains);
+                orderedIds.addAll(0, new ArrayList<>(selectedIds));
+            }
+            case "forward" -> {
+                for (int i = orderedIds.size() - 2; i >= 0; i--) {
+                    if (selectedIds.contains(orderedIds.get(i)) && !selectedIds.contains(orderedIds.get(i + 1))) {
+                        String id = orderedIds.remove(i);
+                        orderedIds.add(i + 1, id);
+                    }
+                }
+            }
+            case "backward" -> {
+                for (int i = 1; i < orderedIds.size(); i++) {
+                    if (selectedIds.contains(orderedIds.get(i)) && !selectedIds.contains(orderedIds.get(i - 1))) {
+                        String id = orderedIds.remove(i);
+                        orderedIds.add(i - 1, id);
+                    }
+                }
+            }
+            default -> {
+                return;
+            }
+        }
+
+        for (int i = 0; i < orderedIds.size(); i++) {
+            badgeLayoutData = BadgePrintService.updateElementZOrder(badgeLayoutData, orderedIds.get(i), i * 10);
+        }
+        refreshBadgePreview();
+        updateBadgeFontControls();
+    }
+
+    private void applySelectedBadgeCustomText() {
+        if (updatingBadgeFontControls || !isBadgeSelectedTextEditable()) {
+            return;
+        }
+        if (BadgePrintService.isCustomTextElement(badgeSelectedTemplateElementId)) {
+            badgeLayoutData = BadgePrintService.updateCustomText(badgeLayoutData, badgeSelectedTemplateElementId, badgeCustomTextField.getText());
+        } else {
+            applySelectedBadgeTemplateText(badgeCustomTextField.getText());
+        }
+        refreshBadgePreview();
+    }
+
+    private void uploadBadgeElementImage() {
+        if ("front.logo".equals(badgeSelectedTemplateElementId)) {
+            uploadBadgeLogo();
+            badgeElementImageField.setText(badgeLogoPathField.getText());
+            return;
+        }
+        if (!BadgePrintService.isImageElement(badgeSelectedTemplateElementId)) {
+            JOptionPane.showMessageDialog(this, "Select the Logo, a background, extra image, or signature image element first.", "Element Image", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Badge Element Image");
+        chooser.setFileFilter(new FileNameExtensionFilter("Image Files", "png", "jpg", "jpeg", "gif", "bmp"));
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        try {
+            String uploadedPath = CompanyCustomizationManager.uploadBadgeTemplateImage(chooser.getSelectedFile().toPath());
+            setBadgeElementImage(uploadedPath);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload element image.\n\n" + ex.getMessage(), "Element Image", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void selectBadgeElementImage() {
+        if ("front.logo".equals(badgeSelectedTemplateElementId)) {
+            selectUploadedBadgeLogo();
+            badgeElementImageField.setText(badgeLogoPathField.getText());
+            return;
+        }
+        if (!BadgePrintService.isImageElement(badgeSelectedTemplateElementId)) {
+            JOptionPane.showMessageDialog(this, "Select the Logo, a background, extra image, or signature image element first.", "Element Image", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        try {
+            List<CompanyCustomizationManager.UploadedImageOption> logos = CompanyCustomizationManager.listUploadedCompanyLogos();
+            if (logos.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No uploaded images were found in Storage or saved company settings.", "Element Image", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            JList<CompanyCustomizationManager.UploadedImageOption> imageList = new JList<>(logos.toArray(new CompanyCustomizationManager.UploadedImageOption[0]));
+            imageList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            imageList.setVisibleRowCount(Math.min(logos.size(), 10));
+            imageList.setSelectedIndex(0);
+            int result = JOptionPane.showConfirmDialog(
+                    this,
+                    new JScrollPane(imageList),
+                    "Select Element Image",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE
+            );
+            if (result == JOptionPane.OK_OPTION && imageList.getSelectedValue() != null) {
+                setBadgeElementImage(imageList.getSelectedValue().url());
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to list uploaded images.\n\n" + ex.getMessage(), "Element Image", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void clearBadgeElementImage() {
+        if ("front.logo".equals(badgeSelectedTemplateElementId)) {
+            clearBadgeLogo();
+            badgeElementImageField.setText("");
+            return;
+        }
+        if (!BadgePrintService.isImageElement(badgeSelectedTemplateElementId)) {
+            return;
+        }
+        setBadgeElementImage("");
+    }
+
+    private void setBadgeElementImage(String imagePath) {
+        if ("front.logo".equals(badgeSelectedTemplateElementId)) {
+            badgeLogoPathField.setText(imagePath == null ? "" : imagePath);
+            badgeElementImageField.setText(badgeLogoPathField.getText());
+            refreshBadgePreview();
+            return;
+        }
+        badgeLayoutData = BadgePrintService.updateElementImagePath(badgeLayoutData, badgeSelectedTemplateElementId, imagePath);
+        String cleanPath = imagePath == null ? "" : imagePath;
+        badgeElementImageField.setText(cleanPath);
+        if ("back.signature".equals(badgeSelectedTemplateElementId)) {
+            badgeSignatureImageField.setText(cleanPath);
+        }
+        refreshBadgePreview();
+    }
+
+    private void applySelectedBadgeImageOpacity() {
+        if (updatingBadgeFontControls || !BadgePrintService.isImageElement(badgeSelectedTemplateElementId)) {
+            return;
+        }
+        int percent = badgeImageOpacitySlider.getValue();
+        badgeImageOpacityValueLabel.setText(percent + "%");
+        badgeLayoutData = BadgePrintService.updateElementOpacity(badgeLayoutData, badgeSelectedTemplateElementId, percent / 100f);
+        refreshBadgePreview();
+    }
+
+    private void chooseBadgeElementColor() {
+        if (!BadgePrintService.isColorElement(badgeSelectedTemplateElementId)) {
+            JOptionPane.showMessageDialog(this, "Select a text element or the Photo element first.", "Element Color", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+        Color initialColor = BadgePrintService.elementColor(settings, badgeSelectedTemplateElementId);
+        Color selectedColor = JColorChooser.showDialog(this, "Choose Element Color", initialColor);
+        if (selectedColor == null) {
+            return;
+        }
+        badgeLayoutData = BadgePrintService.updateElementColor(badgeLayoutData, badgeSelectedTemplateElementId, selectedColor);
+        badgeElementColorSwatch.setBackground(selectedColor);
+        refreshBadgePreview();
+    }
+
+    private void chooseBadgeTextOutlineColor() {
+        chooseBadgeTextEffectColor(badgeTextOutlineColorSwatch, "Choose Text Outline Color");
+    }
+
+    private void chooseBadgeTextBoxOutlineColor() {
+        chooseBadgeTextEffectColor(badgeTextBoxOutlineColorSwatch, "Choose Box Outline Color");
+    }
+
+    private void chooseBadgeTextEffectColor(JLabel swatch, String title) {
+        if (!BadgePrintService.isTextElement(badgeSelectedTemplateElementId)) {
+            JOptionPane.showMessageDialog(this, "Select a text element first.", title, JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Color selectedColor = JColorChooser.showDialog(this, title, swatch.getBackground());
+        if (selectedColor == null) {
+            return;
+        }
+        swatch.setBackground(selectedColor);
+        applySelectedBadgeTextStyle();
+    }
+
+    private void applySelectedBadgeNameLayout() {
+        if (updatingBadgeFontControls || !"front.name".equals(badgeSelectedTemplateElementId)) {
+            return;
+        }
+        String selected = String.valueOf(badgeNameLayoutBox.getSelectedItem());
+        badgeLayoutData = BadgePrintService.updateNameLayout(
+                badgeLayoutData,
+                "Two lines".equals(selected) ? "two" : "one"
+        );
+        refreshBadgePreview();
+    }
+
+    private static String fontStyleLabel(int style) {
+        return switch (style) {
+            case Font.BOLD -> "Bold";
+            case Font.ITALIC -> "Italic";
+            case Font.BOLD | Font.ITALIC -> "Bold Italic";
+            default -> "Regular";
+        };
+    }
+
+    private static void configureCompactSpinner(JSpinner spinner) {
+        ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField().setColumns(4);
+    }
+
+    private static int fontStyleValue(String label) {
+        return switch (label) {
+            case "Bold" -> Font.BOLD;
+            case "Italic" -> Font.ITALIC;
+            case "Bold Italic" -> Font.BOLD | Font.ITALIC;
+            default -> Font.PLAIN;
+        };
+    }
+
+    private static String fontWeightLabel(String weight) {
+        return switch (weight == null ? "regular" : weight.toLowerCase()) {
+            case "medium" -> "Medium";
+            case "semibold" -> "Semi Bold";
+            case "bold" -> "Bold";
+            case "extrabold" -> "Extra Bold";
+            case "black" -> "Black";
+            default -> "Regular";
+        };
+    }
+
+    private static String fontWeightValue(String label) {
+        return switch (label) {
+            case "Medium" -> "medium";
+            case "Semi Bold" -> "semibold";
+            case "Bold" -> "bold";
+            case "Extra Bold" -> "extrabold";
+            case "Black" -> "black";
+            default -> "regular";
+        };
+    }
+
+    private static String alignmentLabel(String alignment) {
+        return switch (alignment == null ? "center" : alignment.toLowerCase()) {
+            case "left" -> "Left";
+            case "right" -> "Right";
+            default -> "Center";
+        };
+    }
+
+    private static String alignmentValue(String label) {
+        return switch (label) {
+            case "Left" -> "left";
+            case "Right" -> "right";
+            default -> "center";
+        };
+    }
+
+    private static Color colorFromHex(String value, Color fallback) {
+        String clean = value == null ? "" : value.trim();
+        if (!clean.matches("#[0-9a-fA-F]{6}")) {
+            return fallback;
+        }
+        try {
+            return new Color(Integer.parseInt(clean.substring(1), 16));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private static String colorToHex(Color color) {
+        Color clean = color == null ? Color.BLACK : color;
+        return String.format("#%02X%02X%02X", clean.getRed(), clean.getGreen(), clean.getBlue());
+    }
+
+    private JPanel buildBadgeLogoSelectorPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.setOpaque(false);
+        panel.add(badgeLogoPathField, BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 0, 4, 0));
+        buttons.setOpaque(false);
+        JButton useCompanyLogoButton = new JButton("Use Company Logo");
+        JButton uploadButton = new JButton("Upload");
+        JButton selectButton = new JButton("Select Uploaded");
+        JButton clearButton = new JButton("Clear");
+        buttons.add(useCompanyLogoButton);
+        buttons.add(uploadButton);
+        buttons.add(selectButton);
+        buttons.add(clearButton);
+        panel.add(buttons, BorderLayout.EAST);
+
+        useCompanyLogoButton.addActionListener(e -> useCompanyLogoForBadge());
+        uploadButton.addActionListener(e -> uploadBadgeLogo());
+        selectButton.addActionListener(e -> selectUploadedBadgeLogo());
+        clearButton.addActionListener(e -> clearBadgeLogo());
+        return panel;
     }
 
     private JPanel buildCustomOrderDepositRefundScreen() {
@@ -479,13 +1630,16 @@ public class CompanyCustomization extends JFrame {
         JPanel buttonPanel = new JPanel(new GridLayout(0, 1, 0, 6));
         buttonPanel.setOpaque(false);
         JButton uploadButton = new JButton("Upload Logo");
+        JButton selectUploadedButton = new JButton("Select Uploaded");
         JButton clearButton = new JButton("Clear Logo");
         buttonPanel.add(uploadButton);
+        buttonPanel.add(selectUploadedButton);
         buttonPanel.add(clearButton);
         logoToolsPanel.add(buttonPanel, BorderLayout.EAST);
         panel.add(logoToolsPanel, BorderLayout.EAST);
 
         uploadButton.addActionListener(e -> uploadLogo());
+        selectUploadedButton.addActionListener(e -> selectUploadedLogo());
         clearButton.addActionListener(e -> clearLogo());
         return panel;
     }
@@ -567,10 +1721,13 @@ public class CompanyCustomization extends JFrame {
         customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
         loadSlipFields(slipSettings);
+        CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = CompanyCustomizationManager.loadBadgeTemplateSettings();
+        loadBadgeTemplateFields(badgeTemplateSettings);
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
         refreshSlipPreview();
+        refreshBadgePreview();
     }
 
     private void saveSettings() {
@@ -587,6 +1744,7 @@ public class CompanyCustomization extends JFrame {
                 CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
             }
             CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
+            CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsFromFields());
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
@@ -727,6 +1885,150 @@ public class CompanyCustomization extends JFrame {
         );
     }
 
+    private void loadBadgeTemplateFields(CompanyCustomizationManager.BadgeTemplateSettings settings) {
+        badgeCompanyNameField.setText(settings.companyName());
+        String badgeLogoPath = settings.logoPath();
+        if (badgeLogoPath == null || badgeLogoPath.isBlank()) {
+            badgeLogoPath = logoPathField.getText();
+        }
+        badgeLogoPathField.setText(badgeLogoPath);
+        badgeQuoteField.setText(settings.quoteLine());
+        badgeSignatoryNameField.setText(settings.signatoryName());
+        badgeSignatoryTitleField.setText(settings.signatoryTitle());
+        badgeBackInstructionsField.setText(settings.backInstructions());
+        badgeShowQuoteBox.setSelected(settings.showQuote());
+        badgeShowEmployeeIdBox.setSelected(settings.showEmployeeId());
+        badgeShowIssueDateBox.setSelected(settings.showIssueDate());
+        badgeShowBarcodeBox.setSelected(settings.showBarcode());
+        badgeShowBadgeTextBox.setSelected(false);
+        badgeMagStripeEnabledBox.setSelected(settings.magStripeEnabled());
+        badgeMagStripeTrack1Field.setText(settings.magStripeTrack1());
+        badgeMagStripeTrack2Field.setText(settings.magStripeTrack2());
+        badgeMagStripeTrack3Field.setText(settings.magStripeTrack3());
+        badgeMagStripeCommandField.setText(settings.magStripeCommand());
+        badgeLayoutData = settings.layoutData();
+        refreshBadgeElementVisibilityControls();
+        refreshBadgePreview();
+    }
+
+    private CompanyCustomizationManager.BadgeTemplateSettings getBadgeTemplateSettingsFromFields() {
+        String badgeLogoPath = badgeLogoPathField.getText();
+        if (badgeLogoPath == null || badgeLogoPath.isBlank()) {
+            badgeLogoPath = logoPathField.getText();
+        }
+        CompanyCustomizationManager.BadgeTemplateSettings previewSettings = new CompanyCustomizationManager.BadgeTemplateSettings(
+                badgeCompanyNameField.getText(),
+                badgeLogoPath,
+                badgeQuoteField.getText(),
+                badgeSignatoryNameField.getText(),
+                badgeSignatoryTitleField.getText(),
+                badgeBackInstructionsField.getText(),
+                badgeShowQuoteBox.isSelected(),
+                badgeShowEmployeeIdBox.isSelected(),
+                badgeShowIssueDateBox.isSelected(),
+                badgeShowBarcodeBox.isSelected(),
+                badgeShowBadgeTextBox.isSelected(),
+                badgeMagStripeEnabledBox.isSelected(),
+                badgeMagStripeTrack1Field.getText(),
+                badgeMagStripeTrack2Field.getText(),
+                badgeMagStripeTrack3Field.getText(),
+                badgeMagStripeCommandField.getText(),
+                badgeLayoutData
+        );
+        return new CompanyCustomizationManager.BadgeTemplateSettings(
+                badgeCompanyNameField.getText(),
+                badgeLogoPath,
+                badgeQuoteField.getText(),
+                badgeSignatoryNameField.getText(),
+                badgeSignatoryTitleField.getText(),
+                badgeBackInstructionsField.getText(),
+                BadgePrintService.elementVisible(previewSettings, "front.quote"),
+                BadgePrintService.elementVisible(previewSettings, "back.employeeNumber"),
+                BadgePrintService.elementVisible(previewSettings, "back.issueDate"),
+                BadgePrintService.elementVisible(previewSettings, "back.barcode"),
+                BadgePrintService.elementVisible(previewSettings, "back.badgeText"),
+                badgeMagStripeEnabledBox.isSelected(),
+                badgeMagStripeTrack1Field.getText(),
+                badgeMagStripeTrack2Field.getText(),
+                badgeMagStripeTrack3Field.getText(),
+                badgeMagStripeCommandField.getText(),
+                badgeLayoutData
+        );
+    }
+
+    private void useCompanyLogoForBadge() {
+        badgeLogoPathField.setText(logoPathField.getText());
+        if (badgeCompanyNameField.getText() == null || badgeCompanyNameField.getText().isBlank()) {
+            badgeCompanyNameField.setText(companyNameField.getText());
+        }
+        refreshBadgePreview();
+    }
+
+    private void uploadBadgeLogo() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Badge Logo");
+        chooser.setFileFilter(new FileNameExtensionFilter("Image Files", "png", "jpg", "jpeg", "gif", "bmp"));
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File selectedFile = chooser.getSelectedFile();
+        try {
+            String uploadedPath = CompanyCustomizationManager.uploadCompanyLogo(selectedFile.toPath());
+            badgeLogoPathField.setText(uploadedPath);
+            refreshBadgePreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload badge logo.\n\n" + ex.getMessage(), "Badge Logo Upload", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void selectUploadedBadgeLogo() {
+        try {
+            List<CompanyCustomizationManager.UploadedImageOption> logos = CompanyCustomizationManager.listUploadedCompanyLogos();
+            if (logos.isEmpty()) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "No uploaded company logos were found in Storage or saved company settings.",
+                        "Select Badge Logo",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+                return;
+            }
+
+            JList<CompanyCustomizationManager.UploadedImageOption> logoList = new JList<>(logos.toArray(new CompanyCustomizationManager.UploadedImageOption[0]));
+            logoList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            logoList.setVisibleRowCount(Math.min(logos.size(), 10));
+            logoList.setSelectedIndex(0);
+
+            int result = JOptionPane.showConfirmDialog(
+                    this,
+                    new JScrollPane(logoList),
+                    "Select Badge Logo",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE
+            );
+            if (result != JOptionPane.OK_OPTION || logoList.getSelectedValue() == null) {
+                return;
+            }
+
+            badgeLogoPathField.setText(logoList.getSelectedValue().url());
+            refreshBadgePreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to list uploaded logos.\n\n" + ex.getMessage(),
+                    "Select Badge Logo",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
+    private void clearBadgeLogo() {
+        badgeLogoPathField.setText("");
+        refreshBadgePreview();
+    }
+
     private void uploadLogo() {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Select Company Logo");
@@ -748,6 +2050,50 @@ public class CompanyCustomization extends JFrame {
         }
     }
 
+    private void selectUploadedLogo() {
+        try {
+            List<CompanyCustomizationManager.UploadedImageOption> logos = CompanyCustomizationManager.listUploadedCompanyLogos();
+            if (logos.isEmpty()) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "No uploaded company logos were found in Storage or saved company settings.",
+                        "Select Uploaded Logo",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+                return;
+            }
+
+            JList<CompanyCustomizationManager.UploadedImageOption> logoList = new JList<>(logos.toArray(new CompanyCustomizationManager.UploadedImageOption[0]));
+            logoList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            logoList.setVisibleRowCount(Math.min(logos.size(), 10));
+            logoList.setSelectedIndex(0);
+
+            int result = JOptionPane.showConfirmDialog(
+                    this,
+                    new JScrollPane(logoList),
+                    "Select Uploaded Logo",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE
+            );
+            if (result != JOptionPane.OK_OPTION || logoList.getSelectedValue() == null) {
+                return;
+            }
+
+            String selectedUrl = logoList.getSelectedValue().url();
+            logoPathField.setText(selectedUrl);
+            showLogoBox.setSelected(true);
+            updateLogoPreview(selectedUrl);
+            refreshSamplePreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to list uploaded logos.\n\n" + ex.getMessage(),
+                    "Select Uploaded Logo",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
     private void clearLogo() {
         logoPathField.setText("");
         showLogoBox.setSelected(false);
@@ -762,22 +2108,11 @@ public class CompanyCustomization extends JFrame {
             return;
         }
 
-        ImageIcon icon;
-        try {
-            if (logoPath.startsWith("http://") || logoPath.startsWith("https://")) {
-                URL url = URI.create(logoPath).toURL();
-                icon = new ImageIcon(url);
-            } else {
-                icon = new ImageIcon(Path.of(logoPath).toString());
-            }
-        } catch (Exception ex) {
+        BufferedImage image = ImageCacheManager.loadImage(logoPath);
+        if (image == null) {
             return;
         }
-        if (icon.getIconWidth() <= 0) {
-            return;
-        }
-
-        Image scaled = icon.getImage().getScaledInstance(210, -1, Image.SCALE_SMOOTH);
+        Image scaled = image.getScaledInstance(210, -1, Image.SCALE_SMOOTH);
         logoPreviewLabel.setText("");
         logoPreviewLabel.setIcon(new ImageIcon(scaled));
     }
@@ -788,18 +2123,21 @@ public class CompanyCustomization extends JFrame {
             public void insertUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
+                refreshBadgePreview();
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
+                refreshBadgePreview();
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
+                refreshBadgePreview();
             }
         };
 
@@ -809,6 +2147,16 @@ public class CompanyCustomization extends JFrame {
         receiptStartCounterField.getDocument().addDocumentListener(previewDocumentListener);
         vatFixedRatePercentField.getDocument().addDocumentListener(previewDocumentListener);
         logoPathField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeCompanyNameField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeLogoPathField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeQuoteField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeSignatoryNameField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeSignatoryTitleField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeBackInstructionsField.getDocument().addDocumentListener(previewDocumentListener);
+        badgeMagStripeTrack1Field.getDocument().addDocumentListener(previewDocumentListener);
+        badgeMagStripeTrack2Field.getDocument().addDocumentListener(previewDocumentListener);
+        badgeMagStripeTrack3Field.getDocument().addDocumentListener(previewDocumentListener);
+        badgeMagStripeCommandField.getDocument().addDocumentListener(previewDocumentListener);
 
         showLogoBox.addActionListener(e -> refreshSamplePreview());
         showSaleIdBox.addActionListener(e -> refreshSamplePreview());
@@ -841,6 +2189,13 @@ public class CompanyCustomization extends JFrame {
         slipEmailLineField.getDocument().addDocumentListener(previewDocumentListener);
         slipFooterNoteField.getDocument().addDocumentListener(previewDocumentListener);
         slipBlankDetailLinesField.getDocument().addDocumentListener(previewDocumentListener);
+
+        badgeShowQuoteBox.addActionListener(e -> refreshBadgePreview());
+        badgeShowEmployeeIdBox.addActionListener(e -> refreshBadgePreview());
+        badgeShowIssueDateBox.addActionListener(e -> refreshBadgePreview());
+        badgeShowBarcodeBox.addActionListener(e -> refreshBadgePreview());
+        badgeShowBadgeTextBox.addActionListener(e -> refreshBadgePreview());
+        badgeMagStripeEnabledBox.addActionListener(e -> refreshBadgePreview());
     }
 
     private void refreshSamplePreview() {
@@ -872,6 +2227,43 @@ public class CompanyCustomization extends JFrame {
         );
         sampleSlip40ColumnPanel.setReceiptText(CustomOrderSlipFormatter.format40Column(sampleSlip, receiptSettings, slipSettings), false);
         updateSlipLogoPreview();
+    }
+
+    private void refreshBadgePreview() {
+        if (loadingSettings) {
+            return;
+        }
+        try {
+            CompanyCustomizationManager.BadgeTemplateSettings settings = getBadgeTemplateSettingsFromFields();
+            BadgePrintService.EmployeeBadgeData sampleEmployee = new BadgePrintService.EmployeeBadgeData(
+                    42,
+                    "D-Bhudoo",
+                    "Diana Devi Bhudoo",
+                    "Diana",
+                    "Devi",
+                    "Bhudoo",
+                    "diana@example.com",
+                    "",
+                    "SSB1ABC123DEF456GH",
+                    "",
+                    0,
+                    "Manager",
+                    "Main Store"
+            );
+            if (sampleBadgeFrontPanel != null) {
+                sampleBadgeFrontPanel.setPreview(BadgePrintService.renderFront(sampleEmployee, settings), settings);
+            }
+            if (sampleBadgeBackPanel != null) {
+                sampleBadgeBackPanel.setPreview(BadgePrintService.renderBack(sampleEmployee, settings), settings);
+            }
+        } catch (Exception ex) {
+            if (sampleBadgeFrontPanel != null) {
+                sampleBadgeFrontPanel.setError();
+            }
+            if (sampleBadgeBackPanel != null) {
+                sampleBadgeBackPanel.setError();
+            }
+        }
     }
 
     private CompanyCustomizationManager.CustomOrderSlipSettings getSlipSettingsForPreview() {
@@ -985,6 +2377,302 @@ public class CompanyCustomization extends JFrame {
                 }
             }
         }.execute();
+    }
+
+    private class BadgeTemplateEditorPanel extends JPanel {
+        private static final int CARD_WIDTH = 638;
+        private static final int CARD_HEIGHT = 1013;
+        private final String side;
+        private final int maxCardWidth;
+        private BufferedImage image;
+        private CompanyCustomizationManager.BadgeTemplateSettings settings;
+        private String selectedElementId;
+        private Point dragStart;
+        private Map<String, Rectangle> dragStartRects = new LinkedHashMap<>();
+        private boolean resizing;
+
+        BadgeTemplateEditorPanel(String side, int maxCardWidth) {
+            this.side = side;
+            this.maxCardWidth = maxCardWidth;
+            int preferredHeight = (int) Math.round(maxCardWidth * (CARD_HEIGHT / (double) CARD_WIDTH)) + 24;
+            setPreferredSize(new Dimension(maxCardWidth + 24, preferredHeight));
+            setBackground(new Color(248, 250, 252));
+            setToolTipText("Click an element, shift-click to select multiple, drag to move, or drag the active element handle to resize.");
+
+            MouseAdapter mouseAdapter = new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    String hitElementId = hitTest(e.getPoint());
+                    if (e.isShiftDown()) {
+                        updateShiftSelection(hitElementId);
+                    } else {
+                        updateNormalSelection(hitElementId);
+                    }
+                    selectedElementId = badgeSelectedTemplateElementId;
+                    updateBadgeFontControls();
+                    if (hitElementId == null || selectedElementId == null || selectedElementId.isBlank()) {
+                        repaint();
+                        return;
+                    }
+                    dragStart = toCardPoint(e.getPoint());
+                    dragStartRects = selectedRects();
+                    Rectangle activeRect = BadgePrintService.layoutRect(settings, selectedElementId);
+                    resizing = badgeSelectedTemplateElementIds.size() == 1 && isOnResizeHandle(e.getPoint(), activeRect);
+                    repaint();
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    if (selectedElementId == null || dragStart == null || dragStartRects.isEmpty()) {
+                        return;
+                    }
+                    Point current = toCardPoint(e.getPoint());
+                    int dx = current.x - dragStart.x;
+                    int dy = current.y - dragStart.y;
+                    if (resizing) {
+                        Rectangle dragStartRect = dragStartRects.get(selectedElementId);
+                        if (dragStartRect == null) {
+                            return;
+                        }
+                        Rectangle updated = new Rectangle(dragStartRect);
+                        updated.width += dx;
+                        updated.height += dy;
+                        badgeLayoutData = BadgePrintService.updateLayoutRect(badgeLayoutData, selectedElementId, updated);
+                    } else {
+                        for (Map.Entry<String, Rectangle> entry : dragStartRects.entrySet()) {
+                            Rectangle updated = new Rectangle(entry.getValue());
+                            updated.x += dx;
+                            updated.y += dy;
+                            badgeLayoutData = BadgePrintService.updateLayoutRect(badgeLayoutData, entry.getKey(), updated);
+                        }
+                    }
+                    refreshBadgePreview();
+                    updateBadgeFontControls();
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    dragStart = null;
+                    dragStartRects = new LinkedHashMap<>();
+                    resizing = false;
+                }
+            };
+            addMouseListener(mouseAdapter);
+            addMouseMotionListener(mouseAdapter);
+        }
+
+        void setPreview(BufferedImage image, CompanyCustomizationManager.BadgeTemplateSettings settings) {
+            this.image = image;
+            this.settings = settings;
+            repaint();
+        }
+
+        void setError() {
+            image = null;
+            repaint();
+        }
+
+        private void updateNormalSelection(String hitElementId) {
+            if (hitElementId == null) {
+                badgeSelectedTemplateElementIds.clear();
+                badgeSelectedTemplateElementId = "";
+                return;
+            }
+            if (badgeSelectedTemplateElementIds.contains(hitElementId)) {
+                removeOtherSideSelections();
+                badgeSelectedTemplateElementId = hitElementId;
+                return;
+            }
+            badgeSelectedTemplateElementIds.clear();
+            badgeSelectedTemplateElementIds.add(hitElementId);
+            badgeSelectedTemplateElementId = hitElementId;
+        }
+
+        private void updateShiftSelection(String hitElementId) {
+            if (hitElementId == null) {
+                return;
+            }
+            removeOtherSideSelections();
+            if (badgeSelectedTemplateElementIds.contains(hitElementId)) {
+                badgeSelectedTemplateElementIds.remove(hitElementId);
+                if (hitElementId.equals(badgeSelectedTemplateElementId)) {
+                    badgeSelectedTemplateElementId = badgeSelectedTemplateElementIds.stream().reduce((first, second) -> second).orElse("");
+                }
+            } else {
+                badgeSelectedTemplateElementIds.add(hitElementId);
+                badgeSelectedTemplateElementId = hitElementId;
+            }
+        }
+
+        private void removeOtherSideSelections() {
+            List<String> toRemove = new ArrayList<>();
+            for (String elementId : badgeSelectedTemplateElementIds) {
+                BadgePrintService.BadgeElement element = BadgePrintService.elementForId(elementId);
+                if (element == null || !side.equals(element.side())) {
+                    toRemove.add(elementId);
+                }
+            }
+            badgeSelectedTemplateElementIds.removeAll(toRemove);
+        }
+
+        private Map<String, Rectangle> selectedRects() {
+            LinkedHashMap<String, Rectangle> rects = new LinkedHashMap<>();
+            for (String elementId : badgeSelectedTemplateElementIds) {
+                BadgePrintService.BadgeElement element = BadgePrintService.elementForId(elementId);
+                if (element != null && side.equals(element.side())) {
+                    rects.put(elementId, BadgePrintService.layoutRect(settings, elementId));
+                }
+            }
+            return rects;
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                Rectangle card = cardBounds();
+                if (image == null) {
+                    g.setColor(new Color(75, 85, 99));
+                    g.drawString("Preview unavailable", 24, 40);
+                    return;
+                }
+                g.drawImage(image, card.x, card.y, card.width, card.height, null);
+                paintNonPrintingGuides(g, card);
+                paintElementOutlines(g, card);
+            } finally {
+                g.dispose();
+            }
+        }
+
+        private void paintNonPrintingGuides(Graphics2D g, Rectangle card) {
+            double scale = card.width / (double) CARD_WIDTH;
+            Stroke previousStroke = g.getStroke();
+            Composite previousComposite = g.getComposite();
+            Font previousFont = g.getFont();
+
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.78f));
+            g.setStroke(new BasicStroke(
+                    1.6f,
+                    BasicStroke.CAP_BUTT,
+                    BasicStroke.JOIN_MITER,
+                    10f,
+                    new float[]{7f, 5f},
+                    0f
+            ));
+
+            int punchWidth = (int) Math.round(170 * scale);
+            int punchHeight = (int) Math.round(36 * scale);
+            int punchX = card.x + (card.width - punchWidth) / 2;
+            int punchY = card.y + (int) Math.round(24 * scale);
+            g.setColor(new Color(37, 99, 235));
+            g.drawRoundRect(punchX, punchY, punchWidth, punchHeight, punchHeight, punchHeight);
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            g.drawString("HOLE PUNCH - DO NOT PRINT", punchX, Math.max(card.y + 12, punchY - 5));
+
+            if ("back".equals(side)) {
+                int stripeX = card.x + (int) Math.round(420 * scale);
+                int stripeWidth = (int) Math.round(118 * scale);
+                int stripeY = card.y + (int) Math.round(42 * scale);
+                int stripeHeight = card.height - (int) Math.round(84 * scale);
+                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22f));
+                g.setColor(Color.BLACK);
+                g.fillRect(stripeX, stripeY, stripeWidth, stripeHeight);
+                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));
+                g.setColor(new Color(17, 24, 39));
+                g.drawRect(stripeX, stripeY, stripeWidth, stripeHeight);
+                Graphics2D labelGraphics = (Graphics2D) g.create();
+                labelGraphics.rotate(Math.PI / 2, stripeX + stripeWidth / 2.0, stripeY + stripeHeight / 2.0);
+                labelGraphics.drawString(
+                        "MAGNETIC STRIPE - DO NOT PRINT",
+                        stripeX - (int) Math.round(210 * scale),
+                        stripeY + stripeHeight / 2
+                );
+                labelGraphics.dispose();
+            }
+
+            g.setFont(previousFont);
+            g.setStroke(previousStroke);
+            g.setComposite(previousComposite);
+        }
+
+        private void paintElementOutlines(Graphics2D g, Rectangle card) {
+            double scale = card.width / (double) CARD_WIDTH;
+            for (BadgePrintService.BadgeElement element : BadgePrintService.elementsForSideInLayerOrder(settings, side)) {
+                if (!BadgePrintService.elementVisible(settings, element.id())) {
+                    continue;
+                }
+                Rectangle source = BadgePrintService.layoutRect(settings, element.id());
+                Rectangle rect = new Rectangle(
+                        card.x + (int) Math.round(source.x * scale),
+                        card.y + (int) Math.round(source.y * scale),
+                        (int) Math.round(source.width * scale),
+                        (int) Math.round(source.height * scale)
+                );
+                boolean selected = badgeSelectedTemplateElementIds.contains(element.id());
+                boolean active = element.id().equals(selectedElementId);
+                g.setColor(active ? new Color(37, 99, 235) : selected ? new Color(59, 130, 246) : new Color(255, 112, 0));
+                g.setStroke(new BasicStroke(selected ? 2f : 1f));
+                g.drawRect(rect.x, rect.y, rect.width, rect.height);
+                g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                g.drawString(element.label(), rect.x + 3, Math.max(card.y + 12, rect.y - 3));
+                if (active) {
+                    g.fillRect(rect.x + rect.width - 6, rect.y + rect.height - 6, 8, 8);
+                }
+            }
+        }
+
+        private String hitTest(Point point) {
+            Rectangle card = cardBounds();
+            double scale = card.width / (double) CARD_WIDTH;
+            List<BadgePrintService.BadgeElement> elements = BadgePrintService.elementsForSideInLayerOrder(settings, side);
+            for (int i = elements.size() - 1; i >= 0; i--) {
+                BadgePrintService.BadgeElement element = elements.get(i);
+                if (!BadgePrintService.elementVisible(settings, element.id())) {
+                    continue;
+                }
+                Rectangle source = BadgePrintService.layoutRect(settings, element.id());
+                Rectangle rect = new Rectangle(
+                        card.x + (int) Math.round(source.x * scale),
+                        card.y + (int) Math.round(source.y * scale),
+                        (int) Math.round(source.width * scale),
+                        (int) Math.round(source.height * scale)
+                );
+                if (rect.contains(point)) {
+                    return element.id();
+                }
+            }
+            return null;
+        }
+
+        private boolean isOnResizeHandle(Point point, Rectangle cardRect) {
+            Rectangle card = cardBounds();
+            double scale = card.width / (double) CARD_WIDTH;
+            Rectangle handle = new Rectangle(
+                    card.x + (int) Math.round((cardRect.x + cardRect.width) * scale) - 10,
+                    card.y + (int) Math.round((cardRect.y + cardRect.height) * scale) - 10,
+                    18,
+                    18
+            );
+            return handle.contains(point);
+        }
+
+        private Point toCardPoint(Point point) {
+            Rectangle card = cardBounds();
+            double scale = CARD_WIDTH / (double) card.width;
+            return new Point(
+                    (int) Math.round((point.x - card.x) * scale),
+                    (int) Math.round((point.y - card.y) * scale)
+            );
+        }
+
+        private Rectangle cardBounds() {
+            int width = Math.min(getWidth() - 16, maxCardWidth);
+            int height = (int) Math.round(width * (CARD_HEIGHT / (double) CARD_WIDTH));
+            int x = Math.max(8, (getWidth() - width) / 2);
+            int y = Math.max(8, (getHeight() - height) / 2);
+            return new Rectangle(x, y, width, height);
+        }
     }
 
     private static class CustomOrderSlipPreviewPanel extends JPanel {
