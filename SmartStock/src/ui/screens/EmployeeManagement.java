@@ -16,6 +16,7 @@ import data.DB;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
@@ -49,6 +50,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class EmployeeManagement extends JFrame {
+    private static final Color PAGE_BG = new Color(17, 17, 17);
+    private static final Color CARD_BG = new Color(28, 28, 28);
+    private static final Color FIELD_BG = new Color(21, 21, 21);
+    private static final Color BORDER = new Color(67, 67, 67);
+    private static final Color TEXT = new Color(238, 238, 238);
+    private static final Color MUTED_TEXT = new Color(182, 182, 182);
+    private static final Color PRIMARY = new Color(78, 111, 158);
 
     private JTable employeeTable;
     private DefaultTableModel employeeModel;
@@ -103,14 +111,17 @@ public class EmployeeManagement extends JFrame {
 
     public EmployeeManagement() {
         setTitle("Employee Management");
-        setSize(1100, 640);
+        setSize(1320, 760);
+        setMinimumSize(new Dimension(1120, 680));
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(10, 10));
         setJMenuBar(AppMenuBar.create(this, "EmployeeManagement"));
+        getContentPane().setBackground(PAGE_BG);
 
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
-        mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+        mainPanel.setBackground(PAGE_BG);
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
 
         employeeModel = new DefaultTableModel(
                 new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active"}, 0
@@ -126,29 +137,43 @@ public class EmployeeManagement extends JFrame {
         employeeTable.setRowSorter(employeeSorter);
         employeeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JPanel leftPanel = new JPanel(new BorderLayout(8, 8));
+        leftPanel.setBackground(CARD_BG);
+        leftPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
 
         JPanel searchPanel = new JPanel(new BorderLayout(6, 0));
+        searchPanel.setOpaque(false);
         employeeSearchField = new JTextField();
-        searchPanel.add(new JLabel("Search Employees:"), BorderLayout.WEST);
+        JLabel searchLabel = new JLabel("Employees");
+        searchLabel.setFont(new Font("SansSerif", Font.BOLD, 15));
+        searchLabel.setForeground(TEXT);
+        employeeSearchField.putClientProperty("JTextField.placeholderText", "Search employees");
+        styleTextField(employeeSearchField);
+        searchPanel.add(searchLabel, BorderLayout.WEST);
         searchPanel.add(employeeSearchField, BorderLayout.CENTER);
         JScrollPane tableScrollPane = new JScrollPane(employeeTable);
-        tableScrollPane.setPreferredSize(new Dimension(390, 0));
+        leftPanel.setPreferredSize(new Dimension(620, 0));
+        tableScrollPane.setPreferredSize(new Dimension(620, 0));
+        tableScrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
+        tableScrollPane.getViewport().setBackground(CARD_BG);
         leftPanel.add(searchPanel, BorderLayout.NORTH);
         leftPanel.add(tableScrollPane, BorderLayout.CENTER);
-        employeeTable.setRowHeight(28);
+        styleTable(employeeTable);
         employeeTable.getColumnModel().getColumn(0).setPreferredWidth(70);
         employeeTable.getColumnModel().getColumn(0).setMinWidth(60);
         employeeTable.getColumnModel().getColumn(0).setMaxWidth(90);
 
-        employeeTable.getColumnModel().getColumn(1).setPreferredWidth(120);
-        employeeTable.getColumnModel().getColumn(2).setPreferredWidth(140);
+        employeeTable.getColumnModel().getColumn(1).setPreferredWidth(135);
+        employeeTable.getColumnModel().getColumn(2).setPreferredWidth(190);
         for (int hiddenColumn = 3; hiddenColumn <= 5; hiddenColumn++) {
             TableColumn column = employeeTable.getColumnModel().getColumn(hiddenColumn);
             column.setMinWidth(0);
             column.setPreferredWidth(0);
             column.setMaxWidth(0);
         }
-        employeeTable.getColumnModel().getColumn(6).setPreferredWidth(180);
+        employeeTable.getColumnModel().getColumn(6).setPreferredWidth(250);
         employeeTable.getColumnModel().getColumn(7).setPreferredWidth(120);
         TableColumn photoColumn = employeeTable.getColumnModel().getColumn(8);
         photoColumn.setMinWidth(0);
@@ -156,17 +181,24 @@ public class EmployeeManagement extends JFrame {
         photoColumn.setMaxWidth(0);
         employeeTable.getColumnModel().getColumn(9).setPreferredWidth(95);
         employeeTable.getColumnModel().getColumn(10).setPreferredWidth(120);
-        employeeTable.getColumnModel().getColumn(11).setPreferredWidth(80);
+        employeeTable.getColumnModel().getColumn(11).setPreferredWidth(105);
         employeeTable.getColumnModel().getColumn(12).setPreferredWidth(90);
         employeeTable.getColumnModel().getColumn(13).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(14).setPreferredWidth(90);
-        employeeTable.getColumnModel().getColumn(15).setPreferredWidth(70);
+        employeeTable.getColumnModel().getColumn(14).setPreferredWidth(125);
+        employeeTable.getColumnModel().getColumn(15).setPreferredWidth(75);
         employeeTable.getColumnModel().getColumn(15).setMinWidth(60);
         employeeTable.getColumnModel().getColumn(15).setMaxWidth(80);
+        hideEmployeeColumn(7);
+        hideEmployeeColumn(9);
+        hideEmployeeColumn(10);
+        hideEmployeeColumn(12);
+        hideEmployeeColumn(13);
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
         JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setBackground(CARD_BG);
+        formPanel.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
 
         usernameField = new JTextField();
         passwordField = new JTextField();
@@ -192,6 +224,7 @@ public class EmployeeManagement extends JFrame {
         activeCheckBox = new JCheckBox("Active", true);
         activeCheckBox.setEnabled(true);
         storeSearchField = new JTextField();
+        styleEmployeeInputs();
         storeModel = new DefaultTableModel(new Object[]{"Assigned", "Store ID", "Store Name", "Address"}, 0) {
             @Override
             public Class<?> getColumnClass(int columnIndex) {
@@ -209,8 +242,8 @@ public class EmployeeManagement extends JFrame {
         storeSorter = new TableRowSorter<>(storeModel);
         storeTable = new JTable(storeModel);
         storeTable.setRowSorter(storeSorter);
-        storeTable.setRowHeight(24);
         storeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        styleTable(storeTable);
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(8, 10, 8, 10);
@@ -346,13 +379,26 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(activeCheckBox, gbc);
 
         JPanel storePanel = new JPanel(new BorderLayout(6, 6));
+        storePanel.setBackground(CARD_BG);
+        storePanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER),
+                BorderFactory.createEmptyBorder(10, 10, 10, 10)
+        ));
         JPanel storeSearchPanel = new JPanel(new BorderLayout(6, 0));
-        storeSearchPanel.add(new JLabel("Assigned Stores:"), BorderLayout.WEST);
+        storeSearchPanel.setOpaque(false);
+        JLabel assignedStoresLabel = new JLabel("Assigned Stores");
+        assignedStoresLabel.setForeground(TEXT);
+        assignedStoresLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
+        storeSearchField.putClientProperty("JTextField.placeholderText", "Search stores");
+        styleTextField(storeSearchField);
+        storeSearchPanel.add(assignedStoresLabel, BorderLayout.WEST);
         storeSearchPanel.add(storeSearchField, BorderLayout.CENTER);
         storePanel.add(storeSearchPanel, BorderLayout.NORTH);
 
         JScrollPane storeScrollPane = new JScrollPane(storeTable);
         storeScrollPane.setPreferredSize(new Dimension(0, 135));
+        storeScrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
+        storeScrollPane.getViewport().setBackground(CARD_BG);
         storePanel.add(storeScrollPane, BorderLayout.CENTER);
 
         TableColumn assignedStoreColumn = storeTable.getColumnModel().getColumn(0);
@@ -376,9 +422,12 @@ public class EmployeeManagement extends JFrame {
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(Box.createVerticalGlue(), gbc);
+        styleLabels(formPanel);
 
         JPanel topButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         JPanel bottomButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        topButtonPanel.setOpaque(false);
+        bottomButtonPanel.setOpaque(false);
         addButton = new JButton("Add Employee");
         updateButton = new JButton("Update Employee");
         clearButton = new JButton("Clear");
@@ -396,6 +445,7 @@ public class EmployeeManagement extends JFrame {
         Dimension smallButtonSize = new Dimension(125, 32);
         clearButton.setPreferredSize(smallButtonSize);
         refreshButton.setPreferredSize(smallButtonSize);
+        styleActionButtons();
 
         topButtonPanel.add(addButton);
         topButtonPanel.add(updateButton);
@@ -408,9 +458,26 @@ public class EmployeeManagement extends JFrame {
         bottomButtonPanel.add(refreshButton);
 
         JPanel rightPanel = new JPanel(new BorderLayout(10, 10));
-        rightPanel.setPreferredSize(new Dimension(650, 0));
-        rightPanel.add(topButtonPanel, BorderLayout.NORTH);
-        rightPanel.add(formPanel, BorderLayout.CENTER);
+        rightPanel.setBackground(CARD_BG);
+        rightPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
+        rightPanel.setPreferredSize(new Dimension(640, 0));
+        JLabel detailsTitle = new JLabel("Employee Details");
+        detailsTitle.setForeground(TEXT);
+        detailsTitle.setFont(new Font("SansSerif", Font.BOLD, 18));
+        JPanel rightHeader = new JPanel(new BorderLayout(0, 10));
+        rightHeader.setOpaque(false);
+        rightHeader.add(detailsTitle, BorderLayout.NORTH);
+        rightHeader.add(topButtonPanel, BorderLayout.SOUTH);
+        JScrollPane formScrollPane = new JScrollPane(formPanel);
+        formScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        formScrollPane.getViewport().setBackground(CARD_BG);
+        formScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        formScrollPane.getVerticalScrollBar().setUnitIncrement(14);
+        rightPanel.add(rightHeader, BorderLayout.NORTH);
+        rightPanel.add(formScrollPane, BorderLayout.CENTER);
         rightPanel.add(bottomButtonPanel, BorderLayout.SOUTH);
 
         mainPanel.add(leftPanel, BorderLayout.WEST);
@@ -525,17 +592,137 @@ public class EmployeeManagement extends JFrame {
         WindowHelper.showPosWindow(this);
     }
 
+    private void hideEmployeeColumn(int modelColumn) {
+        int viewColumn = employeeTable.convertColumnIndexToView(modelColumn);
+        if (viewColumn < 0) {
+            return;
+        }
+        TableColumn column = employeeTable.getColumnModel().getColumn(viewColumn);
+        column.setMinWidth(0);
+        column.setPreferredWidth(0);
+        column.setMaxWidth(0);
+        column.setResizable(false);
+    }
+
+    private void styleEmployeeInputs() {
+        for (JTextField field : new JTextField[]{
+                usernameField,
+                passwordField,
+                firstNameField,
+                middleNameField,
+                lastNameField,
+                emailField,
+                phoneField,
+                employeePhotoField,
+                dateOfBirthField,
+                badgeIdField,
+                salaryAmountField
+        }) {
+            styleTextField(field);
+        }
+        styleComboBox(compensationTypeBox);
+        styleComboBox(roleBox);
+        activeCheckBox.setForeground(TEXT);
+        activeCheckBox.setOpaque(false);
+    }
+
+    private void styleTextField(JTextField field) {
+        field.setBackground(FIELD_BG);
+        field.setForeground(TEXT);
+        field.setCaretColor(TEXT);
+        field.setSelectionColor(PRIMARY);
+        field.setSelectedTextColor(Color.WHITE);
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER),
+                BorderFactory.createEmptyBorder(5, 7, 5, 7)
+        ));
+    }
+
+    private void styleComboBox(JComboBox<?> comboBox) {
+        comboBox.setBackground(FIELD_BG);
+        comboBox.setForeground(TEXT);
+        comboBox.setBorder(BorderFactory.createLineBorder(BORDER));
+    }
+
+    private void styleTable(JTable table) {
+        table.setRowHeight(30);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setFillsViewportHeight(true);
+        table.setBackground(CARD_BG);
+        table.setForeground(TEXT);
+        table.setSelectionBackground(PRIMARY);
+        table.setSelectionForeground(Color.WHITE);
+        table.setGridColor(BORDER);
+        table.getTableHeader().setBackground(new Color(38, 38, 38));
+        table.getTableHeader().setForeground(TEXT);
+        table.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 12));
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                if (!isSelected) {
+                    component.setBackground(row % 2 == 0 ? new Color(31, 31, 31) : new Color(25, 25, 25));
+                    component.setForeground(TEXT);
+                }
+                setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+                return component;
+            }
+        });
+        table.setDefaultRenderer(Boolean.class, table.getDefaultRenderer(Boolean.class));
+    }
+
+    private void styleLabels(Container container) {
+        for (Component child : container.getComponents()) {
+            if (child instanceof JLabel label) {
+                label.setForeground(MUTED_TEXT);
+                label.setFont(new Font("SansSerif", Font.BOLD, 12));
+            } else if (child instanceof JPanel panel) {
+                panel.setBackground(CARD_BG);
+                styleLabels(panel);
+            } else if (child instanceof JScrollPane scrollPane) {
+                scrollPane.setBackground(CARD_BG);
+                scrollPane.getViewport().setBackground(CARD_BG);
+            }
+        }
+    }
+
+    private void styleActionButtons() {
+        styleButton(addButton, true);
+        styleButton(updateButton, true);
+        styleButton(deleteButton, false);
+        styleButton(previewBadgeButton, false);
+        styleButton(printBadgeButton, false);
+        styleButton(writeMagStripeButton, false);
+        styleButton(clearButton, false);
+        styleButton(refreshButton, false);
+    }
+
+    private void styleButton(JButton button, boolean primary) {
+        button.setFocusPainted(false);
+        button.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
+        button.setBackground(primary ? PRIMARY : new Color(82, 82, 82));
+        button.setForeground(Color.WHITE);
+    }
+
     private JPanel buildPhotoSelectorPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.setOpaque(false);
         employeePhotoPreviewLabel = ProductImageHelper.createImagePreview("", 90, 110);
+        employeePhotoPreviewLabel.setBorder(BorderFactory.createLineBorder(BORDER));
         panel.add(employeePhotoPreviewLabel, BorderLayout.WEST);
 
         JPanel fieldPanel = new JPanel(new BorderLayout(6, 4));
+        fieldPanel.setOpaque(false);
         fieldPanel.add(employeePhotoField, BorderLayout.CENTER);
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        buttons.setOpaque(false);
         JButton chooseButton = new JButton("Choose");
         JButton previewButton = new JButton("Preview");
         JButton clearButton = new JButton("Clear");
+        styleButton(chooseButton, false);
+        styleButton(previewButton, false);
+        styleButton(clearButton, false);
         buttons.add(chooseButton);
         buttons.add(previewButton);
         buttons.add(clearButton);
@@ -590,7 +777,11 @@ public class EmployeeManagement extends JFrame {
     private void previewSelectedBadge() {
         try {
             BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
-            BadgePrintService.previewBadge(this, employee, CompanyCustomizationManager.loadBadgeTemplateSettings());
+            CompanyCustomizationManager.BadgeTemplateSettings settings = chooseBadgeTemplateSettings("Preview Badge");
+            if (settings == null) {
+                return;
+            }
+            BadgePrintService.previewBadge(this, employee, settings);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to preview badge.\n\n" + ex.getMessage(), "Badge Preview", JOptionPane.ERROR_MESSAGE);
         }
@@ -607,12 +798,45 @@ public class EmployeeManagement extends JFrame {
             if (expiryDate == null) {
                 return;
             }
-            BadgePrintService.printBadge(this, employee, CompanyCustomizationManager.loadBadgeTemplateSettings(), side, expiryDate);
+            CompanyCustomizationManager.BadgeTemplateSettings settings = chooseBadgeTemplateSettings("Print Badge");
+            if (settings == null) {
+                return;
+            }
+            BadgePrintService.printBadge(this, employee, settings, side, expiryDate);
             loadEmployees();
             selectEmployeeInTable(employee.userId());
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to print badge.\n\n" + ex.getMessage(), "Badge Print", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private CompanyCustomizationManager.BadgeTemplateSettings chooseBadgeTemplateSettings(String title) {
+        CompanyCustomizationManager.BadgeTemplateSettings settings = CompanyCustomizationManager.loadBadgeTemplateSettings();
+        String[] labels = new String[CompanyCustomizationManager.badgeTemplateCount()];
+        for (int i = 0; i < labels.length; i++) {
+            labels[i] = CompanyCustomizationManager.badgeTemplateDisplayName(i);
+        }
+        int activeIndex = CompanyCustomizationManager.activeBadgeTemplateIndex(settings.layoutData());
+        String selected = (String) JOptionPane.showInputDialog(
+                this,
+                "Which badge template do you want to use?",
+                title,
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                labels,
+                labels[Math.max(0, Math.min(labels.length - 1, activeIndex))]
+        );
+        if (selected == null) {
+            return null;
+        }
+        int selectedIndex = 0;
+        for (int i = 0; i < labels.length; i++) {
+            if (labels[i].equals(selected)) {
+                selectedIndex = i;
+                break;
+            }
+        }
+        return settings.withLayoutData(CompanyCustomizationManager.badgeTemplateLayout(settings.layoutData(), selectedIndex));
     }
 
     private BadgePrintService.BadgePrintSide chooseBadgePrintSide() {

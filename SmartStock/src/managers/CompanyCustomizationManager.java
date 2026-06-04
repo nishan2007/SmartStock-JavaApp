@@ -23,6 +23,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -98,6 +99,7 @@ public class CompanyCustomizationManager {
         }
 
         saveReceiptSettingsToDb(locationId, settings);
+        saveCompanyLogoToAllStores(settings);
         saveLocalReceiptSettings(settings);
         cachedLocationId = locationId;
         cachedReceiptSettings = settings;
@@ -348,6 +350,32 @@ public class CompanyCustomizationManager {
             ps.setBoolean(14, settings.vatUseDepartmentRates());
             ps.setBigDecimal(15, settings.vatFixedRatePercent());
             ps.setInt(16, settings.nextReceiptCounter());
+            ps.executeUpdate();
+        }
+    }
+
+    private static void saveCompanyLogoToAllStores(ReceiptSettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    receipt_logo_url,
+                    show_logo,
+                    updated_at
+                )
+                SELECT location_id, ?, ?, ?, NOW()
+                FROM locations
+                ON CONFLICT (location_id) DO UPDATE SET
+                    receipt_logo_url = EXCLUDED.receipt_logo_url,
+                    show_logo = EXCLUDED.show_logo,
+                    updated_at = NOW()
+                """;
+
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, settings.companyName());
+            ps.setString(2, settings.logoPath());
+            ps.setBoolean(3, settings.showLogo());
             ps.executeUpdate();
         }
     }
@@ -1039,6 +1067,94 @@ public class CompanyCustomizationManager {
         return targetPath.toString();
     }
 
+    public static int badgeTemplateCount() {
+        return 4;
+    }
+
+    public static String[] unpackBadgeTemplateLayouts(String layoutData) {
+        String[] layouts = new String[badgeTemplateCount()];
+        String clean = Objects.requireNonNullElse(layoutData, "").trim();
+        if (!clean.startsWith("SSBT4|")) {
+            layouts[0] = clean;
+            for (int i = 1; i < layouts.length; i++) {
+                layouts[i] = "";
+            }
+            return layouts;
+        }
+        for (int i = 0; i < layouts.length; i++) {
+            layouts[i] = "";
+        }
+        for (String part : clean.split("\\|")) {
+            int equals = part.indexOf('=');
+            if (equals <= 0) {
+                continue;
+            }
+            String key = part.substring(0, equals);
+            String value = part.substring(equals + 1);
+            if (key.matches("l[0-3]")) {
+                layouts[Integer.parseInt(key.substring(1))] = decodeTemplatePart(value);
+            }
+        }
+        return layouts;
+    }
+
+    public static int activeBadgeTemplateIndex(String layoutData) {
+        String clean = Objects.requireNonNullElse(layoutData, "").trim();
+        if (!clean.startsWith("SSBT4|")) {
+            return 0;
+        }
+        for (String part : clean.split("\\|")) {
+            if (part.startsWith("active=")) {
+                try {
+                    return Math.max(0, Math.min(badgeTemplateCount() - 1, Integer.parseInt(part.substring("active=".length()))));
+                } catch (NumberFormatException ignored) {
+                    return 0;
+                }
+            }
+        }
+        return 0;
+    }
+
+    public static String activeBadgeTemplateLayout(String layoutData) {
+        return badgeTemplateLayout(layoutData, activeBadgeTemplateIndex(layoutData));
+    }
+
+    public static String badgeTemplateLayout(String layoutData, int index) {
+        String[] layouts = unpackBadgeTemplateLayouts(layoutData);
+        int cleanIndex = Math.max(0, Math.min(layouts.length - 1, index));
+        return layouts[cleanIndex];
+    }
+
+    public static String packBadgeTemplateLayouts(String[] layouts, int activeIndex) {
+        String[] cleanLayouts = layouts == null ? new String[badgeTemplateCount()] : layouts;
+        int cleanActive = Math.max(0, Math.min(badgeTemplateCount() - 1, activeIndex));
+        StringBuilder builder = new StringBuilder("SSBT4|active=").append(cleanActive);
+        for (int i = 0; i < badgeTemplateCount(); i++) {
+            String layout = i < cleanLayouts.length ? Objects.requireNonNullElse(cleanLayouts[i], "") : "";
+            builder.append("|l").append(i).append('=').append(encodeTemplatePart(layout));
+        }
+        return builder.toString();
+    }
+
+    public static String badgeTemplateDisplayName(int index) {
+        return "Template " + (Math.max(0, index) + 1);
+    }
+
+    private static String encodeTemplatePart(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(Objects.requireNonNullElse(value, "").getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String decodeTemplatePart(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        try {
+            return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ex) {
+            return "";
+        }
+    }
+
     public static BufferedImage loadReceiptLogo(ReceiptSettings settings) {
         if (settings == null || !settings.showLogo() || settings.logoPath().isBlank()) {
             return null;
@@ -1495,6 +1611,28 @@ public class CompanyCustomizationManager {
         private static String clean(String value, String fallback) {
             String cleaned = Objects.requireNonNullElse(value, "").trim();
             return cleaned.isBlank() ? fallback : cleaned;
+        }
+
+        public BadgeTemplateSettings withLayoutData(String updatedLayoutData) {
+            return new BadgeTemplateSettings(
+                    companyName,
+                    logoPath,
+                    quoteLine,
+                    signatoryName,
+                    signatoryTitle,
+                    backInstructions,
+                    showQuote,
+                    showEmployeeId,
+                    showIssueDate,
+                    showBarcode,
+                    showBadgeText,
+                    magStripeEnabled,
+                    magStripeTrack1,
+                    magStripeTrack2,
+                    magStripeTrack3,
+                    magStripeCommand,
+                    updatedLayoutData
+            );
         }
     }
 }

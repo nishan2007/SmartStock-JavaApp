@@ -160,7 +160,7 @@ public class Roles_Permission extends JFrame {
 
     private void ensurePermissionDefinitionsExist() {
         try (Connection conn = DB.getConnection()) {
-            Set<String> permissionColumns = getPermissionTableColumns(conn);
+            Set<String> permissionColumns = getTableColumns(conn, "permissions");
             if (!permissionColumns.contains("permission_key")) {
                 throw new SQLException("The permissions table does not have a permission_key column.");
             }
@@ -274,7 +274,7 @@ public class Roles_Permission extends JFrame {
         List<PermissionDefinition> definitions = new ArrayList<>();
 
         try (Connection conn = DB.getConnection()) {
-            Set<String> permissionColumns = getPermissionTableColumns(conn);
+            Set<String> permissionColumns = getTableColumns(conn, "permissions");
             if (!permissionColumns.contains("permission_key")) {
                 throw new SQLException("The permissions table does not have a permission_key column.");
             }
@@ -362,11 +362,26 @@ public class Roles_Permission extends JFrame {
                 return;
             }
 
-            String sql = """
-                    SELECT permission_key, display_name, permission_group, description
-                    FROM mobile_permissions
-                    ORDER BY permission_group, sort_order, display_name, permission_key
-                    """;
+            Set<String> mobilePermissionColumns = getTableColumns(conn, "mobile_permissions");
+            if (!mobilePermissionColumns.contains("permission_key")) {
+                throw new SQLException("The mobile_permissions table does not have a permission_key column.");
+            }
+
+            String displayExpression = buildPermissionDisplayExpression(mobilePermissionColumns);
+            String groupSelect = mobilePermissionColumns.contains("permission_group")
+                    ? "permission_group"
+                    : "NULL AS permission_group";
+            String descriptionSelect = mobilePermissionColumns.contains("description")
+                    ? "description"
+                    : "NULL AS description";
+            String orderSql = mobilePermissionColumns.contains("sort_order")
+                    ? "permission_group NULLS LAST, sort_order NULLS LAST, display_name, permission_key"
+                    : "display_name, permission_key";
+            String sql = "SELECT permission_key, " + displayExpression + " AS display_name, " +
+                    groupSelect + ", " + descriptionSelect + " " +
+                    "FROM mobile_permissions " +
+                    "WHERE permission_key IS NOT NULL AND TRIM(permission_key) <> '' " +
+                    "ORDER BY " + orderSql;
 
             try (PreparedStatement ps = conn.prepareStatement(sql);
                  ResultSet rs = ps.executeQuery()) {
@@ -472,19 +487,21 @@ public class Roles_Permission extends JFrame {
         return expression.toString();
     }
 
-    private Set<String> getPermissionTableColumns(Connection conn) throws SQLException {
+    private Set<String> getTableColumns(Connection conn, String tableName) throws SQLException {
         Set<String> columns = new HashSet<>();
         String sql = """
                 SELECT LOWER(column_name) AS column_name
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
-                  AND table_name = 'permissions'
+                  AND table_name = ?
                 """;
 
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                columns.add(rs.getString("column_name"));
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    columns.add(rs.getString("column_name"));
+                }
             }
         }
 

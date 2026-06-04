@@ -7,6 +7,8 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import ui.screens.CompanyCustomization;
 import ui.screens.customorders.CustomOrderItems;
 import ui.screens.BalanceDraw;
@@ -134,7 +136,7 @@ public class AppMenuBar {
         boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
-        boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE");
+        boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
         boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
@@ -835,6 +837,15 @@ public class AppMenuBar {
 
 
     private static void showChangeLocationDialog(JFrame parent, String currentScreen) {
+        if (isStoreLockedToConfiguredLocation()) {
+            JOptionPane.showMessageDialog(
+                    parent,
+                    "This workstation is locked to its configured store in server/client mode.",
+                    "Change Store",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            return;
+        }
         if (!PermissionManager.hasPermission("CHANGE_STORE")) {
             JOptionPane.showMessageDialog(
                     parent,
@@ -898,6 +909,11 @@ public class AppMenuBar {
                 }
             }
         }
+    }
+
+    private static boolean isStoreLockedToConfiguredLocation() {
+        DatabaseMode mode = DatabaseConfig.load().mode();
+        return mode == DatabaseMode.SERVER || mode == DatabaseMode.CLIENT;
     }
 
     private static void refreshAssignedStoresForPicker(Component parent) {

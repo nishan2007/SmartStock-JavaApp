@@ -1,4 +1,5 @@
 package ui.screens;
+import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SupabaseSessionManager;
@@ -17,6 +18,7 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.awt.image.BufferedImage;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -25,6 +27,23 @@ import java.sql.SQLException;
 
 public class MainMenu extends JFrame {
     private static boolean drawStartPromptShownThisAppSession;
+    private static final int MENU_ICON_SIZE = 74;
+    private static final int MENU_TILE_WIDTH = 315;
+    private static final int MENU_TILE_HEIGHT = 126;
+    private static final int MENU_TILE_GAP = 14;
+    private static final int SECTION_SIDE_PADDING = 18;
+    private static final int LEFT_SECTION_COLUMNS = 4;
+    private static final int RIGHT_SECTION_COLUMNS = 1;
+    private static final Color LIGHT_BACKGROUND = new Color(241, 245, 249);
+    private static final Color LIGHT_SURFACE = Color.WHITE;
+    private static final Color LIGHT_TEXT = new Color(15, 23, 42);
+    private static final Color LIGHT_MUTED = new Color(71, 85, 105);
+    private static final Color LIGHT_BORDER = new Color(203, 213, 225);
+    private static final Color DARK_BACKGROUND = new Color(18, 18, 18);
+    private static final Color DARK_SURFACE = new Color(30, 30, 30);
+    private static final Color DARK_TEXT = new Color(245, 245, 245);
+    private static final Color DARK_MUTED = new Color(190, 190, 190);
+    private static final Color DARK_BORDER = new Color(75, 75, 75);
 
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
@@ -62,93 +81,89 @@ public class MainMenu extends JFrame {
     public MainMenu() {
         setTitle("SmartStock - Main Menu");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(1100, 720);
+        setSize(1800, 850);
+        setMinimumSize(new Dimension(900, 650));
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
         setJMenuBar(AppMenuBar.create(this, "MainMenu"));
 
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color backgroundColor = backgroundColor();
+        Color surfaceColor = surfaceColor();
+        Color textColor = textColor();
+        Color mutedColor = mutedColor();
+
         JPanel mainPanel = new JPanel(new BorderLayout(20, 20));
-        mainPanel.setBorder(new EmptyBorder(25, 25, 25, 25));
-        mainPanel.setBackground(new Color(245, 247, 250));
+        mainPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        mainPanel.setBorder(new EmptyBorder(24, 28, 24, 28));
+        mainPanel.setBackground(backgroundColor);
 
         JLabel titleLabel = new JLabel("SmartStock Main Menu");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
         titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        titleLabel.setForeground(textColor);
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JLabel subtitleLabel = new JLabel("Choose a section to continue");
         subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 16));
         subtitleLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        subtitleLabel.setForeground(new Color(90, 90, 90));
+        subtitleLabel.setForeground(mutedColor);
+        subtitleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
-        JPanel headerPanel = new JPanel();
-        headerPanel.setLayout(new BoxLayout(headerPanel, BoxLayout.Y_AXIS));
-        headerPanel.setOpaque(false);
-        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        subtitleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        headerPanel.add(titleLabel);
-        headerPanel.add(Box.createVerticalStrut(8));
-        headerPanel.add(subtitleLabel);
+        JPanel headerPanel = createHeaderPanel(titleLabel, subtitleLabel);
 
-        makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MakeASale.png"));
-        returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/ViewSales.png"));
-        balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/ViewSales.png"));
-        balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/ViewSales.png"));
-        ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/ViewSales.png"));
-        endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/ViewSales.png"));
-        ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/ViewSales.png"));
-        enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/ViewInventory.png"));
-        receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/ViewSales.png"));
-        storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/ViewInventory.png"));
-        customOrderItemsButton = createMenuButton("Custom Order Items", "Manage printable items and stock levels", loadIcon("src/ICONS/ViewInventory.png"));
-        departmentListButton = createMenuButton("Departments", "Manage item departments", loadIcon("src/ICONS/ViewInventory.png"));
-        vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/Employee.png"));
-        viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/ViewSales.png"));
-        customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/Employee.png"));
-        customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/ViewSales.png"));
-        customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MakeASale.png"));
-        ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/ViewSales.png"));
-        viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/ViewInventory.png"));
-        addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/NewItem.png"));
-        editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/EditItem.png"));
-        timeClockButton = createMenuButton("Time Clock", "Clock employees in and out", loadIcon("src/ICONS/Employee.png"));
-        payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/ViewSales.png"));
-        employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/Employee.png"));
-        rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/Security.png"));
-        deviceManagementButton = createMenuButton("Device Management", "Review devices and approve or block sign-ins", loadIcon("src/ICONS/Security.png"));
-        machineManagementButton = createMenuButton("Machines", "Create, update, and delete machine records", loadIcon("src/ICONS/ViewInventory.png"));
-        partsManagementButton = createMenuButton("Parts", "Create, update, and delete maintenance parts", loadIcon("src/ICONS/ViewInventory.png"));
-        maintenanceManagementButton = createMenuButton("Maintenance", "Manage machines, parts, service logs, and problem tickets", loadIcon("src/ICONS/ViewInventory.png"));
-        companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/Security.png"));
-        workstationPreferencesButton = createMenuButton("Workstation Preferences", "Device-level workstation and printing behavior", loadIcon("src/ICONS/Security.png"));
+        makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MainMenuMakeSale.png"));
+        returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/MainMenuReturns.png"));
+        balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
+        balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/MainMenuBalanceSheet.png"));
+        ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/MainMenuOrdersDashboard.png"));
+        endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
+        ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/MainMenuOrdersEndOfDay.png"));
+        enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/MainMenuReceivingInventory.png"));
+        receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/MainMenuReceivingHistory.png"));
+        storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/MainMenuStoreTransfer.png"));
+        customOrderItemsButton = createMenuButton("Custom Order Items", "Manage printable items and stock levels", loadIcon("src/ICONS/MainMenuCustomOrderItems.png"));
+        departmentListButton = createMenuButton("Departments", "Manage item departments", loadIcon("src/ICONS/MainMenuDepartments.png"));
+        vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/MainMenuVendors.png"));
+        viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/MainMenuViewSales.png"));
+        customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
+        customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
+        customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
+        ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
+        viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
+        addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/MainMenuAddItem.png"));
+        editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/MainMenuEditItems.png"));
+        timeClockButton = createMenuButton("Time Clock", "Clock employees in and out", loadIcon("src/ICONS/MainMenuTimeClock.png"));
+        payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/MainMenuPayroll.png"));
+        employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/MainMenuEmployees.png"));
+        rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/MainMenuRolesPermissions.png"));
+        deviceManagementButton = createMenuButton("Device Management", "Review devices and approve or block sign-ins", loadIcon("src/ICONS/MainMenuDeviceManagement.png"));
+        machineManagementButton = createMenuButton("Machines", "Create, update, and delete machine records", loadIcon("src/ICONS/MainMenuMachines.png"));
+        partsManagementButton = createMenuButton("Parts", "Create, update, and delete maintenance parts", loadIcon("src/ICONS/MainMenuParts.png"));
+        maintenanceManagementButton = createMenuButton("Maintenance", "Manage machines, parts, service logs, and problem tickets", loadIcon("src/ICONS/MainMenuMaintenance.png"));
+        companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/MainMenuCompanyPreferences.png"));
+        workstationPreferencesButton = createMenuButton("Workstation Preferences", "Device-level workstation and printing behavior", loadIcon("src/ICONS/MainMenuWorkstationPreferences.png"));
 
-        JPanel sectionStackPanel = new JPanel() {
+        JPanel leftSectionStackPanel = new JPanel() {
             @Override
             public Dimension getMaximumSize() {
                 return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
             }
         };
-        sectionStackPanel.setLayout(new BoxLayout(sectionStackPanel, BoxLayout.Y_AXIS));
-        sectionStackPanel.setOpaque(false);
-        sectionStackPanel.add(createSectionPanel(
+        leftSectionStackPanel.setLayout(new BoxLayout(leftSectionStackPanel, BoxLayout.Y_AXIS));
+        leftSectionStackPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        leftSectionStackPanel.setBackground(backgroundColor);
+        leftSectionStackPanel.add(createSectionPanel(
                 "Point of Sale",
                 new Color(37, 99, 235),
                 makeSaleButton,
                 returnSaleButton,
                 endOfDayButton,
-                viewSalesButton,
-                customerAccountsButton,
-                customerTransactionHistoryButton
+                viewSalesButton
         ));
-        sectionStackPanel.add(Box.createVerticalStrut(18));
-        sectionStackPanel.add(createSectionPanel(
-                "Operations",
-                new Color(15, 118, 110),
-                balanceDrawButton,
-                balanceSheetButton
-        ));
-        sectionStackPanel.add(Box.createVerticalStrut(18));
-        sectionStackPanel.add(createSectionPanel(
+        leftSectionStackPanel.add(Box.createVerticalStrut(18));
+        leftSectionStackPanel.add(createSectionPanel(
                 "Orders",
                 new Color(14, 116, 144),
                 ordersManagerDashboardButton,
@@ -157,8 +172,8 @@ public class MainMenu extends JFrame {
                 ordersEndOfDayButton,
                 customOrderItemsButton
         ));
-        sectionStackPanel.add(Box.createVerticalStrut(18));
-        sectionStackPanel.add(createSectionPanel(
+        leftSectionStackPanel.add(Box.createVerticalStrut(18));
+        leftSectionStackPanel.add(createSectionPanel(
                 "Inventory",
                 new Color(5, 150, 105),
                 enterInventoryButton,
@@ -171,16 +186,16 @@ public class MainMenu extends JFrame {
                 editItemsButton,
                 maintenanceManagementButton
         ));
-        sectionStackPanel.add(Box.createVerticalStrut(18));
-        sectionStackPanel.add(createSectionPanel(
+        leftSectionStackPanel.add(Box.createVerticalStrut(18));
+        leftSectionStackPanel.add(createSectionPanel(
                 "Employee",
                 new Color(217, 119, 6),
                 timeClockButton,
                 payrollDashboardButton,
                 employeeManagementButton
         ));
-        sectionStackPanel.add(Box.createVerticalStrut(18));
-        sectionStackPanel.add(createSectionPanel(
+        leftSectionStackPanel.add(Box.createVerticalStrut(18));
+        leftSectionStackPanel.add(createSectionPanel(
                 "Admin",
                 new Color(124, 58, 237),
                 rolesPermissionsButton,
@@ -191,20 +206,41 @@ public class MainMenu extends JFrame {
                 workstationPreferencesButton
         ));
 
+        JPanel operationsColumnPanel = new JPanel(new BorderLayout());
+        operationsColumnPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        operationsColumnPanel.setBackground(backgroundColor);
+        operationsColumnPanel.add(createSectionPanel(
+                "Operations",
+                new Color(15, 118, 110),
+                RIGHT_SECTION_COLUMNS,
+                balanceDrawButton,
+                balanceSheetButton,
+                customerAccountsButton,
+                customerTransactionHistoryButton
+        ), BorderLayout.NORTH);
+
+        JPanel menuColumnsPanel = new MenuColumnsPanel(leftSectionStackPanel, operationsColumnPanel);
+        menuColumnsPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        menuColumnsPanel.setBackground(backgroundColor);
+
         JPanel scrollContentPanel = new ViewportWidthPanel(new BorderLayout());
-        scrollContentPanel.setOpaque(false);
-        scrollContentPanel.add(sectionStackPanel, BorderLayout.NORTH);
+        scrollContentPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        scrollContentPanel.setBackground(backgroundColor);
+        scrollContentPanel.add(menuColumnsPanel, BorderLayout.NORTH);
 
         JScrollPane sectionScrollPane = new JScrollPane(scrollContentPanel);
         sectionScrollPane.setBorder(BorderFactory.createEmptyBorder());
-        sectionScrollPane.setOpaque(false);
-        sectionScrollPane.getViewport().setOpaque(false);
+        sectionScrollPane.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        sectionScrollPane.setBackground(backgroundColor);
+        sectionScrollPane.getViewport().putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        sectionScrollPane.getViewport().setBackground(backgroundColor);
         sectionScrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        sectionScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sectionScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         sectionScrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                sectionStackPanel.revalidate();
+                leftSectionStackPanel.revalidate();
+                operationsColumnPanel.revalidate();
             }
         });
 
@@ -212,9 +248,12 @@ public class MainMenu extends JFrame {
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
         logoutButton.setFocusPainted(false);
         logoutButton.setPreferredSize(new Dimension(130, 42));
+        logoutButton.setBackground(dark ? new Color(45, 45, 45) : surfaceColor);
+        logoutButton.setForeground(textColor);
 
         JPanel footerPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        footerPanel.setOpaque(false);
+        footerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        footerPanel.setBackground(backgroundColor);
         footerPanel.add(logoutButton);
 
         mainPanel.add(headerPanel, BorderLayout.NORTH);
@@ -248,77 +287,421 @@ public class MainMenu extends JFrame {
             return createFallbackIcon();
         }
 
-        Image img = icon.getImage().getScaledInstance(48, 48, Image.SCALE_SMOOTH);
+        Image img = icon.getImage().getScaledInstance(MENU_ICON_SIZE, MENU_ICON_SIZE, Image.SCALE_SMOOTH);
         return new ImageIcon(img);
     }
 
     private ImageIcon createFallbackIcon() {
-        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(48, 48, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(MENU_ICON_SIZE, MENU_ICON_SIZE, java.awt.image.BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setColor(new Color(226, 232, 240));
-        g.fillRoundRect(4, 4, 40, 40, 8, 8);
+        g.fillRoundRect(5, 5, MENU_ICON_SIZE - 10, MENU_ICON_SIZE - 10, 14, 14);
         g.setColor(new Color(100, 116, 139));
         g.setStroke(new BasicStroke(3f));
-        g.drawRoundRect(4, 4, 40, 40, 8, 8);
+        g.drawRoundRect(5, 5, MENU_ICON_SIZE - 10, MENU_ICON_SIZE - 10, 14, 14);
         g.dispose();
         return new ImageIcon(image);
     }
 
+    private JPanel createHeaderPanel(JLabel titleLabel, JLabel subtitleLabel) {
+        JPanel headerPanel = new JPanel(new BorderLayout(24, 0));
+        headerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        headerPanel.setBackground(backgroundColor());
+
+        JLabel companyLogoLabel = createLogoLabel("Company");
+        JLabel smartStockLogoLabel = createLogoLabel("SmartStock");
+
+        JPanel companyLogoPanel = createLogoPanel(companyLogoLabel, "Company Logo");
+        JPanel smartStockLogoPanel = createLogoPanel(smartStockLogoLabel, "SmartStock Logo");
+
+        JPanel titlePanel = new JPanel();
+        titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
+        titlePanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        titlePanel.setBackground(backgroundColor());
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        subtitleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        titlePanel.add(Box.createVerticalGlue());
+        titlePanel.add(titleLabel);
+        titlePanel.add(Box.createVerticalStrut(8));
+        titlePanel.add(subtitleLabel);
+        titlePanel.add(Box.createVerticalGlue());
+
+        headerPanel.add(companyLogoPanel, BorderLayout.WEST);
+        headerPanel.add(titlePanel, BorderLayout.CENTER);
+        headerPanel.add(smartStockLogoPanel, BorderLayout.EAST);
+
+        setSmartStockLogo(smartStockLogoLabel);
+        loadCompanyLogo(companyLogoLabel);
+        return headerPanel;
+    }
+
+    private JLabel createLogoLabel(String fallbackText) {
+        JLabel label = new JLabel(fallbackText, SwingConstants.CENTER);
+        label.setFont(new Font("SansSerif", Font.BOLD, 14));
+        label.setForeground(mutedColor());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        return label;
+    }
+
+    private JPanel createLogoPanel(JLabel logoLabel, String accessibleName) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        panel.setBackground(backgroundColor());
+        panel.setBorder(new EmptyBorder(4, 4, 4, 4));
+        panel.setPreferredSize(new Dimension(220, 88));
+        panel.setMinimumSize(new Dimension(220, 88));
+        panel.setMaximumSize(new Dimension(220, 88));
+        panel.getAccessibleContext().setAccessibleName(accessibleName);
+        panel.add(logoLabel, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void loadCompanyLogo(JLabel companyLogoLabel) {
+        new SwingWorker<BufferedImage, Void>() {
+            @Override
+            protected BufferedImage doInBackground() {
+                CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+                return CompanyCustomizationManager.loadCompanyLogo(settings);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    BufferedImage logo = get();
+                    if (logo != null) {
+                        setLogoImage(companyLogoLabel, logo, 204, 72);
+                    }
+                } catch (Exception ignored) {
+                    // Keep the visible fallback label when custom branding cannot be loaded.
+                }
+            }
+        }.execute();
+    }
+
+    private void setSmartStockLogo(JLabel smartStockLogoLabel) {
+        ImageIcon centerLogoIcon = loadCenterLogoIcon();
+        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
+            setLogoImage(smartStockLogoLabel, centerLogoIcon.getImage(), 204, 72);
+            return;
+        }
+        smartStockLogoLabel.setText("SmartStock");
+    }
+
+    private void setLogoImage(JLabel logoLabel, Image image, int maxWidth, int maxHeight) {
+        Image scaled = scaleToFit(image, maxWidth, maxHeight);
+        logoLabel.setText("");
+        logoLabel.setIcon(new ImageIcon(scaled));
+    }
+
+    private Image scaleToFit(Image image, int maxWidth, int maxHeight) {
+        int width = Math.max(image.getWidth(null), 1);
+        int height = Math.max(image.getHeight(null), 1);
+        double scale = Math.min((double) maxWidth / width, (double) maxHeight / height);
+        int scaledWidth = Math.max(1, (int) Math.round(width * scale));
+        int scaledHeight = Math.max(1, (int) Math.round(height * scale));
+        return image.getScaledInstance(scaledWidth, scaledHeight, Image.SCALE_SMOOTH);
+    }
+
+    private ImageIcon loadCenterLogoIcon() {
+        String[] resourcePaths = {
+                "/Images/CenterLogo.png",
+                "Images/CenterLogo.png",
+                "/CenterLogo.png",
+                "CenterLogo.png"
+        };
+        for (String resourcePath : resourcePaths) {
+            java.net.URL url = getClass().getResource(resourcePath);
+            if (url != null) {
+                return new ImageIcon(url);
+            }
+        }
+
+        String[] filePaths = {
+                "src/main/Images/CenterLogo.png",
+                "src/main/resources/Images/CenterLogo.png",
+                "src/Images/CenterLogo.png",
+                "Images/CenterLogo.png",
+                "CenterLogo.png",
+                "SmartStock/src/Images/CenterLogo.png"
+        };
+        for (String path : filePaths) {
+            ImageIcon icon = new ImageIcon(path);
+            if (icon.getIconWidth() > 0) {
+                return icon;
+            }
+        }
+        return null;
+    }
+
     private JPanel createSectionPanel(String title, Color accentColor, JButton... buttons) {
+        return createSectionPanel(title, accentColor, LEFT_SECTION_COLUMNS, false, buttons);
+    }
+
+    private JPanel createSectionPanel(String title, Color accentColor, int columns, JButton... buttons) {
+        return createSectionPanel(title, accentColor, columns, true, buttons);
+    }
+
+    private JPanel createSectionPanel(String title, Color accentColor, int columns, boolean fixedColumns, JButton... buttons) {
         JPanel sectionPanel = new JPanel(new BorderLayout(0, 14)) {
             @Override
             public Dimension getMaximumSize() {
                 Dimension preferred = getPreferredSize();
-                return new Dimension(Integer.MAX_VALUE, preferred.height);
+                return new Dimension(fixedColumns ? preferred.width : Integer.MAX_VALUE, preferred.height);
             }
         };
-        sectionPanel.setBackground(Color.WHITE);
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        sectionPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        sectionPanel.setBackground(blend(surfaceColor(), accentColor, dark ? 0.10 : 0.05));
         sectionPanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
-                new EmptyBorder(16, 16, 16, 16)
+                BorderFactory.createLineBorder(blend(borderColor(), accentColor, dark ? 0.35 : 0.22), 1),
+                new EmptyBorder(18, 18, 18, 18)
         ));
         sectionPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
-        headerPanel.setOpaque(false);
+        headerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        headerPanel.setBackground(sectionPanel.getBackground());
 
         JPanel accentBar = new JPanel();
         accentBar.setBackground(accentColor);
-        accentBar.setPreferredSize(new Dimension(5, 28));
+        accentBar.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        accentBar.setPreferredSize(new Dimension(6, 30));
 
         JLabel titleLabel = new JLabel(title);
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        titleLabel.setForeground(new Color(32, 41, 57));
+        titleLabel.setForeground(textColor());
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         headerPanel.add(accentBar, BorderLayout.WEST);
         headerPanel.add(titleLabel, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new WrappingButtonPanel(12, 12);
-        buttonPanel.setOpaque(false);
+        JPanel buttonPanel = new WrappingButtonPanel(MENU_TILE_GAP, MENU_TILE_GAP, columns, fixedColumns);
+        buttonPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        buttonPanel.setBackground(sectionPanel.getBackground());
 
         for (JButton button : buttons) {
+            applyMenuButtonTheme(button, accentColor);
             buttonPanel.add(button);
         }
 
         sectionPanel.add(headerPanel, BorderLayout.NORTH);
         sectionPanel.add(buttonPanel, BorderLayout.CENTER);
+        int sectionWidth = sectionWidth(columns);
+        if (fixedColumns) {
+            sectionPanel.setPreferredSize(new Dimension(sectionWidth, sectionPanel.getPreferredSize().height));
+        }
+        sectionPanel.setMinimumSize(new Dimension(fixedColumns ? sectionWidth : sectionWidth(1), 0));
+        sectionPanel.setMaximumSize(new Dimension(fixedColumns ? sectionWidth : Integer.MAX_VALUE, Integer.MAX_VALUE));
         return sectionPanel;
+    }
+
+    private void applyMenuButtonTheme(JButton button, Color accentColor) {
+        if (button instanceof MenuTileButton tileButton) {
+            tileButton.setAccentColor(accentColor);
+        }
+        button.putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
+        button.setBackground(surfaceColor());
+        button.setForeground(textColor());
+        button.setContentAreaFilled(false);
+        button.setOpaque(false);
+        button.setBorderPainted(false);
+        updateMenuButtonText(button);
+    }
+
+    private void updateMenuButtonText(JButton button) {
+        Color titleColor = button.isEnabled() ? textColor() : mutedColor();
+        Color descriptionColor = button.isEnabled() ? mutedColor() : blend(mutedColor(), backgroundColor(), 0.38);
+        for (Component component : button.getComponents()) {
+            updateMenuButtonText(component, titleColor, descriptionColor);
+        }
+    }
+
+    private void updateMenuButtonText(Component component, Color titleColor, Color descriptionColor) {
+        if (component instanceof JLabel label) {
+            label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+            if ("menuButtonTitle".equals(label.getName())) {
+                label.setForeground(titleColor);
+            } else if ("menuButtonDescription".equals(label.getName())) {
+                label.setForeground(descriptionColor);
+            }
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                updateMenuButtonText(child, titleColor, descriptionColor);
+            }
+        }
+    }
+
+    private static Color backgroundColor() {
+        return ThemeManager.isDarkModeEnabled() ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+    }
+
+    private static Color surfaceColor() {
+        return ThemeManager.isDarkModeEnabled() ? DARK_SURFACE : LIGHT_SURFACE;
+    }
+
+    private static Color textColor() {
+        return ThemeManager.isDarkModeEnabled() ? DARK_TEXT : LIGHT_TEXT;
+    }
+
+    private static Color mutedColor() {
+        return ThemeManager.isDarkModeEnabled() ? DARK_MUTED : LIGHT_MUTED;
+    }
+
+    private static Color borderColor() {
+        return ThemeManager.isDarkModeEnabled() ? DARK_BORDER : LIGHT_BORDER;
+    }
+
+    private static Color blend(Color base, Color overlay, double overlayRatio) {
+        double ratio = Math.max(0, Math.min(1, overlayRatio));
+        double baseRatio = 1 - ratio;
+        return new Color(
+                clamp((int) Math.round(base.getRed() * baseRatio + overlay.getRed() * ratio)),
+                clamp((int) Math.round(base.getGreen() * baseRatio + overlay.getGreen() * ratio)),
+                clamp((int) Math.round(base.getBlue() * baseRatio + overlay.getBlue() * ratio))
+        );
+    }
+
+    private static Color withAlpha(Color color, int alpha) {
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), clamp(alpha));
+    }
+
+    private static int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
+    }
+
+    private static int sectionWidth(int columns) {
+        int safeColumns = Math.max(1, columns);
+        return safeColumns * MENU_TILE_WIDTH
+                + (safeColumns - 1) * MENU_TILE_GAP
+                + (SECTION_SIDE_PADDING * 2);
+    }
+
+    private static int tileColumnsForWidth(int width, int maxColumns) {
+        int available = Math.max(MENU_TILE_WIDTH, width);
+        int fit = (available + MENU_TILE_GAP) / (MENU_TILE_WIDTH + MENU_TILE_GAP);
+        return Math.max(1, Math.min(Math.max(1, maxColumns), fit));
+    }
+
+    private static class MenuTileButton extends JButton {
+        private Color accentColor;
+
+        private MenuTileButton(Color accentColor) {
+            this.accentColor = accentColor;
+            setRolloverEnabled(true);
+        }
+
+        private void setAccentColor(Color accentColor) {
+            this.accentColor = accentColor;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            boolean dark = ThemeManager.isDarkModeEnabled();
+            boolean pressed = getModel().isPressed();
+            boolean rollover = getModel().isRollover();
+            Color base = surfaceColor();
+            Color tint = blend(base, accentColor, dark ? 0.16 : 0.08);
+            Color hover = blend(base, accentColor, dark ? 0.24 : 0.14);
+            Color fill = rollover ? hover : tint;
+            if (pressed) {
+                fill = blend(base, accentColor, dark ? 0.30 : 0.20);
+            }
+
+            int arc = 14;
+            g.setColor(fill);
+            g.fillRoundRect(1, 1, getWidth() - 3, getHeight() - 3, arc, arc);
+
+            g.setColor(withAlpha(accentColor, dark ? 76 : 48));
+            g.fillRoundRect(1, 1, 9, getHeight() - 3, arc, arc);
+            g.fillRect(7, 1, 5, getHeight() - 3);
+
+            g.setColor(withAlpha(Color.WHITE, dark ? 18 : 90));
+            g.fillOval(getWidth() - 96, -48, 144, 96);
+            g.setColor(withAlpha(accentColor, dark ? 40 : 22));
+            g.fillOval(getWidth() - 82, getHeight() - 58, 112, 86);
+
+            g.setColor(blend(borderColor(), accentColor, dark ? 0.34 : 0.22));
+            g.setStroke(new BasicStroke(1.4f));
+            g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, arc, arc);
+
+            if (!isEnabled()) {
+                g.setColor(withAlpha(backgroundColor(), dark ? 112 : 140));
+                g.fillRoundRect(1, 1, getWidth() - 3, getHeight() - 3, arc, arc);
+            }
+            g.dispose();
+            super.paintComponent(graphics);
+        }
+    }
+
+    private static class MenuColumnsPanel extends JPanel {
+        private final JComponent leftColumn;
+        private final JComponent rightColumn;
+
+        private MenuColumnsPanel(JComponent leftColumn, JComponent rightColumn) {
+            super(null);
+            this.leftColumn = leftColumn;
+            this.rightColumn = rightColumn;
+            add(leftColumn);
+            add(rightColumn);
+        }
+
+        @Override
+        public void doLayout() {
+            int rightWidth = sectionWidth(RIGHT_SECTION_COLUMNS);
+            int leftWidth = Math.max(sectionWidth(1), getWidth() - rightWidth);
+            Dimension leftPreferred = leftColumn.getPreferredSize();
+            Dimension rightPreferred = rightColumn.getPreferredSize();
+            leftColumn.setBounds(0, 0, leftWidth, leftPreferred.height);
+            rightColumn.setBounds(leftWidth, 0, rightWidth, rightPreferred.height);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int rightWidth = sectionWidth(RIGHT_SECTION_COLUMNS);
+            int availableWidth = getWidth();
+            int leftWidth = availableWidth > 0
+                    ? Math.max(sectionWidth(1), availableWidth - rightWidth)
+                    : sectionWidth(LEFT_SECTION_COLUMNS);
+            Dimension leftPreferred = preferredForWidth(leftColumn, leftWidth);
+            Dimension rightPreferred = preferredForWidth(rightColumn, rightWidth);
+            return new Dimension(leftWidth + rightWidth, Math.max(leftPreferred.height, rightPreferred.height));
+        }
+
+        private Dimension preferredForWidth(JComponent component, int width) {
+            Dimension oldSize = component.getSize();
+            component.setSize(width, Short.MAX_VALUE);
+            Dimension preferred = component.getPreferredSize();
+            component.setSize(oldSize);
+            return preferred;
+        }
     }
 
     private static class WrappingButtonPanel extends JPanel {
         private final int hGap;
         private final int vGap;
+        private final int columns;
+        private final boolean fixedColumns;
 
         private WrappingButtonPanel(int hGap, int vGap) {
+            this(hGap, vGap, 0, false);
+        }
+
+        private WrappingButtonPanel(int hGap, int vGap, int columns, boolean fixedColumns) {
             super(null);
             this.hGap = hGap;
             this.vGap = vGap;
+            this.columns = Math.max(0, columns);
+            this.fixedColumns = fixedColumns;
         }
 
         @Override
         public void doLayout() {
-            int width = Math.max(getWidth(), getPreferredSize().width);
+            int width = layoutWidth();
             int x = 0;
             int y = 0;
             int rowHeight = 0;
@@ -341,6 +724,22 @@ public class MainMenu extends JFrame {
 
         @Override
         public Dimension getPreferredSize() {
+            if (columns > 0) {
+                int visibleCount = 0;
+                int rowHeight = 0;
+                for (Component component : getComponents()) {
+                    if (!component.isVisible()) {
+                        continue;
+                    }
+                    visibleCount++;
+                    rowHeight = Math.max(rowHeight, component.getPreferredSize().height);
+                }
+                int layoutColumns = fixedColumns ? columns : tileColumnsForWidth(layoutWidth(), columns);
+                int rows = visibleCount == 0 ? 0 : (int) Math.ceil((double) visibleCount / layoutColumns);
+                int width = layoutColumns * MENU_TILE_WIDTH + (layoutColumns - 1) * hGap;
+                int height = rows == 0 ? 0 : rows * rowHeight + (rows - 1) * vGap;
+                return new Dimension(width, height);
+            }
             int width = getWidth();
             if (width <= 0 && getParent() != null) {
                 width = getParent().getWidth() - 34;
@@ -372,6 +771,26 @@ public class MainMenu extends JFrame {
 
             maxWidth = Math.max(maxWidth, Math.max(0, x - hGap));
             return new Dimension(Math.max(Math.min(maxWidth, width), 320), y + rowHeight);
+        }
+
+        private int layoutWidth() {
+            if (columns > 0 && fixedColumns) {
+                return columns * MENU_TILE_WIDTH + (columns - 1) * hGap;
+            }
+            int width = getWidth();
+            if (width <= 0 && getParent() != null) {
+                width = getParent().getWidth() - (SECTION_SIDE_PADDING * 2);
+            }
+            if (width <= 0) {
+                width = columns > 0
+                        ? columns * MENU_TILE_WIDTH + (columns - 1) * hGap
+                        : MENU_TILE_WIDTH;
+            }
+            if (columns > 0) {
+                int layoutColumns = tileColumnsForWidth(width, columns);
+                return layoutColumns * MENU_TILE_WIDTH + (layoutColumns - 1) * hGap;
+            }
+            return Math.max(width, MENU_TILE_WIDTH);
         }
     }
 
@@ -475,6 +894,48 @@ public class MainMenu extends JFrame {
         maintenanceManagementButton.setEnabled(canMaintenanceManagement);
         companyCustomizationButton.setEnabled(canCompanyCustomization);
         workstationPreferencesButton.setEnabled(canWorkstationPreferences);
+
+        refreshMenuButtonThemes();
+    }
+
+    private void refreshMenuButtonThemes() {
+        JButton[] buttons = {
+                makeSaleButton,
+                returnSaleButton,
+                balanceDrawButton,
+                balanceSheetButton,
+                ordersManagerDashboardButton,
+                endOfDayButton,
+                ordersEndOfDayButton,
+                enterInventoryButton,
+                receivingHistoryButton,
+                storeTransferButton,
+                customOrderItemsButton,
+                departmentListButton,
+                vendorListButton,
+                viewSalesButton,
+                customerAccountsButton,
+                customerTransactionHistoryButton,
+                customOrdersButton,
+                ordersButton,
+                viewInventoryButton,
+                addItemButton,
+                editItemsButton,
+                timeClockButton,
+                payrollDashboardButton,
+                employeeManagementButton,
+                rolesPermissionsButton,
+                deviceManagementButton,
+                machineManagementButton,
+                partsManagementButton,
+                maintenanceManagementButton,
+                companyCustomizationButton,
+                workstationPreferencesButton
+        };
+        for (JButton button : buttons) {
+            updateMenuButtonText(button);
+            button.repaint();
+        }
     }
 
 
@@ -845,37 +1306,39 @@ public class MainMenu extends JFrame {
     }
 
     private JButton createMenuButton(String title, String description, Icon icon) {
-        JButton button = new JButton();
-        button.setLayout(new BorderLayout(10, 10));
+        JButton button = new MenuTileButton(new Color(37, 99, 235));
+        button.setLayout(new BorderLayout(14, 10));
         button.setFocusPainted(false);
-        button.setBackground(Color.WHITE);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230), 1, true),
-                new EmptyBorder(18, 18, 18, 18)
-        ));
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setOpaque(false);
+        button.setBorder(new EmptyBorder(18, 18, 18, 18));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setHorizontalAlignment(SwingConstants.LEFT);
-        button.setPreferredSize(new Dimension(285, 96));
-        button.setMinimumSize(new Dimension(285, 96));
-        button.setMaximumSize(new Dimension(320, 104));
+        button.putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
+        button.setPreferredSize(new Dimension(315, 126));
+        button.setMinimumSize(new Dimension(315, 126));
+        button.setMaximumSize(new Dimension(345, 134));
 
         JLabel iconLabel = new JLabel(icon);
         iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        iconLabel.setPreferredSize(new Dimension(54, 54));
-        iconLabel.setMinimumSize(new Dimension(54, 54));
-        iconLabel.setMaximumSize(new Dimension(54, 54));
+        iconLabel.setPreferredSize(new Dimension(82, 82));
+        iconLabel.setMinimumSize(new Dimension(82, 82));
+        iconLabel.setMaximumSize(new Dimension(82, 82));
 
         JLabel titleLabel = new JLabel(title);
         titleLabel.setName("menuButtonTitle");
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 17));
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
-        JLabel descriptionLabel = new JLabel("<html><div style='width:170px;'>" + description + "</div></html>");
+        JLabel descriptionLabel = new JLabel("<html><div style='width:172px;'>" + description + "</div></html>");
         descriptionLabel.setName("menuButtonDescription");
         descriptionLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        descriptionLabel.setForeground(ThemeManager.isDarkModeEnabled() ? Color.WHITE : new Color(90, 90, 90));
+        descriptionLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel textPanel = new JPanel();
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+        textPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         textPanel.setOpaque(false);
         textPanel.add(titleLabel);
         textPanel.add(Box.createVerticalStrut(8));
@@ -883,6 +1346,7 @@ public class MainMenu extends JFrame {
 
         button.add(iconLabel, BorderLayout.WEST);
         button.add(textPanel, BorderLayout.CENTER);
+        updateMenuButtonText(button);
 
         return button;
     }

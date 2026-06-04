@@ -7,6 +7,8 @@ import services.LocalAuthCacheService;
 import services.StoreHydrationService;
 import managers.SessionManager;
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
@@ -234,7 +236,20 @@ public class Login extends JFrame {
                 }
 
                 LocationOption selectedLocation;
-                if (locations.size() == 1) {
+                Integer lockedLocationId = lockedStoreLocationId();
+                if (lockedLocationId != null) {
+                    selectedLocation = findLocation(locations, lockedLocationId);
+                    if (selectedLocation == null) {
+                        JOptionPane.showMessageDialog(
+                                this,
+                                "This workstation is locked to store ID " + lockedLocationId
+                                        + ", but this user is not assigned to that store.",
+                                "Store Locked",
+                                JOptionPane.WARNING_MESSAGE
+                        );
+                        return;
+                    }
+                } else if (locations.size() == 1) {
                     selectedLocation = locations.get(0);
                 } else {
                     selectedLocation = selectStore(locations);
@@ -344,11 +359,18 @@ public class Login extends JFrame {
                             locations = loadLocations(conn, storesSql, persistedSession.userId());
                         }
 
-                        LocationOption selectedLocation = findLocation(locations, persistedSession.locationId());
-                        if (selectedLocation == null && locations.size() == 1) {
+                        Integer lockedLocationId = lockedStoreLocationId();
+                        LocationOption selectedLocation = lockedLocationId == null
+                                ? findLocation(locations, persistedSession.locationId())
+                                : findLocation(locations, lockedLocationId);
+                        if (lockedLocationId == null && selectedLocation == null && locations.size() == 1) {
                             selectedLocation = locations.get(0);
                         }
                         if (selectedLocation == null) {
+                            if (lockedLocationId != null) {
+                                throw new IllegalStateException("This workstation is locked to store ID "
+                                        + lockedLocationId + ", but the saved user is not assigned to that store.");
+                            }
                             throw new IllegalStateException("Stored store is no longer assigned to this user.");
                         }
 
@@ -434,6 +456,17 @@ public class Login extends JFrame {
         }
         LocalAuthCacheService.CachedUser cached = LocalAuthCacheService.verify(conn, loginIdentifier, enteredSecret.toCharArray());
         if (cached == null) {
+            return false;
+        }
+        Integer lockedLocationId = lockedStoreLocationId();
+        if (lockedLocationId != null && cached.locationId() != lockedLocationId) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "This workstation is locked to store ID " + lockedLocationId
+                            + ". Use an offline PIN cached for this store.",
+                    "Store Locked",
+                    JOptionPane.WARNING_MESSAGE
+            );
             return false;
         }
         SessionManager.setCurrentUserId(cached.userId());
@@ -535,6 +568,17 @@ public class Login extends JFrame {
 
     private boolean isReachabilityAuthFailure(String message) {
         return message != null && message.startsWith("Unable to reach Supabase Auth:");
+    }
+
+    private Integer lockedStoreLocationId() {
+        DatabaseConfig config = DatabaseConfig.load();
+        if (config.mode() != DatabaseMode.SERVER && config.mode() != DatabaseMode.CLIENT) {
+            return null;
+        }
+        if (config.locationId() == null) {
+            throw new IllegalStateException("Server/client mode requires a Store Location ID in Database Setup.");
+        }
+        return config.locationId();
     }
 
     private LocationOption findLocation(List<LocationOption> locations, Integer locationId) {

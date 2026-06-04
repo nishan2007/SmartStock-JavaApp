@@ -20,6 +20,7 @@ import ui.screens.companyprefs.CustomOrderDepositPanel;
 import ui.screens.companyprefs.CustomOrderReceiptPanel;
 import ui.screens.companyprefs.SaleReceiptPanel;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
@@ -35,6 +36,9 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -56,6 +60,14 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
+
+    private static String[] badgeTemplateSlotLabels() {
+        String[] labels = new String[CompanyCustomizationManager.badgeTemplateCount()];
+        for (int i = 0; i < labels.length; i++) {
+            labels[i] = CompanyCustomizationManager.badgeTemplateDisplayName(i);
+        }
+        return labels;
+    }
 
     private final JTextField companyNameField = new JTextField();
     private final JTextField headerLineField = new JTextField();
@@ -115,6 +127,10 @@ public class CompanyCustomization extends JFrame {
     private final JTextField badgeMagStripeTrack3Field = new JTextField();
     private final JTextField badgeMagStripeCommandField = new JTextField();
     private String badgeLayoutData = "";
+    private final String[] badgeTemplateLayouts = new String[CompanyCustomizationManager.badgeTemplateCount()];
+    private int badgeTemplateSlotIndex = 0;
+    private boolean updatingBadgeTemplateSlot = false;
+    private final JComboBox<String> badgeTemplateSlotBox = new JComboBox<>(badgeTemplateSlotLabels());
     private String badgeSelectedTemplateElementId = "";
     private final Set<String> badgeSelectedTemplateElementIds = new LinkedHashSet<>();
     private final Map<String, JCheckBox> badgeElementVisibilityBoxes = new LinkedHashMap<>();
@@ -558,6 +574,16 @@ public class CompanyCustomization extends JFrame {
     private JPanel buildBadgeGroupAlignmentToolbar() {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         toolbar.setOpaque(false);
+        JLabel templateLabel = new JLabel("Template:");
+        templateLabel.setForeground(new Color(17, 24, 39));
+        templateLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        badgeTemplateSlotBox.setPrototypeDisplayValue("Template 4");
+        for (java.awt.event.ActionListener listener : badgeTemplateSlotBox.getActionListeners()) {
+            badgeTemplateSlotBox.removeActionListener(listener);
+        }
+        badgeTemplateSlotBox.addActionListener(e -> switchBadgeTemplateSlot(badgeTemplateSlotBox.getSelectedIndex()));
+        toolbar.add(templateLabel);
+        toolbar.add(badgeTemplateSlotBox);
         JLabel label = new JLabel("Align selected:");
         label.setForeground(new Color(17, 24, 39));
         label.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -1254,7 +1280,7 @@ public class CompanyCustomization extends JFrame {
 
     private void uploadBadgeElementImage() {
         if ("front.logo".equals(badgeSelectedTemplateElementId)) {
-            uploadBadgeLogo();
+            uploadTransparentBadgeLogo();
             badgeElementImageField.setText(badgeLogoPathField.getText());
             return;
         }
@@ -1744,7 +1770,7 @@ public class CompanyCustomization extends JFrame {
                 CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
             }
             CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
-            CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsFromFields());
+            CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsForSave());
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
@@ -1906,7 +1932,18 @@ public class CompanyCustomization extends JFrame {
         badgeMagStripeTrack2Field.setText(settings.magStripeTrack2());
         badgeMagStripeTrack3Field.setText(settings.magStripeTrack3());
         badgeMagStripeCommandField.setText(settings.magStripeCommand());
-        badgeLayoutData = settings.layoutData();
+        String[] loadedLayouts = CompanyCustomizationManager.unpackBadgeTemplateLayouts(settings.layoutData());
+        for (int i = 0; i < badgeTemplateLayouts.length; i++) {
+            badgeTemplateLayouts[i] = i < loadedLayouts.length ? loadedLayouts[i] : "";
+        }
+        badgeTemplateSlotIndex = CompanyCustomizationManager.activeBadgeTemplateIndex(settings.layoutData());
+        badgeLayoutData = badgeTemplateLayouts[badgeTemplateSlotIndex] == null ? "" : badgeTemplateLayouts[badgeTemplateSlotIndex];
+        updatingBadgeTemplateSlot = true;
+        try {
+            badgeTemplateSlotBox.setSelectedIndex(badgeTemplateSlotIndex);
+        } finally {
+            updatingBadgeTemplateSlot = false;
+        }
         refreshBadgeElementVisibilityControls();
         refreshBadgePreview();
     }
@@ -1956,6 +1993,32 @@ public class CompanyCustomization extends JFrame {
         );
     }
 
+    private CompanyCustomizationManager.BadgeTemplateSettings getBadgeTemplateSettingsForSave() {
+        storeCurrentBadgeTemplateSlot();
+        CompanyCustomizationManager.BadgeTemplateSettings current = getBadgeTemplateSettingsFromFields();
+        return current.withLayoutData(CompanyCustomizationManager.packBadgeTemplateLayouts(badgeTemplateLayouts, badgeTemplateSlotIndex));
+    }
+
+    private void storeCurrentBadgeTemplateSlot() {
+        if (badgeTemplateSlotIndex >= 0 && badgeTemplateSlotIndex < badgeTemplateLayouts.length) {
+            badgeTemplateLayouts[badgeTemplateSlotIndex] = badgeLayoutData == null ? "" : badgeLayoutData;
+        }
+    }
+
+    private void switchBadgeTemplateSlot(int selectedIndex) {
+        if (updatingBadgeTemplateSlot || selectedIndex < 0 || selectedIndex >= badgeTemplateLayouts.length || selectedIndex == badgeTemplateSlotIndex) {
+            return;
+        }
+        storeCurrentBadgeTemplateSlot();
+        badgeTemplateSlotIndex = selectedIndex;
+        badgeLayoutData = badgeTemplateLayouts[badgeTemplateSlotIndex] == null ? "" : badgeTemplateLayouts[badgeTemplateSlotIndex];
+        badgeSelectedTemplateElementId = "";
+        badgeSelectedTemplateElementIds.clear();
+        updateBadgeFontControls();
+        refreshBadgeElementVisibilityControls();
+        refreshBadgePreview();
+    }
+
     private void useCompanyLogoForBadge() {
         badgeLogoPathField.setText(logoPathField.getText());
         if (badgeCompanyNameField.getText() == null || badgeCompanyNameField.getText().isBlank()) {
@@ -1981,6 +2044,69 @@ public class CompanyCustomization extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to upload badge logo.\n\n" + ex.getMessage(), "Badge Logo Upload", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void uploadTransparentBadgeLogo() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Badge Logo");
+        chooser.setFileFilter(new FileNameExtensionFilter("Image Files", "png", "jpg", "jpeg", "gif", "bmp", "webp"));
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        Path sourcePath = chooser.getSelectedFile().toPath();
+        int removeBackground = JOptionPane.showConfirmDialog(
+                this,
+                "Remove white/light background and save as transparent PNG?",
+                "Badge Logo",
+                JOptionPane.YES_NO_CANCEL_OPTION,
+                JOptionPane.QUESTION_MESSAGE
+        );
+        if (removeBackground == JOptionPane.CANCEL_OPTION || removeBackground == JOptionPane.CLOSED_OPTION) {
+            return;
+        }
+
+        Path uploadPath = sourcePath;
+        try {
+            if (removeBackground == JOptionPane.YES_OPTION) {
+                uploadPath = createTransparentLogoPng(sourcePath);
+            }
+            String uploadedPath = CompanyCustomizationManager.uploadBadgeTemplateImage(uploadPath);
+            badgeLogoPathField.setText(uploadedPath);
+            badgeElementImageField.setText(uploadedPath);
+            refreshBadgePreview();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload badge logo.\n\n" + ex.getMessage(), "Badge Logo Upload", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private Path createTransparentLogoPng(Path sourcePath) throws IOException {
+        BufferedImage source = ImageIO.read(sourcePath.toFile());
+        if (source == null) {
+            throw new IOException("The selected logo file is not a supported image.");
+        }
+        BufferedImage transparent = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                int argb = source.getRGB(x, y);
+                int alpha = (argb >>> 24) & 0xFF;
+                int red = (argb >>> 16) & 0xFF;
+                int green = (argb >>> 8) & 0xFF;
+                int blue = argb & 0xFF;
+                int brightness = Math.max(red, Math.max(green, blue));
+                int colorSpread = Math.max(red, Math.max(green, blue)) - Math.min(red, Math.min(green, blue));
+                if (brightness >= 248 && colorSpread <= 18) {
+                    alpha = 0;
+                } else if (brightness >= 236 && colorSpread <= 24) {
+                    alpha = Math.min(alpha, Math.max(0, (248 - brightness) * 18));
+                }
+                transparent.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
+            }
+        }
+        Path output = Files.createTempFile("smartstock-badge-logo-transparent-", ".png");
+        ImageIO.write(transparent, "png", output.toFile());
+        return output;
     }
 
     private void selectUploadedBadgeLogo() {

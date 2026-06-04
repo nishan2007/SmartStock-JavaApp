@@ -43,6 +43,9 @@ public final class BadgePrintService {
     private static final int CARD_WIDTH = 638;
     private static final int CARD_HEIGHT = 1013;
     private static final int PRINT_RENDER_SCALE = 4;
+    private static final double CARD_WIDTH_INCHES = 2.125;
+    private static final double CARD_HEIGHT_INCHES = 3.375;
+    private static double actualSizePreviewCalibration = 1.0;
     private static final Color DECKERS_ORANGE = new Color(255, 112, 0);
     private static final Color DECKERS_GREEN = new Color(32, 92, 0);
     private static final Color BORDER_BLUE = new Color(0, 55, 96);
@@ -652,12 +655,49 @@ public final class BadgePrintService {
         dialog.setLayout(new BorderLayout(12, 12));
         dialog.getRootPane().setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
         JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Front", new JScrollPane(new JLabel(new ImageIcon(scale(renderFront(employee, settings), 320, 509)))));
-        tabs.addTab("Back", new JScrollPane(new JLabel(new ImageIcon(scale(renderBack(employee, settings), 320, 509)))));
+        BufferedImage frontImage = renderFront(employee, settings);
+        BufferedImage backImage = renderBack(employee, settings);
+        JLabel frontLabel = new JLabel();
+        JLabel backLabel = new JLabel();
+        updateActualSizePreviewIcons(parent, frontLabel, backLabel, frontImage, backImage);
+        tabs.addTab("Front", new JScrollPane(frontLabel));
+        tabs.addTab("Back", new JScrollPane(backLabel));
         dialog.add(tabs, BorderLayout.CENTER);
+        JLabel sizeLabel = new JLabel("Actual size target: 2.125 x 3.375 in");
+        sizeLabel.setForeground(new Color(75, 85, 99));
+        JButton calibrateButton = new JButton("Calibrate Size");
         JButton closeButton = new JButton("Close");
+        calibrateButton.addActionListener(e -> {
+            Dimension currentSize = actualSizePreviewDimension(parent);
+            double currentWidthInches = currentSize.width / Math.max(1.0, effectiveScreenDpi(parent));
+            Object input = JOptionPane.showInputDialog(
+                    dialog,
+                    "Hold a real badge/card against the preview.\nEnter the preview card width you see on screen, in inches:",
+                    "Calibrate Badge Preview",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    null,
+                    String.format(Locale.ROOT, "%.3f", currentWidthInches)
+            );
+            if (input == null) {
+                return;
+            }
+            try {
+                double measuredWidth = Double.parseDouble(input.toString().trim());
+                if (measuredWidth > 0.2) {
+                    actualSizePreviewCalibration *= CARD_WIDTH_INCHES / measuredWidth;
+                    updateActualSizePreviewIcons(parent, frontLabel, backLabel, frontImage, backImage);
+                    dialog.pack();
+                    dialog.setLocationRelativeTo(parent);
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(dialog, "Enter the measured width as a number of inches.", "Calibrate Badge Preview", JOptionPane.ERROR_MESSAGE);
+            }
+        });
         closeButton.addActionListener(e -> dialog.dispose());
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttons.add(sizeLabel);
+        buttons.add(calibrateButton);
         buttons.add(closeButton);
         dialog.add(buttons, BorderLayout.SOUTH);
         dialog.pack();
@@ -710,6 +750,37 @@ public final class BadgePrintService {
                 .replace("{role}", employee.roleName())
                 .replace("{company}", settings.companyName())
                 .replace("{issued_date}", LocalDate.now().toString());
+    }
+
+    private static void updateActualSizePreviewIcons(Component parent, JLabel frontLabel, JLabel backLabel, BufferedImage frontImage, BufferedImage backImage) {
+        Dimension size = actualSizePreviewDimension(parent);
+        frontLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        backLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        frontLabel.setIcon(new ImageIcon(scale(frontImage, size.width, size.height)));
+        backLabel.setIcon(new ImageIcon(scale(backImage, size.width, size.height)));
+        frontLabel.setPreferredSize(new Dimension(size.width + 18, size.height + 18));
+        backLabel.setPreferredSize(new Dimension(size.width + 18, size.height + 18));
+    }
+
+    private static Dimension actualSizePreviewDimension(Component parent) {
+        double dpi = effectiveScreenDpi(parent);
+        int width = Math.max(80, (int) Math.round(CARD_WIDTH_INCHES * dpi * actualSizePreviewCalibration));
+        int height = Math.max(128, (int) Math.round(CARD_HEIGHT_INCHES * dpi * actualSizePreviewCalibration));
+        return new Dimension(width, height);
+    }
+
+    private static double effectiveScreenDpi(Component parent) {
+        int toolkitDpi = Toolkit.getDefaultToolkit().getScreenResolution();
+        double scaleX = 1.0;
+        GraphicsConfiguration configuration = parent == null ? null : parent.getGraphicsConfiguration();
+        if (configuration != null) {
+            scaleX = Math.max(1.0, configuration.getDefaultTransform().getScaleX());
+        }
+        double dpi = toolkitDpi;
+        if (toolkitDpi <= 96 && scaleX > 1.0) {
+            dpi *= scaleX;
+        }
+        return Math.max(72.0, dpi);
     }
 
     private static void paintFront(Graphics2D g, EmployeeBadgeData employee, CompanyCustomizationManager.BadgeTemplateSettings settings) {
@@ -1383,6 +1454,7 @@ public final class BadgePrintService {
     }
 
     private static LinkedHashMap<String, LayoutEntry> parseLayoutEntries(String layout) {
+        layout = CompanyCustomizationManager.activeBadgeTemplateLayout(layout);
         LinkedHashMap<String, LayoutEntry> entries = new LinkedHashMap<>();
         for (String entry : Objects.requireNonNullElse(layout, "").split(";")) {
             String trimmed = entry.trim();
