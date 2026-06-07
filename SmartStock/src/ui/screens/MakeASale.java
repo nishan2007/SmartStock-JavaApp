@@ -17,6 +17,9 @@ import services.SyncOutboxService;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
+import ui.design.DeckersLogoManager;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 
 
 import javax.swing.*;
@@ -30,10 +33,8 @@ import javax.swing.table.TableColumnModel;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URL;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -87,6 +88,7 @@ public class MakeASale extends JFrame {
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
     private JLabel companyNameLabel;
+    private JLabel screenTitleLabel;
     private JLabel companyLogoLabel;
     private JLabel appLogoLabel;
     private JButton productDropdownButton;
@@ -133,26 +135,27 @@ public class MakeASale extends JFrame {
        // Main container
        JPanel panel = new JPanel(new BorderLayout(16, 16));
        panel.setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
-       panel.setBackground(new Color(245, 247, 250));
+       panel.setBackground(DeckersPalette.background());
 
        // Search and register header
        JPanel searchPanel = new JPanel(new BorderLayout(0, 14));
        searchPanel.setOpaque(false);
 
        companyLogoLabel = new JLabel("Logo", SwingConstants.CENTER);
-       companyLogoLabel.setOpaque(true);
-       companyLogoLabel.setBackground(Color.WHITE);
-       companyLogoLabel.setForeground(new Color(100, 116, 139));
-       companyLogoLabel.setBorder(BorderFactory.createLineBorder(new Color(226, 232, 240)));
-       companyLogoLabel.setPreferredSize(new Dimension(300, 96));
+       companyLogoLabel.setOpaque(false);
+       companyLogoLabel.setForeground(DeckersPalette.muted());
+       companyLogoLabel.setBorder(BorderFactory.createEmptyBorder());
+       companyLogoLabel.setPreferredSize(new Dimension(320, 104));
 
        companyNameLabel = new JLabel("SmartStock");
        companyNameLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
-       companyNameLabel.setForeground(new Color(17, 24, 39));
+       companyNameLabel.setForeground(DeckersPalette.text());
+       companyNameLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
-       JLabel screenTitleLabel = new JLabel("Point of Sale");
+       screenTitleLabel = new JLabel("Point of Sale");
        screenTitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
-       screenTitleLabel.setForeground(new Color(100, 116, 139));
+       screenTitleLabel.setForeground(DeckersPalette.muted());
+       screenTitleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
        JPanel brandTextPanel = new JPanel();
        brandTextPanel.setOpaque(false);
@@ -167,27 +170,20 @@ public class MakeASale extends JFrame {
        brandPanel.add(brandTextPanel, BorderLayout.CENTER);
 
        appLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
-       appLogoLabel.setForeground(new Color(100, 116, 139));
+       appLogoLabel.setForeground(DeckersPalette.muted());
        appLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
-       appLogoLabel.setPreferredSize(new Dimension(140, 72));
+       appLogoLabel.setPreferredSize(new Dimension(210, 96));
        setSmartStockAppLogo();
 
-       newItemBtn = createUtilityButton("New Item");
+       newItemBtn = createUtilityButton("New Item", DeckersPalette.LIME);
        searchField = new PromptTextField("Scan or enter item information");
-       searchField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-       searchField.setForeground(new Color(15, 23, 42));
-       searchField.setCaretColor(new Color(15, 23, 42));
-       searchField.setBackground(Color.WHITE);
-       searchField.setBorder(BorderFactory.createCompoundBorder(
-               BorderFactory.createLineBorder(new Color(203, 213, 225)),
-               BorderFactory.createEmptyBorder(2, 10, 2, 10)
-       ));
+       DeckersSwing.styleField(searchField);
        setFixedControlHeight(searchField, 0);
        searchField.putClientProperty("JTextField.placeholderText", "Scan or enter item information");
        productDropdownButton = createProductDropdownButton();
        selectedStoreLabel = createMetaLabel("Store: Not selected");
        currentUserLabel = createMetaLabel("No User currently logged in");
-       editItemBtn = createUtilityButton("Edit Item");
+       editItemBtn = createUtilityButton("Edit Item", DeckersPalette.PURPLE);
        currentDateLabel = createMetaLabel("No date yet");
        currentTimeLabel = createMetaLabel("No time yet");
 
@@ -201,6 +197,7 @@ public class MakeASale extends JFrame {
 
        updateCurrentDateLabel();
        updateCurrentTimeLabel();
+       updateSalesGreeting();
        startDateRefreshTimer();
 
        rightSidePanel.add(currentDateLabel);
@@ -219,11 +216,7 @@ public class MakeASale extends JFrame {
 
        JPanel centerSection = new JPanel(new BorderLayout(20, 0));
        centerSection.setOpaque(true);
-       centerSection.setBackground(Color.WHITE);
-       centerSection.setBorder(BorderFactory.createCompoundBorder(
-               BorderFactory.createLineBorder(new Color(226, 232, 240)),
-               BorderFactory.createEmptyBorder(16, 16, 16, 16)
-       ));
+       DeckersSwing.styleBand(centerSection, DeckersPalette.ORANGE, new Insets(16, 16, 16, 16));
        centerSection.add(brandPanel, BorderLayout.CENTER);
        centerSection.add(leftSidePanel, BorderLayout.WEST);
        JPanel rightHeaderPanel = new JPanel(new BorderLayout(14, 0));
@@ -235,11 +228,7 @@ public class MakeASale extends JFrame {
         // Search row (THIS is the important part)
        JPanel searchRow = new JPanel(new BorderLayout(12, 0));
        searchRow.setOpaque(true);
-       searchRow.setBackground(Color.WHITE);
-       searchRow.setBorder(BorderFactory.createCompoundBorder(
-               BorderFactory.createLineBorder(new Color(226, 232, 240)),
-               BorderFactory.createEmptyBorder(7, 14, 7, 14)
-       ));
+       DeckersSwing.styleBand(searchRow, DeckersPalette.MAGENTA, new Insets(7, 14, 7, 14));
        JPanel productSearchPanel = new JPanel(new BorderLayout(0, 0));
        productSearchPanel.setOpaque(false);
        productSearchPanel.add(searchField, BorderLayout.CENTER);
@@ -261,37 +250,46 @@ public class MakeASale extends JFrame {
 	                       || (column == CART_COL_ITEM_DISCOUNT);
 	           }
        };
-       cartTable = new JTable(cartModel);
+       cartTable = new JTable(cartModel) {
+           @Override
+           protected void paintComponent(Graphics graphics) {
+               graphics.setColor(getBackground());
+               graphics.fillRect(0, 0, getWidth(), getHeight());
+               super.paintComponent(graphics);
+           }
+       };
        cartTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
-       cartTable.setFont(new Font("SansSerif", Font.PLAIN, 14));
-       cartTable.setRowHeight(34);
-       cartTable.setShowVerticalLines(false);
-       cartTable.setGridColor(new Color(226, 232, 240));
-       cartTable.setSelectionBackground(new Color(219, 234, 254));
-       cartTable.setSelectionForeground(new Color(17, 24, 39));
-       cartTable.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 13));
-       cartTable.getTableHeader().setBackground(new Color(241, 245, 249));
-       cartTable.getTableHeader().setForeground(new Color(51, 65, 85));
+       cartTable.setFillsViewportHeight(true);
+       DeckersSwing.styleTable(cartTable, DeckersPalette.LIME);
        JScrollPane cartScrollPane = new JScrollPane(cartTable);
-       cartScrollPane.setBorder(BorderFactory.createLineBorder(new Color(226, 232, 240)));
+       cartScrollPane.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+       cartScrollPane.setBorder(BorderFactory.createEmptyBorder());
+       cartScrollPane.setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
+       cartScrollPane.getViewport().putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+       cartScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
 	       cartTable.getColumnModel().getColumn(CART_COL_PRICE).setCellEditor(new DefaultCellEditor(new JTextField()));
 	       cartTable.getColumnModel().getColumn(CART_COL_QTY).setCellEditor(new DefaultCellEditor(new JTextField()));
 	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(new DefaultCellEditor(new JTextField()));
        configureCartTableColumns();
 
+       JPanel cartSection = new JPanel(new BorderLayout());
+       DeckersSwing.styleBand(cartSection, DeckersPalette.LIME, new Insets(6, 6, 6, 6));
+       cartSection.add(cartScrollPane, BorderLayout.CENTER);
+
        panel.add(searchPanel, BorderLayout.NORTH);
-       panel.add(cartScrollPane, BorderLayout.CENTER);
+       panel.add(cartSection, BorderLayout.CENTER);
 
        customerAccountBox = new JComboBox<>();
        customerAccountBox.setEditable(true);
        customerAccountBox.setEditor(new PromptComboBoxEditor("Enter customer name"));
-       customerAccountBox.setBorder(BorderFactory.createLineBorder(new Color(203, 213, 225)));
-       customerAccountBox.setBackground(Color.WHITE);
+       customerAccountBox.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+       customerAccountBox.setBackground(DeckersPalette.fieldBackground());
+       customerAccountBox.setForeground(DeckersPalette.text());
        customerAccountBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
        customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false, ""));
        setFixedControlHeight(customerAccountBox, 360);
        customerAccountBox.setRenderer(new CustomerAccountRenderer());
-       addCustomerAccountButton = createUtilityButton("New Customer");
+       addCustomerAccountButton = createUtilityButton("New Customer", DeckersPalette.MAGENTA);
        paymentMethodGroup = new ButtonGroup();
        cashPaymentButton = createPaymentMethodButton("Cash", "CASH");
        cardPaymentButton = createPaymentMethodButton("Card", "CARD");
@@ -301,11 +299,10 @@ public class MakeASale extends JFrame {
        paymentReferenceField = new JTextField(14);
        paymentReferenceField.setToolTipText("Required for MMG transaction reference.");
        paymentReferenceField.setEnabled(false);
+       DeckersSwing.styleField(paymentReferenceField);
        setFixedControlHeight(paymentReferenceField, 170);
 	       discountPercentField = new JTextField("0", 5);
-       discountPercentField.setForeground(new Color(15, 23, 42));
-       discountPercentField.setCaretColor(new Color(15, 23, 42));
-       discountPercentField.setBackground(Color.WHITE);
+       DeckersSwing.styleField(discountPercentField);
 	       discountPercentField.setEnabled(canApplySaleDiscount());
 	       if (!canApplySaleDiscount()) {
 	           discountPercentField.setToolTipText("Requires Apply Sale Discount permission.");
@@ -320,11 +317,7 @@ public class MakeASale extends JFrame {
 
        JPanel bottomPanel = new JPanel(new BorderLayout(14, 10));
        bottomPanel.setOpaque(true);
-       bottomPanel.setBackground(Color.WHITE);
-       bottomPanel.setBorder(BorderFactory.createCompoundBorder(
-               BorderFactory.createLineBorder(new Color(226, 232, 240)),
-               BorderFactory.createEmptyBorder(14, 14, 14, 14)
-       ));
+       DeckersSwing.styleBand(bottomPanel, DeckersPalette.CORAL, new Insets(14, 14, 14, 14));
 
        JPanel totalsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 14, 6));
        totalsPanel.setOpaque(false);
@@ -358,7 +351,7 @@ public class MakeASale extends JFrame {
        actionPanel.add(checkoutPrintBtn);
 
        overrideStatusLabel = new JLabel("No active override approvals");
-       overrideStatusLabel.setForeground(new Color(71, 85, 105));
+       overrideStatusLabel.setForeground(DeckersPalette.muted());
        overrideStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
 
        JPanel bottomTopPanel = new JPanel(new BorderLayout(8, 4));
@@ -564,12 +557,12 @@ public class MakeASale extends JFrame {
         JButton button = new RoundedFillButton(text);
         button.setFont(new Font("SansSerif", Font.BOLD, 14));
         button.setFocusPainted(false);
-        button.setForeground(new Color(15, 23, 42));
-        button.setBackground(new Color(37, 99, 235));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(DeckersPalette.CORAL));
         button.setOpaque(true);
         button.setContentAreaFilled(true);
         button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(29, 78, 216)),
+                BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.CORAL)),
                 BorderFactory.createEmptyBorder(8, 16, 8, 16)
         ));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -582,13 +575,13 @@ public class MakeASale extends JFrame {
         button.setFont(new Font("SansSerif", Font.BOLD, 16));
         button.setFocusPainted(false);
         button.setForeground(new Color(255, 255, 255));
-        button.putClientProperty("Button.disabledText", new Color(0, 0, 0));
-        button.setBackground(new Color(220, 38, 38));
+        button.putClientProperty("Button.disabledText", DeckersPalette.muted());
+        button.setBackground(DeckersPalette.CHECKOUT_RED);
         button.setOpaque(false);
         button.setContentAreaFilled(false);
         button.setBorderPainted(true);
         button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
-        button.setBorder(new OutsideRoundedBorder(new Color(0, 0, 0), 4, 12, new Insets(12, 24, 12, 24)));
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.background(), 4, 12, new Insets(12, 24, 12, 24)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setToolTipText("Select a payment method before checkout.");
         button.setPreferredSize(new Dimension("Checkout & Print".equals(text) ? 205 : 150, 56));
@@ -600,11 +593,12 @@ public class MakeASale extends JFrame {
         JToggleButton button = new RoundedFillToggleButton(label);
         button.setFont(new Font("SansSerif", Font.BOLD, 16));
         button.setFocusPainted(false);
-        button.setForeground(Color.WHITE);
-        button.setBackground(new Color(37, 99, 235));
+        button.setActionCommand(method);
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(paymentAccent(method)));
         button.setOpaque(false);
         button.setContentAreaFilled(false);
-        button.setBorder(new OutsideRoundedBorder(new Color(0, 0, 0), 4, 12, new Insets(12, 22, 12, 22)));
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.sectionBorder(paymentAccent(method)), 4, 12, new Insets(12, 22, 12, 22)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 155 : 125, 56));
         button.setMinimumSize(button.getPreferredSize());
@@ -657,9 +651,10 @@ public class MakeASale extends JFrame {
         if (button == null) {
             return;
         }
-        button.setBackground(selected ? new Color(30, 64, 175) : new Color(37, 99, 235));
+        Color accent = selected ? DeckersPalette.LIME : DeckersPalette.ORANGE;
+        button.setBackground(selected ? DeckersPalette.tilePressed(accent) : DeckersPalette.tileFill(accent));
         button.setBorder(new OutsideRoundedBorder(
-                selected ? new Color(15, 23, 42) : new Color(29, 78, 216),
+                DeckersPalette.sectionBorder(accent),
                 4,
                 12,
                 new Insets(12, 22, 12, 22)
@@ -676,20 +671,14 @@ public class MakeASale extends JFrame {
         }
     }
 
-    private JButton createUtilityButton(String text) {
+    private Color paymentAccent(String method) {
+        return DeckersPalette.ORANGE;
+    }
+
+    private JButton createUtilityButton(String text, Color accent) {
         // Small utility buttons like New Item/New Customer: text color, fill, border, and padding live here.
         JButton button = new JButton(text);
-        button.setFont(new Font("SansSerif", Font.BOLD, 13));
-        button.setFocusPainted(false);
-        button.setForeground(new Color(30, 41, 59));
-        button.setBackground(new Color(248, 250, 252));
-        button.setOpaque(false);
-        button.setContentAreaFilled(false);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(203, 213, 225)),
-                BorderFactory.createEmptyBorder(7, 13, 7, 13)
-        ));
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        DeckersSwing.styleUtilityButton(button, accent);
         return button;
     }
 
@@ -698,12 +687,12 @@ public class MakeASale extends JFrame {
         JButton button = new RoundedFillButton(text);
         button.setFont(new Font("SansSerif", Font.BOLD, 15));
         button.setFocusPainted(false);
-        button.setForeground(new Color(30, 41, 59));
-        button.setBackground(new Color(248, 250, 252));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(DeckersPalette.YELLOW));
         button.setOpaque(false);
         button.setContentAreaFilled(false);
         button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
-        button.setBorder(new OutsideRoundedBorder(Color.BLACK, 4, 12, new Insets(12, 22, 12, 22)));
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.sectionBorder(DeckersPalette.YELLOW), 4, 12, new Insets(12, 22, 12, 22)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setPreferredSize(new Dimension(150, 56));
         return button;
@@ -713,12 +702,12 @@ public class MakeASale extends JFrame {
         // Green arrow section on the product search field: width, height, fill, text, and border live here.
         JButton button = new JButton("▼");
         button.setFont(new Font("SansSerif", Font.BOLD, 11));
-        button.setForeground(Color.WHITE);
-        button.setBackground(new Color(22, 163, 74));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tilePressed(DeckersPalette.LIME));
         button.setOpaque(true);
         button.setContentAreaFilled(true);
         button.setFocusPainted(false);
-        button.setBorder(BorderFactory.createLineBorder(new Color(21, 128, 61)));
+        button.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.LIME)));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Dimension size = new Dimension(38, SEARCH_CONTROL_HEIGHT);
         button.setPreferredSize(size);
@@ -729,18 +718,12 @@ public class MakeASale extends JFrame {
     }
 
     private JLabel createMetaLabel(String text) {
-        JLabel label = new JLabel(text);
-        label.setFont(new Font("SansSerif", Font.BOLD, 13));
-        label.setForeground(new Color(71, 85, 105));
-        return label;
+        return DeckersSwing.metaLabel(text);
     }
 
     private JLabel createTotalLabel(String text, boolean prominent) {
         // Totals row label sizes and colors are controlled here.
-        JLabel label = new JLabel(text);
-        label.setFont(new Font("SansSerif", prominent ? Font.BOLD : Font.PLAIN, prominent ? 18 : 14));
-        label.setForeground(prominent ? new Color(15, 23, 42) : new Color(71, 85, 105));
-        return label;
+        return DeckersSwing.totalLabel(text, prominent);
     }
 
     private void setFixedControlHeight(JComponent component, int width) {
@@ -760,6 +743,8 @@ public class MakeASale extends JFrame {
             JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             label.setFont(new Font("SansSerif", Font.PLAIN, 14));
             label.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+            label.setForeground(isSelected ? DeckersPalette.text() : DeckersPalette.text());
+            label.setBackground(isSelected ? DeckersPalette.tileHover(DeckersPalette.MAGENTA) : DeckersPalette.fieldBackground());
             if (value == null) {
                 label.setText("");
             }
@@ -884,7 +869,8 @@ public class MakeASale extends JFrame {
         panel.setOpaque(false);
         JLabel title = new JLabel(label);
         title.setFont(new Font("SansSerif", Font.BOLD, 11));
-        title.setForeground(new Color(100, 116, 139));
+        title.setForeground(DeckersPalette.muted());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         panel.add(title, BorderLayout.NORTH);
         panel.add(control, BorderLayout.CENTER);
         return panel;
@@ -895,63 +881,95 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        companyNameLabel.setText("SmartStock");
-        companyLogoLabel.setText("Logo");
-        companyLogoLabel.setIcon(null);
-
-        new SwingWorker<CompanyBranding, Void>() {
-            @Override
-            protected CompanyBranding doInBackground() {
-                CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
-                BufferedImage logo = CompanyCustomizationManager.loadCompanyLogo(settings);
-                return new CompanyBranding(settings.companyName(), logo);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    CompanyBranding branding = get();
-                    companyNameLabel.setText(branding.companyName());
-                    if (branding.logo() != null) {
-                        setCompanyLogo(branding.logo());
-                    } else {
-                        setFallbackCompanyLogo();
-                    }
-                } catch (Exception ex) {
-                    setFallbackCompanyLogo();
-                }
-            }
-        }.execute();
+        updateSalesGreeting();
+        setDeckersCompanyLogo();
     }
 
-    private void setCompanyLogo(BufferedImage logo) {
-        Image scaled = scaleToFit(logo, 280, 84);
-        companyLogoLabel.setText("");
-        companyLogoLabel.setIcon(new ImageIcon(scaled));
+    private void updateSalesGreeting() {
+        if (companyNameLabel == null || screenTitleLabel == null) {
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
+        int hour = now.getHour();
+        int variant = (now.getMinute() / 10) % 3;
+        if (hour < 5) {
+            companyNameLabel.setText("Late Shift Sales");
+            screenTitleLabel.setText(variant == 0
+                    ? "Keep checkout smooth and every order accurate."
+                    : variant == 1
+                    ? "Quiet hours, clean totals, steady sales."
+                    : "One more careful sale at a time.");
+        } else if (hour < 12) {
+            companyNameLabel.setText(variant == 2 ? "Morning Momentum" : "Good Morning");
+            screenTitleLabel.setText(variant == 0
+                    ? "Start strong and make the first sales count."
+                    : variant == 1
+                    ? "Coffee loaded, scanner ready."
+                    : "Fresh day, fresh carts, fresh wins.");
+        } else if (hour == 12) {
+            companyNameLabel.setText(variant == 0
+                    ? "What's for Lunch? 🍽"
+                    : variant == 1
+                    ? "Lunch Time Already? 🥪"
+                    : "Ready for Lunch? ☀");
+            screenTitleLabel.setText(variant == 0
+                    ? "Serve the lunch rush, then enjoy yours."
+                    : variant == 1
+                    ? "Great service first, good lunch after."
+                    : "Smooth scans, happy customers, well-earned lunch.");
+        } else if (hour < 15) {
+            companyNameLabel.setText(variant == 1 ? "Midday Hustle" : "Midday Momentum");
+            screenTitleLabel.setText(variant == 0
+                    ? "Keep the line moving and the basket growing."
+                    : variant == 1
+                    ? "Halfway there, sales still count double in spirit."
+                    : "A smooth checkout keeps the day on track.");
+        } else if (hour == 16) {
+            companyNameLabel.setText("Waiting for 5 PM?");
+            screenTitleLabel.setText(variant == 0
+                    ? "One strong final hour can still move the needle."
+                    : variant == 1
+                    ? "Close time is calling, but the register is too."
+                    : "Finish clean, finish sharp, finish smiling.");
+        } else if (hour < 18) {
+            companyNameLabel.setText(variant == 2 ? "Final Stretch" : "Good Afternoon");
+            screenTitleLabel.setText(variant == 0
+                    ? "Finish the day strong with confident service."
+                    : variant == 1
+                    ? "Last stretch, best service."
+                    : "Every checkout is one more good impression.");
+        } else {
+            companyNameLabel.setText(variant == 1 ? "Evening Sales" : "Good Evening");
+            screenTitleLabel.setText(variant == 0
+                    ? "Close out sales with care and a great final impression."
+                    : variant == 1
+                    ? "Evening pace, steady hands, clean totals."
+                    : "Make the last carts feel like the first.");
+        }
     }
 
-    private void setFallbackCompanyLogo() {
-        ImageIcon centerLogoIcon = loadCenterLogoIcon();
-        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
-            Image scaled = scaleToFit(centerLogoIcon.getImage(), 280, 84);
+    private void setDeckersCompanyLogo() {
+        ImageIcon deckersLogoIcon = DeckersLogoManager.loadDeckersLogoIcon(getClass());
+        if (deckersLogoIcon != null && deckersLogoIcon.getIconWidth() > 0) {
+            Image scaled = DeckersLogoManager.scaleToFit(deckersLogoIcon.getImage(), 300, 96);
             companyLogoLabel.setText("");
             companyLogoLabel.setIcon(new ImageIcon(scaled));
             return;
         }
 
         companyLogoLabel.setIcon(null);
-        String name = companyNameLabel == null ? "S" : companyNameLabel.getText().trim();
-        companyLogoLabel.setText(name.isBlank() ? "S" : name.substring(0, 1).toUpperCase());
-        companyLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        companyLogoLabel.setText("Deckers");
+        companyLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
     }
 
     private void setSmartStockAppLogo() {
         if (appLogoLabel == null) {
             return;
         }
-        ImageIcon centerLogoIcon = loadCenterLogoIcon();
+        ImageIcon centerLogoIcon = DeckersLogoManager.loadSmartStockLogoIcon(getClass());
         if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
-            Image scaled = scaleToFit(centerLogoIcon.getImage(), 132, 58);
+            Image scaled = DeckersLogoManager.scaleToFit(centerLogoIcon.getImage(), 196, 88);
             appLogoLabel.setText("");
             appLogoLabel.setIcon(new ImageIcon(scaled));
             return;
@@ -959,54 +977,6 @@ public class MakeASale extends JFrame {
 
         appLogoLabel.setIcon(null);
         appLogoLabel.setText("SmartStock");
-    }
-
-    private Image scaleToFit(Image image, int maxWidth, int maxHeight) {
-        int width = Math.max(image.getWidth(null), 1);
-        int height = Math.max(image.getHeight(null), 1);
-        double scale = Math.min((double) maxWidth / width, (double) maxHeight / height);
-        scale = Math.min(scale, 1.0);
-        int targetWidth = Math.max((int) Math.round(width * scale), 1);
-        int targetHeight = Math.max((int) Math.round(height * scale), 1);
-        return image.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH);
-    }
-
-    private record CompanyBranding(String companyName, BufferedImage logo) {
-    }
-
-
-    private ImageIcon loadCenterLogoIcon() {
-        String[] resourcePaths = {
-                "/Images/CenterLogo.png",
-                "Images/CenterLogo.png",
-                "/CenterLogo.png",
-                "CenterLogo.png"
-        };
-
-        for (String path : resourcePaths) {
-            URL url = getClass().getResource(path);
-            if (url != null) {
-                return new ImageIcon(url);
-            }
-        }
-
-        String[] filePaths = {
-                "src/main/Images/CenterLogo.png",
-                "src/main/resources/Images/CenterLogo.png",
-                "src/Images/CenterLogo.png",
-                "Images/CenterLogo.png",
-                "CenterLogo.png"
-        };
-
-        for (String path : filePaths) {
-            ImageIcon icon = new ImageIcon(path);
-            if (icon.getIconWidth() > 0) {
-                return icon;
-            }
-        }
-
-        System.out.println("Center logo not found. Checked classpath and common file locations.");
-        return null;
     }
 
     private void refreshPermissionButtons() {
@@ -1365,7 +1335,7 @@ public class MakeASale extends JFrame {
     private void showSearchResultsPopup(java.util.List<Object[]> rows) {
         if (searchPopup == null) {
             searchPopup = new JPopupMenu();
-            searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
+            searchPopup.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
             searchPopup.setFocusable(false);
 
             String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock"};
@@ -1377,6 +1347,7 @@ public class MakeASale extends JFrame {
             };
 
             searchResultsTable = new JTable(resultsModel);
+            DeckersSwing.styleTable(searchResultsTable);
             searchResultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             searchResultsTable.setAutoCreateRowSorter(false);
             searchResultsTable.setRowHeight(24);
@@ -1397,6 +1368,7 @@ public class MakeASale extends JFrame {
 
             searchResultsScrollPane = new JScrollPane(searchResultsTable);
             searchResultsScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            searchResultsScrollPane.getViewport().setBackground(DeckersPalette.surface());
             searchResultsScrollPane.setColumnHeaderView(null);
             searchResultsScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 
@@ -1947,6 +1919,7 @@ public class MakeASale extends JFrame {
         LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a");
         currentTimeLabel.setText("Time: " + now.format(formatter));
+        updateSalesGreeting();
     }
 
     private void startDateRefreshTimer() {
@@ -2059,9 +2032,9 @@ public class MakeASale extends JFrame {
                 BorderFactory.createEmptyBorder(0, 8, 0, 8)
         ));
         editorField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        editorField.setForeground(new Color(15, 23, 42));
-        editorField.setCaretColor(new Color(15, 23, 42));
-        editorField.setBackground(Color.WHITE);
+        editorField.setForeground(DeckersPalette.text());
+        editorField.setCaretColor(DeckersPalette.text());
+        editorField.setBackground(DeckersPalette.fieldBackground());
         setFixedControlHeight(editorField, 0);
         if (editorField instanceof PromptTextField promptTextField) {
             promptTextField.setPrompt("Enter customer name");
@@ -3354,7 +3327,7 @@ public class MakeASale extends JFrame {
 
             Graphics2D g2 = (Graphics2D) graphics.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setColor(new Color(100, 116, 139));
+            g2.setColor(DeckersPalette.muted());
             g2.setFont(getFont());
             Insets insets = getInsets();
             FontMetrics metrics = g2.getFontMetrics();

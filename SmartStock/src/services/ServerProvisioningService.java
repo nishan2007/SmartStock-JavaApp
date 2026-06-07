@@ -92,7 +92,8 @@ public final class ServerProvisioningService {
                 "database/custom_orders_setup.sql",
                 "database/custom_order_controls_setup.sql",
                 "database/custom_order_line_discount_setup.sql",
-                "database/custom_order_safety_controls_setup.sql"
+                "database/custom_order_safety_controls_setup.sql",
+                "database/sales_quotes_orders_setup.sql"
         ));
     }
 

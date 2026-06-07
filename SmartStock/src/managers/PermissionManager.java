@@ -107,6 +107,10 @@ public class PermissionManager {
                     || hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")
                     || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
+                    || hasPermission("SALES_QUOTES_ORDERS")
+                    || hasPermission("CREATE_SALES_QUOTE")
+                    || hasPermission("MANAGE_SALES_ORDERS")
+                    || hasPermission("POST_SALES_ORDER_DELIVERY")
                     || hasPermission("NEW_ITEM")
                     || hasPermission("RECEIVING_INVENTORY")
                     || hasPermission("VIEW_RECEIVING_HISTORY")
@@ -140,6 +144,11 @@ public class PermissionManager {
             case "BalanceDraw" -> hasPermission("BALANCE_DRAWER");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
+            case "SalesQuotes", "SalesQuotesOrders" -> hasPermission("SALES_QUOTES_ORDERS")
+                    || hasPermission("CREATE_SALES_QUOTE");
+            case "SalesOrders" -> hasPermission("SALES_QUOTES_ORDERS")
+                    || hasPermission("MANAGE_SALES_ORDERS")
+                    || hasPermission("POST_SALES_ORDER_DELIVERY");
             case "CustomOrders" -> hasPermission("CREATE_CUSTOM_ORDER");
             case "Orders" -> hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")

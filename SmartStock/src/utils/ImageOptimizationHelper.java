@@ -37,6 +37,36 @@ public final class ImageOptimizationHelper {
         );
     }
 
+    public static OptimizedImage optimizeForUploadPreservingTransparency(
+            File sourceFile,
+            String outputPrefix,
+            int maxWidth,
+            int maxHeight,
+            float initialQuality,
+            long maxOriginalBytes,
+            long maxOptimizedBytes
+    ) throws IOException {
+        if (sourceFile == null || !sourceFile.isFile()) {
+            throw new IOException("The selected image file was not found.");
+        }
+
+        long originalBytes = Files.size(sourceFile.toPath());
+        if (originalBytes > maxOriginalBytes) {
+            throw new IOException("Image is too large. Maximum original file size is " + formatBytes(maxOriginalBytes) + ".");
+        }
+
+        BufferedImage source = ImageIO.read(sourceFile);
+        if (source == null) {
+            throw new IOException("The selected file is not a supported image.");
+        }
+
+        if (!source.getColorModel().hasAlpha()) {
+            return optimizeForUpload(sourceFile, outputPrefix, maxWidth, maxHeight, initialQuality, maxOriginalBytes, maxOptimizedBytes);
+        }
+
+        return optimizeTransparentPng(source, outputPrefix, maxWidth, maxHeight, originalBytes, maxOptimizedBytes);
+    }
+
     public static OptimizedImage optimizeForUpload(
             File sourceFile,
             String outputPrefix,
@@ -113,6 +143,52 @@ public final class ImageOptimizationHelper {
         graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         graphics.setColor(Color.WHITE);
         graphics.fillRect(0, 0, width, height);
+        graphics.drawImage(source, 0, 0, width, height, null);
+        graphics.dispose();
+        return output;
+    }
+
+    private static OptimizedImage optimizeTransparentPng(
+            BufferedImage source,
+            String outputPrefix,
+            int maxWidth,
+            int maxHeight,
+            long originalBytes,
+            long maxOptimizedBytes
+    ) throws IOException {
+        int targetWidth = source.getWidth();
+        int targetHeight = source.getHeight();
+        File outputFile = null;
+
+        for (int attempt = 0; attempt < 12; attempt++) {
+            Dimension scaledSize = fitWithin(targetWidth, targetHeight, maxWidth, maxHeight);
+            BufferedImage scaled = scaleToTransparentPng(source, scaledSize.width, scaledSize.height);
+            outputFile = File.createTempFile(outputPrefix + "-", ".png");
+            ImageIO.write(scaled, "png", outputFile);
+
+            long optimizedBytes = Files.size(outputFile.toPath());
+            if (optimizedBytes <= maxOptimizedBytes) {
+                return new OptimizedImage(outputFile, "image/png", outputPrefix + ".png", originalBytes, optimizedBytes);
+            }
+
+            Files.deleteIfExists(outputFile.toPath());
+            outputFile = null;
+            targetWidth = Math.max((int) Math.round(targetWidth * 0.82), 64);
+            targetHeight = Math.max((int) Math.round(targetHeight * 0.82), 64);
+        }
+
+        throw new IOException("Transparent image could not be compressed below " + formatBytes(maxOptimizedBytes) + ".");
+    }
+
+    private static BufferedImage scaleToTransparentPng(BufferedImage source, int width, int height) {
+        BufferedImage output = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = output.createGraphics();
+        graphics.setComposite(AlphaComposite.Clear);
+        graphics.fillRect(0, 0, width, height);
+        graphics.setComposite(AlphaComposite.SrcOver);
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         graphics.drawImage(source, 0, 0, width, height, null);
         graphics.dispose();
         return output;

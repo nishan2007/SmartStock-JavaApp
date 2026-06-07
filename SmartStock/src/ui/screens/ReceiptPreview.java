@@ -188,6 +188,7 @@ public class ReceiptPreview extends JFrame {
         private BufferedImage logo;
         private boolean logoLoading = false;
         private final Font receiptFont = new Font(Font.MONOSPACED, Font.PLAIN, 14);
+        private final Font letterFont = new Font(Font.MONOSPACED, Font.PLAIN, 11);
 
         ReceiptPaperPanel() {
             setBackground(new Color(241, 245, 249));
@@ -217,7 +218,7 @@ public class ReceiptPreview extends JFrame {
 
         @Override
         public Dimension getPreferredSize() {
-            FontMetrics metrics = getFontMetrics(receiptFont);
+            FontMetrics metrics = getFontMetrics(getPreviewFont());
             int paperWidth = getPaperWidth();
             int textHeight = receiptText.split("\\R", -1).length * metrics.getHeight();
             int logoHeight = getLogoDisplayHeight(paperWidth) + (hasLogoSpace() ? 12 : 0);
@@ -256,7 +257,7 @@ public class ReceiptPreview extends JFrame {
                 y += logoSize.height + 12;
             }
 
-            g2.setFont(receiptFont);
+            g2.setFont(getPreviewFont());
             g2.setColor(Color.BLACK);
             FontMetrics metrics = g2.getFontMetrics();
             int textX = paperX + PADDING;
@@ -270,6 +271,10 @@ public class ReceiptPreview extends JFrame {
 
         private int getPaperWidth() {
             return letterFormat ? LETTER_PAPER_WIDTH : RECEIPT_PAPER_WIDTH;
+        }
+
+        private Font getPreviewFont() {
+            return letterFormat ? letterFont : receiptFont;
         }
 
         private boolean hasLogoSpace() {

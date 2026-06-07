@@ -34,6 +34,8 @@ import ui.screens.PayrollDashboard;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
+import ui.screens.SalesOrders;
+import ui.screens.SalesQuotes;
 import ui.screens.StoreTransfer;
 import ui.screens.SyncStatus;
 import ui.screens.TimeClock;
@@ -94,6 +96,8 @@ public class AppMenuBar {
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem workstationPreferencesItem = new JMenuItem("Workstation Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
+        JMenuItem salesQuotesItem = new JMenuItem("Sales Quotes");
+        JMenuItem salesOrdersItem = new JMenuItem("Sales Orders");
         JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
@@ -122,6 +126,11 @@ public class AppMenuBar {
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
+        boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
+        boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
+                || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
@@ -137,7 +146,7 @@ public class AppMenuBar {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canSalesQuotes || canSalesOrders || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -207,6 +216,12 @@ public class AppMenuBar {
         }
         if (!canCustomerAccounts || "CustomerAccounts".equalsIgnoreCase(screenKey)) {
             customerAccountsItem.setEnabled(false);
+        }
+        if (!canSalesQuotes || "SalesQuotes".equalsIgnoreCase(screenKey)) {
+            salesQuotesItem.setEnabled(false);
+        }
+        if (!canSalesOrders || "SalesOrders".equalsIgnoreCase(screenKey)) {
+            salesOrdersItem.setEnabled(false);
         }
         if (!canCustomOrders || "CustomOrders".equalsIgnoreCase(screenKey)) {
             customOrdersItem.setEnabled(false);
@@ -462,6 +477,32 @@ public class AppMenuBar {
             }
         });
 
+        salesQuotesItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!canSalesQuotes) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Sales Quotes.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(SalesQuotes.class)) {
+                    return;
+                }
+                NavigationManager.openSalesQuotes(parent);
+            }
+        });
+
+        salesOrdersItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!canSalesOrders) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Sales Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(SalesOrders.class)) {
+                    return;
+                }
+                NavigationManager.openSalesOrders(parent);
+            }
+        });
+
         customOrdersItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!canCustomOrders) {
@@ -622,6 +663,8 @@ public class AppMenuBar {
         operationsMenu.add(balanceSheetItem);
 
         ordersMenu.add(ordersManagerDashboardItem);
+        ordersMenu.add(salesQuotesItem);
+        ordersMenu.add(salesOrdersItem);
         ordersMenu.add(customOrdersItem);
         ordersMenu.add(ordersItem);
         ordersMenu.add(ordersEndOfDayItem);

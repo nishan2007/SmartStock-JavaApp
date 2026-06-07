@@ -210,6 +210,9 @@ public final class ThemeManager {
             menuItem.setForeground(text);
             menuItem.setOpaque(true);
         } else if (component instanceof JTable table) {
+            if (Boolean.TRUE.equals(table.getClientProperty("SmartStock.preserveBackground"))) {
+                return;
+            }
             table.setBackground(surface);
             table.setForeground(text);
             table.setGridColor(border);

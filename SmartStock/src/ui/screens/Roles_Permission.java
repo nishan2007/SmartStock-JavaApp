@@ -929,6 +929,10 @@ public class Roles_Permission extends JFrame {
         permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
         permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "View Assigned Custom Orders");
+        permissions.put("SALES_QUOTES_ORDERS", "Sales Quotes / Orders");
+        permissions.put("CREATE_SALES_QUOTE", "Create Sales Quote");
+        permissions.put("MANAGE_SALES_ORDERS", "Manage Sales Orders");
+        permissions.put("POST_SALES_ORDER_DELIVERY", "Post Sales Order Delivery");
         permissions.put("ORDERS_MANAGER_DASHBOARD", "Orders Manager Dashboard");
         permissions.put("ORDERS_END_OF_DAY", "Orders End Of Day");
         permissions.put("CUSTOM_ORDER_REFUNDS", "Custom Order Refunds");
@@ -991,6 +995,10 @@ public class Roles_Permission extends JFrame {
         descriptions.put("CREATE_CUSTOM_ORDER", "Allows creating new custom orders.");
         descriptions.put("MANAGE_CUSTOM_ORDERS", "Allows full management access across all custom orders.");
         descriptions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Allows viewing custom orders assigned to the logged-in user.");
+        descriptions.put("SALES_QUOTES_ORDERS", "Allows opening the sales quotes and sales orders workflow.");
+        descriptions.put("CREATE_SALES_QUOTE", "Allows creating and issuing customer sales quotes.");
+        descriptions.put("MANAGE_SALES_ORDERS", "Allows accepting quotes, taking order payments, and managing sales orders.");
+        descriptions.put("POST_SALES_ORDER_DELIVERY", "Allows posting partial or full sales order deliveries.");
         descriptions.put("ORDERS_MANAGER_DASHBOARD", "Allows access to manager-level custom order dashboard tools.");
         descriptions.put("ORDERS_END_OF_DAY", "Allows access to custom-order end-of-day totals and reconciliation.");
         descriptions.put("CUSTOM_ORDER_REFUNDS", "Allows issuing refunds on custom orders.");
@@ -1042,6 +1050,10 @@ public class Roles_Permission extends JFrame {
         groups.put("CREATE_CUSTOM_ORDER", "Orders");
         groups.put("MANAGE_CUSTOM_ORDERS", "Orders");
         groups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Orders");
+        groups.put("SALES_QUOTES_ORDERS", "Orders");
+        groups.put("CREATE_SALES_QUOTE", "Orders");
+        groups.put("MANAGE_SALES_ORDERS", "Orders");
+        groups.put("POST_SALES_ORDER_DELIVERY", "Orders");
         groups.put("ORDERS_MANAGER_DASHBOARD", "Orders");
         groups.put("ORDERS_END_OF_DAY", "Orders");
         groups.put("CUSTOM_ORDER_REFUNDS", "Orders");

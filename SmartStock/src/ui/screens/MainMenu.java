@@ -8,6 +8,8 @@ import models.CashDrawerContext;
 import services.CashDrawerService;
 import services.DeviceService;
 import ui.components.AppMenuBar;
+import ui.design.DeckersLogoManager;
+import ui.design.DeckersPalette;
 import ui.helpers.WindowHelper;
 import ui.helpers.ThemeManager;
 import data.DB;
@@ -29,22 +31,14 @@ public class MainMenu extends JFrame {
     private static boolean drawStartPromptShownThisAppSession;
     private static final int MENU_ICON_SIZE = 74;
     private static final int MENU_TILE_WIDTH = 315;
+    private static final int OPERATION_MENU_TILE_WIDTH = 255;
     private static final int MENU_TILE_HEIGHT = 126;
+    private static final int VERTICAL_MENU_TILE_HEIGHT = 182;
     private static final int MENU_TILE_GAP = 14;
     private static final int SECTION_SIDE_PADDING = 18;
     private static final int LEFT_SECTION_COLUMNS = 4;
     private static final int RIGHT_SECTION_COLUMNS = 1;
-    private static final Color LIGHT_BACKGROUND = new Color(241, 245, 249);
-    private static final Color LIGHT_SURFACE = Color.WHITE;
-    private static final Color LIGHT_TEXT = new Color(15, 23, 42);
-    private static final Color LIGHT_MUTED = new Color(71, 85, 105);
-    private static final Color LIGHT_BORDER = new Color(203, 213, 225);
-    private static final Color DARK_BACKGROUND = new Color(18, 18, 18);
-    private static final Color DARK_SURFACE = new Color(30, 30, 30);
-    private static final Color DARK_TEXT = new Color(245, 245, 245);
-    private static final Color DARK_MUTED = new Color(190, 190, 190);
-    private static final Color DARK_BORDER = new Color(75, 75, 75);
-
+    private static final int COLUMN_GAP = 18;
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
     private final JButton balanceDrawButton;
@@ -61,6 +55,8 @@ public class MainMenu extends JFrame {
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton customerTransactionHistoryButton;
+    private final JButton salesQuotesButton;
+    private final JButton salesOrdersButton;
     private final JButton customOrdersButton;
     private final JButton ordersButton;
     private final JButton viewInventoryButton;
@@ -129,6 +125,8 @@ public class MainMenu extends JFrame {
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/MainMenuViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
         customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
+        salesQuotesButton = createMenuButton("Sales Quotes", "Create and issue business quotations", loadIcon("src/ICONS/MainMenuOrders.png"));
+        salesOrdersButton = createMenuButton("Sales Orders", "Take order payments and post deliveries", loadIcon("src/ICONS/MainMenuOrders.png"));
         customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
@@ -156,7 +154,7 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.setBackground(backgroundColor);
         leftSectionStackPanel.add(createSectionPanel(
                 "Point of Sale",
-                new Color(37, 99, 235),
+                DeckersPalette.ORANGE,
                 makeSaleButton,
                 returnSaleButton,
                 endOfDayButton,
@@ -165,8 +163,10 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
                 "Orders",
-                new Color(14, 116, 144),
+                DeckersPalette.MAGENTA,
                 ordersManagerDashboardButton,
+                salesQuotesButton,
+                salesOrdersButton,
                 customOrdersButton,
                 ordersButton,
                 ordersEndOfDayButton,
@@ -175,7 +175,7 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
                 "Inventory",
-                new Color(5, 150, 105),
+                DeckersPalette.LIME,
                 enterInventoryButton,
                 receivingHistoryButton,
                 storeTransferButton,
@@ -189,7 +189,7 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
                 "Employee",
-                new Color(217, 119, 6),
+                DeckersPalette.YELLOW,
                 timeClockButton,
                 payrollDashboardButton,
                 employeeManagementButton
@@ -197,7 +197,7 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
                 "Admin",
-                new Color(124, 58, 237),
+                DeckersPalette.PURPLE,
                 rolesPermissionsButton,
                 deviceManagementButton,
                 machineManagementButton,
@@ -211,7 +211,7 @@ public class MainMenu extends JFrame {
         operationsColumnPanel.setBackground(backgroundColor);
         operationsColumnPanel.add(createSectionPanel(
                 "Operations",
-                new Color(15, 118, 110),
+                DeckersPalette.CORAL,
                 RIGHT_SECTION_COLUMNS,
                 balanceDrawButton,
                 balanceSheetButton,
@@ -331,8 +331,9 @@ public class MainMenu extends JFrame {
         headerPanel.add(titlePanel, BorderLayout.CENTER);
         headerPanel.add(smartStockLogoPanel, BorderLayout.EAST);
 
-        setSmartStockLogo(smartStockLogoLabel);
+        setDeckersLogo(companyLogoLabel);
         loadCompanyLogo(companyLogoLabel);
+        setSmartStockLogo(smartStockLogoLabel);
         return headerPanel;
     }
 
@@ -349,12 +350,30 @@ public class MainMenu extends JFrame {
         panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         panel.setBackground(backgroundColor());
         panel.setBorder(new EmptyBorder(4, 4, 4, 4));
-        panel.setPreferredSize(new Dimension(220, 88));
-        panel.setMinimumSize(new Dimension(220, 88));
-        panel.setMaximumSize(new Dimension(220, 88));
+        panel.setPreferredSize(new Dimension(300, 112));
+        panel.setMinimumSize(new Dimension(300, 112));
+        panel.setMaximumSize(new Dimension(300, 112));
         panel.getAccessibleContext().setAccessibleName(accessibleName);
         panel.add(logoLabel, BorderLayout.CENTER);
         return panel;
+    }
+
+    private void setSmartStockLogo(JLabel smartStockLogoLabel) {
+        ImageIcon centerLogoIcon = DeckersLogoManager.loadSmartStockLogoIcon(getClass());
+        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
+            setLogoImage(smartStockLogoLabel, centerLogoIcon.getImage(), 204, 72);
+            return;
+        }
+        smartStockLogoLabel.setText("SmartStock");
+    }
+
+    private void setDeckersLogo(JLabel companyLogoLabel) {
+        ImageIcon deckersLogoIcon = DeckersLogoManager.loadDeckersLogoIcon(getClass());
+        if (deckersLogoIcon != null && deckersLogoIcon.getIconWidth() > 0) {
+            setLogoImage(companyLogoLabel, deckersLogoIcon.getImage(), 280, 100);
+            return;
+        }
+        companyLogoLabel.setText("Deckers");
     }
 
     private void loadCompanyLogo(JLabel companyLogoLabel) {
@@ -370,22 +389,13 @@ public class MainMenu extends JFrame {
                 try {
                     BufferedImage logo = get();
                     if (logo != null) {
-                        setLogoImage(companyLogoLabel, logo, 204, 72);
+                        setLogoImage(companyLogoLabel, logo, 280, 100);
                     }
                 } catch (Exception ignored) {
-                    // Keep the visible fallback label when custom branding cannot be loaded.
+                    // Keep the Deckers fallback when saved company branding cannot be loaded.
                 }
             }
         }.execute();
-    }
-
-    private void setSmartStockLogo(JLabel smartStockLogoLabel) {
-        ImageIcon centerLogoIcon = loadCenterLogoIcon();
-        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
-            setLogoImage(smartStockLogoLabel, centerLogoIcon.getImage(), 204, 72);
-            return;
-        }
-        smartStockLogoLabel.setText("SmartStock");
     }
 
     private void setLogoImage(JLabel logoLabel, Image image, int maxWidth, int maxHeight) {
@@ -395,43 +405,7 @@ public class MainMenu extends JFrame {
     }
 
     private Image scaleToFit(Image image, int maxWidth, int maxHeight) {
-        int width = Math.max(image.getWidth(null), 1);
-        int height = Math.max(image.getHeight(null), 1);
-        double scale = Math.min((double) maxWidth / width, (double) maxHeight / height);
-        int scaledWidth = Math.max(1, (int) Math.round(width * scale));
-        int scaledHeight = Math.max(1, (int) Math.round(height * scale));
-        return image.getScaledInstance(scaledWidth, scaledHeight, Image.SCALE_SMOOTH);
-    }
-
-    private ImageIcon loadCenterLogoIcon() {
-        String[] resourcePaths = {
-                "/Images/CenterLogo.png",
-                "Images/CenterLogo.png",
-                "/CenterLogo.png",
-                "CenterLogo.png"
-        };
-        for (String resourcePath : resourcePaths) {
-            java.net.URL url = getClass().getResource(resourcePath);
-            if (url != null) {
-                return new ImageIcon(url);
-            }
-        }
-
-        String[] filePaths = {
-                "src/main/Images/CenterLogo.png",
-                "src/main/resources/Images/CenterLogo.png",
-                "src/Images/CenterLogo.png",
-                "Images/CenterLogo.png",
-                "CenterLogo.png",
-                "SmartStock/src/Images/CenterLogo.png"
-        };
-        for (String path : filePaths) {
-            ImageIcon icon = new ImageIcon(path);
-            if (icon.getIconWidth() > 0) {
-                return icon;
-            }
-        }
-        return null;
+        return DeckersLogoManager.scaleToFit(image, maxWidth, maxHeight);
     }
 
     private JPanel createSectionPanel(String title, Color accentColor, JButton... buttons) {
@@ -482,12 +456,17 @@ public class MainMenu extends JFrame {
 
         for (JButton button : buttons) {
             applyMenuButtonTheme(button, accentColor);
+            if (fixedColumns && columns == RIGHT_SECTION_COLUMNS) {
+                applyVerticalMenuButtonLayout(button);
+            }
             buttonPanel.add(button);
         }
 
         sectionPanel.add(headerPanel, BorderLayout.NORTH);
         sectionPanel.add(buttonPanel, BorderLayout.CENTER);
-        int sectionWidth = sectionWidth(columns);
+        int sectionWidth = fixedColumns && columns == RIGHT_SECTION_COLUMNS
+                ? operationSectionWidth()
+                : sectionWidth(columns);
         if (fixedColumns) {
             sectionPanel.setPreferredSize(new Dimension(sectionWidth, sectionPanel.getPreferredSize().height));
         }
@@ -507,6 +486,85 @@ public class MainMenu extends JFrame {
         button.setOpaque(false);
         button.setBorderPainted(false);
         updateMenuButtonText(button);
+    }
+
+    private void applyVerticalMenuButtonLayout(JButton button) {
+        if (Boolean.TRUE.equals(button.getClientProperty("SmartStock.verticalMenuButton"))) {
+            return;
+        }
+        JLabel iconLabel = findNamedLabel(button, "menuButtonIcon");
+        JPanel textPanel = findNamedPanel(button, "menuButtonTextPanel");
+        JLabel descriptionLabel = findNamedLabel(button, "menuButtonDescription");
+        if (iconLabel == null || textPanel == null || descriptionLabel == null) {
+            return;
+        }
+
+        button.remove(iconLabel);
+        button.remove(textPanel);
+        button.setLayout(new BorderLayout(0, 10));
+        button.setPreferredSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
+        button.setMinimumSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
+        button.setMaximumSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
+
+        iconLabel.setPreferredSize(new Dimension(MENU_ICON_SIZE + 10, MENU_ICON_SIZE + 10));
+        iconLabel.setMinimumSize(new Dimension(MENU_ICON_SIZE + 10, MENU_ICON_SIZE + 10));
+        iconLabel.setMaximumSize(new Dimension(MENU_ICON_SIZE + 10, MENU_ICON_SIZE + 10));
+
+        textPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        for (Component component : textPanel.getComponents()) {
+            if (component instanceof JLabel label) {
+                label.setHorizontalAlignment(SwingConstants.CENTER);
+                label.setAlignmentX(Component.CENTER_ALIGNMENT);
+            }
+        }
+        descriptionLabel.setText("<html><div style='width:210px; text-align:center;'>" + getMenuDescription(button) + "</div></html>");
+
+        JPanel iconWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        iconWrap.setName("menuButtonIconWrap");
+        iconWrap.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        iconWrap.setOpaque(false);
+        iconWrap.add(iconLabel);
+
+        button.add(iconWrap, BorderLayout.NORTH);
+        button.add(textPanel, BorderLayout.CENTER);
+        button.putClientProperty("SmartStock.verticalMenuButton", Boolean.TRUE);
+        button.revalidate();
+        button.repaint();
+    }
+
+    private String getMenuDescription(JButton button) {
+        Object description = button.getClientProperty("SmartStock.menuDescription");
+        return description == null ? "" : description.toString();
+    }
+
+    private JLabel findNamedLabel(Container container, String name) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JLabel label && name.equals(label.getName())) {
+                return label;
+            }
+            if (component instanceof Container childContainer) {
+                JLabel match = findNamedLabel(childContainer, name);
+                if (match != null) {
+                    return match;
+                }
+            }
+        }
+        return null;
+    }
+
+    private JPanel findNamedPanel(Container container, String name) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JPanel panel && name.equals(panel.getName())) {
+                return panel;
+            }
+            if (component instanceof Container childContainer) {
+                JPanel match = findNamedPanel(childContainer, name);
+                if (match != null) {
+                    return match;
+                }
+            }
+        }
+        return null;
     }
 
     private void updateMenuButtonText(JButton button) {
@@ -534,46 +592,48 @@ public class MainMenu extends JFrame {
     }
 
     private static Color backgroundColor() {
-        return ThemeManager.isDarkModeEnabled() ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+        return DeckersPalette.background();
     }
 
     private static Color surfaceColor() {
-        return ThemeManager.isDarkModeEnabled() ? DARK_SURFACE : LIGHT_SURFACE;
+        return DeckersPalette.surface();
     }
 
     private static Color textColor() {
-        return ThemeManager.isDarkModeEnabled() ? DARK_TEXT : LIGHT_TEXT;
+        return DeckersPalette.text();
     }
 
     private static Color mutedColor() {
-        return ThemeManager.isDarkModeEnabled() ? DARK_MUTED : LIGHT_MUTED;
+        return DeckersPalette.muted();
     }
 
     private static Color borderColor() {
-        return ThemeManager.isDarkModeEnabled() ? DARK_BORDER : LIGHT_BORDER;
+        return DeckersPalette.border();
     }
 
     private static Color blend(Color base, Color overlay, double overlayRatio) {
-        double ratio = Math.max(0, Math.min(1, overlayRatio));
-        double baseRatio = 1 - ratio;
-        return new Color(
-                clamp((int) Math.round(base.getRed() * baseRatio + overlay.getRed() * ratio)),
-                clamp((int) Math.round(base.getGreen() * baseRatio + overlay.getGreen() * ratio)),
-                clamp((int) Math.round(base.getBlue() * baseRatio + overlay.getBlue() * ratio))
-        );
+        return DeckersPalette.blend(base, overlay, overlayRatio);
     }
 
     private static Color withAlpha(Color color, int alpha) {
-        return new Color(color.getRed(), color.getGreen(), color.getBlue(), clamp(alpha));
+        return DeckersPalette.withAlpha(color, alpha);
     }
 
     private static int clamp(int value) {
-        return Math.max(0, Math.min(255, value));
+        return DeckersPalette.clamp(value);
     }
 
     private static int sectionWidth(int columns) {
+        return sectionWidth(columns, MENU_TILE_WIDTH);
+    }
+
+    private static int operationSectionWidth() {
+        return sectionWidth(RIGHT_SECTION_COLUMNS, OPERATION_MENU_TILE_WIDTH);
+    }
+
+    private static int sectionWidth(int columns, int tileWidth) {
         int safeColumns = Math.max(1, columns);
-        return safeColumns * MENU_TILE_WIDTH
+        return safeColumns * tileWidth
                 + (safeColumns - 1) * MENU_TILE_GAP
                 + (SECTION_SIDE_PADDING * 2);
     }
@@ -652,24 +712,24 @@ public class MainMenu extends JFrame {
 
         @Override
         public void doLayout() {
-            int rightWidth = sectionWidth(RIGHT_SECTION_COLUMNS);
-            int leftWidth = Math.max(sectionWidth(1), getWidth() - rightWidth);
+            int rightWidth = operationSectionWidth();
+            int leftWidth = Math.max(sectionWidth(1), getWidth() - rightWidth - COLUMN_GAP);
             Dimension leftPreferred = leftColumn.getPreferredSize();
             Dimension rightPreferred = rightColumn.getPreferredSize();
             leftColumn.setBounds(0, 0, leftWidth, leftPreferred.height);
-            rightColumn.setBounds(leftWidth, 0, rightWidth, rightPreferred.height);
+            rightColumn.setBounds(leftWidth + COLUMN_GAP, 0, rightWidth, rightPreferred.height);
         }
 
         @Override
         public Dimension getPreferredSize() {
-            int rightWidth = sectionWidth(RIGHT_SECTION_COLUMNS);
+            int rightWidth = operationSectionWidth();
             int availableWidth = getWidth();
             int leftWidth = availableWidth > 0
-                    ? Math.max(sectionWidth(1), availableWidth - rightWidth)
+                    ? Math.max(sectionWidth(1), availableWidth - rightWidth - COLUMN_GAP)
                     : sectionWidth(LEFT_SECTION_COLUMNS);
             Dimension leftPreferred = preferredForWidth(leftColumn, leftWidth);
             Dimension rightPreferred = preferredForWidth(rightColumn, rightWidth);
-            return new Dimension(leftWidth + rightWidth, Math.max(leftPreferred.height, rightPreferred.height));
+            return new Dimension(leftWidth + COLUMN_GAP + rightWidth, Math.max(leftPreferred.height, rightPreferred.height));
         }
 
         private Dimension preferredForWidth(JComponent component, int width) {
@@ -845,6 +905,11 @@ public class MainMenu extends JFrame {
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
+        boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
+        boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
+                || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
@@ -879,6 +944,8 @@ public class MainMenu extends JFrame {
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         customerTransactionHistoryButton.setEnabled(canCustomerAccounts);
+        salesQuotesButton.setEnabled(canSalesQuotes);
+        salesOrdersButton.setEnabled(canSalesOrders);
         customOrdersButton.setEnabled(canCustomOrders);
         ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
@@ -916,6 +983,8 @@ public class MainMenu extends JFrame {
                 viewSalesButton,
                 customerAccountsButton,
                 customerTransactionHistoryButton,
+                salesQuotesButton,
+                salesOrdersButton,
                 customOrdersButton,
                 ordersButton,
                 viewInventoryButton,
@@ -1042,6 +1111,25 @@ public class MainMenu extends JFrame {
                 return;
             }
             openCustomerTransactionHistory();
+        });
+        salesQuotesButton.addActionListener(e -> {
+            boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                    || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
+            if (!canSalesQuotes) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Sales Quotes.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openSalesQuotes(this);
+        });
+        salesOrdersButton.addActionListener(e -> {
+            boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
+                    || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
+                    || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
+            if (!canSalesOrders) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Sales Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NavigationManager.openSalesOrders(this);
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
@@ -1306,7 +1394,7 @@ public class MainMenu extends JFrame {
     }
 
     private JButton createMenuButton(String title, String description, Icon icon) {
-        JButton button = new MenuTileButton(new Color(37, 99, 235));
+        JButton button = new MenuTileButton(DeckersPalette.ORANGE);
         button.setLayout(new BorderLayout(14, 10));
         button.setFocusPainted(false);
         button.setContentAreaFilled(false);
@@ -1316,11 +1404,13 @@ public class MainMenu extends JFrame {
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
+        button.putClientProperty("SmartStock.menuDescription", description);
         button.setPreferredSize(new Dimension(315, 126));
         button.setMinimumSize(new Dimension(315, 126));
         button.setMaximumSize(new Dimension(345, 134));
 
         JLabel iconLabel = new JLabel(icon);
+        iconLabel.setName("menuButtonIcon");
         iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
         iconLabel.setPreferredSize(new Dimension(82, 82));
         iconLabel.setMinimumSize(new Dimension(82, 82));
@@ -1337,6 +1427,7 @@ public class MainMenu extends JFrame {
         descriptionLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel textPanel = new JPanel();
+        textPanel.setName("menuButtonTextPanel");
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
         textPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         textPanel.setOpaque(false);

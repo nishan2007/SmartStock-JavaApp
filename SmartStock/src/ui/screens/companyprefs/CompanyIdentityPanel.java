@@ -5,7 +5,15 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
 public class CompanyIdentityPanel extends JPanel {
-    public CompanyIdentityPanel(JTextField companyNameField, JComponent logoPanel) {
+    public CompanyIdentityPanel(JTextField companyNameField,
+                                JTextField addressLine1Field,
+                                JTextField addressLine2Field,
+                                JTextField addressLine3Field,
+                                JTextField phoneLine1Field,
+                                JTextField phoneLine2Field,
+                                JTextField emailLine1Field,
+                                JTextField emailLine2Field,
+                                JComponent logoPanel) {
         setLayout(new GridBagLayout());
         setBackground(Color.WHITE);
         setBorder(BorderFactory.createCompoundBorder(
@@ -18,7 +26,14 @@ public class CompanyIdentityPanel extends JPanel {
         addWide(this, sectionLabel, 0);
 
         addRow(this, 1, "Company Name", companyNameField);
-        addRow(this, 2, "Company Logo", logoPanel);
+        addRow(this, 2, "Address Line 1", addressLine1Field);
+        addRow(this, 3, "Address Line 2", addressLine2Field);
+        addRow(this, 4, "Address Line 3", addressLine3Field);
+        addRow(this, 5, "Phone Line 1", phoneLine1Field);
+        addRow(this, 6, "Phone Line 2", phoneLine2Field);
+        addRow(this, 7, "Email Line 1", emailLine1Field);
+        addRow(this, 8, "Email Line 2", emailLine2Field);
+        addRow(this, 9, "Company Logo", logoPanel);
     }
 
     private static void addRow(JPanel panel, int row, String label, JComponent field) {

@@ -26,6 +26,8 @@ import ui.screens.PartsManagement;
 import ui.screens.ReceivingHistory;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
+import ui.screens.SalesOrders;
+import ui.screens.SalesQuotes;
 import ui.screens.StoreTransfer;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
@@ -71,6 +73,8 @@ public final class NavigationManager {
         VIEW_SALES,
         VIEW_INVENTORY,
         CUSTOMER_ACCOUNTS,
+        SALES_QUOTES,
+        SALES_ORDERS,
         CUSTOM_ORDERS,
         ORDERS,
         TIME_CLOCK,
@@ -178,6 +182,14 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
     }
 
+    public static void openSalesQuotes(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.SALES_QUOTES));
+    }
+
+    public static void openSalesOrders(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.SALES_ORDERS));
+    }
+
     public static void openCustomOrders(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.CUSTOM_ORDERS));
     }
@@ -247,6 +259,8 @@ public final class NavigationManager {
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
+            case SALES_QUOTES -> new SalesQuotes();
+            case SALES_ORDERS -> new SalesOrders();
             case CUSTOM_ORDERS -> new CustomOrders();
             case ORDERS -> new Orders();
             case TIME_CLOCK -> new TimeClock();
@@ -287,6 +301,8 @@ public final class NavigationManager {
             case "ViewSales" -> ScreenType.VIEW_SALES;
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
+            case "SalesQuotes", "SalesQuotesOrders" -> ScreenType.SALES_QUOTES;
+            case "SalesOrders" -> ScreenType.SALES_ORDERS;
             case "CustomOrders" -> ScreenType.CUSTOM_ORDERS;
             case "Orders" -> ScreenType.ORDERS;
             case "TimeClock" -> ScreenType.TIME_CLOCK;

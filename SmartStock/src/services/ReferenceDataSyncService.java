@@ -87,6 +87,17 @@ public final class ReferenceDataSyncService {
             "custom_order_line_returns",
             "custom_order_item_movements",
             "custom_order_audit_log",
+            "sales_quotes",
+            "sales_quote_lines",
+            "sales_quote_status_history",
+            "sales_quote_audit_log",
+            "sales_orders",
+            "sales_order_lines",
+            "sales_order_payments",
+            "sales_order_delivery_events",
+            "sales_order_delivery_lines",
+            "sales_order_status_history",
+            "sales_order_audit_log",
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
@@ -145,6 +156,17 @@ public final class ReferenceDataSyncService {
             "custom_order_line_returns",
             "custom_order_item_movements",
             "custom_order_audit_log",
+            "sales_quotes",
+            "sales_quote_lines",
+            "sales_quote_status_history",
+            "sales_quote_audit_log",
+            "sales_orders",
+            "sales_order_lines",
+            "sales_order_payments",
+            "sales_order_delivery_events",
+            "sales_order_delivery_lines",
+            "sales_order_status_history",
+            "sales_order_audit_log",
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
@@ -226,6 +248,12 @@ public final class ReferenceDataSyncService {
                 copied += pushSalesAndAlignIds(local, cloud);
             } else if ("custom_orders".equals(table)) {
                 copied += pushCustomOrdersAndAlignIds(local, cloud);
+            } else if ("sales_quotes".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_quotes", "sales_quote_id", "quote_number", "SALES_QUOTE_ID_REMAP");
+            } else if ("sales_orders".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_orders", "sales_order_id", "order_number", "SALES_ORDER_ID_REMAP");
+            } else if ("sales_order_delivery_events".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_order_delivery_events", "sales_order_delivery_event_id", "delivery_number", "SALES_ORDER_DELIVERY_ID_REMAP");
             } else if ("products".equals(table)) {
                 copied += pushProductsAndAlignIds(local, cloud);
             } else {
@@ -838,6 +866,231 @@ public final class ReferenceDataSyncService {
             ps.setString(2, localId);
             ps.setString(3, cloudId);
             ps.executeUpdate();
+        }
+    }
+
+    private static int pushGeneratedDocumentAndAlignIds(Connection local, Connection cloud, String table,
+                                                        String idColumn, String naturalKeyColumn,
+                                                        String auditAction) throws SQLException {
+        List<String> columns = commonColumns(cloud, local, table);
+        if (!columns.contains(idColumn)) {
+            return upsertAll(local, cloud, table);
+        }
+        int changed = 0;
+        String selectSql = "SELECT " + selectExpressions(table, null, columns)
+                + " FROM " + quote(table) + " ORDER BY " + quote(idColumn);
+        try (PreparedStatement select = local.prepareStatement(selectSql);
+             ResultSet rs = select.executeQuery()) {
+            while (rs.next()) {
+                long localId = rs.getLong(columns.indexOf(idColumn) + 1);
+                String naturalKey = columns.contains(naturalKeyColumn)
+                        ? rs.getString(columns.indexOf(naturalKeyColumn) + 1)
+                        : null;
+                Long cloudId = findCloudDocumentIdById(cloud, table, idColumn, localId);
+                if (cloudId == null) {
+                    cloudId = findCloudDocumentIdByNaturalKey(cloud, table, idColumn, naturalKeyColumn, naturalKey);
+                }
+                if (cloudId == null) {
+                    cloudId = insertCloudGeneratedDocument(cloud, table, idColumn, columns, rs);
+                    changed++;
+                } else if (updateCloudGeneratedDocument(cloud, table, idColumn, columns, rs, cloudId)) {
+                    changed++;
+                }
+                if (cloudId != localId) {
+                    remapLocalGeneratedDocumentId(local, table, idColumn, localId, cloudId);
+                    recordIdMap(local, table, String.valueOf(localId), String.valueOf(cloudId));
+                    SyncAuditService.record(local,
+                            auditAction,
+                            table,
+                            localId,
+                            cloudId,
+                            cloudId,
+                            naturalKey,
+                            "APPLIED",
+                            Map.of(
+                                    naturalKeyColumn, naturalKey == null ? "" : naturalKey,
+                                    "reason", "Cloud document id differed from local id; local references were remapped before child tables synced."
+                            ));
+                }
+            }
+        }
+        return changed;
+    }
+
+    private static Long findCloudDocumentIdById(Connection cloud, String table, String idColumn, long localId) throws SQLException {
+        try (PreparedStatement ps = cloud.prepareStatement("SELECT " + quote(idColumn) + " FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setLong(1, localId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(idColumn) : null;
+            }
+        }
+    }
+
+    private static Long findCloudDocumentIdByNaturalKey(Connection cloud, String table, String idColumn,
+                                                        String naturalKeyColumn, String naturalKey) throws SQLException {
+        if (naturalKey == null || naturalKey.isBlank() || !columns(cloud, table).contains(naturalKeyColumn)) {
+            return null;
+        }
+        String sql = "SELECT " + quote(idColumn) + " FROM " + quote(table)
+                + " WHERE " + quote(naturalKeyColumn) + " = ? ORDER BY " + quote(idColumn) + " LIMIT 1";
+        try (PreparedStatement ps = cloud.prepareStatement(sql)) {
+            ps.setString(1, naturalKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(idColumn) : null;
+            }
+        }
+    }
+
+    private static long insertCloudGeneratedDocument(Connection cloud, String table, String idColumn,
+                                                     List<String> columns, ResultSet rs) throws SQLException {
+        List<String> insertColumns = new ArrayList<>();
+        for (String column : columns) {
+            if (!idColumn.equals(column)) {
+                insertColumns.add(column);
+            }
+        }
+        Map<String, String> cloudTypes = columnTypes(cloud, table);
+        List<String> notNullable = notNullableColumns(cloud, table);
+        String sql = "INSERT INTO " + quote(table) + " (" + joinIdentifiers(insertColumns) + ") VALUES ("
+                + castPlaceholders(insertColumns, cloudTypes) + ") RETURNING " + quote(idColumn);
+        try (PreparedStatement ps = cloud.prepareStatement(sql)) {
+            bindRowValues(ps, insertColumns, columns, rs, cloudTypes, notNullable);
+            try (ResultSet inserted = ps.executeQuery()) {
+                if (inserted.next()) {
+                    return inserted.getLong(idColumn);
+                }
+            }
+        }
+        throw new SQLException("Cloud insert did not return " + idColumn + " for " + table + ".");
+    }
+
+    private static boolean updateCloudGeneratedDocument(Connection cloud, String table, String idColumn,
+                                                        List<String> columns, ResultSet rs, long cloudId) throws SQLException {
+        List<String> updateColumns = new ArrayList<>();
+        for (String column : columns) {
+            if (!idColumn.equals(column)) {
+                updateColumns.add(column);
+            }
+        }
+        if (updateColumns.isEmpty()) {
+            return false;
+        }
+        Map<String, String> cloudTypes = columnTypes(cloud, table);
+        List<String> notNullable = notNullableColumns(cloud, table);
+        StringJoiner assignments = new StringJoiner(", ");
+        for (String column : updateColumns) {
+            String type = cloudTypes.get(column);
+            assignments.add(quote(column) + " = " + (type == null || type.isBlank() ? "?" : "CAST(? AS " + type + ")"));
+        }
+        try (PreparedStatement ps = cloud.prepareStatement("UPDATE " + quote(table) + " SET " + assignments + " WHERE " + quote(idColumn) + " = ?")) {
+            bindRowValues(ps, updateColumns, columns, rs, cloudTypes, notNullable);
+            ps.setLong(updateColumns.size() + 1, cloudId);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    private static void remapLocalGeneratedDocumentId(Connection local, String table, String idColumn,
+                                                      long oldId, long newId) throws SQLException {
+        if (oldId == newId) {
+            return;
+        }
+        boolean oldAutoCommit = local.getAutoCommit();
+        local.setAutoCommit(false);
+        try {
+            ensureForeignKeysCascade(local, table, idColumn);
+            if (localGeneratedDocumentExists(local, table, idColumn, newId)) {
+                updateLocalReferences(local, idColumn, oldId, newId, table);
+                try (PreparedStatement ps = local.prepareStatement("DELETE FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+                    ps.setLong(1, oldId);
+                    ps.executeUpdate();
+                }
+            } else {
+                try (PreparedStatement ps = local.prepareStatement("UPDATE " + quote(table) + " SET " + quote(idColumn) + " = ? WHERE " + quote(idColumn) + " = ?")) {
+                    ps.setLong(1, newId);
+                    ps.setLong(2, oldId);
+                    ps.executeUpdate();
+                }
+                updateLocalReferences(local, idColumn, oldId, newId, table);
+            }
+            local.commit();
+        } catch (SQLException ex) {
+            local.rollback();
+            throw ex;
+        } finally {
+            local.setAutoCommit(oldAutoCommit);
+        }
+    }
+
+    private static void ensureForeignKeysCascade(Connection local, String refTable, String refColumn) throws SQLException {
+        String sql = """
+                SELECT con.conname,
+                       rel.relname AS table_name,
+                       att.attname AS column_name,
+                       con.confdeltype
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace n ON n.oid = rel.relnamespace
+                JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+                JOIN pg_class ref ON ref.oid = con.confrelid
+                JOIN pg_attribute refatt ON refatt.attrelid = con.confrelid AND refatt.attnum = con.confkey[1]
+                WHERE n.nspname = 'public'
+                  AND con.contype = 'f'
+                  AND ref.relname = ?
+                  AND refatt.attname = ?
+                  AND array_length(con.conkey, 1) = 1
+                  AND array_length(con.confkey, 1) = 1
+                  AND con.confupdtype <> 'c'
+                """;
+        try (PreparedStatement ps = local.prepareStatement(sql)) {
+            ps.setString(1, refTable);
+            ps.setString(2, refColumn);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String table = rs.getString("table_name");
+                    String constraint = rs.getString("conname");
+                    String column = rs.getString("column_name");
+                    String deleteAction = deleteActionSql(rs.getString("confdeltype"));
+                    try (Statement stmt = local.createStatement()) {
+                        stmt.executeUpdate("ALTER TABLE " + quote(table) + " DROP CONSTRAINT " + quote(constraint));
+                        stmt.executeUpdate("ALTER TABLE " + quote(table) + " ADD CONSTRAINT " + quote(constraint)
+                                + " FOREIGN KEY (" + quote(column) + ") REFERENCES " + quote(refTable)
+                                + "(" + quote(refColumn) + ") ON UPDATE CASCADE " + deleteAction);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean localGeneratedDocumentExists(Connection local, String table, String idColumn, long id) throws SQLException {
+        try (PreparedStatement ps = local.prepareStatement("SELECT 1 FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void updateLocalReferences(Connection local, String idColumn, long oldId, long newId, String parentTable) throws SQLException {
+        String sql = """
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND column_name = ?
+                  AND table_name <> ?
+                """;
+        try (PreparedStatement ps = local.prepareStatement(sql)) {
+            ps.setString(1, idColumn);
+            ps.setString(2, parentTable);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String table = rs.getString("table_name");
+                    try (PreparedStatement update = local.prepareStatement("UPDATE " + quote(table) + " SET " + quote(idColumn) + " = ? WHERE " + quote(idColumn) + " = ?")) {
+                        update.setLong(1, newId);
+                        update.setLong(2, oldId);
+                        update.executeUpdate();
+                    }
+                }
+            }
         }
     }
 

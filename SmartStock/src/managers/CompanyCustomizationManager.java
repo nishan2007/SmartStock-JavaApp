@@ -207,6 +207,40 @@ public class CompanyCustomizationManager {
         cachedCustomOrderSlipSettings = settings;
     }
 
+    public static SalesQuoteOrderPrintSettings loadSalesQuoteOrderPrintSettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (Objects.equals(locationId, cachedSalesQuoteOrderPrintLocationId) && cachedSalesQuoteOrderPrintSettings != null) {
+            return cachedSalesQuoteOrderPrintSettings;
+        }
+        if (locationId != null) {
+            try {
+                SalesQuoteOrderPrintSettings dbSettings = loadSalesQuoteOrderPrintSettingsFromDb(locationId);
+                if (dbSettings != null) {
+                    saveLocalSalesQuoteOrderPrintSettings(dbSettings);
+                    cachedSalesQuoteOrderPrintLocationId = locationId;
+                    cachedSalesQuoteOrderPrintSettings = dbSettings;
+                    return dbSettings;
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+        SalesQuoteOrderPrintSettings localSettings = loadLocalSalesQuoteOrderPrintSettings();
+        cachedSalesQuoteOrderPrintLocationId = locationId;
+        cachedSalesQuoteOrderPrintSettings = localSettings;
+        return localSettings;
+    }
+
+    public static void saveSalesQuoteOrderPrintSettings(SalesQuoteOrderPrintSettings settings) throws IOException, SQLException {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null) {
+            saveSalesQuoteOrderPrintSettingsToDb(locationId, settings);
+        }
+        saveLocalSalesQuoteOrderPrintSettings(settings);
+        cachedSalesQuoteOrderPrintLocationId = locationId;
+        cachedSalesQuoteOrderPrintSettings = settings;
+    }
+
     public static BadgeTemplateSettings loadBadgeTemplateSettings() {
         Integer locationId = SessionManager.getCurrentLocationId();
         if (Objects.equals(locationId, cachedBadgeTemplateLocationId) && cachedBadgeTemplateSettings != null) {
@@ -244,6 +278,13 @@ public class CompanyCustomizationManager {
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT company_name,
+                       COALESCE(company_address_line1, '') AS company_address_line1,
+                       COALESCE(company_address_line2, '') AS company_address_line2,
+                       COALESCE(company_address_line3, '') AS company_address_line3,
+                       COALESCE(company_phone_line1, '') AS company_phone_line1,
+                       COALESCE(company_phone_line2, '') AS company_phone_line2,
+                       COALESCE(company_email_line1, '') AS company_email_line1,
+                       COALESCE(company_email_line2, '') AS company_email_line2,
                        COALESCE(receipt_header_line, '') AS receipt_header_line,
                        COALESCE(receipt_footer_line, 'Thank you') AS receipt_footer_line,
                        COALESCE(receipt_logo_url, '') AS receipt_logo_url,
@@ -272,6 +313,13 @@ public class CompanyCustomizationManager {
 
                 return new ReceiptSettings(
                         rs.getString("company_name"),
+                        rs.getString("company_address_line1"),
+                        rs.getString("company_address_line2"),
+                        rs.getString("company_address_line3"),
+                        rs.getString("company_phone_line1"),
+                        rs.getString("company_phone_line2"),
+                        rs.getString("company_email_line1"),
+                        rs.getString("company_email_line2"),
                         rs.getString("receipt_header_line"),
                         rs.getString("receipt_footer_line"),
                         rs.getString("receipt_logo_url"),
@@ -296,6 +344,13 @@ public class CompanyCustomizationManager {
                 INSERT INTO company_customization (
                     location_id,
                     company_name,
+                    company_address_line1,
+                    company_address_line2,
+                    company_address_line3,
+                    company_phone_line1,
+                    company_phone_line2,
+                    company_email_line1,
+                    company_email_line2,
                     receipt_header_line,
                     receipt_footer_line,
                     receipt_logo_url,
@@ -312,9 +367,16 @@ public class CompanyCustomizationManager {
                     next_receipt_counter,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     company_name = EXCLUDED.company_name,
+                    company_address_line1 = EXCLUDED.company_address_line1,
+                    company_address_line2 = EXCLUDED.company_address_line2,
+                    company_address_line3 = EXCLUDED.company_address_line3,
+                    company_phone_line1 = EXCLUDED.company_phone_line1,
+                    company_phone_line2 = EXCLUDED.company_phone_line2,
+                    company_email_line1 = EXCLUDED.company_email_line1,
+                    company_email_line2 = EXCLUDED.company_email_line2,
                     receipt_header_line = EXCLUDED.receipt_header_line,
                     receipt_footer_line = EXCLUDED.receipt_footer_line,
                     receipt_logo_url = EXCLUDED.receipt_logo_url,
@@ -336,20 +398,27 @@ public class CompanyCustomizationManager {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
             ps.setString(2, settings.companyName());
-            ps.setString(3, settings.headerLine());
-            ps.setString(4, settings.footerLine());
-            ps.setString(5, settings.logoPath());
-            ps.setBoolean(6, settings.showLogo());
-            ps.setBoolean(7, settings.showSaleId());
-            ps.setBoolean(8, settings.showDevice());
-            ps.setBoolean(9, settings.showCustomer());
-            ps.setBoolean(10, settings.showSku());
-            ps.setBoolean(11, settings.showItemDiscount());
-            ps.setBoolean(12, settings.showPaymentStatus());
-            ps.setBoolean(13, settings.vatEnabled());
-            ps.setBoolean(14, settings.vatUseDepartmentRates());
-            ps.setBigDecimal(15, settings.vatFixedRatePercent());
-            ps.setInt(16, settings.nextReceiptCounter());
+            ps.setString(3, settings.addressLine1());
+            ps.setString(4, settings.addressLine2());
+            ps.setString(5, settings.addressLine3());
+            ps.setString(6, settings.phoneLine1());
+            ps.setString(7, settings.phoneLine2());
+            ps.setString(8, settings.emailLine1());
+            ps.setString(9, settings.emailLine2());
+            ps.setString(10, settings.headerLine());
+            ps.setString(11, settings.footerLine());
+            ps.setString(12, settings.logoPath());
+            ps.setBoolean(13, settings.showLogo());
+            ps.setBoolean(14, settings.showSaleId());
+            ps.setBoolean(15, settings.showDevice());
+            ps.setBoolean(16, settings.showCustomer());
+            ps.setBoolean(17, settings.showSku());
+            ps.setBoolean(18, settings.showItemDiscount());
+            ps.setBoolean(19, settings.showPaymentStatus());
+            ps.setBoolean(20, settings.vatEnabled());
+            ps.setBoolean(21, settings.vatUseDepartmentRates());
+            ps.setBigDecimal(22, settings.vatFixedRatePercent());
+            ps.setInt(23, settings.nextReceiptCounter());
             ps.executeUpdate();
         }
     }
@@ -613,6 +682,72 @@ public class CompanyCustomizationManager {
         }
     }
 
+    private static SalesQuoteOrderPrintSettings loadSalesQuoteOrderPrintSettingsFromDb(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(sales_quote_print_title, 'QUOTE / NOT FINAL SALE') AS quote_title,
+                       COALESCE(sales_quote_print_validity_note, 'This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.') AS quote_validity_note,
+                       COALESCE(sales_order_print_title, 'SALES ORDER CONFIRMATION') AS order_title,
+                       COALESCE(sales_delivery_print_title, 'DELIVERY BILL') AS delivery_title,
+                       COALESCE(sales_quote_order_print_footer_note, '') AS footer_note,
+                       COALESCE(sales_quote_order_print_show_signatures, TRUE) AS show_signatures
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new SalesQuoteOrderPrintSettings(
+                        rs.getString("quote_title"),
+                        rs.getString("quote_validity_note"),
+                        rs.getString("order_title"),
+                        rs.getString("delivery_title"),
+                        rs.getString("footer_note"),
+                        rs.getBoolean("show_signatures")
+                );
+            }
+        }
+    }
+
+    private static void saveSalesQuoteOrderPrintSettingsToDb(int locationId, SalesQuoteOrderPrintSettings settings) throws SQLException {
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    company_name,
+                    sales_quote_print_title,
+                    sales_quote_print_validity_note,
+                    sales_order_print_title,
+                    sales_delivery_print_title,
+                    sales_quote_order_print_footer_note,
+                    sales_quote_order_print_show_signatures,
+                    updated_at
+                )
+                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    sales_quote_print_title = EXCLUDED.sales_quote_print_title,
+                    sales_quote_print_validity_note = EXCLUDED.sales_quote_print_validity_note,
+                    sales_order_print_title = EXCLUDED.sales_order_print_title,
+                    sales_delivery_print_title = EXCLUDED.sales_delivery_print_title,
+                    sales_quote_order_print_footer_note = EXCLUDED.sales_quote_order_print_footer_note,
+                    sales_quote_order_print_show_signatures = EXCLUDED.sales_quote_order_print_show_signatures,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setString(2, settings.quoteTitle());
+            ps.setString(3, settings.quoteValidityNote());
+            ps.setString(4, settings.orderTitle());
+            ps.setString(5, settings.deliveryTitle());
+            ps.setString(6, settings.footerNote());
+            ps.setBoolean(7, settings.showSignatures());
+            ps.executeUpdate();
+        }
+    }
+
     private static BadgeTemplateSettings loadBadgeTemplateSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT COALESCE(badge_template_company_name, company_name, 'SmartStock') AS company_name,
@@ -746,6 +881,13 @@ public class CompanyCustomizationManager {
 
         return new ReceiptSettings(
                 properties.getProperty("receipt.company_name", "SmartStock"),
+                properties.getProperty("receipt.address_line1", ""),
+                properties.getProperty("receipt.address_line2", ""),
+                properties.getProperty("receipt.address_line3", ""),
+                properties.getProperty("receipt.phone_line1", ""),
+                properties.getProperty("receipt.phone_line2", ""),
+                properties.getProperty("receipt.email_line1", ""),
+                properties.getProperty("receipt.email_line2", ""),
                 properties.getProperty("receipt.header_line", ""),
                 properties.getProperty("receipt.footer_line", "Thank you"),
                 properties.getProperty("receipt.logo_path", ""),
@@ -812,6 +954,25 @@ public class CompanyCustomizationManager {
         );
     }
 
+    private static SalesQuoteOrderPrintSettings loadLocalSalesQuoteOrderPrintSettings() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        return new SalesQuoteOrderPrintSettings(
+                properties.getProperty("sales_quote_order.quote_title", "QUOTE / NOT FINAL SALE"),
+                properties.getProperty("sales_quote_order.quote_validity_note", "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled."),
+                properties.getProperty("sales_quote_order.order_title", "SALES ORDER CONFIRMATION"),
+                properties.getProperty("sales_quote_order.delivery_title", "DELIVERY BILL"),
+                properties.getProperty("sales_quote_order.footer_note", ""),
+                Boolean.parseBoolean(properties.getProperty("sales_quote_order.show_signatures", "true"))
+        );
+    }
+
     private static SaleSafetySettings loadLocalSaleSafetySettings() {
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
@@ -866,6 +1027,13 @@ public class CompanyCustomizationManager {
             }
         }
         properties.setProperty("receipt.company_name", settings.companyName());
+        properties.setProperty("receipt.address_line1", settings.addressLine1());
+        properties.setProperty("receipt.address_line2", settings.addressLine2());
+        properties.setProperty("receipt.address_line3", settings.addressLine3());
+        properties.setProperty("receipt.phone_line1", settings.phoneLine1());
+        properties.setProperty("receipt.phone_line2", settings.phoneLine2());
+        properties.setProperty("receipt.email_line1", settings.emailLine1());
+        properties.setProperty("receipt.email_line2", settings.emailLine2());
         properties.setProperty("receipt.header_line", settings.headerLine());
         properties.setProperty("receipt.footer_line", settings.footerLine());
         properties.setProperty("receipt.logo_path", settings.logoPath());
@@ -930,6 +1098,25 @@ public class CompanyCustomizationManager {
         properties.setProperty("custom_order_slip.show_payment_reference", String.valueOf(settings.showPaymentReference()));
         properties.setProperty("custom_order_slip.show_taken_by", String.valueOf(settings.showTakenBy()));
         properties.setProperty("custom_order_slip.show_signatures", String.valueOf(settings.showSignatures()));
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock company customization settings");
+        }
+    }
+
+    private static void saveLocalSalesQuoteOrderPrintSettings(SalesQuoteOrderPrintSettings settings) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(inputStream);
+            }
+        }
+        properties.setProperty("sales_quote_order.quote_title", settings.quoteTitle());
+        properties.setProperty("sales_quote_order.quote_validity_note", settings.quoteValidityNote());
+        properties.setProperty("sales_quote_order.order_title", settings.orderTitle());
+        properties.setProperty("sales_quote_order.delivery_title", settings.deliveryTitle());
+        properties.setProperty("sales_quote_order.footer_note", settings.footerNote());
+        properties.setProperty("sales_quote_order.show_signatures", String.valueOf(settings.showSignatures()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -1192,6 +1379,8 @@ public class CompanyCustomizationManager {
     private static SaleSafetySettings cachedSaleSafetySettings;
     private static Integer cachedCustomOrderSlipLocationId;
     private static CustomOrderSlipSettings cachedCustomOrderSlipSettings;
+    private static Integer cachedSalesQuoteOrderPrintLocationId;
+    private static SalesQuoteOrderPrintSettings cachedSalesQuoteOrderPrintSettings;
     private static Integer cachedBadgeTemplateLocationId;
     private static BadgeTemplateSettings cachedBadgeTemplateSettings;
 
@@ -1308,7 +1497,7 @@ public class CompanyCustomizationManager {
     }
 
     private static String uploadReceiptLogoToStorage(File logoFile, int locationId) throws Exception {
-        try (ImageOptimizationHelper.OptimizedImage optimizedImage = ImageOptimizationHelper.optimizeForUpload(
+        try (ImageOptimizationHelper.OptimizedImage optimizedImage = ImageOptimizationHelper.optimizeForUploadPreservingTransparency(
                 logoFile,
                 "receipt-logo",
                 900,
@@ -1475,6 +1664,13 @@ public class CompanyCustomizationManager {
 
     public record ReceiptSettings(
             String companyName,
+            String addressLine1,
+            String addressLine2,
+            String addressLine3,
+            String phoneLine1,
+            String phoneLine2,
+            String emailLine1,
+            String emailLine2,
             String headerLine,
             String footerLine,
             String logoPath,
@@ -1492,6 +1688,13 @@ public class CompanyCustomizationManager {
     ) {
         public ReceiptSettings {
             companyName = clean(companyName, "SmartStock");
+            addressLine1 = Objects.requireNonNullElse(addressLine1, "").trim();
+            addressLine2 = Objects.requireNonNullElse(addressLine2, "").trim();
+            addressLine3 = Objects.requireNonNullElse(addressLine3, "").trim();
+            phoneLine1 = Objects.requireNonNullElse(phoneLine1, "").trim();
+            phoneLine2 = Objects.requireNonNullElse(phoneLine2, "").trim();
+            emailLine1 = Objects.requireNonNullElse(emailLine1, "").trim();
+            emailLine2 = Objects.requireNonNullElse(emailLine2, "").trim();
             headerLine = Objects.requireNonNullElse(headerLine, "").trim();
             footerLine = clean(footerLine, "Thank you");
             logoPath = Objects.requireNonNullElse(logoPath, "").trim();
@@ -1567,6 +1770,28 @@ public class CompanyCustomizationManager {
             } else if (blankDetailLines > 20) {
                 blankDetailLines = 20;
             }
+        }
+
+        private static String clean(String value, String fallback) {
+            String cleaned = Objects.requireNonNullElse(value, "").trim();
+            return cleaned.isBlank() ? fallback : cleaned;
+        }
+    }
+
+    public record SalesQuoteOrderPrintSettings(
+            String quoteTitle,
+            String quoteValidityNote,
+            String orderTitle,
+            String deliveryTitle,
+            String footerNote,
+            boolean showSignatures
+    ) {
+        public SalesQuoteOrderPrintSettings {
+            quoteTitle = clean(quoteTitle, "QUOTE / NOT FINAL SALE");
+            quoteValidityNote = clean(quoteValidityNote, "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
+            orderTitle = clean(orderTitle, "SALES ORDER CONFIRMATION");
+            deliveryTitle = clean(deliveryTitle, "DELIVERY BILL");
+            footerNote = Objects.requireNonNullElse(footerNote, "").trim();
         }
 
         private static String clean(String value, String fallback) {
