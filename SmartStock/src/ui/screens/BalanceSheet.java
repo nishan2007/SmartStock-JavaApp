@@ -51,6 +51,7 @@ public class BalanceSheet extends JFrame {
     private final DefaultTableModel drawerCashModel = tableModel();
     private final DefaultTableModel deviceSalesModel = tableModel();
     private final DefaultTableModel deviceOrdersModel = tableModel();
+    private final DefaultTableModel accountPaymentsModel = tableModel();
     private final DefaultTableModel drawerChecksModel = tableModel();
     private services.BalanceSheetService.BalanceSheet currentSheet;
     private SwingWorker<services.BalanceSheetService.BalanceSheet, Void> sheetWorker;
@@ -127,11 +128,12 @@ public class BalanceSheet extends JFrame {
         top.add(headerStack, BorderLayout.NORTH);
         top.add(metrics, BorderLayout.SOUTH);
 
-        JPanel grid = new JPanel(new GridLayout(4, 2, 12, 12));
+        JPanel grid = new JPanel(new GridLayout(5, 2, 12, 12));
         grid.setOpaque(false);
         grid.add(section("Income", new JTable(incomeModel), new Color(219, 234, 254)));
         grid.add(section("Accounts Receivable", new JTable(receivableModel), new Color(220, 252, 231)));
         grid.add(section("Drawer Cash In Hand", new JTable(drawerCashModel), new Color(226, 232, 240)));
+        grid.add(section("Account Payments", new JTable(accountPaymentsModel), new Color(204, 251, 241)));
         grid.add(section("Sales By Device", new JTable(deviceSalesModel), new Color(224, 231, 255)));
         grid.add(section("Orders By Device", new JTable(deviceOrdersModel), new Color(240, 253, 244)));
         grid.add(section("Accounts Payable", new JTable(payableModel), new Color(255, 237, 213)));
@@ -231,6 +233,7 @@ public class BalanceSheet extends JFrame {
         fill(drawerCashModel, sheet.drawerCash(), sheet.cashInHand());
         fill(deviceSalesModel, sheet.deviceSales(), totalLines(sheet.deviceSales()));
         fill(deviceOrdersModel, sheet.deviceOrders(), totalLines(sheet.deviceOrders()));
+        fill(accountPaymentsModel, sheet.accountPayments(), totalLines(sheet.accountPayments()));
         fill(drawerChecksModel, sheet.drawerChecks(), totalLines(sheet.drawerChecks()));
         balanceBfLabel.setText("Balance BF: " + money(sheet.balanceBf()));
         cashInHandLabel.setText("Cash In Hand: " + money(sheet.cashInHand()));
@@ -530,6 +533,7 @@ public class BalanceSheet extends JFrame {
         fillLoading(drawerCashModel);
         fillLoading(deviceSalesModel);
         fillLoading(deviceOrdersModel);
+        fillLoading(accountPaymentsModel);
         fillLoading(drawerChecksModel);
         statusLabel.setText(message);
     }

@@ -15,7 +15,7 @@ public final class ImageCacheWarmupService {
 
     public static int warmLocalCache(Connection conn) throws SQLException {
         Set<String> urls = new LinkedHashSet<>();
-        collectUrls(conn, urls, "company_customization", "receipt_logo_url");
+        collectUrls(conn, urls, "company_info", "company_logo_url");
         collectUrls(conn, urls, "company_customization", "badge_template_logo_url");
         collectUrls(conn, urls, "products", "image_url");
         collectUrls(conn, urls, "custom_order_items", "image_url");

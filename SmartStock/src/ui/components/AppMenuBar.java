@@ -1,5 +1,6 @@
 package ui.components;
 import services.DeviceService;
+import services.NotificationService;
 import services.StoreHydrationService;
 import services.SyncWorker;
 import managers.NavigationManager;
@@ -18,7 +19,6 @@ import ui.screens.DatabaseSetup;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
-import ui.screens.EndOfDay;
 import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.MaintenanceManagement;
@@ -27,15 +27,16 @@ import ui.screens.MakeASale;
 import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
 import ui.screens.NewItem;
+import ui.screens.NotificationsDialog;
 import ui.screens.Orders;
-import ui.screens.OrdersEndOfDay;
 import ui.screens.PartsManagement;
 import ui.screens.PayrollDashboard;
 import ui.screens.ReceivingHistory;
+import ui.screens.Reports;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
-import ui.screens.SalesOrders;
-import ui.screens.SalesQuotes;
+import ui.screens.Invoices;
+import ui.screens.Quotations;
 import ui.screens.StoreTransfer;
 import ui.screens.SyncStatus;
 import ui.screens.TimeClock;
@@ -75,8 +76,7 @@ public class AppMenuBar {
         JMenuItem balanceDrawItem = new JMenuItem("Balance Draw");
         JMenuItem balanceSheetItem = new JMenuItem("Balance Sheet");
         JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Manager Dashboard");
-        JMenuItem endOfDayItem = new JMenuItem("End of Day");
-        JMenuItem ordersEndOfDayItem = new JMenuItem("Orders End Of Day");
+        JMenuItem reportsItem = new JMenuItem("Reports");
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
         JMenuItem storeTransferItem = new JMenuItem("Store Transfer");
@@ -96,8 +96,8 @@ public class AppMenuBar {
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem workstationPreferencesItem = new JMenuItem("Workstation Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
-        JMenuItem salesQuotesItem = new JMenuItem("Sales Quotes");
-        JMenuItem salesOrdersItem = new JMenuItem("Sales Orders");
+        JMenuItem quotationsItem = new JMenuItem("Quotations");
+        JMenuItem invoicesItem = new JMenuItem("Invoices");
         JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
@@ -111,9 +111,7 @@ public class AppMenuBar {
                 || PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
-        boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
-        boolean canOrdersEndOfDay = PermissionManager.hasPermission("ORDERS_END_OF_DAY")
-                || PermissionManager.hasPermission("END_OF_DAY");
+        boolean canReports = PermissionManager.hasReportsPermission();
         boolean canNewItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
@@ -122,15 +120,16 @@ public class AppMenuBar {
         boolean canCustomOrderItems = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
-        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
+        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT")
+                || PermissionManager.hasPermission("MAINTENANCE_TECHNICIAN");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
-        boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
-                || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
+        boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("CREATE_QUOTATION");
+        boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_INVOICES")
+                || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
@@ -146,7 +145,7 @@ public class AppMenuBar {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canOrdersManagerDashboard || canEndOfDay || canOrdersEndOfDay || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canSalesQuotes || canSalesOrders || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotations || canInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -166,11 +165,8 @@ public class AppMenuBar {
         if (!canOrdersManagerDashboard || "OrdersManagerDashboard".equalsIgnoreCase(screenKey)) {
             ordersManagerDashboardItem.setEnabled(false);
         }
-        if (!canEndOfDay || "EndOfDay".equalsIgnoreCase(screenKey)) {
-            endOfDayItem.setEnabled(false);
-        }
-        if (!canOrdersEndOfDay || "OrdersEndOfDay".equalsIgnoreCase(screenKey)) {
-            ordersEndOfDayItem.setEnabled(false);
+        if (!canReports || "Reports".equalsIgnoreCase(screenKey)) {
+            reportsItem.setEnabled(false);
         }
         if (!canEnterInventory || "EnterInventory".equalsIgnoreCase(screenKey)) {
             enterInventoryItem.setEnabled(false);
@@ -217,11 +213,11 @@ public class AppMenuBar {
         if (!canCustomerAccounts || "CustomerAccounts".equalsIgnoreCase(screenKey)) {
             customerAccountsItem.setEnabled(false);
         }
-        if (!canSalesQuotes || "SalesQuotes".equalsIgnoreCase(screenKey)) {
-            salesQuotesItem.setEnabled(false);
+        if (!canQuotations || "Quotations".equalsIgnoreCase(screenKey)) {
+            quotationsItem.setEnabled(false);
         }
-        if (!canSalesOrders || "SalesOrders".equalsIgnoreCase(screenKey)) {
-            salesOrdersItem.setEnabled(false);
+        if (!canInvoices || "Invoices".equalsIgnoreCase(screenKey)) {
+            invoicesItem.setEnabled(false);
         }
         if (!canCustomOrders || "CustomOrders".equalsIgnoreCase(screenKey)) {
             customOrdersItem.setEnabled(false);
@@ -307,28 +303,16 @@ public class AppMenuBar {
             }
         });
 
-        endOfDayItem.addActionListener(new ActionListener() {
+        reportsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("END_OF_DAY", parent, "End of Day")) {
+                if (!PermissionManager.hasReportsPermission()) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Reports.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
-                if (WindowHelper.focusIfAlreadyOpen(EndOfDay.class)) {
+                if (WindowHelper.focusIfAlreadyOpen(Reports.class)) {
                     return;
                 }
-                NavigationManager.openEndOfDay(parent);
-            }
-        });
-
-        ordersEndOfDayItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.hasPermission("ORDERS_END_OF_DAY") && !PermissionManager.hasPermission("END_OF_DAY")) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Orders End Of Day.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-                    return;
-                }
-                if (WindowHelper.focusIfAlreadyOpen(OrdersEndOfDay.class)) {
-                    return;
-                }
-                NavigationManager.openOrdersEndOfDay(parent);
+                NavigationManager.openReports(parent);
             }
         });
 
@@ -406,7 +390,8 @@ public class AppMenuBar {
 
         maintenanceManagementItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("MAINTENANCE_MANAGEMENT", parent, "Maintenance Management")) {
+                if (!PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT") && !PermissionManager.hasPermission("MAINTENANCE_TECHNICIAN")) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Maintenance Management.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(MaintenanceManagement.class)) {
@@ -477,29 +462,29 @@ public class AppMenuBar {
             }
         });
 
-        salesQuotesItem.addActionListener(new ActionListener() {
+        quotationsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!canSalesQuotes) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Sales Quotes.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                if (!canQuotations) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Quotations.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
-                if (WindowHelper.focusIfAlreadyOpen(SalesQuotes.class)) {
+                if (WindowHelper.focusIfAlreadyOpen(Quotations.class)) {
                     return;
                 }
-                NavigationManager.openSalesQuotes(parent);
+                NavigationManager.openQuotations(parent);
             }
         });
 
-        salesOrdersItem.addActionListener(new ActionListener() {
+        invoicesItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!canSalesOrders) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Sales Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                if (!canInvoices) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
-                if (WindowHelper.focusIfAlreadyOpen(SalesOrders.class)) {
+                if (WindowHelper.focusIfAlreadyOpen(Invoices.class)) {
                     return;
                 }
-                NavigationManager.openSalesOrders(parent);
+                NavigationManager.openInvoices(parent);
             }
         });
 
@@ -655,19 +640,18 @@ public class AppMenuBar {
         pointOfSaleMenu.addSeparator();
         pointOfSaleMenu.add(makeSaleItem);
         pointOfSaleMenu.add(returnSaleItem);
-        pointOfSaleMenu.add(endOfDayItem);
         pointOfSaleMenu.add(ViewSalesItem);
         pointOfSaleMenu.add(customerAccountsItem);
 
         operationsMenu.add(balanceDrawItem);
         operationsMenu.add(balanceSheetItem);
+        operationsMenu.add(reportsItem);
 
         ordersMenu.add(ordersManagerDashboardItem);
-        ordersMenu.add(salesQuotesItem);
-        ordersMenu.add(salesOrdersItem);
+        ordersMenu.add(quotationsItem);
+        ordersMenu.add(invoicesItem);
         ordersMenu.add(customOrdersItem);
         ordersMenu.add(ordersItem);
-        ordersMenu.add(ordersEndOfDayItem);
         ordersMenu.add(customOrderItemsItem);
 
         inventoryMenu.add(enterInventoryItem);
@@ -693,6 +677,7 @@ public class AppMenuBar {
 
         JMenu sessionMenu = new JMenu("Session");
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
+        JMenuItem notificationsItem = new JMenuItem(NotificationService.loadSummary().label());
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem databaseSetupItem = new JMenuItem("Database Setup");
@@ -706,6 +691,11 @@ public class AppMenuBar {
         changeStoreItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 showChangeLocationDialog(parent, currentScreen);
+            }
+        });
+        notificationsItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                new NotificationsDialog(parent).setVisible(true);
             }
         });
         syncNowItem.addActionListener(new ActionListener() {
@@ -748,6 +738,7 @@ public class AppMenuBar {
 
 
         sessionMenu.add(changeStoreItem);
+        sessionMenu.add(notificationsItem);
         sessionMenu.add(syncNowItem);
         sessionMenu.add(syncStatusItem);
         sessionMenu.add(databaseSetupItem);

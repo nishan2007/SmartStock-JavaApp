@@ -4,6 +4,7 @@ import data.DB;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import utils.DeviceUtils;
+import models.DeviceInfo;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -21,14 +22,19 @@ public final class DeviceContextService {
     }
 
     public static String currentDeviceName() {
-        String receiptDeviceName = currentReceiptDeviceName();
-        if (receiptDeviceName != null) {
-            return receiptDeviceName;
-        }
-
         String managedDeviceName = currentManagedDeviceName();
         if (managedDeviceName != null) {
             return managedDeviceName;
+        }
+
+        String localDeviceName = currentLocalDeviceName();
+        if (localDeviceName != null) {
+            return localDeviceName;
+        }
+
+        String receiptDeviceName = currentReceiptDeviceName();
+        if (receiptDeviceName != null) {
+            return receiptDeviceName;
         }
 
         return currentDeviceId();
@@ -59,7 +65,15 @@ public final class DeviceContextService {
         if (deviceId == null) {
             return null;
         }
-        String sql = "SELECT NULLIF(TRIM(device_name), '') AS device_name FROM devices WHERE device_id = ?::uuid";
+        String sql = """
+                SELECT COALESCE(
+                           NULLIF(TRIM(NULLIF(device_name, device_id::text)), ''),
+                           NULLIF(TRIM(hostname), ''),
+                           NULLIF(TRIM(local_username), '')
+                       ) AS device_name
+                FROM devices
+                WHERE device_id = ?::uuid
+                """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, deviceId);
@@ -72,6 +86,19 @@ public final class DeviceContextService {
             return null;
         }
         return null;
+    }
+
+    private static String currentLocalDeviceName() {
+        try {
+            DeviceInfo info = DeviceUtils.collectDeviceInfo();
+            String deviceName = blankToNull(info.getDeviceName());
+            if (deviceName != null && !deviceName.equals(currentDeviceId())) {
+                return deviceName;
+            }
+            return blankToNull(info.getHostname());
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private static void requireCapability(Connection conn, String capabilityColumn, String message) throws SQLException {

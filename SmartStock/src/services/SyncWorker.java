@@ -105,6 +105,7 @@ public final class SyncWorker {
                     int eventPushes = pushBatch(local, cloud);
                     int pushed = rowPushes + devicePushes + eventPushes;
                     ImageCacheWarmupService.warmLocalCache(local);
+                    SyncServiceStatusService.mark(local, "Running", "Cloud reachable");
                     latestStatus = new SyncStatus(true, "Cloud reachable", Instant.now(), pushed,
                             countPending(local), countFailed(local), countConflicts(local), null,
                             SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));

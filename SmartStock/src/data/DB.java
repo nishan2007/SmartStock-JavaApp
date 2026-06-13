@@ -2,7 +2,8 @@ package data;
 
 import services.SyncSchemaInstaller;
 import services.BaseSchemaInstaller;
-import services.SalesQuoteOrderSchemaInstaller;
+import services.QuotationInvoiceSchemaInstaller;
+import services.WorkflowSyncIdentitySchemaInstaller;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -88,7 +89,8 @@ public class DB {
             }
             BaseSchemaInstaller.ensureSchema(conn);
             SyncSchemaInstaller.ensureSchema(conn);
-            SalesQuoteOrderSchemaInstaller.ensureSchema(conn);
+            QuotationInvoiceSchemaInstaller.ensureSchema(conn);
+            WorkflowSyncIdentitySchemaInstaller.ensureSchema(conn);
             ENSURED_SCHEMA_KEYS.add(key);
         }
     }

@@ -4,18 +4,22 @@ import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
+import models.AppNotification;
 import models.CashDrawerContext;
 import services.CashDrawerService;
 import services.DeviceService;
+import services.NotificationService;
 import ui.components.AppMenuBar;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
 import ui.helpers.WindowHelper;
 import ui.helpers.ThemeManager;
+import ui.helpers.WelcomeGreetingHelper;
 import data.DB;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.basic.BasicButtonUI;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -25,6 +29,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 
 public class MainMenu extends JFrame {
@@ -44,8 +51,7 @@ public class MainMenu extends JFrame {
     private final JButton balanceDrawButton;
     private final JButton balanceSheetButton;
     private final JButton ordersManagerDashboardButton;
-    private final JButton endOfDayButton;
-    private final JButton ordersEndOfDayButton;
+    private final JButton reportsButton;
     private final JButton enterInventoryButton;
     private final JButton receivingHistoryButton;
     private final JButton storeTransferButton;
@@ -55,8 +61,8 @@ public class MainMenu extends JFrame {
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton customerTransactionHistoryButton;
-    private final JButton salesQuotesButton;
-    private final JButton salesOrdersButton;
+    private final JButton quotationsButton;
+    private final JButton invoicesButton;
     private final JButton customOrdersButton;
     private final JButton ordersButton;
     private final JButton viewInventoryButton;
@@ -73,6 +79,9 @@ public class MainMenu extends JFrame {
     private final JButton companyCustomizationButton;
     private final JButton workstationPreferencesButton;
     private final JButton logoutButton;
+    private final JButton notificationButton = new JButton("Notifications");
+    private final Set<String> urgentPopupKeysShown = new HashSet<>();
+    private Timer notificationRefreshTimer;
 
     public MainMenu() {
         setTitle("SmartStock - Main Menu");
@@ -95,7 +104,7 @@ public class MainMenu extends JFrame {
         mainPanel.setBorder(new EmptyBorder(24, 28, 24, 28));
         mainPanel.setBackground(backgroundColor);
 
-        JLabel titleLabel = new JLabel("SmartStock Main Menu");
+        JLabel titleLabel = new JLabel(WelcomeGreetingHelper.currentGreeting().title());
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
         titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
         titleLabel.setForeground(textColor);
@@ -114,8 +123,7 @@ public class MainMenu extends JFrame {
         balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
         balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/MainMenuBalanceSheet.png"));
         ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/MainMenuOrdersDashboard.png"));
-        endOfDayButton = createMenuButton("End of Day", "Review store daily totals", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
-        ordersEndOfDayButton = createMenuButton("Orders End Of Day", "Reconcile custom order payments and balances", loadIcon("src/ICONS/MainMenuOrdersEndOfDay.png"));
+        reportsButton = createMenuButton("Reports", "Review sales, orders, and invoice totals", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
         enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/MainMenuReceivingInventory.png"));
         receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/MainMenuReceivingHistory.png"));
         storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/MainMenuStoreTransfer.png"));
@@ -125,8 +133,8 @@ public class MainMenu extends JFrame {
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/MainMenuViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
         customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
-        salesQuotesButton = createMenuButton("Sales Quotes", "Create and issue business quotations", loadIcon("src/ICONS/MainMenuOrders.png"));
-        salesOrdersButton = createMenuButton("Sales Orders", "Take order payments and post deliveries", loadIcon("src/ICONS/MainMenuOrders.png"));
+        quotationsButton = createMenuButton("Quotations", "Create and issue business quotations", loadIcon("src/ICONS/MainMenuQuotations.png"));
+        invoicesButton = createMenuButton("Invoices", "Take order payments and post deliveries", loadIcon("src/ICONS/MainMenuInvoices.png"));
         customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
@@ -157,7 +165,8 @@ public class MainMenu extends JFrame {
                 DeckersPalette.ORANGE,
                 makeSaleButton,
                 returnSaleButton,
-                endOfDayButton,
+                quotationsButton,
+                invoicesButton,
                 viewSalesButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
@@ -165,11 +174,8 @@ public class MainMenu extends JFrame {
                 "Orders",
                 DeckersPalette.MAGENTA,
                 ordersManagerDashboardButton,
-                salesQuotesButton,
-                salesOrdersButton,
                 customOrdersButton,
                 ordersButton,
-                ordersEndOfDayButton,
                 customOrderItemsButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
@@ -215,6 +221,7 @@ public class MainMenu extends JFrame {
                 RIGHT_SECTION_COLUMNS,
                 balanceDrawButton,
                 balanceSheetButton,
+                reportsButton,
                 customerAccountsButton,
                 customerTransactionHistoryButton
         ), BorderLayout.NORTH);
@@ -265,7 +272,11 @@ public class MainMenu extends JFrame {
         wireActions();
         wireWindowSessionHandling();
         WindowHelper.configurePosWindow(this);
-        SwingUtilities.invokeLater(this::promptToStartDrawIfNeeded);
+        SwingUtilities.invokeLater(() -> {
+            refreshNotifications(true);
+            startNotificationRefreshTimer();
+            promptToStartDrawIfNeeded();
+        });
     }
     private ImageIcon loadIcon(String path) {
         ImageIcon icon = null;
@@ -314,6 +325,11 @@ public class MainMenu extends JFrame {
 
         JPanel companyLogoPanel = createLogoPanel(companyLogoLabel, "Company Logo");
         JPanel smartStockLogoPanel = createLogoPanel(smartStockLogoLabel, "SmartStock Logo");
+        JPanel rightPanel = new JPanel(new BorderLayout(0, 8));
+        rightPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        rightPanel.setBackground(backgroundColor());
+        rightPanel.add(smartStockLogoPanel, BorderLayout.CENTER);
+        rightPanel.add(createNotificationButtonPanel(), BorderLayout.SOUTH);
 
         JPanel titlePanel = new JPanel();
         titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
@@ -329,12 +345,28 @@ public class MainMenu extends JFrame {
 
         headerPanel.add(companyLogoPanel, BorderLayout.WEST);
         headerPanel.add(titlePanel, BorderLayout.CENTER);
-        headerPanel.add(smartStockLogoPanel, BorderLayout.EAST);
+        headerPanel.add(rightPanel, BorderLayout.EAST);
 
         setDeckersLogo(companyLogoLabel);
         loadCompanyLogo(companyLogoLabel);
         setSmartStockLogo(smartStockLogoLabel);
         return headerPanel;
+    }
+
+    private JPanel createNotificationButtonPanel() {
+        notificationButton.setFont(new Font("SansSerif", Font.BOLD, 13));
+        notificationButton.setFocusPainted(false);
+        notificationButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        notificationButton.setPreferredSize(new Dimension(300, 34));
+        notificationButton.setBackground(surfaceColor());
+        notificationButton.setForeground(textColor());
+        notificationButton.addActionListener(e -> openNotificationsDialog());
+
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        panel.setBackground(backgroundColor());
+        panel.add(notificationButton);
+        return panel;
     }
 
     private JLabel createLogoLabel(String fallbackText) {
@@ -894,9 +926,7 @@ public class MainMenu extends JFrame {
                 || PermissionManager.hasPermission("PAYROLL_DASHBOARD");
         boolean canOrdersManagerDashboard = PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS");
-        boolean canEndOfDay = PermissionManager.hasPermission("END_OF_DAY");
-        boolean canOrdersEndOfDay = PermissionManager.hasPermission("ORDERS_END_OF_DAY")
-                || PermissionManager.hasPermission("END_OF_DAY");
+        boolean canReports = PermissionManager.hasReportsPermission();
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
@@ -905,11 +935,11 @@ public class MainMenu extends JFrame {
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
-        boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
-                || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
+        boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("CREATE_QUOTATION");
+        boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_INVOICES")
+                || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
@@ -924,7 +954,8 @@ public class MainMenu extends JFrame {
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
         boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
         boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
-        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT");
+        boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT")
+                || PermissionManager.hasPermission("MAINTENANCE_TECHNICIAN");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
 
@@ -933,8 +964,7 @@ public class MainMenu extends JFrame {
         balanceDrawButton.setEnabled(canBalanceDrawer);
         balanceSheetButton.setEnabled(canBalanceSheet);
         ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
-        endOfDayButton.setEnabled(canEndOfDay);
-        ordersEndOfDayButton.setEnabled(canOrdersEndOfDay);
+        reportsButton.setEnabled(canReports);
         enterInventoryButton.setEnabled(canEnterInventory);
         receivingHistoryButton.setEnabled(canReceivingHistory);
         storeTransferButton.setEnabled(canStoreTransfer);
@@ -944,8 +974,8 @@ public class MainMenu extends JFrame {
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         customerTransactionHistoryButton.setEnabled(canCustomerAccounts);
-        salesQuotesButton.setEnabled(canSalesQuotes);
-        salesOrdersButton.setEnabled(canSalesOrders);
+        quotationsButton.setEnabled(canQuotations);
+        invoicesButton.setEnabled(canInvoices);
         customOrdersButton.setEnabled(canCustomOrders);
         ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
@@ -972,8 +1002,7 @@ public class MainMenu extends JFrame {
                 balanceDrawButton,
                 balanceSheetButton,
                 ordersManagerDashboardButton,
-                endOfDayButton,
-                ordersEndOfDayButton,
+                reportsButton,
                 enterInventoryButton,
                 receivingHistoryButton,
                 storeTransferButton,
@@ -983,8 +1012,8 @@ public class MainMenu extends JFrame {
                 viewSalesButton,
                 customerAccountsButton,
                 customerTransactionHistoryButton,
-                salesQuotesButton,
-                salesOrdersButton,
+                quotationsButton,
+                invoicesButton,
                 customOrdersButton,
                 ordersButton,
                 viewInventoryButton,
@@ -1045,18 +1074,12 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openOrdersManagerDashboard(this);
         });
-        endOfDayButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("END_OF_DAY", this, "End of Day")) {
+        reportsButton.addActionListener(e -> {
+            if (!PermissionManager.hasReportsPermission()) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Reports.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            NavigationManager.openEndOfDay(this);
-        });
-        ordersEndOfDayButton.addActionListener(e -> {
-            if (!PermissionManager.hasPermission("ORDERS_END_OF_DAY") && !PermissionManager.hasPermission("END_OF_DAY")) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders End Of Day.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            NavigationManager.openOrdersEndOfDay(this);
+            NavigationManager.openReports(this);
         });
         enterInventoryButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("RECEIVING_INVENTORY", this, "Receiving Inventory")) {
@@ -1112,24 +1135,24 @@ public class MainMenu extends JFrame {
             }
             openCustomerTransactionHistory();
         });
-        salesQuotesButton.addActionListener(e -> {
-            boolean canSalesQuotes = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                    || PermissionManager.hasPermission("CREATE_SALES_QUOTE");
-            if (!canSalesQuotes) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Sales Quotes.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+        quotationsButton.addActionListener(e -> {
+            boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                    || PermissionManager.hasPermission("CREATE_QUOTATION");
+            if (!canQuotations) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Quotations.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            NavigationManager.openSalesQuotes(this);
+            NavigationManager.openQuotations(this);
         });
-        salesOrdersButton.addActionListener(e -> {
-            boolean canSalesOrders = PermissionManager.hasPermission("SALES_QUOTES_ORDERS")
-                    || PermissionManager.hasPermission("MANAGE_SALES_ORDERS")
-                    || PermissionManager.hasPermission("POST_SALES_ORDER_DELIVERY");
-            if (!canSalesOrders) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Sales Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+        invoicesButton.addActionListener(e -> {
+            boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                    || PermissionManager.hasPermission("MANAGE_INVOICES")
+                    || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
+            if (!canInvoices) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            NavigationManager.openSalesOrders(this);
+            NavigationManager.openInvoices(this);
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
@@ -1209,7 +1232,8 @@ public class MainMenu extends JFrame {
             NavigationManager.openPartsManagement(this);
         });
         maintenanceManagementButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("MAINTENANCE_MANAGEMENT", this, "Maintenance Management")) {
+            if (!PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT") && !PermissionManager.hasPermission("MAINTENANCE_TECHNICIAN")) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Maintenance Management.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             NavigationManager.openMaintenanceManagement(this);
@@ -1240,9 +1264,189 @@ public class MainMenu extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent e) {
+                stopNotificationRefreshTimer();
                 endSessionSafely();
             }
         });
+    }
+
+    private void startNotificationRefreshTimer() {
+        if (notificationRefreshTimer != null && notificationRefreshTimer.isRunning()) {
+            return;
+        }
+        notificationRefreshTimer = new Timer(60_000, e -> refreshNotifications(true));
+        notificationRefreshTimer.start();
+    }
+
+    private void stopNotificationRefreshTimer() {
+        if (notificationRefreshTimer != null) {
+            notificationRefreshTimer.stop();
+            notificationRefreshTimer = null;
+        }
+    }
+
+    private void refreshNotifications(boolean allowPopup) {
+        SwingWorker<List<AppNotification>, Void> worker = new SwingWorker<>() {
+            @Override
+            protected List<AppNotification> doInBackground() {
+                return NotificationService.loadNotifications();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    List<AppNotification> notifications = get();
+                    int unread = 0;
+                    int urgent = 0;
+                    for (AppNotification notification : notifications) {
+                        if (notification.isUnreadVisible()) {
+                            unread++;
+                        }
+                        if (notification.isUrgentVisible()) {
+                            urgent++;
+                        }
+                    }
+                    if (urgent > 0) {
+                        notificationButton.setText("Notifications (" + urgent + " urgent)");
+                    } else if (unread > 0) {
+                        notificationButton.setText("Notifications (" + unread + ")");
+                    } else {
+                        notificationButton.setText("Notifications");
+                    }
+                    notificationButton.setForeground(urgent > 0 ? new Color(185, 28, 28) : textColor());
+                    if (allowPopup) {
+                        showUrgentNotificationPopup(notifications);
+                    }
+                } catch (Exception ex) {
+                    notificationButton.setText("Notifications");
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void showUrgentNotificationPopup(List<AppNotification> notifications) {
+        for (AppNotification notification : notifications) {
+            if (!notification.isUrgentVisible() || urgentPopupKeysShown.contains(notification.notificationKey())) {
+                continue;
+            }
+            urgentPopupKeysShown.add(notification.notificationKey());
+            int choice = showUrgentNotificationDialog(notification);
+            try {
+                if (choice == 0) {
+                    NotificationService.markSeen(notification);
+                    NotificationsDialog.navigate(this, notification.actionTarget());
+                } else if (choice == 1) {
+                    NotificationService.snooze(notification.notificationKey(), 60);
+                    refreshNotifications(false);
+                } else if (choice == 2) {
+                    NotificationService.markRead(notification.notificationKey());
+                    refreshNotifications(false);
+                }
+            } catch (SQLException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
+            }
+            return;
+        }
+    }
+
+    private int showUrgentNotificationDialog(AppNotification notification) {
+        final int[] choice = {-1};
+        JDialog dialog = new JDialog(this, "Urgent Notification", true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel root = new JPanel(new BorderLayout(18, 16));
+        root.setBorder(new EmptyBorder(22, 24, 20, 24));
+        root.setBackground(surfaceColor());
+
+        JLabel iconLabel = new JLabel(UIManager.getIcon("OptionPane.warningIcon"));
+        iconLabel.setVerticalAlignment(SwingConstants.TOP);
+        root.add(iconLabel, BorderLayout.WEST);
+
+        JPanel content = new JPanel(new BorderLayout(0, 18));
+        content.setOpaque(false);
+
+        JLabel titleLabel = new JLabel(notification.title());
+        titleLabel.setForeground(textColor());
+        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 18f));
+        content.add(titleLabel, BorderLayout.NORTH);
+
+        JLabel messageLabel = new JLabel("<html><div style='width:460px;'>"
+                + escapeHtml(notification.message()) + "</div></html>");
+        messageLabel.setForeground(textColor());
+        messageLabel.setFont(messageLabel.getFont().deriveFont(Font.PLAIN, 16f));
+        content.add(messageLabel, BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 3, 10, 0));
+        buttons.setOpaque(false);
+        JButton markReadButton = createNotificationActionButton("Mark Read", new Color(75, 85, 99), Color.WHITE);
+        JButton snoozeButton = createNotificationActionButton("Snooze", new Color(75, 85, 99), Color.WHITE);
+        JButton openButton = createNotificationActionButton("Open", new Color(37, 99, 235), Color.WHITE);
+
+        markReadButton.addActionListener(e -> {
+            choice[0] = 2;
+            dialog.dispose();
+        });
+        snoozeButton.addActionListener(e -> {
+            choice[0] = 1;
+            dialog.dispose();
+        });
+        openButton.addActionListener(e -> {
+            choice[0] = 0;
+            dialog.dispose();
+        });
+
+        buttons.add(markReadButton);
+        buttons.add(snoozeButton);
+        buttons.add(openButton);
+        content.add(buttons, BorderLayout.SOUTH);
+        root.add(content, BorderLayout.CENTER);
+
+        dialog.setContentPane(root);
+        dialog.getRootPane().setDefaultButton(openButton);
+        dialog.pack();
+        dialog.setMinimumSize(new Dimension(640, dialog.getHeight()));
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+        return choice[0];
+    }
+
+    private static JButton createNotificationActionButton(String text, Color background, Color foreground) {
+        JButton button = new JButton(text);
+        button.setUI(new BasicButtonUI());
+        button.setFont(button.getFont().deriveFont(Font.BOLD, 14f));
+        button.setForeground(foreground);
+        button.setBackground(background);
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setPreferredSize(new Dimension(142, 40));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return button;
+    }
+
+    private static String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private void openNotificationsDialog() {
+        NotificationsDialog dialog = new NotificationsDialog(this);
+        dialog.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                refreshNotifications(false);
+            }
+        });
+        dialog.setVisible(true);
     }
 
     private void promptToStartDrawIfNeeded() {

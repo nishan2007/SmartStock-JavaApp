@@ -7,6 +7,7 @@ import Receipt.CustomOrderSlipBuilder;
 import Receipt.CustomOrderSlipData;
 import Receipt.CustomOrderSlipFormatter;
 import Receipt.CustomOrderSlipRenderer;
+import Receipt.QuotationInvoiceDocumentBuilder;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
@@ -19,7 +20,7 @@ import ui.screens.companyprefs.CompanyIdentityPanel;
 import ui.screens.companyprefs.CustomOrderDepositPanel;
 import ui.screens.companyprefs.CustomOrderReceiptPanel;
 import ui.screens.companyprefs.SaleReceiptPanel;
-import ui.screens.companyprefs.SalesQuoteOrderPrintPanel;
+import ui.screens.companyprefs.QuotationInvoicePrintPanel;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -59,7 +60,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
     private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
     private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
-    private static final String NAV_SALES_QUOTE_ORDER_PRINTING = "Sales Quote/Order Printouts";
+    private static final String NAV_QUOTATION_ORDER_PRINTING = "Quotation/Invoice Printouts";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -79,6 +80,8 @@ public class CompanyCustomization extends JFrame {
     private final JTextField companyPhoneLine2Field = new JTextField();
     private final JTextField companyEmailLine1Field = new JTextField();
     private final JTextField companyEmailLine2Field = new JTextField();
+    private final JTextField companyMottoLine1Field = new JTextField();
+    private final JTextField companyMottoLine2Field = new JTextField();
     private final JTextField headerLineField = new JTextField();
     private final JTextField footerLineField = new JTextField();
     private final JTextField receiptStartCounterField = new JTextField("1");
@@ -119,12 +122,12 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox slipShowPaymentReferenceBox = new JCheckBox("Payment reference");
     private final JCheckBox slipShowTakenByBox = new JCheckBox("Taken/delivered by");
     private final JCheckBox slipShowSignaturesBox = new JCheckBox("Signature lines");
-    private final JTextField salesQuotePrintTitleField = new JTextField("QUOTE / NOT FINAL SALE");
-    private final JTextField salesQuoteValidityNoteField = new JTextField("This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
-    private final JTextField salesOrderPrintTitleField = new JTextField("SALES ORDER CONFIRMATION");
+    private final JTextField quotationPrintTitleField = new JTextField("QUOTE / NOT FINAL SALE");
+    private final JTextField quotationValidityNoteField = new JTextField("This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
+    private final JTextField invoicePrintTitleField = new JTextField("SALES ORDER CONFIRMATION");
     private final JTextField salesDeliveryPrintTitleField = new JTextField("DELIVERY BILL");
-    private final JTextField salesQuoteOrderFooterNoteField = new JTextField();
-    private final JCheckBox salesQuoteOrderShowSignaturesBox = new JCheckBox("Employee and customer/receiver signature lines");
+    private final JTextField quotationInvoiceFooterNoteField = new JTextField();
+    private final JCheckBox quotationInvoiceShowSignaturesBox = new JCheckBox("Received/approved signature lines");
     private final JTextField badgeCompanyNameField = new JTextField();
     private final JTextField badgeLogoPathField = new JTextField();
     private final JTextField badgeQuoteField = new JTextField();
@@ -185,9 +188,9 @@ public class CompanyCustomization extends JFrame {
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final CustomOrderSlipPreviewPanel sampleSlipPanel = new CustomOrderSlipPreviewPanel();
     private final ReceiptPreview.ReceiptPaperPanel sampleSlip40ColumnPanel = new ReceiptPreview.ReceiptPaperPanel();
-    private final ReceiptPreview.ReceiptPaperPanel sampleSalesQuotePanel = new ReceiptPreview.ReceiptPaperPanel();
-    private final ReceiptPreview.ReceiptPaperPanel sampleSalesOrderPanel = new ReceiptPreview.ReceiptPaperPanel();
-    private final ReceiptPreview.ReceiptPaperPanel sampleSalesDeliveryPanel = new ReceiptPreview.ReceiptPaperPanel();
+    private final JEditorPane sampleQuotationPane = createSalesDocumentPreviewPane();
+    private final JEditorPane sampleInvoicePane = createSalesDocumentPreviewPane();
+    private final JEditorPane sampleSalesDeliveryPane = createSalesDocumentPreviewPane();
     private final JPanel rightContentPanel = new JPanel(new CardLayout());
     private JTree navigationTree;
     private boolean loadingSettings = false;
@@ -265,7 +268,7 @@ public class CompanyCustomization extends JFrame {
         DefaultMutableTreeNode customOrdersNode = new DefaultMutableTreeNode(NAV_CUSTOM_ORDERS);
         addNodeIfPermitted(customOrdersNode, NAV_CUSTOM_ORDER_DEPOSIT_REFUND);
         addNodeIfPermitted(customOrdersNode, NAV_CUSTOM_ORDER_SLIP_FORMATTING);
-        addNodeIfPermitted(customOrdersNode, NAV_SALES_QUOTE_ORDER_PRINTING);
+        addNodeIfPermitted(customOrdersNode, NAV_QUOTATION_ORDER_PRINTING);
         if (customOrdersNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_CUSTOM_ORDERS)) {
             root.add(customOrdersNode);
         }
@@ -353,8 +356,8 @@ public class CompanyCustomization extends JFrame {
         if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_SLIP_FORMATTING)) {
             rightContentPanel.add(buildCustomOrderSlipPreferencesScreen(), NAV_CUSTOM_ORDER_SLIP_FORMATTING);
         }
-        if (canAccessPreferenceSection(NAV_SALES_QUOTE_ORDER_PRINTING)) {
-            rightContentPanel.add(buildSalesQuoteOrderPrintPreferencesScreen(), NAV_SALES_QUOTE_ORDER_PRINTING);
+        if (canAccessPreferenceSection(NAV_QUOTATION_ORDER_PRINTING)) {
+            rightContentPanel.add(buildQuotationInvoicePrintPreferencesScreen(), NAV_QUOTATION_ORDER_PRINTING);
         }
     }
 
@@ -380,7 +383,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
-                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_SALES_QUOTE_ORDER_PRINTING -> canEditCompanyPreferences();
+                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
     }
@@ -404,7 +407,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDERS,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING,
-                NAV_SALES_QUOTE_ORDER_PRINTING
+                NAV_QUOTATION_ORDER_PRINTING
         }) {
             if (canAccessPreferenceSection(key)) {
                 return key;
@@ -441,13 +444,8 @@ public class CompanyCustomization extends JFrame {
         logoPathField.setEditable(false);
         contentPanel.add(new CompanyIdentityPanel(
                 companyNameField,
-                companyAddressLine1Field,
-                companyAddressLine2Field,
-                companyAddressLine3Field,
-                companyPhoneLine1Field,
-                companyPhoneLine2Field,
-                companyEmailLine1Field,
-                companyEmailLine2Field,
+                companyMottoLine1Field,
+                companyMottoLine2Field,
                 buildLogoFilePanel()
         ), BorderLayout.NORTH);
         JPanel filler = new JPanel();
@@ -1671,16 +1669,16 @@ public class CompanyCustomization extends JFrame {
         );
     }
 
-    private JPanel buildSalesQuoteOrderPrintPreferencesScreen() {
+    private JPanel buildQuotationInvoicePrintPreferencesScreen() {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
-        SalesQuoteOrderPrintPanel settingsPanel = new SalesQuoteOrderPrintPanel(
-                salesQuotePrintTitleField,
-                salesQuoteValidityNoteField,
-                salesOrderPrintTitleField,
+        QuotationInvoicePrintPanel settingsPanel = new QuotationInvoicePrintPanel(
+                quotationPrintTitleField,
+                quotationValidityNoteField,
+                invoicePrintTitleField,
                 salesDeliveryPrintTitleField,
-                salesQuoteOrderFooterNoteField,
-                salesQuoteOrderShowSignaturesBox
+                quotationInvoiceFooterNoteField,
+                quotationInvoiceShowSignaturesBox
         );
         JScrollPane settingsScrollPane = new JScrollPane(settingsPanel);
         settingsScrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -1690,7 +1688,7 @@ public class CompanyCustomization extends JFrame {
         JSplitPane splitPane = new JSplitPane(
                 JSplitPane.HORIZONTAL_SPLIT,
                 settingsScrollPane,
-                buildSalesQuoteOrderPreviewPanel()
+                buildQuotationInvoicePreviewPanel()
         );
         splitPane.setBorder(BorderFactory.createEmptyBorder());
         splitPane.setContinuousLayout(true);
@@ -1700,7 +1698,7 @@ public class CompanyCustomization extends JFrame {
         return contentPanel;
     }
 
-    private JPanel buildSalesQuoteOrderPreviewPanel() {
+    private JPanel buildQuotationInvoicePreviewPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setPreferredSize(new Dimension(900, 0));
         panel.setMinimumSize(new Dimension(720, 0));
@@ -1715,14 +1713,23 @@ public class CompanyCustomization extends JFrame {
         panel.add(sectionLabel, BorderLayout.NORTH);
 
         JTabbedPane previewTabs = new JTabbedPane();
-        previewTabs.addTab("Quote", buildSalesDocumentScroll(sampleSalesQuotePanel));
-        previewTabs.addTab("Order", buildSalesDocumentScroll(sampleSalesOrderPanel));
-        previewTabs.addTab("Delivery", buildSalesDocumentScroll(sampleSalesDeliveryPanel));
+        previewTabs.addTab("Quotation", buildSalesDocumentScroll(sampleQuotationPane));
+        previewTabs.addTab("Invoice", buildSalesDocumentScroll(sampleInvoicePane));
+        previewTabs.addTab("Delivery", buildSalesDocumentScroll(sampleSalesDeliveryPane));
         panel.add(previewTabs, BorderLayout.CENTER);
         return panel;
     }
 
-    private JComponent buildSalesDocumentScroll(ReceiptPreview.ReceiptPaperPanel previewPanel) {
+    private JEditorPane createSalesDocumentPreviewPane() {
+        JEditorPane pane = new JEditorPane();
+        pane.setEditable(false);
+        pane.setContentType("text/html");
+        pane.setBackground(new Color(241, 245, 249));
+        pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        return pane;
+    }
+
+    private JComponent buildSalesDocumentScroll(JEditorPane previewPanel) {
         JScrollPane scrollPane = new JScrollPane(previewPanel);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
         scrollPane.getHorizontalScrollBar().setUnitIncrement(16);
@@ -1823,6 +1830,8 @@ public class CompanyCustomization extends JFrame {
         companyPhoneLine2Field.setText(settings.phoneLine2());
         companyEmailLine1Field.setText(settings.emailLine1());
         companyEmailLine2Field.setText(settings.emailLine2());
+        companyMottoLine1Field.setText(settings.mottoLine1());
+        companyMottoLine2Field.setText(settings.mottoLine2());
         headerLineField.setText(settings.headerLine());
         footerLineField.setText(settings.footerLine());
         logoPathField.setText(settings.logoPath());
@@ -1845,15 +1854,15 @@ public class CompanyCustomization extends JFrame {
         customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
         loadSlipFields(slipSettings);
-        CompanyCustomizationManager.SalesQuoteOrderPrintSettings salesPrintSettings = CompanyCustomizationManager.loadSalesQuoteOrderPrintSettings();
-        loadSalesQuoteOrderPrintFields(salesPrintSettings);
+        CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = CompanyCustomizationManager.loadQuotationInvoicePrintSettings();
+        loadQuotationInvoicePrintFields(salesPrintSettings);
         CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = CompanyCustomizationManager.loadBadgeTemplateSettings();
         loadBadgeTemplateFields(badgeTemplateSettings);
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
         refreshSlipPreview();
-        refreshSalesQuoteOrderPrintPreview();
+        refreshQuotationInvoicePrintPreview();
         refreshBadgePreview();
     }
 
@@ -1871,7 +1880,7 @@ public class CompanyCustomization extends JFrame {
                 CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
             }
             CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
-            CompanyCustomizationManager.saveSalesQuoteOrderPrintSettings(getSalesQuoteOrderPrintSettingsFromFields());
+            CompanyCustomizationManager.saveQuotationInvoicePrintSettings(getQuotationInvoicePrintSettingsFromFields());
             CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsForSave());
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
@@ -1921,6 +1930,8 @@ public class CompanyCustomization extends JFrame {
                 companyPhoneLine2Field.getText(),
                 companyEmailLine1Field.getText(),
                 companyEmailLine2Field.getText(),
+                companyMottoLine1Field.getText(),
+                companyMottoLine2Field.getText(),
                 headerLineField.getText(),
                 footerLineField.getText(),
                 logoPathField.getText(),
@@ -2020,23 +2031,23 @@ public class CompanyCustomization extends JFrame {
         );
     }
 
-    private void loadSalesQuoteOrderPrintFields(CompanyCustomizationManager.SalesQuoteOrderPrintSettings settings) {
-        salesQuotePrintTitleField.setText(settings.quoteTitle());
-        salesQuoteValidityNoteField.setText(settings.quoteValidityNote());
-        salesOrderPrintTitleField.setText(settings.orderTitle());
+    private void loadQuotationInvoicePrintFields(CompanyCustomizationManager.QuotationInvoicePrintSettings settings) {
+        quotationPrintTitleField.setText(settings.quotationTitle());
+        quotationValidityNoteField.setText(settings.quotationValidityNote());
+        invoicePrintTitleField.setText(settings.invoiceTitle());
         salesDeliveryPrintTitleField.setText(settings.deliveryTitle());
-        salesQuoteOrderFooterNoteField.setText(settings.footerNote());
-        salesQuoteOrderShowSignaturesBox.setSelected(settings.showSignatures());
+        quotationInvoiceFooterNoteField.setText(settings.footerNote());
+        quotationInvoiceShowSignaturesBox.setSelected(settings.showSignatures());
     }
 
-    private CompanyCustomizationManager.SalesQuoteOrderPrintSettings getSalesQuoteOrderPrintSettingsFromFields() {
-        return new CompanyCustomizationManager.SalesQuoteOrderPrintSettings(
-                salesQuotePrintTitleField.getText(),
-                salesQuoteValidityNoteField.getText(),
-                salesOrderPrintTitleField.getText(),
+    private CompanyCustomizationManager.QuotationInvoicePrintSettings getQuotationInvoicePrintSettingsFromFields() {
+        return new CompanyCustomizationManager.QuotationInvoicePrintSettings(
+                quotationPrintTitleField.getText(),
+                quotationValidityNoteField.getText(),
+                invoicePrintTitleField.getText(),
                 salesDeliveryPrintTitleField.getText(),
-                salesQuoteOrderFooterNoteField.getText(),
-                salesQuoteOrderShowSignaturesBox.isSelected()
+                quotationInvoiceFooterNoteField.getText(),
+                quotationInvoiceShowSignaturesBox.isSelected()
         );
     }
 
@@ -2378,7 +2389,7 @@ public class CompanyCustomization extends JFrame {
             public void insertUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
-                refreshSalesQuoteOrderPrintPreview();
+                refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
             }
 
@@ -2386,7 +2397,7 @@ public class CompanyCustomization extends JFrame {
             public void removeUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
-                refreshSalesQuoteOrderPrintPreview();
+                refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
             }
 
@@ -2394,7 +2405,7 @@ public class CompanyCustomization extends JFrame {
             public void changedUpdate(DocumentEvent e) {
                 refreshSamplePreview();
                 refreshSlipPreview();
-                refreshSalesQuoteOrderPrintPreview();
+                refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
             }
         };
@@ -2407,6 +2418,8 @@ public class CompanyCustomization extends JFrame {
         companyPhoneLine2Field.getDocument().addDocumentListener(previewDocumentListener);
         companyEmailLine1Field.getDocument().addDocumentListener(previewDocumentListener);
         companyEmailLine2Field.getDocument().addDocumentListener(previewDocumentListener);
+        companyMottoLine1Field.getDocument().addDocumentListener(previewDocumentListener);
+        companyMottoLine2Field.getDocument().addDocumentListener(previewDocumentListener);
         headerLineField.getDocument().addDocumentListener(previewDocumentListener);
         footerLineField.getDocument().addDocumentListener(previewDocumentListener);
         receiptStartCounterField.getDocument().addDocumentListener(previewDocumentListener);
@@ -2455,12 +2468,12 @@ public class CompanyCustomization extends JFrame {
         slipFooterNoteField.getDocument().addDocumentListener(previewDocumentListener);
         slipBlankDetailLinesField.getDocument().addDocumentListener(previewDocumentListener);
 
-        salesQuotePrintTitleField.getDocument().addDocumentListener(previewDocumentListener);
-        salesQuoteValidityNoteField.getDocument().addDocumentListener(previewDocumentListener);
-        salesOrderPrintTitleField.getDocument().addDocumentListener(previewDocumentListener);
+        quotationPrintTitleField.getDocument().addDocumentListener(previewDocumentListener);
+        quotationValidityNoteField.getDocument().addDocumentListener(previewDocumentListener);
+        invoicePrintTitleField.getDocument().addDocumentListener(previewDocumentListener);
         salesDeliveryPrintTitleField.getDocument().addDocumentListener(previewDocumentListener);
-        salesQuoteOrderFooterNoteField.getDocument().addDocumentListener(previewDocumentListener);
-        salesQuoteOrderShowSignaturesBox.addActionListener(e -> refreshSalesQuoteOrderPrintPreview());
+        quotationInvoiceFooterNoteField.getDocument().addDocumentListener(previewDocumentListener);
+        quotationInvoiceShowSignaturesBox.addActionListener(e -> refreshQuotationInvoicePrintPreview());
 
         badgeShowQuoteBox.addActionListener(e -> refreshBadgePreview());
         badgeShowEmployeeIdBox.addActionListener(e -> refreshBadgePreview());
@@ -2501,163 +2514,20 @@ public class CompanyCustomization extends JFrame {
         updateSlipLogoPreview();
     }
 
-    private void refreshSalesQuoteOrderPrintPreview() {
+    private void refreshQuotationInvoicePrintPreview() {
         if (loadingSettings) {
             return;
         }
         CompanyCustomizationManager.ReceiptSettings receiptSettings = getSettingsFromFields();
-        CompanyCustomizationManager.SalesQuoteOrderPrintSettings printSettings = getSalesQuoteOrderPrintSettingsFromFields();
-        sampleSalesQuotePanel.setReceiptText(buildSampleSalesQuoteText(receiptSettings, printSettings), true);
-        sampleSalesOrderPanel.setReceiptText(buildSampleSalesOrderText(receiptSettings, printSettings), true);
-        sampleSalesDeliveryPanel.setReceiptText(buildSampleSalesDeliveryText(receiptSettings, printSettings), true);
-        updateSalesQuoteOrderLogoPreview();
+        CompanyCustomizationManager.QuotationInvoicePrintSettings printSettings = getQuotationInvoicePrintSettingsFromFields();
+        updateSalesDocumentPreview(sampleQuotationPane, QuotationInvoiceDocumentBuilder.buildSampleQuotation(receiptSettings, printSettings));
+        updateSalesDocumentPreview(sampleInvoicePane, QuotationInvoiceDocumentBuilder.buildSampleInvoice(receiptSettings, printSettings));
+        updateSalesDocumentPreview(sampleSalesDeliveryPane, QuotationInvoiceDocumentBuilder.buildSampleDelivery(receiptSettings, printSettings));
     }
 
-    private String buildSampleSalesQuoteText(CompanyCustomizationManager.ReceiptSettings receiptSettings,
-                                             CompanyCustomizationManager.SalesQuoteOrderPrintSettings printSettings) {
-        StringBuilder out = new StringBuilder();
-        appendSalesDocumentHeader(out, receiptSettings, printSettings.quoteTitle());
-        appendSampleDocumentCustomerBlock(out,
-                new String[]{"Quote #: Q-MAIN-POS1-000123", "Status: ISSUED", "Issue Date: 06/07/2026", "Valid Until: 07/07/2026"},
-                new String[]{"Customer: Apex Property Group", "Phone: 555-0198", "Email: purchasing@apex.example"});
-        appendSalesDocumentRule(out);
-        out.append("Lines\n");
-        out.append("Commercial Filter Set  SKU: FIL-COM-20\n");
-        out.append("  Qty: 12  Method: LOCAL_DELIVERY  Unit: $42.00  Discount: $30.24  VAT: $47.38  Total: $521.14\n");
-        out.append("Installation Kit  SKU: INST-KIT\n");
-        out.append("  Qty: 2  Method: INSTALLATION  Unit: $95.00  Discount: $0.00  VAT: $17.86  Total: $207.86\n");
-        appendSalesDocumentRule(out);
-        out.append("Subtotal: $694.00\n");
-        out.append("Discount: $30.24\n");
-        out.append("VAT: $65.24\n");
-        out.append("Quote Total: $729.00\n");
-        appendSalesDocumentRule(out);
-        out.append(printSettings.quoteValidityNote()).append('\n');
-        out.append("Notes: Pending customer approval.\n");
-        appendSalesDocumentFooter(out, printSettings);
-        return out.toString();
-    }
-
-    private String buildSampleSalesOrderText(CompanyCustomizationManager.ReceiptSettings receiptSettings,
-                                             CompanyCustomizationManager.SalesQuoteOrderPrintSettings printSettings) {
-        StringBuilder out = new StringBuilder();
-        appendSalesDocumentHeader(out, receiptSettings, printSettings.orderTitle());
-        appendSampleDocumentCustomerBlock(out,
-                new String[]{"Order #: SO-MAIN-POS1-000088", "Quote #: Q-MAIN-POS1-000123", "Status: PARTIALLY_DELIVERED", "Order Date: 06/07/2026"},
-                new String[]{"Customer: Apex Property Group", "Phone: 555-0198", "Email: purchasing@apex.example"});
-        appendSalesDocumentRule(out);
-        out.append("Lines\n");
-        out.append("Commercial Filter Set  SKU: FIL-COM-20\n");
-        out.append("  Qty ordered: 12  Delivered: 6  Method: LOCAL_DELIVERY  Unit: $42.00  Discount: $30.24  VAT: $47.38  Total: $521.14\n");
-        out.append("Installation Kit  SKU: INST-KIT\n");
-        out.append("  Qty ordered: 2  Delivered: 0  Method: INSTALLATION  Unit: $95.00  Discount: $0.00  VAT: $17.86  Total: $207.86\n");
-        appendSalesDocumentRule(out);
-        out.append("Order Total: $729.00\n");
-        out.append("Amount Paid: $250.00\n");
-        out.append("Balance Due: $479.00\n");
-        out.append("Payment Status: PARTIAL\n");
-        appendSalesDocumentFooter(out, printSettings);
-        return out.toString();
-    }
-
-    private String buildSampleSalesDeliveryText(CompanyCustomizationManager.ReceiptSettings receiptSettings,
-                                                CompanyCustomizationManager.SalesQuoteOrderPrintSettings printSettings) {
-        StringBuilder out = new StringBuilder();
-        appendSalesDocumentHeader(out, receiptSettings, printSettings.deliveryTitle());
-        appendSampleDocumentCustomerBlock(out,
-                new String[]{"Delivery #: DEL-MAIN-POS1-000041", "Order #: SO-MAIN-POS1-000088", "Method: LOCAL_DELIVERY", "Delivered At: 06/07/2026 10:30 AM"},
-                new String[]{"Customer: Apex Property Group", "Receiver: Jordan Lee", "Employee: Sample Cashier"});
-        appendSalesDocumentRule(out);
-        out.append("Delivered Items\n");
-        out.append("Commercial Filter Set  Delivered: 6  Remaining: 6\n");
-        appendSalesDocumentRule(out);
-        out.append("Remaining Items\n");
-        out.append("Commercial Filter Set  Remaining: 6\n");
-        out.append("Installation Kit  Remaining: 2\n");
-        appendSalesDocumentRule(out);
-        out.append("Remaining Order Balance: $479.00\n");
-        out.append("Notes: Partial delivery accepted by receiver.\n");
-        appendSalesDocumentFooter(out, printSettings);
-        return out.toString();
-    }
-
-    private void appendSalesDocumentHeader(StringBuilder out, CompanyCustomizationManager.ReceiptSettings receiptSettings, String title) {
-        out.append(centerSalesDocumentText(receiptSettings.companyName())).append('\n');
-        if (!receiptSettings.headerLine().isBlank()) {
-            out.append(centerSalesDocumentText(receiptSettings.headerLine())).append('\n');
-        }
-        out.append(centerSalesDocumentText(title)).append('\n');
-        appendSalesDocumentIdentity(out, receiptSettings);
-        appendSalesDocumentRule(out);
-    }
-
-    private void appendSampleDocumentCustomerBlock(StringBuilder out, String[] leftLines, String[] rightLines) {
-        int rows = Math.max(leftLines.length, rightLines.length);
-        for (int i = 0; i < rows; i++) {
-            String left = i < leftLines.length ? leftLines[i] : "";
-            String right = i < rightLines.length ? rightLines[i] : "";
-            out.append(padRight(left, 46)).append(right).append('\n');
-        }
-        appendSalesDocumentRule(out);
-    }
-
-    private void appendSalesDocumentIdentity(StringBuilder out, CompanyCustomizationManager.ReceiptSettings receiptSettings) {
-        out.append(sampleIdentityLine(
-                fallbackText(receiptSettings.addressLine1(), "Lot 1 & 2 #81 Skeldon,"),
-                fallbackText(receiptSettings.phoneLine1(), "(592) 643-2323     (592) 339-3200"),
-                fallbackText(receiptSettings.emailLine1(), "deckershcn@yahoo.com")
-        )).append('\n');
-        out.append(sampleIdentityLine(
-                fallbackText(receiptSettings.addressLine2(), "Corriverton,"),
-                fallbackText(receiptSettings.phoneLine2(), "(592) 638-4002     (592) 622-5093"),
-                fallbackText(receiptSettings.emailLine2(), "deckershcn@gmail.com")
-        )).append('\n');
-        String thirdLine = fallbackText(receiptSettings.addressLine3(), "Berbice, Guyana");
-        if (!thirdLine.isBlank()) {
-            out.append(thirdLine).append('\n');
-        }
-    }
-
-    private String sampleIdentityLine(String address, String phone, String email) {
-        return padRight(address, 28) + padRight(phone, 34) + email;
-    }
-
-    private String padRight(String value, int width) {
-        String text = value == null ? "" : value.trim();
-        if (text.length() >= width) {
-            return text.substring(0, width);
-        }
-        return text + " ".repeat(width - text.length());
-    }
-
-    private String fallbackText(String value, String fallback) {
-        String text = value == null ? "" : value.trim();
-        return text.isBlank() ? fallback : text;
-    }
-
-    private void appendSalesDocumentFooter(StringBuilder out, CompanyCustomizationManager.SalesQuoteOrderPrintSettings printSettings) {
-        if (!printSettings.footerNote().isBlank()) {
-            appendSalesDocumentRule(out);
-            out.append(printSettings.footerNote()).append('\n');
-        }
-        if (printSettings.showSignatures()) {
-            appendSalesDocumentRule(out);
-            out.append("Employee Signature: ").append("_".repeat(54)).append('\n').append('\n');
-            out.append("Customer / Receiver Signature: ").append("_".repeat(42)).append('\n');
-        }
-    }
-
-    private void appendSalesDocumentRule(StringBuilder out) {
-        out.append("-".repeat(92)).append('\n');
-    }
-
-    private String centerSalesDocumentText(String value) {
-        String text = value == null ? "" : value.trim();
-        int width = 92;
-        if (text.length() >= width) {
-            return text.substring(0, width);
-        }
-        return " ".repeat((width - text.length()) / 2) + text;
+    private void updateSalesDocumentPreview(JEditorPane pane, String html) {
+        pane.setText(html == null ? "" : html);
+        pane.setCaretPosition(0);
     }
 
     private void refreshBadgePreview() {
@@ -2805,39 +2675,6 @@ public class CompanyCustomization extends JFrame {
                 } catch (Exception ex) {
                     sampleSlipPanel.setLogo(null);
                     sampleSlip40ColumnPanel.setLogo(null, false);
-                }
-            }
-        }.execute();
-    }
-
-    private void updateSalesQuoteOrderLogoPreview() {
-        CompanyCustomizationManager.ReceiptSettings settings = getSettingsFromFields();
-        sampleSalesQuotePanel.setLogo(null, false);
-        sampleSalesOrderPanel.setLogo(null, false);
-        sampleSalesDeliveryPanel.setLogo(null, false);
-        if (!settings.showLogo() || settings.logoPath().isBlank()) {
-            return;
-        }
-        sampleSalesQuotePanel.setLogoLoading(true);
-        sampleSalesOrderPanel.setLogoLoading(true);
-        sampleSalesDeliveryPanel.setLogoLoading(true);
-        new SwingWorker<BufferedImage, Void>() {
-            @Override
-            protected BufferedImage doInBackground() {
-                return CompanyCustomizationManager.loadCompanyLogo(settings);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    BufferedImage logo = get();
-                    sampleSalesQuotePanel.setLogo(logo, false);
-                    sampleSalesOrderPanel.setLogo(logo, false);
-                    sampleSalesDeliveryPanel.setLogo(logo, false);
-                } catch (Exception ex) {
-                    sampleSalesQuotePanel.setLogo(null, false);
-                    sampleSalesOrderPanel.setLogo(null, false);
-                    sampleSalesDeliveryPanel.setLogo(null, false);
                 }
             }
         }.execute();

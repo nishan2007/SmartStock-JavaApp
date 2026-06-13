@@ -130,19 +130,25 @@ public class CustomerPaymentHistory extends JFrame {
 	                       COALESCE(s.total_amount, 0) AS sale_total,
 	                       COALESCE(s.amount_paid, 0) AS sale_paid,
 	                       COALESCE(s.payment_status, '') AS payment_status,
-                       COALESCE(co.order_number, '') AS order_number,
+                       COALESCE(co.order_number, '') AS custom_order_number,
                        COALESCE(co.total_amount, 0) AS custom_order_total,
                        COALESCE(co.amount_paid, 0) AS custom_order_paid,
                        COALESCE(co.payment_status, '') AS custom_order_payment_status,
-	                       (COALESCE(s.created_at, co.created_at) AT TIME ZONE ?) AS charge_date
+                       a.invoice_id,
+                       COALESCE(so.invoice_number, '') AS invoice_number,
+                       COALESCE(so.total_amount, 0) AS invoice_total,
+                       COALESCE(so.amount_paid, 0) AS invoice_paid,
+                       COALESCE(so.payment_status, '') AS invoice_payment_status,
+	                       (COALESCE(s.created_at, co.created_at, so.created_at) AT TIME ZONE ?) AS charge_date
 	                FROM customer_account_transactions t
 	                LEFT JOIN customer_account_payment_allocations a
 	                    ON a.payment_transaction_id = t.transaction_id
 	                LEFT JOIN sales s ON a.sale_id = s.sale_id
                 LEFT JOIN custom_orders co ON a.custom_order_id = co.custom_order_id
+                LEFT JOIN invoices so ON a.invoice_id = so.invoice_id
 	                WHERE t.customer_id = ?
 	                  AND t.transaction_type = 'PAYMENT'
-	                ORDER BY t.created_at DESC, t.transaction_id DESC, a.sale_id ASC, a.custom_order_id ASC
+	                ORDER BY t.created_at DESC, t.transaction_id DESC, a.sale_id ASC, a.custom_order_id ASC, a.invoice_id ASC
 	                """;
 
         int rowCount = 0;
@@ -218,10 +224,17 @@ public class CustomerPaymentHistory extends JFrame {
         }
         long customOrderId = rs.getLong("custom_order_id");
         if (!rs.wasNull()) {
-            String orderNumber = rs.getString("order_number");
+            String orderNumber = rs.getString("custom_order_number");
             return orderNumber == null || orderNumber.isBlank()
                     ? "Custom Order #" + customOrderId
                     : "Custom Order " + orderNumber;
+        }
+        long invoiceId = rs.getLong("invoice_id");
+        if (!rs.wasNull()) {
+            String orderNumber = rs.getString("invoice_number");
+            return orderNumber == null || orderNumber.isBlank()
+                    ? "Invoice #" + invoiceId
+                    : "Invoice " + orderNumber;
         }
         return "";
     }
@@ -231,7 +244,15 @@ public class CustomerPaymentHistory extends JFrame {
         if (!String.valueOf(saleId).isBlank()) {
             return defaultZero(rs.getBigDecimal("sale_total"));
         }
-        return defaultZero(rs.getBigDecimal("custom_order_total"));
+        long customOrderId = rs.getLong("custom_order_id");
+        if (!rs.wasNull()) {
+            return defaultZero(rs.getBigDecimal("custom_order_total"));
+        }
+        long invoiceId = rs.getLong("invoice_id");
+        if (!rs.wasNull()) {
+            return defaultZero(rs.getBigDecimal("invoice_total"));
+        }
+        return BigDecimal.ZERO;
     }
 
     private BigDecimal chargePaid(ResultSet rs) throws SQLException {
@@ -239,7 +260,15 @@ public class CustomerPaymentHistory extends JFrame {
         if (!String.valueOf(saleId).isBlank()) {
             return defaultZero(rs.getBigDecimal("sale_paid"));
         }
-        return defaultZero(rs.getBigDecimal("custom_order_paid"));
+        long customOrderId = rs.getLong("custom_order_id");
+        if (!rs.wasNull()) {
+            return defaultZero(rs.getBigDecimal("custom_order_paid"));
+        }
+        long invoiceId = rs.getLong("invoice_id");
+        if (!rs.wasNull()) {
+            return defaultZero(rs.getBigDecimal("invoice_paid"));
+        }
+        return BigDecimal.ZERO;
     }
 
     private String chargeStatus(ResultSet rs) throws SQLException {
@@ -247,7 +276,15 @@ public class CustomerPaymentHistory extends JFrame {
         if (!String.valueOf(saleId).isBlank()) {
             return rs.getString("payment_status");
         }
-        return rs.getString("custom_order_payment_status");
+        long customOrderId = rs.getLong("custom_order_id");
+        if (!rs.wasNull()) {
+            return rs.getString("custom_order_payment_status");
+        }
+        long invoiceId = rs.getLong("invoice_id");
+        if (!rs.wasNull()) {
+            return rs.getString("invoice_payment_status");
+        }
+        return "";
     }
 
     private String formatTimestamp(Timestamp timestamp) {

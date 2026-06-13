@@ -58,10 +58,33 @@ public final class BaseSchemaInstaller {
                         location_id SERIAL PRIMARY KEY,
                         name TEXT NOT NULL,
                         address TEXT,
+                        company_address_line1 TEXT NOT NULL DEFAULT '',
+                        company_address_line2 TEXT NOT NULL DEFAULT '',
+                        company_address_line3 TEXT NOT NULL DEFAULT '',
+                        company_phone_line1 TEXT NOT NULL DEFAULT '',
+                        company_phone_line2 TEXT NOT NULL DEFAULT '',
+                        company_email_line1 TEXT NOT NULL DEFAULT '',
+                        company_email_line2 TEXT NOT NULL DEFAULT '',
                         receipt_store_code TEXT,
                         timezone TEXT NOT NULL DEFAULT 'America/New_York',
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS company_info (
+                        company_info_id INTEGER PRIMARY KEY DEFAULT 1,
+                        company_name TEXT NOT NULL DEFAULT 'SmartStock',
+                        company_motto_line1 TEXT NOT NULL DEFAULT '',
+                        company_motto_line2 TEXT NOT NULL DEFAULT '',
+                        company_logo_url TEXT NOT NULL DEFAULT '',
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT company_info_singleton_chk CHECK (company_info_id = 1)
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO company_info (company_info_id, company_name)
+                    VALUES (1, 'SmartStock')
+                    ON CONFLICT (company_info_id) DO NOTHING
                     """);
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS users (
@@ -111,6 +134,13 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_print_count INTEGER NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE user_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
             stmt.executeUpdate("""
                     CREATE OR REPLACE FUNCTION set_users_updated_at()
@@ -470,6 +500,7 @@ public final class BaseSchemaInstaller {
             ensureUpdatedAtTableSchema(stmt, "inventory");
             ensureUpdatedAtTableSchema(stmt, "customer_accounts");
             services.CustomerAccountLedgerService.ensureSchema(conn);
+            services.NotificationService.ensureSchema(conn);
             stmt.execute("SELECT setval(pg_get_serial_sequence('roles', 'role_id'), COALESCE((SELECT MAX(role_id) FROM roles), 1), (SELECT COUNT(*) FROM roles) > 0)");
             stmt.execute("SELECT setval(pg_get_serial_sequence('locations', 'location_id'), COALESCE((SELECT MAX(location_id) FROM locations), 1), (SELECT COUNT(*) FROM locations) > 0)");
             stmt.executeUpdate("INSERT INTO roles (role_name, description) VALUES ('ADMIN', 'Administrator'), ('MANAGER', 'Manager'), ('USER', 'User') ON CONFLICT (role_name) DO NOTHING");

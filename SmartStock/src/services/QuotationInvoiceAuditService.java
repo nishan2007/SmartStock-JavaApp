@@ -1,68 +1,68 @@
 package services;
 
-import managers.SessionManager;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 
-public final class SalesQuoteOrderAuditService {
-    private SalesQuoteOrderAuditService() {
+import managers.SessionManager;
+
+public final class QuotationInvoiceAuditService {
+    private QuotationInvoiceAuditService() {
     }
 
-    public static void recordQuoteAudit(Connection conn, long quoteId, String actionType, String fieldName,
+    public static void recordQuotationAudit(Connection conn, long quotationId, String actionType, String fieldName,
                                         Object oldValue, Object newValue, String reason) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO sales_quote_audit_log (
-                    sales_quote_id, action_type, field_name, old_value, new_value,
+                INSERT INTO quotation_audit_log (
+                    quotation_id, action_type, field_name, old_value, new_value,
                     reason, user_id, user_name, device_id, device_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
-            bindAudit(ps, quoteId, actionType, fieldName, oldValue, newValue, reason);
+            bindAudit(ps, quotationId, actionType, fieldName, oldValue, newValue, reason);
             ps.executeUpdate();
         }
     }
 
-    public static void recordOrderAudit(Connection conn, long orderId, String actionType, String fieldName,
+    public static void recordInvoiceAudit(Connection conn, long invoiceId, String actionType, String fieldName,
                                         Object oldValue, Object newValue, String reason) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO sales_order_audit_log (
-                    sales_order_id, action_type, field_name, old_value, new_value,
+                INSERT INTO invoice_audit_log (
+                    invoice_id, action_type, field_name, old_value, new_value,
                     reason, user_id, user_name, device_id, device_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
-            bindAudit(ps, orderId, actionType, fieldName, oldValue, newValue, reason);
+            bindAudit(ps, invoiceId, actionType, fieldName, oldValue, newValue, reason);
             ps.executeUpdate();
         }
     }
 
-    public static void recordQuoteStatus(Connection conn, long quoteId, String oldStatus, String newStatus, String reason) throws SQLException {
+    public static void recordQuotationStatus(Connection conn, long quotationId, String oldStatus, String newStatus, String reason) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO sales_quote_status_history (
-                    sales_quote_id, old_status, new_status, reason, user_id, user_name, device_id, device_name
+                INSERT INTO quotation_status_history (
+                    quotation_id, old_status, new_status, reason, user_id, user_name, device_id, device_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
-            bindStatus(ps, quoteId, oldStatus, newStatus, reason);
+            bindStatus(ps, quotationId, oldStatus, newStatus, reason);
             ps.executeUpdate();
         }
-        recordQuoteAudit(conn, quoteId, "STATUS_CHANGE", "status", oldStatus, newStatus, reason);
+        recordQuotationAudit(conn, quotationId, "STATUS_CHANGE", "status", oldStatus, newStatus, reason);
     }
 
-    public static void recordOrderStatus(Connection conn, long orderId, String oldStatus, String newStatus, String reason) throws SQLException {
+    public static void recordInvoiceStatus(Connection conn, long invoiceId, String oldStatus, String newStatus, String reason) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO sales_order_status_history (
-                    sales_order_id, old_status, new_status, reason, user_id, user_name, device_id, device_name
+                INSERT INTO invoice_status_history (
+                    invoice_id, old_status, new_status, reason, user_id, user_name, device_id, device_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
-            bindStatus(ps, orderId, oldStatus, newStatus, reason);
+            bindStatus(ps, invoiceId, oldStatus, newStatus, reason);
             ps.executeUpdate();
         }
-        recordOrderAudit(conn, orderId, "STATUS_CHANGE", "status", oldStatus, newStatus, reason);
+        recordInvoiceAudit(conn, invoiceId, "STATUS_CHANGE", "status", oldStatus, newStatus, reason);
     }
 
     private static void bindAudit(PreparedStatement ps, long parentId, String actionType, String fieldName,
@@ -75,8 +75,8 @@ public final class SalesQuoteOrderAuditService {
         ps.setString(6, blankToNull(reason));
         setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
         ps.setString(8, SessionManager.getCurrentUserDisplayName());
-        ps.setString(9, blankToNull(DeviceContextService.currentDeviceId()));
-        ps.setString(10, blankToNull(DeviceContextService.currentDeviceName()));
+        ps.setString(9, blankToNull(currentDocumentDeviceId()));
+        ps.setString(10, blankToNull(currentDocumentDeviceName()));
     }
 
     private static void bindStatus(PreparedStatement ps, long parentId, String oldStatus, String newStatus, String reason) throws SQLException {
@@ -86,8 +86,16 @@ public final class SalesQuoteOrderAuditService {
         ps.setString(4, blankToNull(reason));
         setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
         ps.setString(6, SessionManager.getCurrentUserDisplayName());
-        ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
-        ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
+        ps.setString(7, blankToNull(currentDocumentDeviceId()));
+        ps.setString(8, blankToNull(currentDocumentDeviceName()));
+    }
+
+    private static String currentDocumentDeviceId() {
+        return DeviceContextService.currentDeviceId();
+    }
+
+    private static String currentDocumentDeviceName() {
+        return DeviceContextService.currentDeviceName();
     }
 
     private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {

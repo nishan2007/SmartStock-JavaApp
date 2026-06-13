@@ -94,10 +94,19 @@ public class PermissionManager {
         return false;
     }
 
+    public static boolean hasReportsPermission() {
+        return hasPermission("VIEW_REPORTS")
+                || hasPermission("END_OF_DAY")
+                || hasPermission("ORDERS_END_OF_DAY")
+                || hasPermission("QUOTATIONS_ORDERS")
+                || hasPermission("MANAGE_INVOICES");
+    }
+
     public static boolean canAccessScreen(String screenName) {
         return switch (screenName) {
             case "MainMenu" -> hasPermission("MAKE_SALE")
                     || hasPermission("END_OF_DAY")
+                    || hasReportsPermission()
                     || hasPermission("BALANCE_DRAWER")
                     || hasPermission("VIEW_SALES")
                     || hasPermission("PROCESS_RETURNS")
@@ -107,10 +116,10 @@ public class PermissionManager {
                     || hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")
                     || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
-                    || hasPermission("SALES_QUOTES_ORDERS")
-                    || hasPermission("CREATE_SALES_QUOTE")
-                    || hasPermission("MANAGE_SALES_ORDERS")
-                    || hasPermission("POST_SALES_ORDER_DELIVERY")
+                    || hasPermission("QUOTATIONS_ORDERS")
+                    || hasPermission("CREATE_QUOTATION")
+                    || hasPermission("MANAGE_INVOICES")
+                    || hasPermission("POST_INVOICE_DELIVERY")
                     || hasPermission("NEW_ITEM")
                     || hasPermission("RECEIVING_INVENTORY")
                     || hasPermission("VIEW_RECEIVING_HISTORY")
@@ -126,13 +135,14 @@ public class PermissionManager {
                     || hasPermission("CASH_DRAWER_MANAGEMENT")
                     || hasPermission("MACHINE_MANAGEMENT")
                     || hasPermission("PARTS_MANAGEMENT")
+                    || hasPermission("MAINTENANCE_TECHNICIAN")
                     || hasPermission("MAINTENANCE_MANAGEMENT")
                     || hasPermission("COMPANY_PREFERENCES")
                     || hasPermission("COMPANY_CUSTOMIZATION")
                     || hasPermission("HARDWARE_SETUP")
                     || hasPermission("LOCAL_DEVICE_SETTINGS");
             case "MakeASale" -> hasPermission("MAKE_SALE");
-            case "EndOfDay" -> hasPermission("END_OF_DAY");
+            case "Reports", "EndOfDay", "OrdersEndOfDay" -> hasReportsPermission();
             case "EnterInventory" -> hasPermission("RECEIVING_INVENTORY");
             case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
             case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
@@ -144,11 +154,11 @@ public class PermissionManager {
             case "BalanceDraw" -> hasPermission("BALANCE_DRAWER");
             case "ViewInventory" -> hasPermission("VIEW_INVENTORY");
             case "CustomerAccounts" -> hasPermission("CUSTOMER_ACCOUNTS");
-            case "SalesQuotes", "SalesQuotesOrders" -> hasPermission("SALES_QUOTES_ORDERS")
-                    || hasPermission("CREATE_SALES_QUOTE");
-            case "SalesOrders" -> hasPermission("SALES_QUOTES_ORDERS")
-                    || hasPermission("MANAGE_SALES_ORDERS")
-                    || hasPermission("POST_SALES_ORDER_DELIVERY");
+            case "Quotations", "QuotationsOrders" -> hasPermission("QUOTATIONS_ORDERS")
+                    || hasPermission("CREATE_QUOTATION");
+            case "Invoices" -> hasPermission("QUOTATIONS_ORDERS")
+                    || hasPermission("MANAGE_INVOICES")
+                    || hasPermission("POST_INVOICE_DELIVERY");
             case "CustomOrders" -> hasPermission("CREATE_CUSTOM_ORDER");
             case "Orders" -> hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")
@@ -162,7 +172,8 @@ public class PermissionManager {
             case "DeviceManagement" -> hasPermission("DEVICE_MANAGEMENT");
             case "MachineManagement" -> hasPermission("MACHINE_MANAGEMENT");
             case "PartsManagement" -> hasPermission("PARTS_MANAGEMENT");
-            case "MaintenanceManagement" -> hasPermission("MAINTENANCE_MANAGEMENT");
+            case "MaintenanceManagement" -> hasPermission("MAINTENANCE_MANAGEMENT")
+                    || hasPermission("MAINTENANCE_TECHNICIAN");
             case "CompanyCustomization" -> hasPermission("COMPANY_PREFERENCES")
                     || hasPermission("COMPANY_CUSTOMIZATION")
                     || hasPermission("LOCATION_MANAGEMENT")

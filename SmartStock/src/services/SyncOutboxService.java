@@ -15,7 +15,6 @@ public final class SyncOutboxService {
         if (eventType == null || eventType.isBlank()) {
             return;
         }
-        SyncSchemaInstaller.ensureSchema(conn);
         String sql = """
                 INSERT INTO sync_outbox (
                     event_type, location_id, device_id, user_id, payload,

@@ -22,6 +22,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Locale;
@@ -99,7 +100,6 @@ public class CompanyCustomizationManager {
         }
 
         saveReceiptSettingsToDb(locationId, settings);
-        saveCompanyLogoToAllStores(settings);
         saveLocalReceiptSettings(settings);
         cachedLocationId = locationId;
         cachedReceiptSettings = settings;
@@ -207,38 +207,38 @@ public class CompanyCustomizationManager {
         cachedCustomOrderSlipSettings = settings;
     }
 
-    public static SalesQuoteOrderPrintSettings loadSalesQuoteOrderPrintSettings() {
+    public static QuotationInvoicePrintSettings loadQuotationInvoicePrintSettings() {
         Integer locationId = SessionManager.getCurrentLocationId();
-        if (Objects.equals(locationId, cachedSalesQuoteOrderPrintLocationId) && cachedSalesQuoteOrderPrintSettings != null) {
-            return cachedSalesQuoteOrderPrintSettings;
+        if (Objects.equals(locationId, cachedQuotationInvoicePrintLocationId) && cachedQuotationInvoicePrintSettings != null) {
+            return cachedQuotationInvoicePrintSettings;
         }
         if (locationId != null) {
             try {
-                SalesQuoteOrderPrintSettings dbSettings = loadSalesQuoteOrderPrintSettingsFromDb(locationId);
+                QuotationInvoicePrintSettings dbSettings = loadQuotationInvoicePrintSettingsFromDb(locationId);
                 if (dbSettings != null) {
-                    saveLocalSalesQuoteOrderPrintSettings(dbSettings);
-                    cachedSalesQuoteOrderPrintLocationId = locationId;
-                    cachedSalesQuoteOrderPrintSettings = dbSettings;
+                    saveLocalQuotationInvoicePrintSettings(dbSettings);
+                    cachedQuotationInvoicePrintLocationId = locationId;
+                    cachedQuotationInvoicePrintSettings = dbSettings;
                     return dbSettings;
                 }
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
         }
-        SalesQuoteOrderPrintSettings localSettings = loadLocalSalesQuoteOrderPrintSettings();
-        cachedSalesQuoteOrderPrintLocationId = locationId;
-        cachedSalesQuoteOrderPrintSettings = localSettings;
+        QuotationInvoicePrintSettings localSettings = loadLocalQuotationInvoicePrintSettings();
+        cachedQuotationInvoicePrintLocationId = locationId;
+        cachedQuotationInvoicePrintSettings = localSettings;
         return localSettings;
     }
 
-    public static void saveSalesQuoteOrderPrintSettings(SalesQuoteOrderPrintSettings settings) throws IOException, SQLException {
+    public static void saveQuotationInvoicePrintSettings(QuotationInvoicePrintSettings settings) throws IOException, SQLException {
         Integer locationId = SessionManager.getCurrentLocationId();
         if (locationId != null) {
-            saveSalesQuoteOrderPrintSettingsToDb(locationId, settings);
+            saveQuotationInvoicePrintSettingsToDb(locationId, settings);
         }
-        saveLocalSalesQuoteOrderPrintSettings(settings);
-        cachedSalesQuoteOrderPrintLocationId = locationId;
-        cachedSalesQuoteOrderPrintSettings = settings;
+        saveLocalQuotationInvoicePrintSettings(settings);
+        cachedQuotationInvoicePrintLocationId = locationId;
+        cachedQuotationInvoicePrintSettings = settings;
     }
 
     public static BadgeTemplateSettings loadBadgeTemplateSettings() {
@@ -277,35 +277,41 @@ public class CompanyCustomizationManager {
 
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
-                SELECT company_name,
-                       COALESCE(company_address_line1, '') AS company_address_line1,
-                       COALESCE(company_address_line2, '') AS company_address_line2,
-                       COALESCE(company_address_line3, '') AS company_address_line3,
-                       COALESCE(company_phone_line1, '') AS company_phone_line1,
-                       COALESCE(company_phone_line2, '') AS company_phone_line2,
-                       COALESCE(company_email_line1, '') AS company_email_line1,
-                       COALESCE(company_email_line2, '') AS company_email_line2,
-                       COALESCE(receipt_header_line, '') AS receipt_header_line,
-                       COALESCE(receipt_footer_line, 'Thank you') AS receipt_footer_line,
-                       COALESCE(receipt_logo_url, '') AS receipt_logo_url,
-                       COALESCE(show_logo, FALSE) AS show_logo,
-                       COALESCE(show_sale_id, TRUE) AS show_sale_id,
-                       COALESCE(show_device, TRUE) AS show_device,
-                       COALESCE(show_customer, TRUE) AS show_customer,
-                       COALESCE(show_sku, TRUE) AS show_sku,
-                       COALESCE(show_item_discount, TRUE) AS show_item_discount,
-                       COALESCE(show_payment_status, TRUE) AS show_payment_status,
-                       COALESCE(vat_enabled, FALSE) AS vat_enabled,
-                       COALESCE(vat_use_department_rates, FALSE) AS vat_use_department_rates,
-                       COALESCE(vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
-                       COALESCE(next_receipt_counter, 1) AS next_receipt_counter
-                FROM company_customization
-                WHERE location_id = ?
+                SELECT ci.company_name,
+                       COALESCE(l.company_address_line1, '') AS company_address_line1,
+                       COALESCE(l.company_address_line2, '') AS company_address_line2,
+                       COALESCE(l.company_address_line3, '') AS company_address_line3,
+                       COALESCE(l.company_phone_line1, '') AS company_phone_line1,
+                       COALESCE(l.company_phone_line2, '') AS company_phone_line2,
+                       COALESCE(l.company_email_line1, '') AS company_email_line1,
+                       COALESCE(l.company_email_line2, '') AS company_email_line2,
+                       COALESCE(ci.company_motto_line1, '') AS company_motto_line1,
+                       COALESCE(ci.company_motto_line2, '') AS company_motto_line2,
+                       COALESCE(cc.receipt_header_line, '') AS receipt_header_line,
+                       COALESCE(cc.receipt_footer_line, 'Thank you') AS receipt_footer_line,
+                       COALESCE(ci.company_logo_url, '') AS receipt_logo_url,
+                       COALESCE(cc.show_logo, FALSE) AS show_logo,
+                       COALESCE(cc.show_sale_id, TRUE) AS show_sale_id,
+                       COALESCE(cc.show_device, TRUE) AS show_device,
+                       COALESCE(cc.show_customer, TRUE) AS show_customer,
+                       COALESCE(cc.show_sku, TRUE) AS show_sku,
+                       COALESCE(cc.show_item_discount, TRUE) AS show_item_discount,
+                       COALESCE(cc.show_payment_status, TRUE) AS show_payment_status,
+                       COALESCE(cc.vat_enabled, FALSE) AS vat_enabled,
+                       COALESCE(cc.vat_use_department_rates, FALSE) AS vat_use_department_rates,
+                       COALESCE(cc.vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
+                       COALESCE(cc.next_receipt_counter, 1) AS next_receipt_counter
+                FROM company_info ci
+                LEFT JOIN company_customization cc ON cc.location_id = ?
+                LEFT JOIN locations l ON l.location_id = ?
+                WHERE ci.company_info_id = 1
                 """;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
+            ps.setInt(2, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
                     return null;
@@ -320,6 +326,8 @@ public class CompanyCustomizationManager {
                         rs.getString("company_phone_line2"),
                         rs.getString("company_email_line1"),
                         rs.getString("company_email_line2"),
+                        rs.getString("company_motto_line1"),
+                        rs.getString("company_motto_line2"),
                         rs.getString("receipt_header_line"),
                         rs.getString("receipt_footer_line"),
                         rs.getString("receipt_logo_url"),
@@ -336,24 +344,33 @@ public class CompanyCustomizationManager {
                         rs.getInt("next_receipt_counter")
                 );
             }
+            }
         }
     }
 
     private static void saveReceiptSettingsToDb(int locationId, ReceiptSettings settings) throws SQLException {
+        String companySql = """
+                INSERT INTO company_info (
+                    company_info_id,
+                    company_name,
+                    company_motto_line1,
+                    company_motto_line2,
+                    company_logo_url,
+                    updated_at
+                )
+                VALUES (1, ?, ?, ?, ?, NOW())
+                ON CONFLICT (company_info_id) DO UPDATE SET
+                    company_name = EXCLUDED.company_name,
+                    company_motto_line1 = EXCLUDED.company_motto_line1,
+                    company_motto_line2 = EXCLUDED.company_motto_line2,
+                    company_logo_url = EXCLUDED.company_logo_url,
+                    updated_at = NOW()
+                """;
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
-                    company_address_line1,
-                    company_address_line2,
-                    company_address_line3,
-                    company_phone_line1,
-                    company_phone_line2,
-                    company_email_line1,
-                    company_email_line2,
                     receipt_header_line,
                     receipt_footer_line,
-                    receipt_logo_url,
                     show_logo,
                     show_sale_id,
                     show_device,
@@ -367,19 +384,10 @@ public class CompanyCustomizationManager {
                     next_receipt_counter,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
-                    company_name = EXCLUDED.company_name,
-                    company_address_line1 = EXCLUDED.company_address_line1,
-                    company_address_line2 = EXCLUDED.company_address_line2,
-                    company_address_line3 = EXCLUDED.company_address_line3,
-                    company_phone_line1 = EXCLUDED.company_phone_line1,
-                    company_phone_line2 = EXCLUDED.company_phone_line2,
-                    company_email_line1 = EXCLUDED.company_email_line1,
-                    company_email_line2 = EXCLUDED.company_email_line2,
                     receipt_header_line = EXCLUDED.receipt_header_line,
                     receipt_footer_line = EXCLUDED.receipt_footer_line,
-                    receipt_logo_url = EXCLUDED.receipt_logo_url,
                     show_logo = EXCLUDED.show_logo,
                     show_sale_id = EXCLUDED.show_sale_id,
                     show_device = EXCLUDED.show_device,
@@ -394,59 +402,149 @@ public class CompanyCustomizationManager {
                     updated_at = NOW()
                 """;
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, locationId);
-            ps.setString(2, settings.companyName());
-            ps.setString(3, settings.addressLine1());
-            ps.setString(4, settings.addressLine2());
-            ps.setString(5, settings.addressLine3());
-            ps.setString(6, settings.phoneLine1());
-            ps.setString(7, settings.phoneLine2());
-            ps.setString(8, settings.emailLine1());
-            ps.setString(9, settings.emailLine2());
-            ps.setString(10, settings.headerLine());
-            ps.setString(11, settings.footerLine());
-            ps.setString(12, settings.logoPath());
-            ps.setBoolean(13, settings.showLogo());
-            ps.setBoolean(14, settings.showSaleId());
-            ps.setBoolean(15, settings.showDevice());
-            ps.setBoolean(16, settings.showCustomer());
-            ps.setBoolean(17, settings.showSku());
-            ps.setBoolean(18, settings.showItemDiscount());
-            ps.setBoolean(19, settings.showPaymentStatus());
-            ps.setBoolean(20, settings.vatEnabled());
-            ps.setBoolean(21, settings.vatUseDepartmentRates());
-            ps.setBigDecimal(22, settings.vatFixedRatePercent());
-            ps.setInt(23, settings.nextReceiptCounter());
-            ps.executeUpdate();
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(companySql)) {
+                ps.setString(1, settings.companyName());
+                ps.setString(2, settings.mottoLine1());
+                ps.setString(3, settings.mottoLine2());
+                ps.setString(4, settings.logoPath());
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setInt(1, locationId);
+                ps.setString(2, settings.headerLine());
+                ps.setString(3, settings.footerLine());
+                ps.setBoolean(4, settings.showLogo());
+                ps.setBoolean(5, settings.showSaleId());
+                ps.setBoolean(6, settings.showDevice());
+                ps.setBoolean(7, settings.showCustomer());
+                ps.setBoolean(8, settings.showSku());
+                ps.setBoolean(9, settings.showItemDiscount());
+                ps.setBoolean(10, settings.showPaymentStatus());
+                ps.setBoolean(11, settings.vatEnabled());
+                ps.setBoolean(12, settings.vatUseDepartmentRates());
+                ps.setBigDecimal(13, settings.vatFixedRatePercent());
+                ps.setInt(14, settings.nextReceiptCounter());
+                ps.executeUpdate();
+            }
         }
     }
 
-    private static void saveCompanyLogoToAllStores(ReceiptSettings settings) throws SQLException {
-        String sql = """
-                INSERT INTO company_customization (
-                    location_id,
-                    company_name,
-                    receipt_logo_url,
-                    show_logo,
-                    updated_at
-                )
-                SELECT location_id, ?, ?, ?, NOW()
-                FROM locations
-                ON CONFLICT (location_id) DO UPDATE SET
-                    receipt_logo_url = EXCLUDED.receipt_logo_url,
-                    show_logo = EXCLUDED.show_logo,
-                    updated_at = NOW()
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, settings.companyName());
-            ps.setString(2, settings.logoPath());
-            ps.setBoolean(3, settings.showLogo());
-            ps.executeUpdate();
+    private static void ensureReceiptSettingsSchema(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            ensureCompanyInfoSchema(stmt);
+            ensureLocationIdentitySchema(stmt);
         }
+    }
+
+    private static void ensureCompanyInfoSchema(Statement stmt) throws SQLException {
+        stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS company_info (
+                    company_info_id INTEGER PRIMARY KEY DEFAULT 1,
+                    company_name TEXT NOT NULL DEFAULT 'SmartStock',
+                    company_motto_line1 TEXT NOT NULL DEFAULT '',
+                    company_motto_line2 TEXT NOT NULL DEFAULT '',
+                    company_logo_url TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT company_info_singleton_chk CHECK (company_info_id = 1)
+                )
+                """);
+        stmt.executeUpdate("""
+                DO $$
+                BEGIN
+                    IF to_regclass('public.company_customization') IS NOT NULL THEN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'company_customization'
+                              AND column_name = 'company_name'
+                        ) THEN
+                            EXECUTE $sql$
+                                INSERT INTO company_info (
+                                    company_info_id,
+                                    company_name,
+                                    company_motto_line1,
+                                    company_motto_line2,
+                                    company_logo_url,
+                                    updated_at
+                                )
+                                SELECT 1,
+                                       COALESCE(NULLIF(company_name, ''), 'SmartStock'),
+                                       COALESCE(company_motto_line1, ''),
+                                       COALESCE(company_motto_line2, ''),
+                                       COALESCE(receipt_logo_url, ''),
+                                       NOW()
+                                FROM company_customization
+                                ORDER BY location_id
+                                LIMIT 1
+                                ON CONFLICT (company_info_id) DO UPDATE SET
+                                    company_name = COALESCE(NULLIF(company_info.company_name, ''), EXCLUDED.company_name),
+                                    company_motto_line1 = COALESCE(NULLIF(company_info.company_motto_line1, ''), EXCLUDED.company_motto_line1),
+                                    company_motto_line2 = COALESCE(NULLIF(company_info.company_motto_line2, ''), EXCLUDED.company_motto_line2),
+                                    company_logo_url = COALESCE(NULLIF(company_info.company_logo_url, ''), EXCLUDED.company_logo_url),
+                                    updated_at = NOW()
+                            $sql$;
+                        END IF;
+                    END IF;
+                END $$;
+                """);
+        stmt.executeUpdate("""
+                INSERT INTO company_info (company_info_id, company_name)
+                VALUES (1, 'SmartStock')
+                ON CONFLICT (company_info_id) DO NOTHING
+                """);
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_name");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line1");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line2");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS receipt_logo_url");
+    }
+
+    private static void ensureLocationIdentitySchema(Statement stmt) throws SQLException {
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("""
+                DO $$
+                BEGIN
+                    IF to_regclass('public.company_customization') IS NOT NULL
+                       AND EXISTS (
+                           SELECT 1
+                           FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'company_customization'
+                             AND column_name = 'company_address_line1'
+                       ) THEN
+                        EXECUTE $sql$
+                            UPDATE locations l
+                            SET company_address_line1 = COALESCE(NULLIF(l.company_address_line1, ''), cc.company_address_line1, ''),
+                                company_address_line2 = COALESCE(NULLIF(l.company_address_line2, ''), cc.company_address_line2, ''),
+                                company_address_line3 = COALESCE(NULLIF(l.company_address_line3, ''), cc.company_address_line3, ''),
+                                company_phone_line1 = COALESCE(NULLIF(l.company_phone_line1, ''), cc.company_phone_line1, ''),
+                                company_phone_line2 = COALESCE(NULLIF(l.company_phone_line2, ''), cc.company_phone_line2, ''),
+                                company_email_line1 = COALESCE(NULLIF(l.company_email_line1, ''), cc.company_email_line1, ''),
+                                company_email_line2 = COALESCE(NULLIF(l.company_email_line2, ''), cc.company_email_line2, '')
+                            FROM company_customization cc
+                            WHERE cc.location_id = l.location_id
+                              AND (l.company_address_line1 = '' OR l.company_address_line2 = '' OR l.company_address_line3 = ''
+                                   OR l.company_phone_line1 = '' OR l.company_phone_line2 = ''
+                                   OR l.company_email_line1 = '' OR l.company_email_line2 = '')
+                        $sql$;
+                    END IF;
+                END $$;
+                """);
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line1");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line2");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line3");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line1");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line2");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line1");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line2");
     }
 
     private static CustomOrderSettings loadCustomOrderSettingsFromDb(int locationId) throws SQLException {
@@ -456,8 +554,9 @@ public class CompanyCustomizationManager {
                 FROM company_customization
                 WHERE location_id = ?
                 """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -469,18 +568,18 @@ public class CompanyCustomizationManager {
                 );
             }
         }
+        }
     }
 
     private static void saveCustomOrderSettingsToDb(int locationId, CustomOrderSettings settings) throws SQLException {
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
                     custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, NOW())
+                VALUES (?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_minimum_deposit_percent = EXCLUDED.custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit = EXCLUDED.custom_order_refund_approval_limit,
@@ -521,12 +620,11 @@ public class CompanyCustomizationManager {
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
                     sale_discount_limit_percent,
                     sale_return_approval_limit,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, NOW())
+                VALUES (?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     sale_discount_limit_percent = EXCLUDED.sale_discount_limit_percent,
                     sale_return_approval_limit = EXCLUDED.sale_return_approval_limit,
@@ -605,7 +703,6 @@ public class CompanyCustomizationManager {
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
                     custom_order_slip_enabled,
                     custom_order_slip_auto_print,
                     custom_order_slip_title,
@@ -629,7 +726,7 @@ public class CompanyCustomizationManager {
                     custom_order_slip_show_signatures,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_slip_enabled = EXCLUDED.custom_order_slip_enabled,
                     custom_order_slip_auto_print = EXCLUDED.custom_order_slip_auto_print,
@@ -682,14 +779,14 @@ public class CompanyCustomizationManager {
         }
     }
 
-    private static SalesQuoteOrderPrintSettings loadSalesQuoteOrderPrintSettingsFromDb(int locationId) throws SQLException {
+    private static QuotationInvoicePrintSettings loadQuotationInvoicePrintSettingsFromDb(int locationId) throws SQLException {
         String sql = """
-                SELECT COALESCE(sales_quote_print_title, 'QUOTE / NOT FINAL SALE') AS quote_title,
-                       COALESCE(sales_quote_print_validity_note, 'This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.') AS quote_validity_note,
-                       COALESCE(sales_order_print_title, 'SALES ORDER CONFIRMATION') AS order_title,
-                       COALESCE(sales_delivery_print_title, 'DELIVERY BILL') AS delivery_title,
-                       COALESCE(sales_quote_order_print_footer_note, '') AS footer_note,
-                       COALESCE(sales_quote_order_print_show_signatures, TRUE) AS show_signatures
+                SELECT COALESCE(quotation_print_title, 'QUOTATION / NOT FINAL SALE') AS quotation_title,
+                       COALESCE(quotation_print_validity_note, 'This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.') AS quotation_validity_note,
+                       COALESCE(invoice_print_title, 'INVOICE') AS invoice_title,
+                       COALESCE(invoice_delivery_print_title, 'DELIVERY BILL') AS delivery_title,
+                       COALESCE(quotation_invoice_print_footer_note, '') AS footer_note,
+                       COALESCE(quotation_invoice_print_show_signatures, TRUE) AS show_signatures
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -700,10 +797,10 @@ public class CompanyCustomizationManager {
                 if (!rs.next()) {
                     return null;
                 }
-                return new SalesQuoteOrderPrintSettings(
-                        rs.getString("quote_title"),
-                        rs.getString("quote_validity_note"),
-                        rs.getString("order_title"),
+                return new QuotationInvoicePrintSettings(
+                        rs.getString("quotation_title"),
+                        rs.getString("quotation_validity_note"),
+                        rs.getString("invoice_title"),
                         rs.getString("delivery_title"),
                         rs.getString("footer_note"),
                         rs.getBoolean("show_signatures")
@@ -712,35 +809,34 @@ public class CompanyCustomizationManager {
         }
     }
 
-    private static void saveSalesQuoteOrderPrintSettingsToDb(int locationId, SalesQuoteOrderPrintSettings settings) throws SQLException {
+    private static void saveQuotationInvoicePrintSettingsToDb(int locationId, QuotationInvoicePrintSettings settings) throws SQLException {
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
-                    sales_quote_print_title,
-                    sales_quote_print_validity_note,
-                    sales_order_print_title,
-                    sales_delivery_print_title,
-                    sales_quote_order_print_footer_note,
-                    sales_quote_order_print_show_signatures,
+                    quotation_print_title,
+                    quotation_print_validity_note,
+                    invoice_print_title,
+                    invoice_delivery_print_title,
+                    quotation_invoice_print_footer_note,
+                    quotation_invoice_print_show_signatures,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
-                    sales_quote_print_title = EXCLUDED.sales_quote_print_title,
-                    sales_quote_print_validity_note = EXCLUDED.sales_quote_print_validity_note,
-                    sales_order_print_title = EXCLUDED.sales_order_print_title,
-                    sales_delivery_print_title = EXCLUDED.sales_delivery_print_title,
-                    sales_quote_order_print_footer_note = EXCLUDED.sales_quote_order_print_footer_note,
-                    sales_quote_order_print_show_signatures = EXCLUDED.sales_quote_order_print_show_signatures,
+                    quotation_print_title = EXCLUDED.quotation_print_title,
+                    quotation_print_validity_note = EXCLUDED.quotation_print_validity_note,
+                    invoice_print_title = EXCLUDED.invoice_print_title,
+                    invoice_delivery_print_title = EXCLUDED.invoice_delivery_print_title,
+                    quotation_invoice_print_footer_note = EXCLUDED.quotation_invoice_print_footer_note,
+                    quotation_invoice_print_show_signatures = EXCLUDED.quotation_invoice_print_show_signatures,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
-            ps.setString(2, settings.quoteTitle());
-            ps.setString(3, settings.quoteValidityNote());
-            ps.setString(4, settings.orderTitle());
+            ps.setString(2, settings.quotationTitle());
+            ps.setString(3, settings.quotationValidityNote());
+            ps.setString(4, settings.invoiceTitle());
             ps.setString(5, settings.deliveryTitle());
             ps.setString(6, settings.footerNote());
             ps.setBoolean(7, settings.showSignatures());
@@ -750,8 +846,8 @@ public class CompanyCustomizationManager {
 
     private static BadgeTemplateSettings loadBadgeTemplateSettingsFromDb(int locationId) throws SQLException {
         String sql = """
-                SELECT COALESCE(badge_template_company_name, company_name, 'SmartStock') AS company_name,
-                       COALESCE(NULLIF(badge_template_logo_url, ''), receipt_logo_url, '') AS logo_path,
+                SELECT COALESCE(cc.badge_template_company_name, ci.company_name, 'SmartStock') AS company_name,
+                       COALESCE(NULLIF(cc.badge_template_logo_url, ''), ci.company_logo_url, '') AS logo_path,
                        COALESCE(badge_template_quote, '"Sales goes up and down, Service is Forever"') AS quote_line,
                        COALESCE(badge_template_signatory_name, 'Authorized Signature') AS signatory_name,
                        COALESCE(badge_template_signatory_title, 'Management') AS signatory_title,
@@ -767,8 +863,9 @@ public class CompanyCustomizationManager {
                        COALESCE(badge_template_magstripe_track3, '') AS magstripe_track3,
                        COALESCE(badge_template_magstripe_command, '') AS magstripe_command,
                        COALESCE(badge_template_layout_data, '') AS layout_data
-                FROM company_customization
-                WHERE location_id = ?
+                FROM company_info ci
+                LEFT JOIN company_customization cc ON cc.location_id = ?
+                WHERE ci.company_info_id = 1
                 """;
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -797,14 +894,13 @@ public class CompanyCustomizationManager {
                         rs.getString("layout_data")
                 );
             }
+            }
         }
-    }
 
     private static void saveBadgeTemplateSettingsToDb(int locationId, BadgeTemplateSettings settings) throws SQLException {
         String sql = """
                 INSERT INTO company_customization (
                     location_id,
-                    company_name,
                     badge_template_company_name,
                     badge_template_logo_url,
                     badge_template_quote,
@@ -824,7 +920,7 @@ public class CompanyCustomizationManager {
                     badge_template_layout_data,
                     updated_at
                 )
-                VALUES (?, 'SmartStock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     badge_template_company_name = EXCLUDED.badge_template_company_name,
                     badge_template_logo_url = EXCLUDED.badge_template_logo_url,
@@ -888,6 +984,8 @@ public class CompanyCustomizationManager {
                 properties.getProperty("receipt.phone_line2", ""),
                 properties.getProperty("receipt.email_line1", ""),
                 properties.getProperty("receipt.email_line2", ""),
+                properties.getProperty("receipt.motto_line1", ""),
+                properties.getProperty("receipt.motto_line2", ""),
                 properties.getProperty("receipt.header_line", ""),
                 properties.getProperty("receipt.footer_line", "Thank you"),
                 properties.getProperty("receipt.logo_path", ""),
@@ -954,7 +1052,7 @@ public class CompanyCustomizationManager {
         );
     }
 
-    private static SalesQuoteOrderPrintSettings loadLocalSalesQuoteOrderPrintSettings() {
+    private static QuotationInvoicePrintSettings loadLocalQuotationInvoicePrintSettings() {
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
             try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
@@ -963,13 +1061,13 @@ public class CompanyCustomizationManager {
                 ex.printStackTrace();
             }
         }
-        return new SalesQuoteOrderPrintSettings(
-                properties.getProperty("sales_quote_order.quote_title", "QUOTE / NOT FINAL SALE"),
-                properties.getProperty("sales_quote_order.quote_validity_note", "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled."),
-                properties.getProperty("sales_quote_order.order_title", "SALES ORDER CONFIRMATION"),
-                properties.getProperty("sales_quote_order.delivery_title", "DELIVERY BILL"),
-                properties.getProperty("sales_quote_order.footer_note", ""),
-                Boolean.parseBoolean(properties.getProperty("sales_quote_order.show_signatures", "true"))
+        return new QuotationInvoicePrintSettings(
+                properties.getProperty("quotation_invoice.quotation_title", "QUOTATION / NOT FINAL SALE"),
+                properties.getProperty("quotation_invoice.quotation_validity_note", "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled."),
+                properties.getProperty("quotation_invoice.invoice_title", "INVOICE"),
+                properties.getProperty("quotation_invoice.delivery_title", "DELIVERY BILL"),
+                properties.getProperty("quotation_invoice.footer_note", ""),
+                Boolean.parseBoolean(properties.getProperty("quotation_invoice.show_signatures", "true"))
         );
     }
 
@@ -1034,6 +1132,8 @@ public class CompanyCustomizationManager {
         properties.setProperty("receipt.phone_line2", settings.phoneLine2());
         properties.setProperty("receipt.email_line1", settings.emailLine1());
         properties.setProperty("receipt.email_line2", settings.emailLine2());
+        properties.setProperty("receipt.motto_line1", settings.mottoLine1());
+        properties.setProperty("receipt.motto_line2", settings.mottoLine2());
         properties.setProperty("receipt.header_line", settings.headerLine());
         properties.setProperty("receipt.footer_line", settings.footerLine());
         properties.setProperty("receipt.logo_path", settings.logoPath());
@@ -1103,7 +1203,7 @@ public class CompanyCustomizationManager {
         }
     }
 
-    private static void saveLocalSalesQuoteOrderPrintSettings(SalesQuoteOrderPrintSettings settings) throws IOException {
+    private static void saveLocalQuotationInvoicePrintSettings(QuotationInvoicePrintSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
         Properties properties = new Properties();
         if (Files.exists(CONFIG_PATH)) {
@@ -1111,12 +1211,12 @@ public class CompanyCustomizationManager {
                 properties.load(inputStream);
             }
         }
-        properties.setProperty("sales_quote_order.quote_title", settings.quoteTitle());
-        properties.setProperty("sales_quote_order.quote_validity_note", settings.quoteValidityNote());
-        properties.setProperty("sales_quote_order.order_title", settings.orderTitle());
-        properties.setProperty("sales_quote_order.delivery_title", settings.deliveryTitle());
-        properties.setProperty("sales_quote_order.footer_note", settings.footerNote());
-        properties.setProperty("sales_quote_order.show_signatures", String.valueOf(settings.showSignatures()));
+        properties.setProperty("quotation_invoice.quotation_title", settings.quotationTitle());
+        properties.setProperty("quotation_invoice.quotation_validity_note", settings.quotationValidityNote());
+        properties.setProperty("quotation_invoice.invoice_title", settings.invoiceTitle());
+        properties.setProperty("quotation_invoice.delivery_title", settings.deliveryTitle());
+        properties.setProperty("quotation_invoice.footer_note", settings.footerNote());
+        properties.setProperty("quotation_invoice.show_signatures", String.valueOf(settings.showSignatures()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -1379,8 +1479,8 @@ public class CompanyCustomizationManager {
     private static SaleSafetySettings cachedSaleSafetySettings;
     private static Integer cachedCustomOrderSlipLocationId;
     private static CustomOrderSlipSettings cachedCustomOrderSlipSettings;
-    private static Integer cachedSalesQuoteOrderPrintLocationId;
-    private static SalesQuoteOrderPrintSettings cachedSalesQuoteOrderPrintSettings;
+    private static Integer cachedQuotationInvoicePrintLocationId;
+    private static QuotationInvoicePrintSettings cachedQuotationInvoicePrintSettings;
     private static Integer cachedBadgeTemplateLocationId;
     private static BadgeTemplateSettings cachedBadgeTemplateSettings;
 
@@ -1396,8 +1496,8 @@ public class CompanyCustomizationManager {
         String sql = """
                 SELECT DISTINCT logo_url
                 FROM (
-                    SELECT NULLIF(TRIM(receipt_logo_url), '') AS logo_url
-                    FROM company_customization
+                    SELECT NULLIF(TRIM(company_logo_url), '') AS logo_url
+                    FROM company_info
                     UNION
                     SELECT NULLIF(TRIM(badge_template_logo_url), '') AS logo_url
                     FROM company_customization
@@ -1405,14 +1505,16 @@ public class CompanyCustomizationManager {
                 WHERE logo_url IS NOT NULL
                 ORDER BY logo_url DESC
                 """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 String url = rs.getString("logo_url");
                 if (isRemoteImageUrl(url)) {
                     options.putIfAbsent(url, new UploadedImageOption(displayNameFromUrl(url), url));
                 }
+            }
             }
         } catch (Exception ex) {
             // The Storage list below can still recover uploaded logo files.
@@ -1671,6 +1773,8 @@ public class CompanyCustomizationManager {
             String phoneLine2,
             String emailLine1,
             String emailLine2,
+            String mottoLine1,
+            String mottoLine2,
             String headerLine,
             String footerLine,
             String logoPath,
@@ -1695,6 +1799,8 @@ public class CompanyCustomizationManager {
             phoneLine2 = Objects.requireNonNullElse(phoneLine2, "").trim();
             emailLine1 = Objects.requireNonNullElse(emailLine1, "").trim();
             emailLine2 = Objects.requireNonNullElse(emailLine2, "").trim();
+            mottoLine1 = Objects.requireNonNullElse(mottoLine1, "").trim();
+            mottoLine2 = Objects.requireNonNullElse(mottoLine2, "").trim();
             headerLine = Objects.requireNonNullElse(headerLine, "").trim();
             footerLine = clean(footerLine, "Thank you");
             logoPath = Objects.requireNonNullElse(logoPath, "").trim();
@@ -1778,18 +1884,18 @@ public class CompanyCustomizationManager {
         }
     }
 
-    public record SalesQuoteOrderPrintSettings(
-            String quoteTitle,
-            String quoteValidityNote,
-            String orderTitle,
+    public record QuotationInvoicePrintSettings(
+            String quotationTitle,
+            String quotationValidityNote,
+            String invoiceTitle,
             String deliveryTitle,
             String footerNote,
             boolean showSignatures
     ) {
-        public SalesQuoteOrderPrintSettings {
-            quoteTitle = clean(quoteTitle, "QUOTE / NOT FINAL SALE");
-            quoteValidityNote = clean(quoteValidityNote, "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
-            orderTitle = clean(orderTitle, "SALES ORDER CONFIRMATION");
+        public QuotationInvoicePrintSettings {
+            quotationTitle = clean(quotationTitle, "QUOTATION / NOT FINAL SALE");
+            quotationValidityNote = clean(quotationValidityNote, "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
+            invoiceTitle = clean(invoiceTitle, "INVOICE");
             deliveryTitle = clean(deliveryTitle, "DELIVERY BILL");
             footerNote = Objects.requireNonNullElse(footerNote, "").trim();
         }

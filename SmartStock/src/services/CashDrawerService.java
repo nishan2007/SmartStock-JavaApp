@@ -587,6 +587,17 @@ public final class CashDrawerService {
                 FROM custom_order_payments
                 WHERE cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
+                  AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
+                """, sessionId));
+        total = total.add(sum(conn, """
+                SELECT COALESCE(SUM(CASE
+                    WHEN COALESCE(payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL') THEN -payment_amount
+                    ELSE payment_amount
+                END), 0)
+                FROM invoice_payments
+                WHERE cash_drawer_session_id = ?
+                  AND payment_method = 'CASH'
+                  AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
                 """, sessionId));
         total = total.add(sum(conn, """
                 SELECT COALESCE(SUM(ABS(amount)), 0)
@@ -595,6 +606,7 @@ public final class CashDrawerService {
                   AND payment_method = 'CASH'
                   AND transaction_type = 'PAYMENT'
                   AND custom_order_id IS NULL
+                  AND invoice_id IS NULL
                 """, sessionId));
         return total;
     }
@@ -678,6 +690,14 @@ public final class CashDrawerService {
                 FROM custom_order_payments
                 WHERE cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
+                  AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
+                """, sessionId);
+        addNamesFromQuery(conn, names, """
+                SELECT taken_by_name AS name
+                FROM invoice_payments
+                WHERE cash_drawer_session_id = ?
+                  AND payment_method = 'CASH'
+                  AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
                 """, sessionId);
         addNamesFromQuery(conn, names, """
                 SELECT user_name AS name
@@ -978,6 +998,11 @@ public final class CashDrawerService {
                 stmt.executeUpdate("ALTER TABLE custom_order_payments ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
                 stmt.executeUpdate("ALTER TABLE custom_order_payments ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
                 stmt.executeUpdate("ALTER TABLE custom_order_payments ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT REFERENCES cash_drawer_sessions(cash_drawer_session_id)");
+                if (tableExists(conn, "invoice_payments")) {
+                    stmt.executeUpdate("ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
+                    stmt.executeUpdate("ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
+                    stmt.executeUpdate("ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT REFERENCES cash_drawer_sessions(cash_drawer_session_id)");
+                }
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_method TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
@@ -989,6 +1014,9 @@ public final class CashDrawerService {
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_orders_cash_drawer_created ON custom_orders(cash_drawer_id, created_at DESC) WHERE cash_drawer_id IS NOT NULL");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_orders_cash_drawer_session_created ON custom_orders(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_custom_order_payments_cash_drawer_session_created ON custom_order_payments(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                if (tableExists(conn, "invoice_payments")) {
+                    stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_invoice_payments_cash_drawer_session_created ON invoice_payments(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
+                }
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_customer_transactions_cash_drawer_session_created ON customer_account_transactions(cash_drawer_session_id, created_at DESC) WHERE cash_drawer_session_id IS NOT NULL");
                 stmt.executeUpdate("""
                         INSERT INTO permissions (permission_key, permission_name)
@@ -1297,6 +1325,12 @@ public final class CashDrawerService {
                 EXECUTE FUNCTION %s()
                 """.formatted(quote(triggerName), quote(table), quote(functionName)));
         stmt.executeUpdate("CREATE INDEX IF NOT EXISTS " + quote(indexName) + " ON " + quote(table) + "(updated_at DESC)");
+    }
+
+    private static boolean tableExists(Connection conn, String table) throws SQLException {
+        try (ResultSet rs = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"})) {
+            return rs.next();
+        }
     }
 
     private static String quote(String identifier) {

@@ -43,6 +43,7 @@ public final class ServerProvisioningService {
             BaseSchemaInstaller.ensureSchema(local);
             int customOrderStatements = installLocalWorkflowSchemas(local);
             SyncSchemaInstaller.ensureSchema(local);
+            SyncSchemaInstaller.ensureSecurityHardening(local);
             LocalAuthCacheService.ensureSchema(local);
             steps.add("Installed local base schema, custom order workflow schema, and sync/offline-login tables ("
                     + customOrderStatements + " custom-order statements).");
@@ -54,6 +55,7 @@ public final class ServerProvisioningService {
                 BaseSchemaInstaller.ensureSchema(local);
                 installLocalWorkflowSchemas(local);
                 SyncSchemaInstaller.ensureSchema(cloud);
+                SyncSchemaInstaller.ensureSecurityHardening(cloud);
                 int copiedRows = ReferenceDataSyncService.refreshFromCloud(local, cloud);
                 int historyRows = ReferenceDataSyncService.pullExistingLocationHistory(local, cloud, config.locationId());
                 int cachedImages = ImageCacheWarmupService.warmLocalCache(local);
@@ -93,7 +95,9 @@ public final class ServerProvisioningService {
                 "database/custom_order_controls_setup.sql",
                 "database/custom_order_line_discount_setup.sql",
                 "database/custom_order_safety_controls_setup.sql",
-                "database/sales_quotes_orders_setup.sql"
+                "database/quotations_invoices_setup.sql",
+                "database/notification_permissions_setup.sql",
+                "database/workflow_sync_identity_setup.sql"
         ));
     }
 

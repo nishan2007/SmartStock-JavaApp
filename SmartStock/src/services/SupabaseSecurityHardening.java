@@ -20,8 +20,13 @@ public final class SupabaseSecurityHardening {
         if (HARDENED_TABLES.contains(cacheKey)) {
             return;
         }
-        try (Statement lock = conn.createStatement()) {
-            lock.execute("SELECT pg_advisory_lock(" + HARDENING_LOCK_KEY + ")");
+        boolean locked = false;
+        try (Statement lock = conn.createStatement();
+             ResultSet rs = lock.executeQuery("SELECT pg_try_advisory_lock(" + HARDENING_LOCK_KEY + ")")) {
+            locked = rs.next() && rs.getBoolean(1);
+        }
+        if (!locked) {
+            return;
         }
         try {
             if (HARDENED_TABLES.contains(cacheKey)) {
@@ -29,6 +34,12 @@ public final class SupabaseSecurityHardening {
             }
             protectInternalTableUnlocked(conn, tableName);
             HARDENED_TABLES.add(cacheKey);
+        } catch (SQLException ex) {
+            if (isBusySchemaError(ex)) {
+                System.err.println("Skipped security hardening for " + tableName + " because the database was busy: " + ex.getMessage());
+                return;
+            }
+            throw ex;
         } finally {
             try (Statement unlock = conn.createStatement()) {
                 unlock.execute("SELECT pg_advisory_unlock(" + HARDENING_LOCK_KEY + ")");
@@ -39,6 +50,8 @@ public final class SupabaseSecurityHardening {
     private static void protectInternalTableUnlocked(Connection conn, String tableName) throws SQLException {
         String table = quoteIdentifier(tableName);
         try (Statement stmt = conn.createStatement()) {
+            stmt.execute("SET lock_timeout = '2s'");
+            stmt.execute("SET statement_timeout = '10s'");
             stmt.executeUpdate("ALTER TABLE public." + table + " ENABLE ROW LEVEL SECURITY");
             stmt.executeUpdate("REVOKE ALL ON TABLE public." + table + " FROM PUBLIC");
             revokeRoleIfExists(conn, "anon", "TABLE public." + table);
@@ -133,5 +146,10 @@ public final class SupabaseSecurityHardening {
 
     private static String quoteIdentifier(String identifier) {
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
+    private static boolean isBusySchemaError(SQLException ex) {
+        String state = ex.getSQLState();
+        return "40P01".equals(state) || "55P03".equals(state) || "57014".equals(state);
     }
 }

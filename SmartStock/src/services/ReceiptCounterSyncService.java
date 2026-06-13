@@ -66,8 +66,8 @@ public final class ReceiptCounterSyncService {
 
     private static boolean upsertCounter(Connection local, int locationId, int nextCounter) throws SQLException {
         String sql = """
-                INSERT INTO company_customization (location_id, company_name, next_receipt_counter)
-                SELECT ?, 'SmartStock', ?
+                INSERT INTO company_customization (location_id, next_receipt_counter)
+                SELECT ?, ?
                 WHERE EXISTS (SELECT 1 FROM locations WHERE location_id = ?)
                 ON CONFLICT (location_id) DO UPDATE
                 SET next_receipt_counter = GREATEST(company_customization.next_receipt_counter, EXCLUDED.next_receipt_counter),
@@ -87,10 +87,8 @@ public final class ReceiptCounterSyncService {
                     CREATE TABLE IF NOT EXISTS company_customization (
                         customization_id SERIAL PRIMARY KEY,
                         location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
-                        company_name TEXT NOT NULL DEFAULT 'SmartStock',
                         receipt_header_line TEXT NOT NULL DEFAULT '',
                         receipt_footer_line TEXT NOT NULL DEFAULT 'Thank you',
-                        receipt_logo_url TEXT NOT NULL DEFAULT '',
                         show_logo BOOLEAN NOT NULL DEFAULT FALSE,
                         show_sale_id BOOLEAN NOT NULL DEFAULT TRUE,
                         show_device BOOLEAN NOT NULL DEFAULT TRUE,
@@ -145,6 +143,10 @@ public final class ReceiptCounterSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+            stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_name");
+            stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line1");
+            stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line2");
+            stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS receipt_logo_url");
         }
     }
 

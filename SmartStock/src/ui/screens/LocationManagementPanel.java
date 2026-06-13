@@ -24,18 +24,29 @@ public class LocationManagementPanel extends JPanel {
     private final JTextField nameField = new JTextField();
     private final JTextField storeCodeField = new JTextField("0001");
     private final JTextArea addressArea = new JTextArea(4, 24);
+    private final JTextField addressLine1Field = new JTextField();
+    private final JTextField addressLine2Field = new JTextField();
+    private final JTextField addressLine3Field = new JTextField();
+    private final JTextField phoneLine1Field = new JTextField();
+    private final JTextField phoneLine2Field = new JTextField();
+    private final JTextField emailLine1Field = new JTextField();
+    private final JTextField emailLine2Field = new JTextField();
     private final JComboBox<String> timezoneBox = new JComboBox<>();
     private final DefaultTableModel tableModel;
     private final JTable locationTable;
     private Integer selectedLocationId;
     private boolean hasTimezoneColumn;
+    private boolean hasIdentityColumns;
 
     public LocationManagementPanel() {
         setLayout(new BorderLayout(14, 14));
         setBorder(new EmptyBorder(8, 8, 8, 8));
         setOpaque(false);
 
-        tableModel = new DefaultTableModel(new Object[]{"ID", "Store Name", "Store Code", "Address", "Timezone"}, 0) {
+        tableModel = new DefaultTableModel(new Object[]{
+                "ID", "Store Name", "Store Code", "Address", "Address Line 1", "Address Line 2", "Address Line 3",
+                "Phone Line 1", "Phone Line 2", "Email Line 1", "Email Line 2", "Timezone"
+        }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -54,6 +65,7 @@ public class LocationManagementPanel extends JPanel {
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(new JScrollPane(locationTable), BorderLayout.CENTER);
         add(buildEditorPanel(), BorderLayout.EAST);
+        ensureLocationIdentitySchema();
         loadLocations();
     }
 
@@ -120,12 +132,19 @@ public class LocationManagementPanel extends JPanel {
         addFormRow(panel, gbc, 1, "Name:", nameField);
         addFormRow(panel, gbc, 2, "Store Code:", storeCodeField);
         addFormRow(panel, gbc, 3, "Address:", new JScrollPane(addressArea));
-        addFormRow(panel, gbc, 4, "Timezone:", timezoneBox);
+        addFormRow(panel, gbc, 4, "Address Line 1:", addressLine1Field);
+        addFormRow(panel, gbc, 5, "Address Line 2:", addressLine2Field);
+        addFormRow(panel, gbc, 6, "Address Line 3:", addressLine3Field);
+        addFormRow(panel, gbc, 7, "Phone Line 1:", phoneLine1Field);
+        addFormRow(panel, gbc, 8, "Phone Line 2:", phoneLine2Field);
+        addFormRow(panel, gbc, 9, "Email Line 1:", emailLine1Field);
+        addFormRow(panel, gbc, 10, "Email Line 2:", emailLine2Field);
+        addFormRow(panel, gbc, 11, "Timezone:", timezoneBox);
 
-        JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for End of Day date boundaries and store reports.</div></html>");
+        JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for report date boundaries and store totals.</div></html>");
         timezoneHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.gridx = 1;
-        gbc.gridy = 5;
+        gbc.gridy = 12;
         gbc.gridwidth = 1;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -139,7 +158,7 @@ public class LocationManagementPanel extends JPanel {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 13;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -185,11 +204,34 @@ public class LocationManagementPanel extends JPanel {
     private void loadLocations() {
         tableModel.setRowCount(0);
         hasTimezoneColumn = hasColumn("locations", "timezone");
+        hasIdentityColumns = hasColumn("locations", "company_address_line1")
+                && hasColumn("locations", "company_address_line2")
+                && hasColumn("locations", "company_address_line3")
+                && hasColumn("locations", "company_phone_line1")
+                && hasColumn("locations", "company_phone_line2")
+                && hasColumn("locations", "company_email_line1")
+                && hasColumn("locations", "company_email_line2");
         String search = searchField.getText().trim();
+        String searchWhere = "";
+        if (!search.isBlank()) {
+            searchWhere = hasIdentityColumns
+                    ? " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR COALESCE(company_phone_line1, '') ILIKE ? OR COALESCE(company_email_line1, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?"
+                    : " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?";
+        }
         String sql = "SELECT location_id, name, COALESCE(receipt_store_code, '0001') AS receipt_store_code, COALESCE(address, '') AS address"
+                + (hasIdentityColumns
+                ? ", COALESCE(company_address_line1, '') AS company_address_line1"
+                + ", COALESCE(company_address_line2, '') AS company_address_line2"
+                + ", COALESCE(company_address_line3, '') AS company_address_line3"
+                + ", COALESCE(company_phone_line1, '') AS company_phone_line1"
+                + ", COALESCE(company_phone_line2, '') AS company_phone_line2"
+                + ", COALESCE(company_email_line1, '') AS company_email_line1"
+                + ", COALESCE(company_email_line2, '') AS company_email_line2"
+                : ", '' AS company_address_line1, '' AS company_address_line2, '' AS company_address_line3"
+                + ", '' AS company_phone_line1, '' AS company_phone_line2, '' AS company_email_line1, '' AS company_email_line2")
                 + (hasTimezoneColumn ? ", COALESCE(timezone, ?) AS timezone" : ", ? AS timezone")
                 + " FROM locations"
-                + (search.isBlank() ? "" : " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?")
+                + searchWhere
                 + " ORDER BY location_id";
 
         try (Connection conn = DB.getConnection();
@@ -200,6 +242,10 @@ public class LocationManagementPanel extends JPanel {
                 ps.setString(2, pattern);
                 ps.setString(3, pattern);
                 ps.setString(4, pattern);
+                if (hasIdentityColumns) {
+                    ps.setString(5, pattern);
+                    ps.setString(6, pattern);
+                }
             }
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -209,6 +255,13 @@ public class LocationManagementPanel extends JPanel {
                             rs.getString("name"),
                             rs.getString("receipt_store_code"),
                             rs.getString("address"),
+                            rs.getString("company_address_line1"),
+                            rs.getString("company_address_line2"),
+                            rs.getString("company_address_line3"),
+                            rs.getString("company_phone_line1"),
+                            rs.getString("company_phone_line2"),
+                            rs.getString("company_email_line1"),
+                            rs.getString("company_email_line2"),
                             rs.getString("timezone")
                     });
                 }
@@ -248,7 +301,14 @@ public class LocationManagementPanel extends JPanel {
         nameField.setText(String.valueOf(tableModel.getValueAt(modelRow, 1)));
         storeCodeField.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
         addressArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 3)));
-        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 4)));
+        addressLine1Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 4)));
+        addressLine2Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 5)));
+        addressLine3Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 6)));
+        phoneLine1Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 7)));
+        phoneLine2Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 8)));
+        emailLine1Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 9)));
+        emailLine2Field.setText(String.valueOf(tableModel.getValueAt(modelRow, 10)));
+        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 11)));
     }
 
     private void saveLocation() {
@@ -261,6 +321,13 @@ public class LocationManagementPanel extends JPanel {
         String name = nameField.getText().trim();
         String storeCode = sanitizeStoreCode(storeCodeField.getText());
         String address = addressArea.getText().trim();
+        String addressLine1 = addressLine1Field.getText().trim();
+        String addressLine2 = addressLine2Field.getText().trim();
+        String addressLine3 = addressLine3Field.getText().trim();
+        String phoneLine1 = phoneLine1Field.getText().trim();
+        String phoneLine2 = phoneLine2Field.getText().trim();
+        String emailLine1 = emailLine1Field.getText().trim();
+        String emailLine2 = emailLine2Field.getText().trim();
         String timezone = getTimezoneValue();
 
         if (name.isBlank()) {
@@ -279,12 +346,12 @@ public class LocationManagementPanel extends JPanel {
         String sql;
         if (selectedLocationId == null) {
             sql = hasTimezoneColumn
-                    ? "INSERT INTO locations (name, receipt_store_code, address, timezone) VALUES (?, ?, ?, ?)"
-                    : "INSERT INTO locations (name, receipt_store_code, address) VALUES (?, ?, ?)";
+                    ? "INSERT INTO locations (name, receipt_store_code, address, company_address_line1, company_address_line2, company_address_line3, company_phone_line1, company_phone_line2, company_email_line1, company_email_line2, timezone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    : "INSERT INTO locations (name, receipt_store_code, address, company_address_line1, company_address_line2, company_address_line3, company_phone_line1, company_phone_line2, company_email_line1, company_email_line2) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         } else {
             sql = hasTimezoneColumn
-                    ? "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, timezone = ? WHERE location_id = ?"
-                    : "UPDATE locations SET name = ?, receipt_store_code = ?, address = ? WHERE location_id = ?";
+                    ? "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, company_address_line1 = ?, company_address_line2 = ?, company_address_line3 = ?, company_phone_line1 = ?, company_phone_line2 = ?, company_email_line1 = ?, company_email_line2 = ?, timezone = ? WHERE location_id = ?"
+                    : "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, company_address_line1 = ?, company_address_line2 = ?, company_address_line3 = ?, company_phone_line1 = ?, company_phone_line2 = ?, company_email_line1 = ?, company_email_line2 = ? WHERE location_id = ?";
         }
 
         try (Connection conn = DB.getConnection();
@@ -292,13 +359,20 @@ public class LocationManagementPanel extends JPanel {
             ps.setString(1, name);
             ps.setString(2, storeCode);
             ps.setString(3, emptyToNull(address));
+            ps.setString(4, addressLine1);
+            ps.setString(5, addressLine2);
+            ps.setString(6, addressLine3);
+            ps.setString(7, phoneLine1);
+            ps.setString(8, phoneLine2);
+            ps.setString(9, emailLine1);
+            ps.setString(10, emailLine2);
             if (hasTimezoneColumn) {
-                ps.setString(4, timezone);
+                ps.setString(11, timezone);
                 if (selectedLocationId != null) {
-                    ps.setInt(5, selectedLocationId);
+                    ps.setInt(12, selectedLocationId);
                 }
             } else if (selectedLocationId != null) {
-                ps.setInt(4, selectedLocationId);
+                ps.setInt(11, selectedLocationId);
             }
 
             ps.executeUpdate();
@@ -338,8 +412,85 @@ public class LocationManagementPanel extends JPanel {
         nameField.setText("");
         storeCodeField.setText("0001");
         addressArea.setText("");
+        addressLine1Field.setText("");
+        addressLine2Field.setText("");
+        addressLine3Field.setText("");
+        phoneLine1Field.setText("");
+        phoneLine2Field.setText("");
+        emailLine1Field.setText("");
+        emailLine2Field.setText("");
         timezoneBox.setSelectedItem(DEFAULT_TIMEZONE);
         nameField.requestFocusInWindow();
+    }
+
+    private void ensureLocationIdentitySchema() {
+        try (Connection conn = DB.getConnection();
+             java.sql.Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
+            if (hasTable("company_customization")) {
+                stmt.executeUpdate("""
+                        DO $$
+                        BEGIN
+                            IF EXISTS (
+                                SELECT 1
+                                FROM information_schema.columns
+                                WHERE table_schema = 'public'
+                                  AND table_name = 'company_customization'
+                                  AND column_name = 'company_address_line1'
+                            ) THEN
+                                EXECUTE $sql$
+                                    UPDATE locations l
+                                    SET company_address_line1 = COALESCE(NULLIF(l.company_address_line1, ''), cc.company_address_line1, ''),
+                                        company_address_line2 = COALESCE(NULLIF(l.company_address_line2, ''), cc.company_address_line2, ''),
+                                        company_address_line3 = COALESCE(NULLIF(l.company_address_line3, ''), cc.company_address_line3, ''),
+                                        company_phone_line1 = COALESCE(NULLIF(l.company_phone_line1, ''), cc.company_phone_line1, ''),
+                                        company_phone_line2 = COALESCE(NULLIF(l.company_phone_line2, ''), cc.company_phone_line2, ''),
+                                        company_email_line1 = COALESCE(NULLIF(l.company_email_line1, ''), cc.company_email_line1, ''),
+                                        company_email_line2 = COALESCE(NULLIF(l.company_email_line2, ''), cc.company_email_line2, '')
+                                    FROM company_customization cc
+                                    WHERE cc.location_id = l.location_id
+                                      AND (l.company_address_line1 = '' OR l.company_address_line2 = '' OR l.company_address_line3 = ''
+                                           OR l.company_phone_line1 = '' OR l.company_phone_line2 = ''
+                                           OR l.company_email_line1 = '' OR l.company_email_line2 = '')
+                                $sql$;
+                            END IF;
+                        END $$;
+                        """);
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line1");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line2");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line3");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line1");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line2");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line1");
+                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line2");
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to prepare location identity fields: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private boolean hasTable(String tableName) {
+        String sql = """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                """;
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException ex) {
+            return false;
+        }
     }
 
     private String sanitizeStoreCode(String value) {

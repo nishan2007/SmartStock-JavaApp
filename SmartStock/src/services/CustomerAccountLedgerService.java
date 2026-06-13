@@ -10,7 +10,7 @@ import java.sql.Statement;
 public final class CustomerAccountLedgerService {
     private static final String BALANCE_DELTA_CASE = """
             CASE
-                WHEN COALESCE(transaction_type, '') IN ('SALE_CREDIT', 'CUSTOM_ORDER_CREDIT', 'MANUAL_CHARGE')
+                WHEN COALESCE(transaction_type, '') IN ('SALE_CREDIT', 'CUSTOM_ORDER_CREDIT', 'INVOICE_CREDIT', 'MANUAL_CHARGE')
                     THEN ABS(COALESCE(amount, 0))
                 WHEN COALESCE(transaction_type, '') IN ('PAYMENT', 'RETURN', 'CUSTOM_ORDER_REFUND')
                     THEN -ABS(COALESCE(amount, 0))
@@ -31,6 +31,7 @@ public final class CustomerAccountLedgerService {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_id TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS location_id INTEGER");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
+                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_method TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT");
@@ -58,10 +59,12 @@ public final class CustomerAccountLedgerService {
             }
             if (tableExists(conn, "customer_account_payment_allocations")) {
                 stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
+                stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
                 ensureUpdatedAtTableSchema(stmt, "customer_account_payment_allocations");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_payment_idx ON customer_account_payment_allocations(payment_transaction_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sale_idx ON customer_account_payment_allocations(sale_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_custom_order_idx ON customer_account_payment_allocations(custom_order_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_invoice_idx ON customer_account_payment_allocations(invoice_id)");
                 stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_payment");
                 stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_sale");
             }
@@ -188,6 +191,16 @@ public final class CustomerAccountLedgerService {
                     WHERE t.custom_order_id = co.custom_order_id
                       AND t.location_id IS NULL
                       AND co.location_id IS NOT NULL
+                    """);
+        }
+        if (tableExists(conn, "invoices") && columnExists(conn, "invoices", "location_id")) {
+            stmt.executeUpdate("""
+                    UPDATE customer_account_transactions t
+                    SET location_id = so.location_id
+                    FROM invoices so
+                    WHERE t.invoice_id = so.invoice_id
+                      AND t.location_id IS NULL
+                      AND so.location_id IS NOT NULL
                     """);
         }
     }

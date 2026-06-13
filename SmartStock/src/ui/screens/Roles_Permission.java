@@ -907,7 +907,7 @@ public class Roles_Permission extends JFrame {
         permissions.put("SALE_RETURN_APPROVAL_SETTINGS", "Sale Return Approval Settings");
         permissions.put("CHANGE_SALE_ITEM_PRICE", "Change Sale Item Price");
         permissions.put("PROCESS_RETURNS", "Process Returns");
-        permissions.put("END_OF_DAY", "End of Day");
+        permissions.put("END_OF_DAY", "Sales Reports");
         permissions.put("BALANCE_DRAWER", "Balance Draw");
         permissions.put("BALANCE_SHEET", "Balance Sheet");
         permissions.put("VIEW_SALES", "View Sales");
@@ -918,6 +918,7 @@ public class Roles_Permission extends JFrame {
         permissions.put("VIEW_RECEIVING_HISTORY", "View Receiving History");
         permissions.put("STORE_TRANSFER", "Store Transfer");
         permissions.put("VIEW_INVENTORY", "View Inventory");
+        permissions.put("INVENTORY_STOCK_NOTIFICATIONS", "Inventory Stock Notifications");
         permissions.put("VIEW_ITEM_DETAILS", "View Item Details");
         permissions.put("VIEW_COST_PRICE", "View Cost Price");
         permissions.put("VIEW_VENDOR", "View Vendor");
@@ -929,12 +930,14 @@ public class Roles_Permission extends JFrame {
         permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
         permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "View Assigned Custom Orders");
-        permissions.put("SALES_QUOTES_ORDERS", "Sales Quotes / Orders");
-        permissions.put("CREATE_SALES_QUOTE", "Create Sales Quote");
-        permissions.put("MANAGE_SALES_ORDERS", "Manage Sales Orders");
-        permissions.put("POST_SALES_ORDER_DELIVERY", "Post Sales Order Delivery");
+        permissions.put("QUOTATIONS_ORDERS", "Quotations / Invoices");
+        permissions.put("CREATE_QUOTATION", "Create Quotation");
+        permissions.put("MANAGE_INVOICES", "Manage Invoices");
+        permissions.put("POST_INVOICE_DELIVERY", "Post Invoice Delivery");
         permissions.put("ORDERS_MANAGER_DASHBOARD", "Orders Manager Dashboard");
-        permissions.put("ORDERS_END_OF_DAY", "Orders End Of Day");
+        permissions.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Custom Order Work Notifications");
+        permissions.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Custom Order Exception Notifications");
+        permissions.put("ORDERS_END_OF_DAY", "Order Reports");
         permissions.put("CUSTOM_ORDER_REFUNDS", "Custom Order Refunds");
         permissions.put("CUSTOM_ORDER_LINE_RETURNS", "Custom Order Line Returns");
         permissions.put("CUSTOM_ORDER_LINE_DELIVERY", "Custom Order Line Delivery");
@@ -958,8 +961,10 @@ public class Roles_Permission extends JFrame {
         permissions.put("COMPANY_PREFERENCES", "Company Preferences");
         permissions.put("CHANGE_STORE", "Change Store");
         permissions.put("VIEW_REPORTS", "View Reports");
+        permissions.put("SYNC_NOTIFICATIONS", "Sync Notifications");
         permissions.put("LOCAL_DEVICE_SETTINGS", "Workstation Settings");
         permissions.put("HARDWARE_SETUP", "Hardware Settings");
+        permissions.put("MAINTENANCE_TECHNICIAN", "Maintenance Technician");
         return permissions;
     }
 
@@ -973,8 +978,8 @@ public class Roles_Permission extends JFrame {
         descriptions.put("SALE_RETURN_APPROVAL_SETTINGS", "Allows changing return approval thresholds in company settings.");
         descriptions.put("CHANGE_SALE_ITEM_PRICE", "Allows editing item unit prices during a sale without override.");
         descriptions.put("PROCESS_RETURNS", "Allows creating and completing return transactions.");
-        descriptions.put("END_OF_DAY", "Allows running end-of-day reconciliation and closeout tasks.");
-        descriptions.put("BALANCE_DRAWER", "Allows balancing drawer sessions and submitting counted cash totals.");
+        descriptions.put("END_OF_DAY", "Allows access to sales reporting totals.");
+        descriptions.put("BALANCE_DRAWER", "Allows balancing drawer sessions, submitting counted cash totals, and receiving drawer-start notifications.");
         descriptions.put("BALANCE_SHEET", "Allows viewing balance sheet totals and logging business expenses.");
         descriptions.put("VIEW_SALES", "Allows viewing past sales and related transaction history.");
         descriptions.put("NEW_ITEM", "Allows creating new inventory items.");
@@ -984,6 +989,7 @@ public class Roles_Permission extends JFrame {
         descriptions.put("VIEW_RECEIVING_HISTORY", "Allows viewing historical receiving records.");
         descriptions.put("STORE_TRANSFER", "Allows sending and receiving inventory store transfers.");
         descriptions.put("VIEW_INVENTORY", "Allows viewing the inventory list and stock levels.");
+        descriptions.put("INVENTORY_STOCK_NOTIFICATIONS", "Allows receiving low-stock and out-of-stock notifications for inventory and custom-order items.");
         descriptions.put("VIEW_ITEM_DETAILS", "Allows opening full item detail records.");
         descriptions.put("VIEW_COST_PRICE", "Allows viewing internal item cost prices.");
         descriptions.put("VIEW_VENDOR", "Allows viewing vendor assignments on items.");
@@ -995,12 +1001,14 @@ public class Roles_Permission extends JFrame {
         descriptions.put("CREATE_CUSTOM_ORDER", "Allows creating new custom orders.");
         descriptions.put("MANAGE_CUSTOM_ORDERS", "Allows full management access across all custom orders.");
         descriptions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Allows viewing custom orders assigned to the logged-in user.");
-        descriptions.put("SALES_QUOTES_ORDERS", "Allows opening the sales quotes and sales orders workflow.");
-        descriptions.put("CREATE_SALES_QUOTE", "Allows creating and issuing customer sales quotes.");
-        descriptions.put("MANAGE_SALES_ORDERS", "Allows accepting quotes, taking order payments, and managing sales orders.");
-        descriptions.put("POST_SALES_ORDER_DELIVERY", "Allows posting partial or full sales order deliveries.");
+        descriptions.put("QUOTATIONS_ORDERS", "Allows opening the quotations and invoices workflow.");
+        descriptions.put("CREATE_QUOTATION", "Allows creating and issuing customer quotations.");
+        descriptions.put("MANAGE_INVOICES", "Allows accepting quotations, taking invoice payments, and managing invoices.");
+        descriptions.put("POST_INVOICE_DELIVERY", "Allows posting partial or full invoice deliveries.");
         descriptions.put("ORDERS_MANAGER_DASHBOARD", "Allows access to manager-level custom order dashboard tools.");
-        descriptions.put("ORDERS_END_OF_DAY", "Allows access to custom-order end-of-day totals and reconciliation.");
+        descriptions.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Allows receiving operational notifications for due, overdue, ready, unassigned, and balance-due custom orders.");
+        descriptions.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Allows receiving custom-order exception notifications such as recent refunds.");
+        descriptions.put("ORDERS_END_OF_DAY", "Allows access to custom-order reporting totals.");
         descriptions.put("CUSTOM_ORDER_REFUNDS", "Allows issuing refunds on custom orders.");
         descriptions.put("CUSTOM_ORDER_LINE_RETURNS", "Allows returning individual custom-order lines.");
         descriptions.put("CUSTOM_ORDER_LINE_DELIVERY", "Allows marking custom-order lines as delivered.");
@@ -1024,8 +1032,10 @@ public class Roles_Permission extends JFrame {
         descriptions.put("COMPANY_PREFERENCES", "Allows editing company-wide operational preferences.");
         descriptions.put("CHANGE_STORE", "Allows switching the active store context.");
         descriptions.put("VIEW_REPORTS", "Allows opening reporting screens and exports.");
+        descriptions.put("SYNC_NOTIFICATIONS", "Allows receiving sync health notifications for offline cloud, failed events, conflicts, and backlogs.");
         descriptions.put("LOCAL_DEVICE_SETTINGS", "Allows changing workstation-specific app/receipt settings.");
         descriptions.put("HARDWARE_SETUP", "Allows configuring scanner, printer, and hardware integration settings.");
+        descriptions.put("MAINTENANCE_TECHNICIAN", "Allows receiving open maintenance ticket notifications and working maintenance tickets.");
         return descriptions;
     }
 
@@ -1040,7 +1050,7 @@ public class Roles_Permission extends JFrame {
         groups.put("SALE_RETURN_APPROVAL_SETTINGS", "Sales");
         groups.put("CHANGE_SALE_ITEM_PRICE", "Sales");
         groups.put("PROCESS_RETURNS", "Sales");
-        groups.put("END_OF_DAY", "Sales");
+        groups.put("END_OF_DAY", "Administration");
         groups.put("BALANCE_DRAWER", "Sales");
         groups.put("BALANCE_SHEET", "Sales");
         groups.put("VIEW_SALES", "Sales");
@@ -1050,12 +1060,14 @@ public class Roles_Permission extends JFrame {
         groups.put("CREATE_CUSTOM_ORDER", "Orders");
         groups.put("MANAGE_CUSTOM_ORDERS", "Orders");
         groups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Orders");
-        groups.put("SALES_QUOTES_ORDERS", "Orders");
-        groups.put("CREATE_SALES_QUOTE", "Orders");
-        groups.put("MANAGE_SALES_ORDERS", "Orders");
-        groups.put("POST_SALES_ORDER_DELIVERY", "Orders");
+        groups.put("QUOTATIONS_ORDERS", "Orders");
+        groups.put("CREATE_QUOTATION", "Orders");
+        groups.put("MANAGE_INVOICES", "Orders");
+        groups.put("POST_INVOICE_DELIVERY", "Orders");
         groups.put("ORDERS_MANAGER_DASHBOARD", "Orders");
-        groups.put("ORDERS_END_OF_DAY", "Orders");
+        groups.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Orders");
+        groups.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Orders");
+        groups.put("ORDERS_END_OF_DAY", "Administration");
         groups.put("CUSTOM_ORDER_REFUNDS", "Orders");
         groups.put("CUSTOM_ORDER_LINE_RETURNS", "Orders");
         groups.put("CUSTOM_ORDER_LINE_DELIVERY", "Orders");
@@ -1074,6 +1086,7 @@ public class Roles_Permission extends JFrame {
         groups.put("VIEW_RECEIVING_HISTORY", "Inventory");
         groups.put("STORE_TRANSFER", "Inventory");
         groups.put("VIEW_INVENTORY", "Inventory");
+        groups.put("INVENTORY_STOCK_NOTIFICATIONS", "Inventory");
         groups.put("VIEW_ITEM_DETAILS", "Inventory");
         groups.put("VIEW_COST_PRICE", "Inventory");
         groups.put("VIEW_VENDOR", "Inventory");
@@ -1094,8 +1107,10 @@ public class Roles_Permission extends JFrame {
         groups.put("COMPANY_PREFERENCES", "Administration");
         groups.put("CHANGE_STORE", "Administration");
         groups.put("VIEW_REPORTS", "Administration");
+        groups.put("SYNC_NOTIFICATIONS", "Administration");
         groups.put("LOCAL_DEVICE_SETTINGS", "Administration");
         groups.put("HARDWARE_SETUP", "Administration");
+        groups.put("MAINTENANCE_TECHNICIAN", "Inventory");
         return groups;
     }
 }

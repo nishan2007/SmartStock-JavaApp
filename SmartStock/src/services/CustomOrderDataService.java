@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class CustomOrderDataService {
     private CustomOrderDataService() {
@@ -514,7 +515,7 @@ public final class CustomOrderDataService {
     }
 
     private static String generateOrderNumber() {
-        return "CO-" + System.currentTimeMillis();
+        return "CO-" + System.currentTimeMillis() + "-" + ThreadLocalRandom.current().nextInt(1000, 10000);
     }
 
     private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {

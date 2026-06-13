@@ -1,7 +1,6 @@
 package services;
 
 import data.DB;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
 
 import java.io.IOException;
@@ -10,26 +9,26 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-public final class SalesQuoteOrderNumberManager {
-    private SalesQuoteOrderNumberManager() {
+public final class QuotationInvoiceNumberManager {
+    private QuotationInvoiceNumberManager() {
     }
 
-    public static synchronized String nextQuoteNumber(Connection conn, int locationId) throws SQLException {
-        return nextDocumentNumber(conn, locationId, "next_sales_quote_counter", "Q");
+    public static synchronized String nextQuotationNumber(Connection conn, int locationId) throws SQLException {
+        return nextDocumentNumber(conn, locationId, "next_quotation_counter", "Q");
     }
 
-    public static synchronized String nextOrderNumber(Connection conn, int locationId) throws SQLException {
-        return nextDocumentNumber(conn, locationId, "next_sales_order_counter", "SO");
+    public static synchronized String nextInvoiceNumber(Connection conn, int locationId) throws SQLException {
+        return nextDocumentNumber(conn, locationId, "next_invoice_counter", "SO");
     }
 
     public static synchronized String nextDeliveryNumber(Connection conn, int locationId) throws SQLException {
-        return nextDocumentNumber(conn, locationId, "next_sales_delivery_counter", "DEL");
+        return nextDocumentNumber(conn, locationId, "next_invoice_delivery_counter", "DEL");
     }
 
-    public static int defaultQuoteValidityDays(Connection conn, int locationId) throws SQLException {
+    public static int defaultQuotationValidityDays(Connection conn, int locationId) throws SQLException {
         ensureCounterRow(conn, locationId);
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT COALESCE(sales_quote_default_valid_days, 30) AS days
+                SELECT COALESCE(quotation_default_valid_days, 30) AS days
                 FROM company_customization
                 WHERE location_id = ?
                 """)) {
@@ -40,12 +39,12 @@ public final class SalesQuoteOrderNumberManager {
         }
     }
 
-    public static String previewQuoteNumber(int locationId) throws SQLException, IOException {
+    public static String previewQuotationNumber(int locationId) throws SQLException, IOException {
         try (Connection conn = DB.getConnection()) {
             ensureCounterRow(conn, locationId);
             String storeCode = storeCode(conn, locationId);
             String deviceCode = deviceCode(locationId);
-            int counter = currentCounter(conn, locationId, "next_sales_quote_counter");
+            int counter = currentCounter(conn, locationId, "next_quotation_counter");
             return format("Q", storeCode, deviceCode, counter);
         }
     }
@@ -54,6 +53,7 @@ public final class SalesQuoteOrderNumberManager {
         ensureCounterRow(conn, locationId);
         String storeCode = storeCode(conn, locationId);
         String deviceCode = deviceCode(locationId);
+        repairCounterFloor(conn, locationId, counterColumn, prefix, storeCode, deviceCode);
         String sql = """
                 UPDATE company_customization
                 SET %s = GREATEST(COALESCE(%s, 1), 1) + 1,
@@ -72,6 +72,47 @@ public final class SalesQuoteOrderNumberManager {
         throw new SQLException("Unable to advance " + prefix + " counter.");
     }
 
+    private static void repairCounterFloor(Connection conn, int locationId, String counterColumn,
+                                           String prefix, String storeCode, String deviceCode) throws SQLException {
+        DocumentTable table = documentTable(prefix);
+        String regex = "^" + prefix + "-" + storeCode + "-" + deviceCode + "-([0-9]+)$";
+        String like = prefix + "-" + storeCode + "-" + deviceCode + "-%";
+        String maxSql = """
+                SELECT COALESCE(MAX(SUBSTRING(%s FROM ?)::INTEGER), 0) + 1 AS next_counter
+                FROM %s
+                WHERE %s LIKE ?
+                """.formatted(table.numberColumn(), table.tableName(), table.numberColumn());
+        int nextCounter = 1;
+        try (PreparedStatement ps = conn.prepareStatement(maxSql)) {
+            ps.setString(1, regex);
+            ps.setString(2, like);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    nextCounter = Math.max(rs.getInt("next_counter"), 1);
+                }
+            }
+        }
+        String updateSql = """
+                UPDATE company_customization
+                SET %s = GREATEST(COALESCE(%s, 1), ?)
+                WHERE location_id = ?
+                """.formatted(counterColumn, counterColumn);
+        try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
+            ps.setInt(1, nextCounter);
+            ps.setInt(2, locationId);
+            ps.executeUpdate();
+        }
+    }
+
+    private static DocumentTable documentTable(String prefix) throws SQLException {
+        return switch (prefix) {
+            case "Q" -> new DocumentTable("quotations", "quotation_number");
+            case "SO" -> new DocumentTable("invoices", "invoice_number");
+            case "DEL" -> new DocumentTable("invoice_delivery_events", "delivery_number");
+            default -> throw new SQLException("Unsupported document prefix: " + prefix);
+        };
+    }
+
     private static int currentCounter(Connection conn, int locationId, String counterColumn) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("SELECT GREATEST(COALESCE(" + counterColumn + ", 1), 1) AS counter FROM company_customization WHERE location_id = ?")) {
             ps.setInt(1, locationId);
@@ -82,14 +123,13 @@ public final class SalesQuoteOrderNumberManager {
     }
 
     private static void ensureCounterRow(Connection conn, int locationId) throws SQLException {
-        SalesQuoteOrderSchemaInstaller.ensureSchema(conn);
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO company_customization (
-                    location_id, company_name,
-                    next_sales_quote_counter, next_sales_order_counter, next_sales_delivery_counter,
-                    sales_quote_default_valid_days
+                    location_id,
+                    next_quotation_counter, next_invoice_counter, next_invoice_delivery_counter,
+                    quotation_default_valid_days
                 )
-                SELECT ?, 'SmartStock', 1, 1, 1, 30
+                SELECT ?, 1, 1, 1, 30
                 WHERE EXISTS (SELECT 1 FROM locations WHERE location_id = ?)
                 ON CONFLICT (location_id) DO NOTHING
                 """)) {
@@ -113,11 +153,7 @@ public final class SalesQuoteOrderNumberManager {
     }
 
     private static String deviceCode(int locationId) {
-        try {
-            return sanitizeCode(ReceiptNumberManager.getDeviceReceiptSettings(locationId).deviceId());
-        } catch (Exception ignored) {
-            return sanitizeCode(SessionManager.getCurrentDeviceId());
-        }
+        return sanitizeCode(SessionManager.getCurrentDeviceId());
     }
 
     private static String sanitizeCode(String value) {
@@ -140,5 +176,8 @@ public final class SalesQuoteOrderNumberManager {
 
     private static String format(String prefix, String storeCode, String deviceCode, int sequence) {
         return prefix + "-" + storeCode + "-" + deviceCode + "-" + String.format("%06d", sequence);
+    }
+
+    private record DocumentTable(String tableName, String numberColumn) {
     }
 }

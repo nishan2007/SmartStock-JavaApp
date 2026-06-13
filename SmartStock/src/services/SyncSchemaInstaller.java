@@ -3,16 +3,56 @@ package services;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class SyncSchemaInstaller {
+    private static final Set<String> INSTALLED_DATABASES = ConcurrentHashMap.newKeySet();
+    private static final Set<String> HARDENED_DATABASES = ConcurrentHashMap.newKeySet();
+
     private SyncSchemaInstaller() {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
-        install(conn);
+        String key = databaseKey(conn);
+        if (INSTALLED_DATABASES.contains(key)) {
+            return;
+        }
+        synchronized (SyncSchemaInstaller.class) {
+            if (INSTALLED_DATABASES.contains(key)) {
+                return;
+            }
+            installTables(conn);
+            INSTALLED_DATABASES.add(key);
+        }
     }
 
-    private static void install(Connection conn) throws SQLException {
+    public static void ensureSecurityHardening(Connection conn) throws SQLException {
+        String key = databaseKey(conn);
+        if (HARDENED_DATABASES.contains(key)) {
+            return;
+        }
+        synchronized (SyncSchemaInstaller.class) {
+            if (HARDENED_DATABASES.contains(key)) {
+                return;
+            }
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_outbox");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_applied_events");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_id_map");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_tombstones");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_conflicts");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_audit_log");
+            HARDENED_DATABASES.add(key);
+        }
+    }
+
+    private static String databaseKey(Connection conn) throws SQLException {
+        String url = conn.getMetaData().getURL();
+        String user = conn.getMetaData().getUserName();
+        return (url == null ? "unknown" : url) + "|" + (user == null ? "" : user);
+    }
+
+    private static void installTables(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("CREATE EXTENSION IF NOT EXISTS pgcrypto");
             stmt.executeUpdate("""
@@ -125,11 +165,5 @@ public final class SyncSchemaInstaller {
                     )
                     """);
         }
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_outbox");
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_applied_events");
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_id_map");
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_tombstones");
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_conflicts");
-        SupabaseSecurityHardening.protectInternalTable(conn, "sync_audit_log");
     }
 }

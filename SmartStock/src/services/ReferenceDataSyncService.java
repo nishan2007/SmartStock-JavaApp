@@ -26,6 +26,7 @@ public final class ReferenceDataSyncService {
             "role_permissions",
             "mobile_permissions",
             "role_mobile_permissions",
+            "company_info",
             "locations",
             "company_customization",
             "users",
@@ -46,6 +47,7 @@ public final class ReferenceDataSyncService {
             "mobile_permissions",
             "role_permissions",
             "role_mobile_permissions",
+            "company_info",
             "locations",
             "company_customization",
             "customer_types",
@@ -69,7 +71,6 @@ public final class ReferenceDataSyncService {
             "sale_returns",
             "sale_return_items",
             "sale_audit_log",
-            "inventory_movements",
             "custom_order_items",
             "custom_order_item_barcodes",
             "custom_order_item_variants",
@@ -87,17 +88,18 @@ public final class ReferenceDataSyncService {
             "custom_order_line_returns",
             "custom_order_item_movements",
             "custom_order_audit_log",
-            "sales_quotes",
-            "sales_quote_lines",
-            "sales_quote_status_history",
-            "sales_quote_audit_log",
-            "sales_orders",
-            "sales_order_lines",
-            "sales_order_payments",
-            "sales_order_delivery_events",
-            "sales_order_delivery_lines",
-            "sales_order_status_history",
-            "sales_order_audit_log",
+            "quotations",
+            "quotation_lines",
+            "quotation_status_history",
+            "quotation_audit_log",
+            "invoices",
+            "invoice_lines",
+            "invoice_payments",
+            "invoice_delivery_events",
+            "invoice_delivery_lines",
+            "invoice_status_history",
+            "invoice_audit_log",
+            "inventory_movements",
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
@@ -120,6 +122,7 @@ public final class ReferenceDataSyncService {
             "mobile_permissions",
             "role_permissions",
             "role_mobile_permissions",
+            "company_info",
             "locations",
             "company_customization",
             "users",
@@ -138,7 +141,6 @@ public final class ReferenceDataSyncService {
             "sale_return_items",
             "sale_audit_log",
             "inventory",
-            "inventory_movements",
             "custom_order_items",
             "custom_order_item_barcodes",
             "custom_order_item_variants",
@@ -156,17 +158,18 @@ public final class ReferenceDataSyncService {
             "custom_order_line_returns",
             "custom_order_item_movements",
             "custom_order_audit_log",
-            "sales_quotes",
-            "sales_quote_lines",
-            "sales_quote_status_history",
-            "sales_quote_audit_log",
-            "sales_orders",
-            "sales_order_lines",
-            "sales_order_payments",
-            "sales_order_delivery_events",
-            "sales_order_delivery_lines",
-            "sales_order_status_history",
-            "sales_order_audit_log",
+            "quotations",
+            "quotation_lines",
+            "quotation_status_history",
+            "quotation_audit_log",
+            "invoices",
+            "invoice_lines",
+            "invoice_payments",
+            "invoice_delivery_events",
+            "invoice_delivery_lines",
+            "invoice_status_history",
+            "invoice_audit_log",
+            "inventory_movements",
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
@@ -190,6 +193,8 @@ public final class ReferenceDataSyncService {
     }
 
     public static int refreshFromCloud(Connection local, Connection cloud) throws SQLException {
+        ensureQuotationInvoiceSyncSchema(local, cloud);
+        ensureWorkflowSyncIdentitySchema(local, cloud);
         int copied = 0;
         truncateLocalTables(local);
         for (String table : TABLES) {
@@ -204,6 +209,8 @@ public final class ReferenceDataSyncService {
 
     public static int pullReferenceData(Connection local, Connection cloud) throws SQLException {
         ensureMissingCloudTables(local, cloud);
+        ensureQuotationInvoiceSyncSchema(local, cloud);
+        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         ensureTombstoneSchema(local);
@@ -222,6 +229,8 @@ public final class ReferenceDataSyncService {
 
     public static int pullExistingLocationHistory(Connection local, Connection cloud, Integer locationId) throws SQLException {
         ensureMissingCloudTables(local, cloud);
+        ensureQuotationInvoiceSyncSchema(local, cloud);
+        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         int copied = 0;
@@ -233,6 +242,8 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pushLocalOperationalChanges(Connection local, Connection cloud) throws SQLException {
+        ensureQuotationInvoiceSyncSchema(local, cloud);
+        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         ensureTombstoneSchema(local);
@@ -248,14 +259,16 @@ public final class ReferenceDataSyncService {
                 copied += pushSalesAndAlignIds(local, cloud);
             } else if ("custom_orders".equals(table)) {
                 copied += pushCustomOrdersAndAlignIds(local, cloud);
-            } else if ("sales_quotes".equals(table)) {
-                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_quotes", "sales_quote_id", "quote_number", "SALES_QUOTE_ID_REMAP");
-            } else if ("sales_orders".equals(table)) {
-                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_orders", "sales_order_id", "order_number", "SALES_ORDER_ID_REMAP");
-            } else if ("sales_order_delivery_events".equals(table)) {
-                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "sales_order_delivery_events", "sales_order_delivery_event_id", "delivery_number", "SALES_ORDER_DELIVERY_ID_REMAP");
+            } else if ("quotations".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "quotations", "quotation_id", "quotation_number", "QUOTATION_ID_REMAP");
+            } else if ("invoices".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "invoices", "invoice_id", "invoice_number", "INVOICE_ID_REMAP");
+            } else if ("invoice_delivery_events".equals(table)) {
+                copied += pushGeneratedDocumentAndAlignIds(local, cloud, "invoice_delivery_events", "invoice_delivery_event_id", "delivery_number", "INVOICE_DELIVERY_ID_REMAP");
             } else if ("products".equals(table)) {
                 copied += pushProductsAndAlignIds(local, cloud);
+            } else if (usesWorkflowChildUuid(table)) {
+                copied += pushUuidKeyedRowsAndAlignIds(local, cloud, table);
             } else {
                 copied += upsertAll(local, cloud, table);
             }
@@ -263,6 +276,38 @@ public final class ReferenceDataSyncService {
         repairSequences(cloud);
         repairSequences(local);
         return copied;
+    }
+
+    private static void ensureWorkflowSyncIdentitySchema(Connection local, Connection cloud) throws SQLException {
+        WorkflowSyncIdentitySchemaInstaller.HealthReport localReport = WorkflowSyncIdentitySchemaInstaller.repairAndReport(local);
+        WorkflowSyncIdentitySchemaInstaller.HealthReport cloudReport = WorkflowSyncIdentitySchemaInstaller.repairAndReport(cloud);
+        if (!localReport.healthy()) {
+            SyncAuditService.record(local,
+                    "WORKFLOW_SYNC_IDENTITY_SCHEMA_REPAIR",
+                    "local",
+                    null,
+                    null,
+                    null,
+                    "workflow_sync_identity",
+                    "WARNING",
+                    Map.of("summary", localReport.summary()));
+        }
+        if (!cloudReport.healthy()) {
+            SyncAuditService.record(local,
+                    "WORKFLOW_SYNC_IDENTITY_SCHEMA_REPAIR",
+                    "cloud",
+                    null,
+                    null,
+                    null,
+                    "workflow_sync_identity",
+                    "WARNING",
+                    Map.of("summary", cloudReport.summary()));
+        }
+    }
+
+    private static void ensureQuotationInvoiceSyncSchema(Connection local, Connection cloud) throws SQLException {
+        QuotationInvoiceSchemaInstaller.ensureSchema(local);
+        QuotationInvoiceSchemaInstaller.ensureSchema(cloud);
     }
 
     public static void recordTombstone(Connection conn, String tableName, Map<String, ?> keyData) throws SQLException {
@@ -575,6 +620,24 @@ public final class ReferenceDataSyncService {
         if (!tableExists(local, table) || !tableExists(cloud, table)) {
             return 0;
         }
+        if ("sales".equals(table)) {
+            return pullGeneratedDocumentsAndAlignIds(local, cloud, "sales", "sale_id", "receipt_number", "SALE_PULL_ID_REMAP");
+        }
+        if ("custom_orders".equals(table)) {
+            return pullGeneratedDocumentsAndAlignIds(local, cloud, "custom_orders", "custom_order_id", "order_number", "CUSTOM_ORDER_PULL_ID_REMAP");
+        }
+        if ("quotations".equals(table)) {
+            return pullGeneratedDocumentsAndAlignIds(local, cloud, "quotations", "quotation_id", "quotation_number", "QUOTATION_PULL_ID_REMAP");
+        }
+        if ("invoices".equals(table)) {
+            return pullGeneratedDocumentsAndAlignIds(local, cloud, "invoices", "invoice_id", "invoice_number", "INVOICE_PULL_ID_REMAP");
+        }
+        if ("invoice_delivery_events".equals(table)) {
+            return pullGeneratedDocumentsAndAlignIds(local, cloud, "invoice_delivery_events", "invoice_delivery_event_id", "delivery_number", "INVOICE_DELIVERY_PULL_ID_REMAP");
+        }
+        if (usesWorkflowChildUuid(table)) {
+            return pullUuidKeyedRowsAndAlignIds(local, cloud, table);
+        }
         if (usesNaturalKeyReferenceSync(table)) {
             return upsertAll(cloud, local, table);
         }
@@ -593,6 +656,7 @@ public final class ReferenceDataSyncService {
         if (!columns.contains("sale_id")) {
             return upsertAll(local, cloud, "sales");
         }
+        Map<String, Long> cloudIdsByReceipt = idsByColumn(cloud, "sales", "sale_id", "receipt_number");
         int changed = 0;
         String selectSql = "SELECT " + selectExpressions("sales", null, columns) + " FROM sales ORDER BY sale_id";
         try (PreparedStatement select = local.prepareStatement(selectSql);
@@ -602,12 +666,13 @@ public final class ReferenceDataSyncService {
                 String receiptNumber = columns.contains("receipt_number")
                         ? rs.getString(columns.indexOf("receipt_number") + 1)
                         : null;
-                Integer cloudSaleId = findCloudSaleIdById(cloud, localSaleId);
-                if (cloudSaleId == null) {
-                    cloudSaleId = findCloudSaleIdByReceipt(cloud, receiptNumber);
-                }
+                Long matchedCloudSaleId = receiptNumber == null || receiptNumber.isBlank() ? null : cloudIdsByReceipt.get(receiptNumber);
+                Integer cloudSaleId = matchedCloudSaleId == null ? null : Math.toIntExact(matchedCloudSaleId);
                 if (cloudSaleId == null) {
                     cloudSaleId = insertCloudSale(cloud, columns, rs);
+                    if (receiptNumber != null && !receiptNumber.isBlank()) {
+                        cloudIdsByReceipt.put(receiptNumber, (long) cloudSaleId);
+                    }
                     changed++;
                 } else {
                     updateCloudSale(cloud, columns, rs, cloudSaleId);
@@ -651,6 +716,25 @@ public final class ReferenceDataSyncService {
             ps.setString(1, receiptNumber);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt("sale_id") : null;
+            }
+        }
+    }
+
+    private static boolean cloudSaleIdMatchesReceipt(Connection cloud, int saleId, String receiptNumber) throws SQLException {
+        if (receiptNumber == null || receiptNumber.isBlank()) {
+            return false;
+        }
+        try (PreparedStatement ps = cloud.prepareStatement("""
+                SELECT 1
+                FROM sales
+                WHERE sale_id = ?
+                  AND receipt_number = ?
+                LIMIT 1
+                """)) {
+            ps.setInt(1, saleId);
+            ps.setString(2, receiptNumber);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
             }
         }
     }
@@ -886,9 +970,9 @@ public final class ReferenceDataSyncService {
                 String naturalKey = columns.contains(naturalKeyColumn)
                         ? rs.getString(columns.indexOf(naturalKeyColumn) + 1)
                         : null;
-                Long cloudId = findCloudDocumentIdById(cloud, table, idColumn, localId);
-                if (cloudId == null) {
-                    cloudId = findCloudDocumentIdByNaturalKey(cloud, table, idColumn, naturalKeyColumn, naturalKey);
+                Long cloudId = findCloudDocumentIdByNaturalKey(cloud, table, idColumn, naturalKeyColumn, naturalKey);
+                if (cloudId == null && cloudDocumentIdMatchesNaturalKey(cloud, table, idColumn, localId, naturalKeyColumn, naturalKey)) {
+                    cloudId = localId;
                 }
                 if (cloudId == null) {
                     cloudId = insertCloudGeneratedDocument(cloud, table, idColumn, columns, rs);
@@ -915,6 +999,530 @@ public final class ReferenceDataSyncService {
             }
         }
         return changed;
+    }
+
+    private static int pullGeneratedDocumentsAndAlignIds(Connection local, Connection cloud, String table,
+                                                         String idColumn, String naturalKeyColumn,
+                                                         String auditAction) throws SQLException {
+        List<String> columns = commonColumns(local, cloud, table);
+        if (!columns.contains(idColumn) || !columns.contains(naturalKeyColumn)) {
+            return insertMissing(local, cloud, table, "SELECT %s FROM " + quote(table), null);
+        }
+        int changed = 0;
+        String selectSql = "SELECT " + selectExpressions(table, null, columns)
+                + " FROM " + quote(table) + " ORDER BY " + quote(idColumn);
+        try (PreparedStatement select = cloud.prepareStatement(selectSql);
+             ResultSet rs = select.executeQuery()) {
+            while (rs.next()) {
+                long cloudId = rs.getLong(columns.indexOf(idColumn) + 1);
+                String naturalKey = rs.getString(columns.indexOf(naturalKeyColumn) + 1);
+                Long localId = findCloudDocumentIdByNaturalKey(local, table, idColumn, naturalKeyColumn, naturalKey);
+                if (localId == null && cloudDocumentIdMatchesNaturalKey(local, table, idColumn, cloudId, naturalKeyColumn, naturalKey)) {
+                    localId = cloudId;
+                }
+                if (localId == null) {
+                    if (localGeneratedDocumentExists(local, table, idColumn, cloudId)) {
+                        moveConflictingLocalDocumentByNaturalKey(local, cloud, table, idColumn, naturalKeyColumn, cloudId);
+                    }
+                    insertLocalGeneratedDocumentWithId(local, table, columns, rs);
+                    changed++;
+                } else {
+                    if (localId != cloudId) {
+                        if (localGeneratedDocumentExists(local, table, idColumn, cloudId)) {
+                            moveConflictingLocalDocumentByNaturalKey(local, cloud, table, idColumn, naturalKeyColumn, cloudId);
+                        }
+                        remapLocalGeneratedDocumentId(local, table, idColumn, localId, cloudId);
+                        recordIdMap(local, table, String.valueOf(localId), String.valueOf(cloudId));
+                        SyncAuditService.record(local,
+                                auditAction,
+                                table,
+                                localId,
+                                cloudId,
+                                cloudId,
+                                naturalKey,
+                                "APPLIED",
+                                Map.of(
+                                        naturalKeyColumn, naturalKey == null ? "" : naturalKey,
+                                        "reason", "Cloud document id differed from local id during pull; local references were remapped before child tables synced."
+                                ));
+                    }
+                    if (updateCloudGeneratedDocument(local, table, idColumn, columns, rs, cloudId)) {
+                        changed++;
+                    }
+                }
+            }
+        }
+        return changed;
+    }
+
+    private static boolean cloudDocumentIdMatchesNaturalKey(Connection conn, String table, String idColumn, long id,
+                                                           String naturalKeyColumn, String naturalKey) throws SQLException {
+        if (naturalKey == null || naturalKey.isBlank() || !columns(conn, table).contains(naturalKeyColumn)) {
+            return false;
+        }
+        String sql = "SELECT 1 FROM " + quote(table)
+                + " WHERE " + quote(idColumn) + " = ?"
+                + " AND " + quote(naturalKeyColumn) + " = ?"
+                + " LIMIT 1";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ps.setString(2, naturalKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void moveConflictingLocalDocumentByNaturalKey(Connection local, Connection cloud, String table,
+                                                                 String idColumn, String naturalKeyColumn,
+                                                                 long occupiedLocalId) throws SQLException {
+        String occupiedNaturalKey = localDocumentNaturalKey(local, table, idColumn, naturalKeyColumn, occupiedLocalId);
+        long targetId;
+        if (occupiedNaturalKey == null || occupiedNaturalKey.isBlank()) {
+            targetId = nextFreeLocalId(local, table, idColumn);
+        } else {
+            Long occupiedCloudId = findCloudDocumentIdByNaturalKey(cloud, table, idColumn, naturalKeyColumn, occupiedNaturalKey);
+            targetId = occupiedCloudId == null || occupiedCloudId == occupiedLocalId
+                    ? nextFreeLocalId(local, table, idColumn)
+                    : occupiedCloudId;
+        }
+        if (targetId == occupiedLocalId) {
+            targetId = nextFreeLocalId(local, table, idColumn);
+        }
+        if (localGeneratedDocumentExists(local, table, idColumn, targetId)) {
+            moveConflictingLocalDocumentByNaturalKey(local, cloud, table, idColumn, naturalKeyColumn, targetId);
+        }
+        remapLocalGeneratedDocumentId(local, table, idColumn, occupiedLocalId, targetId);
+        recordIdMap(local, table, String.valueOf(occupiedLocalId), String.valueOf(targetId));
+    }
+
+    private static String localDocumentNaturalKey(Connection conn, String table, String idColumn,
+                                                 String naturalKeyColumn, long id) throws SQLException {
+        if (!columns(conn, table).contains(naturalKeyColumn)) {
+            return null;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(naturalKeyColumn)
+                + " FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(naturalKeyColumn) : null;
+            }
+        }
+    }
+
+    private static void insertLocalGeneratedDocumentWithId(Connection local, String table, List<String> columns,
+                                                           ResultSet rs) throws SQLException {
+        Map<String, String> localTypes = columnTypes(local, table);
+        List<String> notNullable = notNullableColumns(local, table);
+        String sql = "INSERT INTO " + quote(table) + " (" + joinIdentifiers(columns) + ") VALUES ("
+                + castPlaceholders(columns, localTypes) + ")";
+        try (PreparedStatement ps = local.prepareStatement(sql)) {
+            bindRowValues(ps, columns, columns, rs, localTypes, notNullable);
+            ps.executeUpdate();
+        }
+    }
+
+    private static int pushUuidKeyedRowsAndAlignIds(Connection local, Connection cloud, String table) throws SQLException {
+        List<String> columns = commonColumns(cloud, local, table);
+        if (!columns.contains("sync_uuid")) {
+            return upsertAll(local, cloud, table);
+        }
+        List<String> primaryKeys = primaryKeyColumns(cloud, table);
+        if (primaryKeys.size() != 1 || !columns.contains(primaryKeys.get(0))) {
+            return upsertAll(local, cloud, table);
+        }
+        String idColumn = primaryKeys.get(0);
+        Map<String, Long> cloudIdsByUuid = idsByColumn(cloud, table, idColumn, "sync_uuid");
+        Map<Long, String> cloudUuidById = columnValuesById(cloud, table, idColumn, "sync_uuid");
+        Set<Long> cloudExistingIds = idSet(cloud, table, idColumn);
+        Map<String, String> cloudTypes = columnTypes(cloud, table);
+        List<String> cloudNotNullable = notNullableColumns(cloud, table);
+        int changed = 0;
+        String selectSql = "SELECT " + selectExpressions(table, null, columns)
+                + " FROM " + quote(table) + " ORDER BY " + quote(idColumn);
+        try (PreparedStatement select = local.prepareStatement(selectSql);
+             PreparedStatement localUuidUpdate = prepareUuidUpdate(local, table, idColumn);
+             ResultSet rs = select.executeQuery()) {
+            int uuidBatch = 0;
+            while (rs.next()) {
+                long localId = rs.getLong(columns.indexOf(idColumn) + 1);
+                String syncUuid = rs.getString(columns.indexOf("sync_uuid") + 1);
+                Long cloudId = cloudIdsByUuid.get(syncUuid);
+                if (cloudId == null) {
+                    if (cloudExistingIds.contains(localId)) {
+                        String cloudSyncUuid = cloudUuidById.get(localId);
+                        addUuidUpdate(localUuidUpdate, localId, cloudSyncUuid);
+                        uuidBatch++;
+                        if (uuidBatch >= 500) {
+                            localUuidUpdate.executeBatch();
+                            uuidBatch = 0;
+                        }
+                        cloudId = localId;
+                        syncUuid = cloudSyncUuid;
+                    } else {
+                        cloudId = insertUuidKeyedRow(cloud, table, idColumn, columns, rs, true);
+                        changed++;
+                    }
+                    cloudExistingIds.add(cloudId);
+                    cloudIdsByUuid.put(syncUuid, cloudId);
+                } else if (!isWorkflowAppendOnlyTable(table)
+                        && updateGeneratedDocument(cloud, table, idColumn, columns, rs, cloudId, cloudTypes, cloudNotNullable)) {
+                    changed++;
+                }
+                if (cloudId != localId) {
+                    remapLocalGeneratedDocumentId(local, table, idColumn, localId, cloudId);
+                    recordIdMap(local, table, String.valueOf(localId), String.valueOf(cloudId));
+                    SyncAuditService.record(local,
+                            "SALES_DOCUMENT_CHILD_ID_REMAP",
+                            table,
+                            localId,
+                            cloudId,
+                            cloudId,
+                            syncUuid,
+                            "APPLIED",
+                            Map.of(
+                                    "sync_uuid", syncUuid == null ? "" : syncUuid,
+                                    "reason", "Cloud child row id differed from local id; local child references were remapped before dependent rows synced."
+                            ));
+                }
+            }
+            if (uuidBatch > 0) {
+                localUuidUpdate.executeBatch();
+            }
+        }
+        return changed;
+    }
+
+    private static int pullUuidKeyedRowsAndAlignIds(Connection local, Connection cloud, String table) throws SQLException {
+        List<String> columns = commonColumns(local, cloud, table);
+        if (!columns.contains("sync_uuid")) {
+            return insertMissing(local, cloud, table, "SELECT %s FROM " + quote(table), null);
+        }
+        List<String> primaryKeys = primaryKeyColumns(local, table);
+        if (primaryKeys.size() != 1 || !columns.contains(primaryKeys.get(0))) {
+            return insertMissing(local, cloud, table, "SELECT %s FROM " + quote(table), null);
+        }
+        String idColumn = primaryKeys.get(0);
+        Map<String, Long> localIdsByUuid = idsByColumn(local, table, idColumn, "sync_uuid");
+        Set<Long> localExistingIds = idSet(local, table, idColumn);
+        Map<String, String> localTypes = columnTypes(local, table);
+        List<String> localNotNullable = notNullableColumns(local, table);
+        int changed = 0;
+        String selectSql = "SELECT " + selectExpressions(table, null, columns)
+                + " FROM " + quote(table) + " ORDER BY " + quote(idColumn);
+        try (PreparedStatement select = cloud.prepareStatement(selectSql);
+             PreparedStatement uuidUpdate = prepareUuidUpdate(local, table, idColumn);
+             ResultSet rs = select.executeQuery()) {
+            int uuidBatch = 0;
+            while (rs.next()) {
+                long cloudId = rs.getLong(columns.indexOf(idColumn) + 1);
+                String syncUuid = rs.getString(columns.indexOf("sync_uuid") + 1);
+                Long localId = localIdsByUuid.get(syncUuid);
+                if (localId == null) {
+                    if (localExistingIds.contains(cloudId)) {
+                        addUuidUpdate(uuidUpdate, cloudId, syncUuid);
+                        uuidBatch++;
+                        if (uuidBatch >= 500) {
+                            uuidUpdate.executeBatch();
+                            uuidBatch = 0;
+                        }
+                        localId = cloudId;
+                        localIdsByUuid.put(syncUuid, localId);
+                    } else {
+                        if (localExistingIds.contains(cloudId)) {
+                            moveConflictingLocalUuidRow(local, cloud, table, idColumn, cloudId);
+                        }
+                        insertUuidKeyedRow(local, table, idColumn, columns, rs, true);
+                        changed++;
+                        localId = cloudId;
+                        localExistingIds.add(localId);
+                        localIdsByUuid.put(syncUuid, localId);
+                    }
+                }
+                if (localId != cloudId) {
+                    if (localExistingIds.contains(cloudId)) {
+                        moveConflictingLocalUuidRow(local, cloud, table, idColumn, cloudId);
+                    }
+                    remapLocalGeneratedDocumentId(local, table, idColumn, localId, cloudId);
+                    recordIdMap(local, table, String.valueOf(localId), String.valueOf(cloudId));
+                    SyncAuditService.record(local,
+                            "WORKFLOW_CHILD_PULL_ID_REMAP",
+                            table,
+                            localId,
+                            cloudId,
+                            cloudId,
+                            syncUuid,
+                            "APPLIED",
+                            Map.of(
+                                    "sync_uuid", syncUuid == null ? "" : syncUuid,
+                                    "reason", "Cloud child row id differed from local id during pull; local child references were remapped before dependent rows synced."
+                            ));
+                }
+                if (!isWorkflowAppendOnlyTable(table)
+                        && updateGeneratedDocument(local, table, idColumn, columns, rs, cloudId, localTypes, localNotNullable)) {
+                    changed++;
+                }
+            }
+            if (uuidBatch > 0) {
+                uuidUpdate.executeBatch();
+            }
+        }
+        return changed;
+    }
+
+    private static PreparedStatement prepareUuidUpdate(Connection conn, String table, String idColumn) throws SQLException {
+        return conn.prepareStatement("UPDATE " + quote(table)
+                + " SET sync_uuid = CAST(? AS uuid)"
+                + " WHERE " + quote(idColumn) + " = ?");
+    }
+
+    private static void addUuidUpdate(PreparedStatement ps, long id, String syncUuid) throws SQLException {
+        ps.setString(1, syncUuid);
+        ps.setLong(2, id);
+        ps.addBatch();
+    }
+
+    private static Map<String, Long> idsByColumn(Connection conn, String table, String idColumn, String column) throws SQLException {
+        Map<String, Long> ids = new LinkedHashMap<>();
+        if (!columns(conn, table).contains(column)) {
+            return ids;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(idColumn) + ", " + quote(column)
+                + " FROM " + quote(table) + " WHERE " + quote(column) + " IS NOT NULL");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String value = rs.getString(column);
+                if (value != null && !value.isBlank()) {
+                    ids.put(value, rs.getLong(idColumn));
+                }
+            }
+        }
+        return ids;
+    }
+
+    private static Map<Long, String> columnValuesById(Connection conn, String table, String idColumn, String column) throws SQLException {
+        Map<Long, String> values = new LinkedHashMap<>();
+        if (!columns(conn, table).contains(column)) {
+            return values;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(idColumn) + ", " + quote(column)
+                + " FROM " + quote(table) + " WHERE " + quote(column) + " IS NOT NULL");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                values.put(rs.getLong(idColumn), rs.getString(column));
+            }
+        }
+        return values;
+    }
+
+    private static Set<Long> idSet(Connection conn, String table, String idColumn) throws SQLException {
+        Set<Long> ids = new HashSet<>();
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(idColumn) + " FROM " + quote(table));
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                ids.add(rs.getLong(idColumn));
+            }
+        }
+        return ids;
+    }
+
+    private static Map<Long, String> workflowIdentitySignaturesById(Connection conn, String table, String idColumn,
+                                                                    List<String> columns) throws SQLException {
+        List<String> identityColumns = workflowIdentityColumns(columns);
+        Map<Long, String> signatures = new LinkedHashMap<>();
+        if (identityColumns.isEmpty()) {
+            return signatures;
+        }
+        List<String> selectColumns = new ArrayList<>();
+        selectColumns.add(idColumn);
+        selectColumns.addAll(identityColumns);
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + joinIdentifiers(selectColumns) + " FROM " + quote(table));
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                signatures.put(rs.getLong(idColumn), workflowIdentitySignature(rs, identityColumns));
+            }
+        }
+        return signatures;
+    }
+
+    private static boolean rowLooksLikeSameWorkflowChild(Map<Long, String> targetIdentityById,
+                                                         List<String> columns, ResultSet rs, long id) throws SQLException {
+        String targetSignature = targetIdentityById.get(id);
+        return targetSignature != null && targetSignature.equals(workflowIdentitySignature(columns, rs));
+    }
+
+    private static List<String> workflowIdentityColumns(List<String> columns) {
+        List<String> identityColumns = new ArrayList<>();
+        for (String column : List.of(
+                "quotation_id", "invoice_id", "invoice_delivery_event_id", "invoice_line_id",
+                "sale_id", "sale_item_id", "return_id", "return_item_id",
+                "custom_order_id", "custom_order_line_id", "custom_order_line_return_id",
+                "custom_item_id", "custom_variant_id", "payment_transaction_id",
+                "product_id", "location_id", "sort_order", "action_type", "action_scope",
+                "new_status", "payment_action", "created_at", "delivered_at")) {
+            if (columns.contains(column)) {
+                identityColumns.add(column);
+            }
+        }
+        return identityColumns;
+    }
+
+    private static String workflowIdentitySignature(List<String> columns, ResultSet rs) throws SQLException {
+        List<String> identityColumns = workflowIdentityColumns(columns);
+        List<String> values = new ArrayList<>();
+        for (String column : identityColumns) {
+            Object value = rs.getObject(columns.indexOf(column) + 1);
+            values.add(column + "=" + (value == null ? "<null>" : value.toString()));
+        }
+        return String.join("|", values);
+    }
+
+    private static String workflowIdentitySignature(ResultSet rs, List<String> identityColumns) throws SQLException {
+        List<String> values = new ArrayList<>();
+        for (String column : identityColumns) {
+            Object value = rs.getObject(column);
+            values.add(column + "=" + (value == null ? "<null>" : value.toString()));
+        }
+        return String.join("|", values);
+    }
+
+    private static void moveConflictingLocalUuidRow(Connection local, Connection cloud, String table,
+                                                   String idColumn, long occupiedLocalId) throws SQLException {
+        String occupiedSyncUuid = localColumnValueById(local, table, idColumn, "sync_uuid", occupiedLocalId);
+        Long occupiedCloudId = findIdByColumn(cloud, table, idColumn, "sync_uuid", occupiedSyncUuid);
+        long targetId = occupiedCloudId == null || occupiedCloudId == occupiedLocalId
+                ? nextFreeLocalId(local, table, idColumn)
+                : occupiedCloudId;
+        if (targetId == occupiedLocalId) {
+            targetId = nextFreeLocalId(local, table, idColumn);
+        }
+        if (localGeneratedDocumentExists(local, table, idColumn, targetId)) {
+            moveConflictingLocalUuidRow(local, cloud, table, idColumn, targetId);
+        }
+        remapLocalGeneratedDocumentId(local, table, idColumn, occupiedLocalId, targetId);
+        recordIdMap(local, table, String.valueOf(occupiedLocalId), String.valueOf(targetId));
+    }
+
+    private static String localColumnValueById(Connection conn, String table, String idColumn,
+                                               String valueColumn, long id) throws SQLException {
+        if (!columns(conn, table).contains(valueColumn)) {
+            return null;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(valueColumn)
+                + " FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(valueColumn) : null;
+            }
+        }
+    }
+
+    private static long nextFreeLocalId(Connection local, String table, String idColumn) throws SQLException {
+        long candidate;
+        try (PreparedStatement ps = local.prepareStatement("SELECT COALESCE(MAX(" + quote(idColumn) + "), 0) + 1 AS next_id FROM " + quote(table));
+             ResultSet rs = ps.executeQuery()) {
+            candidate = rs.next() ? rs.getLong("next_id") : 1L;
+        }
+        while (localGeneratedDocumentExists(local, table, idColumn, candidate)) {
+            candidate++;
+        }
+        return candidate;
+    }
+
+    private static Long insertUuidKeyedRow(Connection target, String table, String idColumn,
+                                           List<String> columns, ResultSet rs, boolean includeId) throws SQLException {
+        List<String> insertColumns = new ArrayList<>();
+        for (String column : columns) {
+            if (includeId || !idColumn.equals(column)) {
+                insertColumns.add(column);
+            }
+        }
+        Map<String, String> targetTypes = columnTypes(target, table);
+        List<String> notNullable = notNullableColumns(target, table);
+        String sql = "INSERT INTO " + quote(table) + " (" + joinIdentifiers(insertColumns) + ") VALUES ("
+                + castPlaceholders(insertColumns, targetTypes) + ") RETURNING " + quote(idColumn);
+        try (PreparedStatement ps = target.prepareStatement(sql)) {
+            bindRowValues(ps, insertColumns, columns, rs, targetTypes, notNullable);
+            try (ResultSet inserted = ps.executeQuery()) {
+                if (inserted.next()) {
+                    return inserted.getLong(idColumn);
+                }
+            }
+        }
+        throw new SQLException("Insert did not return " + idColumn + " for " + table + ".");
+    }
+
+    private static boolean rowLooksLikeSameSalesDocumentChild(Connection target, String table, String idColumn,
+                                                              List<String> columns, ResultSet rs, long id) throws SQLException {
+        List<String> identityColumns = new ArrayList<>();
+        for (String column : List.of(
+                "quotation_id", "invoice_id", "invoice_delivery_event_id", "invoice_line_id",
+                "sale_id", "sale_item_id", "return_id", "return_item_id",
+                "custom_order_id", "custom_order_line_id", "custom_order_line_return_id",
+                "custom_item_id", "custom_variant_id", "payment_transaction_id",
+                "product_id", "location_id", "sort_order", "action_type", "action_scope",
+                "new_status", "payment_action", "created_at", "delivered_at")) {
+            if (columns.contains(column)) {
+                identityColumns.add(column);
+            }
+        }
+        if (identityColumns.isEmpty()) {
+            return false;
+        }
+        try (PreparedStatement ps = target.prepareStatement("SELECT " + joinIdentifiers(identityColumns)
+                + " FROM " + quote(table) + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet targetRow = ps.executeQuery()) {
+                if (!targetRow.next()) {
+                    return false;
+                }
+                for (String column : identityColumns) {
+                    Object sourceValue = rs.getObject(columns.indexOf(column) + 1);
+                    Object targetValue = targetRow.getObject(column);
+                    String sourceText = sourceValue == null ? null : sourceValue.toString();
+                    String targetText = targetValue == null ? null : targetValue.toString();
+                    if (sourceText == null ? targetText != null : !sourceText.equals(targetText)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+    }
+
+    private static void updateSingleUuidById(Connection conn, String table, String idColumn, long id, String syncUuid) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("UPDATE " + quote(table)
+                + " SET sync_uuid = CAST(? AS uuid)"
+                + " WHERE " + quote(idColumn) + " = ?")) {
+            ps.setString(1, syncUuid);
+            ps.setLong(2, id);
+            ps.executeUpdate();
+        }
+    }
+
+    private static Long findIdByColumn(Connection conn, String table, String idColumn, String column, String value) throws SQLException {
+        if (value == null || value.isBlank() || !columns(conn, table).contains(column)) {
+            return null;
+        }
+        String type = columnTypes(conn, table).get(column);
+        String valueExpression = type == null || type.isBlank() ? "?" : "CAST(? AS " + type + ")";
+        try (PreparedStatement ps = conn.prepareStatement("SELECT " + quote(idColumn)
+                + " FROM " + quote(table) + " WHERE " + quote(column) + " = " + valueExpression + " LIMIT 1")) {
+            ps.setString(1, value);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(idColumn) : null;
+            }
+        }
+    }
+
+    private static boolean idExists(Connection conn, String table, String idColumn, long id) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM " + quote(table)
+                + " WHERE " + quote(idColumn) + " = ? LIMIT 1")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     private static Long findCloudDocumentIdById(Connection cloud, String table, String idColumn, long localId) throws SQLException {
@@ -966,6 +1574,14 @@ public final class ReferenceDataSyncService {
 
     private static boolean updateCloudGeneratedDocument(Connection cloud, String table, String idColumn,
                                                         List<String> columns, ResultSet rs, long cloudId) throws SQLException {
+        return updateGeneratedDocument(cloud, table, idColumn, columns, rs, cloudId,
+                columnTypes(cloud, table), notNullableColumns(cloud, table));
+    }
+
+    private static boolean updateGeneratedDocument(Connection cloud, String table, String idColumn,
+                                                   List<String> columns, ResultSet rs, long cloudId,
+                                                   Map<String, String> cloudTypes,
+                                                   List<String> notNullable) throws SQLException {
         List<String> updateColumns = new ArrayList<>();
         for (String column : columns) {
             if (!idColumn.equals(column)) {
@@ -975,8 +1591,6 @@ public final class ReferenceDataSyncService {
         if (updateColumns.isEmpty()) {
             return false;
         }
-        Map<String, String> cloudTypes = columnTypes(cloud, table);
-        List<String> notNullable = notNullableColumns(cloud, table);
         StringJoiner assignments = new StringJoiner(", ");
         for (String column : updateColumns) {
             String type = cloudTypes.get(column);
@@ -1099,6 +1713,7 @@ public final class ReferenceDataSyncService {
         if (!columns.contains("custom_order_id")) {
             return upsertAll(local, cloud, "custom_orders");
         }
+        Map<String, Long> cloudIdsByOrderNumber = idsByColumn(cloud, "custom_orders", "custom_order_id", "order_number");
         int changed = 0;
         String selectSql = "SELECT " + selectExpressions("custom_orders", null, columns)
                 + " FROM custom_orders ORDER BY custom_order_id";
@@ -1109,12 +1724,23 @@ public final class ReferenceDataSyncService {
                 String orderNumber = columns.contains("order_number")
                         ? rs.getString(columns.indexOf("order_number") + 1)
                         : null;
-                Long cloudOrderId = findCloudCustomOrderIdById(cloud, localOrderId);
+                Long cloudOrderId = orderNumber == null || orderNumber.isBlank() ? null : cloudIdsByOrderNumber.get(orderNumber);
                 if (cloudOrderId == null) {
-                    cloudOrderId = findCloudCustomOrderIdByOrderNumber(cloud, orderNumber);
-                }
-                if (cloudOrderId == null) {
-                    cloudOrderId = insertCloudCustomOrder(cloud, columns, rs);
+                    try {
+                        cloudOrderId = insertCloudCustomOrder(cloud, columns, rs);
+                    } catch (SQLException ex) {
+                        if (!isUniqueViolation(ex) || orderNumber == null || orderNumber.isBlank()) {
+                            throw ex;
+                        }
+                        cloudOrderId = findCloudCustomOrderIdByOrderNumber(cloud, orderNumber);
+                        if (cloudOrderId == null) {
+                            throw ex;
+                        }
+                        updateCloudCustomOrder(cloud, columns, rs, cloudOrderId);
+                    }
+                    if (orderNumber != null && !orderNumber.isBlank()) {
+                        cloudIdsByOrderNumber.put(orderNumber, cloudOrderId);
+                    }
                     changed++;
                 } else {
                     if (updateCloudCustomOrder(cloud, columns, rs, cloudOrderId)) {
@@ -1152,13 +1778,32 @@ public final class ReferenceDataSyncService {
     }
 
     private static Long findCloudCustomOrderIdByOrderNumber(Connection cloud, String orderNumber) throws SQLException {
-        if (orderNumber == null || orderNumber.isBlank() || !columns(cloud, "custom_orders").contains("order_number")) {
+        if (orderNumber == null || orderNumber.isBlank()) {
             return null;
         }
         try (PreparedStatement ps = cloud.prepareStatement("SELECT custom_order_id FROM custom_orders WHERE order_number = ? ORDER BY custom_order_id LIMIT 1")) {
             ps.setString(1, orderNumber);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong("custom_order_id") : null;
+            }
+        }
+    }
+
+    private static boolean cloudCustomOrderIdMatchesOrderNumber(Connection cloud, long customOrderId, String orderNumber) throws SQLException {
+        if (orderNumber == null || orderNumber.isBlank()) {
+            return false;
+        }
+        try (PreparedStatement ps = cloud.prepareStatement("""
+                SELECT 1
+                FROM custom_orders
+                WHERE custom_order_id = ?
+                  AND order_number = ?
+                LIMIT 1
+                """)) {
+            ps.setLong(1, customOrderId);
+            ps.setString(2, orderNumber);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
             }
         }
     }
@@ -1183,6 +1828,15 @@ public final class ReferenceDataSyncService {
             }
         }
         throw new SQLException("Cloud custom order insert did not return custom_order_id.");
+    }
+
+    private static boolean isUniqueViolation(SQLException ex) {
+        for (SQLException current = ex; current != null; current = current.getNextException()) {
+            if ("23505".equals(current.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean updateCloudCustomOrder(Connection cloud, List<String> columns, ResultSet rs, long cloudOrderId) throws SQLException {
@@ -2150,6 +2804,11 @@ public final class ReferenceDataSyncService {
         if ("inventory".equals(table) && columns.contains("product_id") && columns.contains("location_id")) {
             return List.of("product_id", "location_id");
         }
+        if (usesWorkflowChildUuid(table)
+                && columns.contains("sync_uuid")
+                && hasUniqueConflictTarget(target, table, List.of("sync_uuid"))) {
+            return List.of("sync_uuid");
+        }
         if ("receiving_batches".equals(table) && columns.contains("receive_id")) {
             return List.of("receive_id");
         }
@@ -2177,6 +2836,57 @@ public final class ReferenceDataSyncService {
             return List.of("placement_name");
         }
         return primaryKeys;
+    }
+
+    private static boolean usesWorkflowChildUuid(String table) {
+        return "quotation_lines".equals(table)
+                || "invoice_lines".equals(table)
+                || "invoice_payments".equals(table)
+                || "invoice_delivery_lines".equals(table)
+                || "quotation_status_history".equals(table)
+                || "quotation_audit_log".equals(table)
+                || "invoice_status_history".equals(table)
+                || "invoice_audit_log".equals(table)
+                || "sale_items".equals(table)
+                || "sale_returns".equals(table)
+                || "sale_return_items".equals(table)
+                || "sale_audit_log".equals(table)
+                || "inventory_movements".equals(table)
+                || "customer_account_transactions".equals(table)
+                || "customer_account_payment_allocations".equals(table)
+                || "custom_order_lines".equals(table)
+                || "custom_order_line_print_addons".equals(table)
+                || "custom_order_payments".equals(table)
+                || "custom_order_inventory_reservations".equals(table)
+                || "custom_order_status_history".equals(table)
+                || "custom_order_line_deliveries".equals(table)
+                || "custom_order_line_production_history".equals(table)
+                || "custom_order_line_returns".equals(table)
+                || "custom_order_item_movements".equals(table)
+                || "custom_order_audit_log".equals(table);
+    }
+
+    private static boolean isWorkflowAppendOnlyTable(String table) {
+        return "quotation_status_history".equals(table)
+                || "quotation_audit_log".equals(table)
+                || "invoice_payments".equals(table)
+                || "invoice_delivery_lines".equals(table)
+                || "invoice_status_history".equals(table)
+                || "invoice_audit_log".equals(table)
+                || "sale_items".equals(table)
+                || "sale_returns".equals(table)
+                || "sale_return_items".equals(table)
+                || "sale_audit_log".equals(table)
+                || "inventory_movements".equals(table)
+                || "customer_account_transactions".equals(table)
+                || "customer_account_payment_allocations".equals(table)
+                || "custom_order_payments".equals(table)
+                || "custom_order_status_history".equals(table)
+                || "custom_order_line_deliveries".equals(table)
+                || "custom_order_line_production_history".equals(table)
+                || "custom_order_line_returns".equals(table)
+                || "custom_order_item_movements".equals(table)
+                || "custom_order_audit_log".equals(table);
     }
 
     private static boolean hasUniqueConflictTarget(Connection conn, String table, List<String> conflictColumns) throws SQLException {
@@ -2312,9 +3022,17 @@ public final class ReferenceDataSyncService {
             ensureUpdatedAtTableSchema(conn, stmt, "role_permissions");
             ensureUpdatedAtTableSchema(conn, stmt, "role_mobile_permissions");
             ensureUpdatedAtTableSchema(conn, stmt, "roles");
+            ensureCompanyInfoSchema(stmt);
             ensureUpdatedAtTableSchema(conn, stmt, "locations");
             ensureUpdatedAtTableSchema(conn, stmt, "company_customization");
             ensureUpdatedAtTableSchema(conn, stmt, "users");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
@@ -2503,6 +3221,68 @@ public final class ReferenceDataSyncService {
     private static String schemaCacheKey(Connection conn, String schemaName) throws SQLException {
         DatabaseMetaData metaData = conn.getMetaData();
         return schemaName + "|" + metaData.getURL() + "|" + metaData.getUserName();
+    }
+
+    private static void ensureCompanyInfoSchema(Statement stmt) throws SQLException {
+        stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS company_info (
+                    company_info_id INTEGER PRIMARY KEY DEFAULT 1,
+                    company_name TEXT NOT NULL DEFAULT 'SmartStock',
+                    company_motto_line1 TEXT NOT NULL DEFAULT '',
+                    company_motto_line2 TEXT NOT NULL DEFAULT '',
+                    company_logo_url TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT company_info_singleton_chk CHECK (company_info_id = 1)
+                )
+                """);
+        stmt.executeUpdate("""
+                DO $$
+                BEGIN
+                    IF to_regclass('public.company_customization') IS NOT NULL
+                       AND EXISTS (
+                           SELECT 1
+                           FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'company_customization'
+                             AND column_name = 'company_name'
+                       ) THEN
+                        EXECUTE $sql$
+                            INSERT INTO company_info (
+                                company_info_id,
+                                company_name,
+                                company_motto_line1,
+                                company_motto_line2,
+                                company_logo_url,
+                                updated_at
+                            )
+                            SELECT 1,
+                                   COALESCE(NULLIF(company_name, ''), 'SmartStock'),
+                                   COALESCE(company_motto_line1, ''),
+                                   COALESCE(company_motto_line2, ''),
+                                   COALESCE(receipt_logo_url, ''),
+                                   NOW()
+                            FROM company_customization
+                            ORDER BY location_id
+                            LIMIT 1
+                            ON CONFLICT (company_info_id) DO UPDATE SET
+                                company_name = COALESCE(NULLIF(company_info.company_name, ''), EXCLUDED.company_name),
+                                company_motto_line1 = COALESCE(NULLIF(company_info.company_motto_line1, ''), EXCLUDED.company_motto_line1),
+                                company_motto_line2 = COALESCE(NULLIF(company_info.company_motto_line2, ''), EXCLUDED.company_motto_line2),
+                                company_logo_url = COALESCE(NULLIF(company_info.company_logo_url, ''), EXCLUDED.company_logo_url),
+                                updated_at = NOW()
+                        $sql$;
+                    END IF;
+                END $$;
+                """);
+        stmt.executeUpdate("""
+                INSERT INTO company_info (company_info_id, company_name)
+                VALUES (1, 'SmartStock')
+                ON CONFLICT (company_info_id) DO NOTHING
+                """);
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_name");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line1");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line2");
+        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS receipt_logo_url");
     }
 
     private static void ensureUpdatedAtTableSchema(Connection conn, Statement stmt, String table) throws SQLException {

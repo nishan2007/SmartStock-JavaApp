@@ -10,7 +10,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class BalanceSheetService {
     private static final long SCHEMA_LOCK_KEY = 7_340_210_001L;
+    private static final DateTimeFormatter ACCOUNT_PAYMENT_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd h:mm a");
     private static final Set<String> SCHEMA_READY = ConcurrentHashMap.newKeySet();
 
     private BalanceSheetService() {
@@ -99,6 +104,7 @@ public final class BalanceSheetService {
                         drawer_cash_lines TEXT,
                         device_sales_lines TEXT,
                         device_order_lines TEXT,
+                        account_payment_lines TEXT,
                         drawer_check_lines TEXT,
                         submitted_by_user_id INTEGER REFERENCES users(user_id),
                         submitted_by_name TEXT,
@@ -109,6 +115,7 @@ public final class BalanceSheetService {
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_cash_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS device_sales_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS device_order_lines TEXT");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS account_payment_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_check_lines TEXT");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_location_period_idx ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx ON balance_sheet_submissions(submitted_by_user_id)");
@@ -224,6 +231,7 @@ public final class BalanceSheetService {
             List<SheetLine> drawerCash = loadDrawerCash(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceSales = loadDeviceSales(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceOrders = loadDeviceOrders(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
+            List<SheetLine> accountPayments = loadAccountPayments(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> drawerChecks = loadDrawerMatchChecks(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             BigDecimal cashInHand = total(drawerCash);
             BigDecimal totalIncome = total(income);
@@ -236,7 +244,7 @@ public final class BalanceSheetService {
             }
             BigDecimal balanceCf = balanceBf.add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
             return new BalanceSheet(null, null, null, null, null, null,
-                    income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, drawerChecks, cashInHand,
+                    income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, accountPayments, drawerChecks, cashInHand,
                     balanceBf, totalIncome, totalReceivables, totalExpenses, totalPayables, balanceCf);
         }
     }
@@ -254,10 +262,10 @@ public final class BalanceSheetService {
                         location_id, location_name, period_start, period_end, store_timezone,
                         balance_bf, cash_in_hand, total_income, total_receivables, total_expenses,
                         total_payables, balance_cf, income_lines, receivable_lines, expense_lines,
-                        payable_lines, drawer_cash_lines, device_sales_lines, device_order_lines, drawer_check_lines, submitted_by_user_id,
+                        payable_lines, drawer_cash_lines, device_sales_lines, device_order_lines, account_payment_lines, drawer_check_lines, submitted_by_user_id,
                         submitted_by_name, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING balance_sheet_submission_id
                     """;
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -280,10 +288,11 @@ public final class BalanceSheetService {
                 ps.setString(17, encodeLines(sheet.drawerCash()));
                 ps.setString(18, encodeLines(sheet.deviceSales()));
                 ps.setString(19, encodeLines(sheet.deviceOrders()));
-                ps.setString(20, encodeLines(sheet.drawerChecks()));
-                setNullableInteger(ps, 21, SessionManager.getCurrentUserId());
-                ps.setString(22, SessionManager.getCurrentUserDisplayName());
-                ps.setString(23, blankToNull(notes));
+                ps.setString(20, encodeLines(sheet.accountPayments()));
+                ps.setString(21, encodeLines(sheet.drawerChecks()));
+                setNullableInteger(ps, 22, SessionManager.getCurrentUserId());
+                ps.setString(23, SessionManager.getCurrentUserDisplayName());
+                ps.setString(24, blankToNull(notes));
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         long submissionId = rs.getLong("balance_sheet_submission_id");
@@ -367,6 +376,7 @@ public final class BalanceSheetService {
                                 decodeLines(rs.getString("drawer_cash_lines")),
                                 decodeLines(rs.getString("device_sales_lines")),
                                 decodeLines(rs.getString("device_order_lines")),
+                                decodeLines(rs.getString("account_payment_lines")),
                                 decodeLines(rs.getString("drawer_check_lines")),
                                 defaultZero(rs.getBigDecimal("cash_in_hand")),
                                 defaultZero(rs.getBigDecimal("balance_bf")),
@@ -744,6 +754,49 @@ public final class BalanceSheetService {
         return lines;
     }
 
+    private static List<SheetLine> loadAccountPayments(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
+                                                       Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
+        List<SheetLine> lines = new ArrayList<>();
+        String sql = """
+                SELECT t.cash_drawer_session_id,
+                       COALESCE(NULLIF(TRIM(t.payment_method), ''), 'UNKNOWN') AS payment_method,
+                       COALESCE(NULLIF(TRIM(t.cash_drawer_name), ''), NULLIF(TRIM(cds.drawer_name), ''), 'No Drawer') AS drawer_label,
+                       MIN(t.created_at) AS first_paid_at,
+                       MAX(t.created_at) AS last_paid_at,
+                       COUNT(*) AS payment_count,
+                       SUM(ABS(COALESCE(t.amount, 0))) AS amount
+                FROM customer_account_transactions t
+                LEFT JOIN cash_drawer_sessions cds ON cds.cash_drawer_session_id = t.cash_drawer_session_id
+                WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                  AND (? IS NULL OR t.location_id = ?)
+                  AND (t.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                """ + sessionFilterSql(cashDrawerSessionIds, "t.cash_drawer_session_id") + """
+                GROUP BY t.cash_drawer_session_id,
+                         COALESCE(NULLIF(TRIM(t.payment_method), ''), 'UNKNOWN'),
+                         COALESCE(NULLIF(TRIM(t.cash_drawer_name), ''), NULLIF(TRIM(cds.drawer_name), ''), 'No Drawer')
+                ORDER BY MIN(t.created_at) ASC, drawer_label ASC, payment_method ASC
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int index = 1;
+            setNullableInteger(ps, index++, locationId);
+            setNullableInteger(ps, index++, locationId);
+            ps.setString(index++, storeZoneId);
+            ps.setDate(index++, Date.valueOf(from));
+            ps.setDate(index++, Date.valueOf(to));
+            bindSessionIds(ps, index, cashDrawerSessionIds);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    lines.add(new SheetLine(accountPaymentLabel(rs, storeZoneId), defaultZero(rs.getBigDecimal("amount"))));
+                }
+            }
+        }
+
+        if (lines.isEmpty()) {
+            lines.add(new SheetLine("No account payments collected", BigDecimal.ZERO));
+        }
+        return lines;
+    }
+
     private static List<SheetLine> loadDrawerMatchChecks(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
                                                          Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
@@ -866,6 +919,33 @@ public final class BalanceSheetService {
             case "ACCOUNT" -> "ACCOUNT CHARGES";
             default -> paymentMethod.trim().toUpperCase();
         };
+    }
+
+    private static String accountPaymentLabel(ResultSet rs, String storeZoneId) throws SQLException {
+        long sessionId = rs.getLong("cash_drawer_session_id");
+        boolean hasSession = !rs.wasNull();
+        String drawerLabel = defaultText(rs.getString("drawer_label"));
+        LocalDateTime firstPaidAt = toStoreTime(rs.getTimestamp("first_paid_at"), storeZoneId);
+        LocalDateTime lastPaidAt = toStoreTime(rs.getTimestamp("last_paid_at"), storeZoneId);
+        String timeLabel = firstPaidAt == null
+                ? "Unknown time"
+                : ACCOUNT_PAYMENT_TIME_FORMAT.format(firstPaidAt);
+        if (firstPaidAt != null && lastPaidAt != null && !firstPaidAt.equals(lastPaidAt)) {
+            timeLabel += " - " + ACCOUNT_PAYMENT_TIME_FORMAT.format(lastPaidAt);
+        }
+        int paymentCount = rs.getInt("payment_count");
+        String drawLabel = hasSession ? "Draw #" + sessionId : "No draw";
+        String paymentMethod = formatIncomeLabel(rs.getString("payment_method"));
+        String paymentLabel = paymentCount == 1 ? "1 payment" : paymentCount + " payments";
+        return paymentMethod + " / " + drawLabel + " / " + drawerLabel + " / " + timeLabel + " / " + paymentLabel;
+    }
+
+    private static LocalDateTime toStoreTime(Timestamp timestamp, String storeZoneId) {
+        if (timestamp == null) {
+            return null;
+        }
+        ZoneId zone = ZoneId.of(storeZoneId == null || storeZoneId.isBlank() ? "UTC" : storeZoneId);
+        return timestamp.toInstant().atZone(zone).toLocalDateTime();
     }
 
     private static BigDecimal defaultZero(BigDecimal value) {
@@ -1014,6 +1094,7 @@ public final class BalanceSheetService {
                                List<SheetLine> drawerCash,
                                List<SheetLine> deviceSales,
                                List<SheetLine> deviceOrders,
+                               List<SheetLine> accountPayments,
                                List<SheetLine> drawerChecks,
                                BigDecimal cashInHand,
                                BigDecimal balanceBf,

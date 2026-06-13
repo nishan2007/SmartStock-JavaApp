@@ -21,7 +21,6 @@ public final class SyncAuditService {
         if (conn == null || actionType == null || actionType.isBlank()) {
             return;
         }
-        SyncSchemaInstaller.ensureSchema(conn);
         String sql = """
                 INSERT INTO sync_audit_log (
                     action_type, table_name, local_id_before, local_id_after,

@@ -13,21 +13,20 @@ import ui.screens.customorders.CustomOrders;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EmployeeManagement;
-import ui.screens.EndOfDay;
 import ui.screens.MainMenu;
 import ui.screens.MakeASale;
 import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
 import ui.screens.NewItem;
 import ui.screens.Orders;
-import ui.screens.OrdersEndOfDay;
 import ui.screens.MaintenanceManagement;
 import ui.screens.PartsManagement;
 import ui.screens.ReceivingHistory;
+import ui.screens.Reports;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
-import ui.screens.SalesOrders;
-import ui.screens.SalesQuotes;
+import ui.screens.Invoices;
+import ui.screens.Quotations;
 import ui.screens.StoreTransfer;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
@@ -60,8 +59,7 @@ public final class NavigationManager {
         BALANCE_DRAW,
         BALANCE_SHEET,
         ORDERS_MANAGER_DASHBOARD,
-        END_OF_DAY,
-        ORDERS_END_OF_DAY,
+        REPORTS,
         RECEIVING_INVENTORY,
         RECEIVING_HISTORY,
         STORE_TRANSFER,
@@ -73,8 +71,8 @@ public final class NavigationManager {
         VIEW_SALES,
         VIEW_INVENTORY,
         CUSTOMER_ACCOUNTS,
-        SALES_QUOTES,
-        SALES_ORDERS,
+        QUOTATIONS,
+        INVOICES,
         CUSTOM_ORDERS,
         ORDERS,
         TIME_CLOCK,
@@ -130,12 +128,8 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.ORDERS_MANAGER_DASHBOARD));
     }
 
-    public static void openEndOfDay(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.END_OF_DAY));
-    }
-
-    public static void openOrdersEndOfDay(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.ORDERS_END_OF_DAY));
+    public static void openReports(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.REPORTS));
     }
 
     public static void openEnterInventory(JFrame parent) {
@@ -182,12 +176,12 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
     }
 
-    public static void openSalesQuotes(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.SALES_QUOTES));
+    public static void openQuotations(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.QUOTATIONS));
     }
 
-    public static void openSalesOrders(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.SALES_ORDERS));
+    public static void openInvoices(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.INVOICES));
     }
 
     public static void openCustomOrders(JFrame parent) {
@@ -246,8 +240,7 @@ public final class NavigationManager {
             case BALANCE_DRAW -> new BalanceDraw();
             case BALANCE_SHEET -> new BalanceSheet();
             case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
-            case END_OF_DAY -> new EndOfDay();
-            case ORDERS_END_OF_DAY -> new OrdersEndOfDay();
+            case REPORTS -> new Reports();
             case RECEIVING_INVENTORY -> new EnterInventory();
             case RECEIVING_HISTORY -> new ReceivingHistory();
             case STORE_TRANSFER -> new StoreTransfer();
@@ -259,8 +252,8 @@ public final class NavigationManager {
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
-            case SALES_QUOTES -> new SalesQuotes();
-            case SALES_ORDERS -> new SalesOrders();
+            case QUOTATIONS -> new Quotations();
+            case INVOICES -> new Invoices();
             case CUSTOM_ORDERS -> new CustomOrders();
             case ORDERS -> new Orders();
             case TIME_CLOCK -> new TimeClock();
@@ -288,8 +281,7 @@ public final class NavigationManager {
             case "BalanceDraw" -> ScreenType.BALANCE_DRAW;
             case "BalanceSheet" -> ScreenType.BALANCE_SHEET;
             case "OrdersManagerDashboard" -> ScreenType.ORDERS_MANAGER_DASHBOARD;
-            case "EndOfDay" -> ScreenType.END_OF_DAY;
-            case "OrdersEndOfDay" -> ScreenType.ORDERS_END_OF_DAY;
+            case "Reports", "EndOfDay", "OrdersEndOfDay" -> ScreenType.REPORTS;
             case "EnterInventory" -> ScreenType.RECEIVING_INVENTORY;
             case "ReceivingHistory" -> ScreenType.RECEIVING_HISTORY;
             case "StoreTransfer" -> ScreenType.STORE_TRANSFER;
@@ -301,8 +293,8 @@ public final class NavigationManager {
             case "ViewSales" -> ScreenType.VIEW_SALES;
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
-            case "SalesQuotes", "SalesQuotesOrders" -> ScreenType.SALES_QUOTES;
-            case "SalesOrders" -> ScreenType.SALES_ORDERS;
+            case "Quotations", "QuotationsOrders" -> ScreenType.QUOTATIONS;
+            case "Invoices" -> ScreenType.INVOICES;
             case "CustomOrders" -> ScreenType.CUSTOM_ORDERS;
             case "Orders" -> ScreenType.ORDERS;
             case "TimeClock" -> ScreenType.TIME_CLOCK;

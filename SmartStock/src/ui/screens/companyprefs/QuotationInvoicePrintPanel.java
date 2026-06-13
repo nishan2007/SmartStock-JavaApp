@@ -4,29 +4,29 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
-public class SalesQuoteOrderPrintPanel extends JPanel {
-    public SalesQuoteOrderPrintPanel(JTextField quoteTitleField,
-                                     JTextField quoteValidityNoteField,
-                                     JTextField orderTitleField,
+public class QuotationInvoicePrintPanel extends JPanel {
+    public QuotationInvoicePrintPanel(JTextField quotationTitleField,
+                                     JTextField quotationValidityNoteField,
+                                     JTextField invoiceTitleField,
                                      JTextField deliveryTitleField,
                                      JTextField footerNoteField,
                                      JCheckBox showSignaturesBox) {
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
         setOpaque(false);
-        add(buildTitlesPanel(quoteTitleField, quoteValidityNoteField, orderTitleField, deliveryTitleField, footerNoteField));
+        add(buildTitlesPanel(quotationTitleField, quotationValidityNoteField, invoiceTitleField, deliveryTitleField, footerNoteField));
         add(Box.createVerticalStrut(16));
         add(buildOptionsPanel(showSignaturesBox));
     }
 
-    private JPanel buildTitlesPanel(JTextField quoteTitleField,
-                                    JTextField quoteValidityNoteField,
-                                    JTextField orderTitleField,
+    private JPanel buildTitlesPanel(JTextField quotationTitleField,
+                                    JTextField quotationValidityNoteField,
+                                    JTextField invoiceTitleField,
                                     JTextField deliveryTitleField,
                                     JTextField footerNoteField) {
-        JPanel panel = createSectionPanel("Sales Document Printouts");
-        addRow(panel, 1, "Quote Title", quoteTitleField);
-        addRow(panel, 2, "Quote Validity Note", quoteValidityNoteField);
-        addRow(panel, 3, "Order Title", orderTitleField);
+        JPanel panel = createSectionPanel("Quotation / Invoice Printouts");
+        addRow(panel, 1, "Quotation Title", quotationTitleField);
+        addRow(panel, 2, "Quotation Validity Note", quotationValidityNoteField);
+        addRow(panel, 3, "Invoice Title", invoiceTitleField);
         addRow(panel, 4, "Delivery Bill Title", deliveryTitleField);
         addRow(panel, 5, "Footer Note", footerNoteField);
         return panel;

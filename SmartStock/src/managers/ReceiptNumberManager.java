@@ -211,10 +211,8 @@ public class ReceiptNumberManager {
                 CREATE TABLE IF NOT EXISTS company_customization (
                     customization_id SERIAL PRIMARY KEY,
                     location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
-                    company_name TEXT NOT NULL DEFAULT 'SmartStock',
                     receipt_header_line TEXT NOT NULL DEFAULT '',
                     receipt_footer_line TEXT NOT NULL DEFAULT 'Thank you',
-                    receipt_logo_url TEXT NOT NULL DEFAULT '',
                     show_logo BOOLEAN NOT NULL DEFAULT FALSE,
                     show_sale_id BOOLEAN NOT NULL DEFAULT TRUE,
                     show_device BOOLEAN NOT NULL DEFAULT TRUE,
@@ -271,8 +269,8 @@ public class ReceiptNumberManager {
                     FROM sales
                     WHERE location_id = ?
                 )
-                INSERT INTO company_customization (location_id, company_name, next_receipt_counter)
-                VALUES (?, 'SmartStock', (SELECT GREATEST(max_sequence + 1, 1) FROM max_sale_sequence))
+                INSERT INTO company_customization (location_id, next_receipt_counter)
+                VALUES (?, (SELECT GREATEST(max_sequence + 1, 1) FROM max_sale_sequence))
                 ON CONFLICT (location_id) DO NOTHING
                 """;
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
