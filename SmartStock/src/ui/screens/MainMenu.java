@@ -61,7 +61,6 @@ public class MainMenu extends JFrame {
     private final JButton viewSalesButton;
     private final JButton customerAccountsButton;
     private final JButton customerTransactionHistoryButton;
-    private final JButton quotationsButton;
     private final JButton invoicesButton;
     private final JButton customOrdersButton;
     private final JButton ordersButton;
@@ -79,7 +78,6 @@ public class MainMenu extends JFrame {
     private final JButton companyCustomizationButton;
     private final JButton workstationPreferencesButton;
     private final JButton logoutButton;
-    private final JButton notificationButton = new JButton("Notifications");
     private final Set<String> urgentPopupKeysShown = new HashSet<>();
     private Timer notificationRefreshTimer;
 
@@ -133,8 +131,7 @@ public class MainMenu extends JFrame {
         viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/MainMenuViewSales.png"));
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
         customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
-        quotationsButton = createMenuButton("Quotations", "Create and issue business quotations", loadIcon("src/ICONS/MainMenuQuotations.png"));
-        invoicesButton = createMenuButton("Invoices", "Take order payments and post deliveries", loadIcon("src/ICONS/MainMenuInvoices.png"));
+        invoicesButton = createMenuButton("Quotations & Invoices", "Create quotes, take payments, and post deliveries", loadIcon("src/ICONS/MainMenuInvoices.png"));
         customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
@@ -165,7 +162,6 @@ public class MainMenu extends JFrame {
                 DeckersPalette.ORANGE,
                 makeSaleButton,
                 returnSaleButton,
-                quotationsButton,
                 invoicesButton,
                 viewSalesButton
         ));
@@ -175,8 +171,7 @@ public class MainMenu extends JFrame {
                 DeckersPalette.MAGENTA,
                 ordersManagerDashboardButton,
                 customOrdersButton,
-                ordersButton,
-                customOrderItemsButton
+                ordersButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
@@ -185,12 +180,10 @@ public class MainMenu extends JFrame {
                 enterInventoryButton,
                 receivingHistoryButton,
                 storeTransferButton,
-                departmentListButton,
-                vendorListButton,
+                customOrderItemsButton,
                 viewInventoryButton,
                 addItemButton,
-                editItemsButton,
-                maintenanceManagementButton
+                editItemsButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
@@ -204,6 +197,8 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(createSectionPanel(
                 "Admin",
                 DeckersPalette.PURPLE,
+                departmentListButton,
+                vendorListButton,
                 rolesPermissionsButton,
                 deviceManagementButton,
                 machineManagementButton,
@@ -223,7 +218,8 @@ public class MainMenu extends JFrame {
                 balanceSheetButton,
                 reportsButton,
                 customerAccountsButton,
-                customerTransactionHistoryButton
+                customerTransactionHistoryButton,
+                maintenanceManagementButton
         ), BorderLayout.NORTH);
 
         JPanel menuColumnsPanel = new MenuColumnsPanel(leftSectionStackPanel, operationsColumnPanel);
@@ -329,7 +325,6 @@ public class MainMenu extends JFrame {
         rightPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         rightPanel.setBackground(backgroundColor());
         rightPanel.add(smartStockLogoPanel, BorderLayout.CENTER);
-        rightPanel.add(createNotificationButtonPanel(), BorderLayout.SOUTH);
 
         JPanel titlePanel = new JPanel();
         titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
@@ -351,22 +346,6 @@ public class MainMenu extends JFrame {
         loadCompanyLogo(companyLogoLabel);
         setSmartStockLogo(smartStockLogoLabel);
         return headerPanel;
-    }
-
-    private JPanel createNotificationButtonPanel() {
-        notificationButton.setFont(new Font("SansSerif", Font.BOLD, 13));
-        notificationButton.setFocusPainted(false);
-        notificationButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        notificationButton.setPreferredSize(new Dimension(300, 34));
-        notificationButton.setBackground(surfaceColor());
-        notificationButton.setForeground(textColor());
-        notificationButton.addActionListener(e -> openNotificationsDialog());
-
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-        panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
-        panel.setBackground(backgroundColor());
-        panel.add(notificationButton);
-        return panel;
     }
 
     private JLabel createLogoLabel(String fallbackText) {
@@ -935,9 +914,8 @@ public class MainMenu extends JFrame {
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
-                || PermissionManager.hasPermission("CREATE_QUOTATION");
-        boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+        boolean canQuotationsInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("CREATE_QUOTATION")
                 || PermissionManager.hasPermission("MANAGE_INVOICES")
                 || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
@@ -974,8 +952,7 @@ public class MainMenu extends JFrame {
         viewSalesButton.setEnabled(canViewSales);
         customerAccountsButton.setEnabled(canCustomerAccounts);
         customerTransactionHistoryButton.setEnabled(canCustomerAccounts);
-        quotationsButton.setEnabled(canQuotations);
-        invoicesButton.setEnabled(canInvoices);
+        invoicesButton.setEnabled(canQuotationsInvoices);
         customOrdersButton.setEnabled(canCustomOrders);
         ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
@@ -1012,7 +989,6 @@ public class MainMenu extends JFrame {
                 viewSalesButton,
                 customerAccountsButton,
                 customerTransactionHistoryButton,
-                quotationsButton,
                 invoicesButton,
                 customOrdersButton,
                 ordersButton,
@@ -1135,21 +1111,13 @@ public class MainMenu extends JFrame {
             }
             openCustomerTransactionHistory();
         });
-        quotationsButton.addActionListener(e -> {
-            boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
-                    || PermissionManager.hasPermission("CREATE_QUOTATION");
-            if (!canQuotations) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Quotations.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            NavigationManager.openQuotations(this);
-        });
         invoicesButton.addActionListener(e -> {
-            boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+            boolean canQuotationsInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                    || PermissionManager.hasPermission("CREATE_QUOTATION")
                     || PermissionManager.hasPermission("MANAGE_INVOICES")
                     || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
-            if (!canInvoices) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+            if (!canQuotationsInvoices) {
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Quotations & Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             NavigationManager.openInvoices(this);
@@ -1306,23 +1274,20 @@ public class MainMenu extends JFrame {
                             urgent++;
                         }
                     }
-                    if (urgent > 0) {
-                        notificationButton.setText("Notifications (" + urgent + " urgent)");
-                    } else if (unread > 0) {
-                        notificationButton.setText("Notifications (" + unread + ")");
-                    } else {
-                        notificationButton.setText("Notifications");
-                    }
-                    notificationButton.setForeground(urgent > 0 ? new Color(185, 28, 28) : textColor());
+                    AppMenuBar.updateNotificationMenuLabel(getJMenuBar(), unread, urgent);
                     if (allowPopup) {
                         showUrgentNotificationPopup(notifications);
                     }
                 } catch (Exception ex) {
-                    notificationButton.setText("Notifications");
+                    AppMenuBar.updateNotificationMenuLabel(getJMenuBar(), 0, 0);
                 }
             }
         };
         worker.execute();
+    }
+
+    public void refreshNotificationMenu() {
+        refreshNotifications(false);
     }
 
     private void showUrgentNotificationPopup(List<AppNotification> notifications) {
@@ -1436,17 +1401,6 @@ public class MainMenu extends JFrame {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&#39;");
-    }
-
-    private void openNotificationsDialog() {
-        NotificationsDialog dialog = new NotificationsDialog(this);
-        dialog.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                refreshNotifications(false);
-            }
-        });
-        dialog.setVisible(true);
     }
 
     private void promptToStartDrawIfNeeded() {

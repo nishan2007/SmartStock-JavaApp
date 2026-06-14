@@ -45,7 +45,7 @@ public final class ServerProvisioningService {
             SyncSchemaInstaller.ensureSchema(local);
             SyncSchemaInstaller.ensureSecurityHardening(local);
             LocalAuthCacheService.ensureSchema(local);
-            steps.add("Installed local base schema, custom order workflow schema, and sync/offline-login tables ("
+            steps.add("Installed local base schema, custom order workflow schema, and sync/employee credential tables ("
                     + customOrderStatements + " custom-order statements).");
         }
 

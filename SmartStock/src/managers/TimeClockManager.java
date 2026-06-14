@@ -273,51 +273,66 @@ public final class TimeClockManager {
     }
 
     private static List<TimeClockRow> buildRows(List<TimeRecord> records) {
+        List<TimeSegment> segments = splitRecordsByWorkDate(records);
         Map<String, BigDecimal> payPeriodHours = new HashMap<>();
         Map<String, Integer> dailyPaidClockIds = new HashMap<>();
 
-        for (TimeRecord record : records) {
-            PayPeriod payPeriod = payPeriodFor(record.workDate);
-            String key = record.userId + "|" + payPeriod.start();
-            BigDecimal dailyHours = sessionHours(record);
-            payPeriodHours.merge(key, dailyHours, BigDecimal::add);
+        for (TimeSegment segment : segments) {
+            PayPeriod payPeriod = payPeriodFor(segment.workDate);
+            String key = segment.record.userId + "|" + payPeriod.start();
+            payPeriodHours.merge(key, segment.hours, BigDecimal::add);
 
-            if (record.isDaily() && record.clockOut != null) {
-                String dailyKey = dailyPayKey(record.userId, record.workDate);
-                dailyPaidClockIds.merge(dailyKey, record.clockId, Math::min);
+            if (segment.record.isDaily() && segment.record.clockOut != null && segment.hours.compareTo(BigDecimal.ZERO) > 0) {
+                String dailyKey = dailyPayKey(segment.record.userId, segment.workDate);
+                dailyPaidClockIds.merge(dailyKey, segment.record.clockId, Math::min);
             }
         }
 
         List<TimeClockRow> rows = new ArrayList<>();
-        for (TimeRecord record : records) {
-            PayPeriod payPeriod = payPeriodFor(record.workDate);
+        for (TimeSegment segment : segments) {
+            TimeRecord record = segment.record;
+            PayPeriod payPeriod = payPeriodFor(segment.workDate);
             String key = record.userId + "|" + payPeriod.start();
-            BigDecimal dailyHours = sessionHours(record);
             BigDecimal totalHours = payPeriodHours.getOrDefault(key, BigDecimal.ZERO);
-            BigDecimal sessionPay = sessionPay(record, dailyHours, dailyPaidClockIds);
+            BigDecimal segmentPay = segmentPay(segment, dailyPaidClockIds);
 
             rows.add(new TimeClockRow(
                     record.clockId,
                     record.userId,
                     record.employeeName,
                     record.employeeRole,
-                    record.workDate,
-                    record.clockIn,
-                    record.lunchStart,
-                    record.lunchEnd,
-                    record.clockOut,
-                    dailyHours,
+                    segment.workDate,
+                    segment.clockIn,
+                    segment.lunchStart,
+                    segment.lunchEnd,
+                    segment.clockOut,
+                    segment.hours,
                     payPeriod.start(),
                     payPeriod.end(),
                     payPeriod.payDate(),
                     totalHours,
                     record.compensationType,
                     record.salary,
-                    sessionPay,
+                    segmentPay,
                     record.locationId,
-                    record.locationName
+                    record.locationName,
+                    record.clockIn,
+                    record.lunchStart,
+                    record.lunchEnd,
+                    record.clockOut
             ));
         }
+        rows.sort((a, b) -> {
+            int dateCompare = b.workDate().compareTo(a.workDate());
+            if (dateCompare != 0) {
+                return dateCompare;
+            }
+            int clockCompare = nullSafeDateTime(b.clockIn()).compareTo(nullSafeDateTime(a.clockIn()));
+            if (clockCompare != 0) {
+                return clockCompare;
+            }
+            return Integer.compare(b.clockId(), a.clockId());
+        });
         return rows;
     }
 
@@ -679,9 +694,93 @@ public final class TimeClockManager {
         return calculateHours(record);
     }
 
-    private static BigDecimal sessionPay(TimeRecord record, BigDecimal hours, Map<String, Integer> dailyPaidClockIds) {
+    private static List<TimeSegment> splitRecordsByWorkDate(List<TimeRecord> records) {
+        List<TimeSegment> segments = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now(ZoneId.of(currentStoreZoneId()));
+        for (TimeRecord record : records) {
+            segments.addAll(splitRecordByWorkDate(record, now));
+        }
+        return segments;
+    }
+
+    private static List<TimeSegment> splitRecordByWorkDate(TimeRecord record, LocalDateTime now) {
+        List<TimeSegment> segments = new ArrayList<>();
+        if (record.clockIn == null) {
+            return segments;
+        }
+
+        LocalDateTime shiftEnd = record.clockOut == null ? now : record.clockOut;
+        if (!shiftEnd.isAfter(record.clockIn)) {
+            segments.add(new TimeSegment(
+                    record,
+                    record.workDate,
+                    record.clockIn,
+                    null,
+                    null,
+                    record.clockOut,
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+            ));
+            return segments;
+        }
+
+        LocalDate segmentDate = record.clockIn.toLocalDate();
+        while (segmentDate.atStartOfDay().isBefore(shiftEnd)) {
+            LocalDateTime dayStart = segmentDate.atStartOfDay();
+            LocalDateTime dayEnd = segmentDate.plusDays(1).atStartOfDay();
+            LocalDateTime segmentStart = maxDateTime(record.clockIn, dayStart);
+            LocalDateTime segmentEnd = minDateTime(shiftEnd, dayEnd);
+
+            if (segmentEnd.isAfter(segmentStart)) {
+                long totalMinutes = minutesBetween(segmentStart, segmentEnd);
+                long lunchMinutes = lunchOverlapMinutes(record, segmentStart, segmentEnd, shiftEnd);
+                long workedMinutes = Math.max(0, totalMinutes - lunchMinutes);
+                BigDecimal hours = BigDecimal.valueOf(workedMinutes)
+                        .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
+
+                LocalDateTime segmentLunchStart = null;
+                LocalDateTime segmentLunchEnd = null;
+                if (lunchMinutes > 0 && record.lunchStart != null) {
+                    segmentLunchStart = maxDateTime(record.lunchStart, segmentStart);
+                    if (record.lunchEnd != null) {
+                        segmentLunchEnd = minDateTime(record.lunchEnd, segmentEnd);
+                    }
+                }
+
+                LocalDateTime segmentClockOut = record.clockOut == null && segmentEnd.equals(shiftEnd)
+                        ? null
+                        : segmentEnd;
+
+                segments.add(new TimeSegment(
+                        record,
+                        segmentDate,
+                        segmentStart,
+                        segmentLunchStart,
+                        segmentLunchEnd,
+                        segmentClockOut,
+                        hours
+                ));
+            }
+
+            segmentDate = segmentDate.plusDays(1);
+        }
+
+        return segments;
+    }
+
+    private static long lunchOverlapMinutes(TimeRecord record, LocalDateTime segmentStart, LocalDateTime segmentEnd, LocalDateTime shiftEnd) {
+        if (record.lunchStart == null) {
+            return 0;
+        }
+        LocalDateTime lunchEnd = record.lunchEnd == null ? shiftEnd : record.lunchEnd;
+        LocalDateTime overlapStart = maxDateTime(record.lunchStart, segmentStart);
+        LocalDateTime overlapEnd = minDateTime(lunchEnd, segmentEnd);
+        return minutesBetween(overlapStart, overlapEnd);
+    }
+
+    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds) {
+        TimeRecord record = segment.record;
         if (record.isDaily()) {
-            Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, record.workDate));
+            Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, segment.workDate));
             return paidClockId != null && paidClockId == record.clockId
                     ? record.salary.setScale(2, RoundingMode.HALF_UP)
                     : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
@@ -689,10 +788,15 @@ public final class TimeClockManager {
         if (record.isSalary()) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         }
-        if (record.clockOut != null && record.totalEarned != null) {
-            return record.totalEarned.setScale(2, RoundingMode.HALF_UP);
+        if (record.clockOut != null && record.totalEarned != null && record.totalHoursWorked != null) {
+            BigDecimal totalHours = record.totalHoursWorked.setScale(2, RoundingMode.HALF_UP);
+            if (totalHours.compareTo(BigDecimal.ZERO) > 0) {
+                return record.totalEarned
+                        .multiply(segment.hours)
+                        .divide(totalHours, 2, RoundingMode.HALF_UP);
+            }
         }
-        return record.salary.multiply(hours).setScale(2, RoundingMode.HALF_UP);
+        return record.salary.multiply(segment.hours).setScale(2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal payrollPay(TimeClockRow row, boolean firstRowForPeriod) {
@@ -711,6 +815,18 @@ public final class TimeClockManager {
             return 0;
         }
         return Duration.between(start, end).toMinutes();
+    }
+
+    private static LocalDateTime maxDateTime(LocalDateTime a, LocalDateTime b) {
+        return a.isAfter(b) ? a : b;
+    }
+
+    private static LocalDateTime minDateTime(LocalDateTime a, LocalDateTime b) {
+        return a.isBefore(b) ? a : b;
+    }
+
+    private static LocalDateTime nullSafeDateTime(LocalDateTime value) {
+        return value == null ? LocalDateTime.MIN : value;
     }
 
     private static PayPeriod payPeriodFor(LocalDate date) {
@@ -885,7 +1001,11 @@ public final class TimeClockManager {
             BigDecimal salary,
             BigDecimal totalPay,
             Integer locationId,
-            String locationName
+            String locationName,
+            LocalDateTime shiftClockIn,
+            LocalDateTime shiftLunchStart,
+            LocalDateTime shiftLunchEnd,
+            LocalDateTime shiftClockOut
     ) {
     }
 
@@ -899,6 +1019,17 @@ public final class TimeClockManager {
     }
 
     private record PayrollPaymentStatus(LocalDateTime paidAt, String paidByName, BigDecimal paidAmount) {
+    }
+
+    private record TimeSegment(
+            TimeRecord record,
+            LocalDate workDate,
+            LocalDateTime clockIn,
+            LocalDateTime lunchStart,
+            LocalDateTime lunchEnd,
+            LocalDateTime clockOut,
+            BigDecimal hours
+    ) {
     }
 
     private static String mergeLocations(String current, String next) {

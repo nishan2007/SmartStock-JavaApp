@@ -3036,7 +3036,12 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_cache_invalidated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_photo_url TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id_card_document_url TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_salt TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");

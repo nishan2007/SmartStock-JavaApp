@@ -10,10 +10,12 @@ import managers.TimeClockManager.TimeClockException;
 import managers.TimeClockManager.TimeClockRow;
 import services.ManagerApprovalService;
 import ui.components.AppMenuBar;
-import ui.helpers.ThemeManager;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
+import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -62,10 +64,12 @@ public class TimeClock extends JFrame {
     private javax.swing.Timer sessionTimer;
     private javax.swing.Timer pulseTimer;
 
-    private final Color clockInColor = new Color(22, 163, 74);
-    private final Color lunchStartColor = new Color(217, 119, 6);
-    private final Color lunchEndColor = new Color(37, 99, 235);
-    private final Color clockOutColor = new Color(220, 38, 38);
+    private static final Color EMPLOYEE_ACCENT = DeckersPalette.YELLOW;
+
+    private final Color clockInColor = DeckersPalette.LIME;
+    private final Color lunchStartColor = DeckersPalette.ORANGE;
+    private final Color lunchEndColor = DeckersPalette.MAGENTA;
+    private final Color clockOutColor = DeckersPalette.CORAL;
 
     private YearMonth currentMonth;
     private List<TimeClockRow> allRows = new ArrayList<>();
@@ -101,7 +105,7 @@ public class TimeClock extends JFrame {
 
         JPanel mainPanel = new JPanel(new BorderLayout(16, 16));
         mainPanel.setBorder(new EmptyBorder(18, 18, 18, 18));
-        mainPanel.setBackground(new Color(245, 247, 250));
+        mainPanel.setBackground(DeckersPalette.background());
 
         JPanel headerPanel = new JPanel(new BorderLayout(12, 12));
         headerPanel.setOpaque(false);
@@ -112,17 +116,17 @@ public class TimeClock extends JFrame {
 
         JLabel titleLabel = new JLabel("Employee Time Clock");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
-        titleLabel.setForeground(new Color(31, 41, 55));
+        titleLabel.setForeground(DeckersPalette.text());
         preserveForeground(titleLabel);
 
         JLabel employeeLabel = new JLabel("Employee: " + SessionManager.getCurrentUserDisplayName());
         employeeLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        employeeLabel.setForeground(new Color(75, 85, 99));
+        employeeLabel.setForeground(DeckersPalette.muted());
         preserveForeground(employeeLabel);
 
         JLabel locationLabel = new JLabel("Location: " + safeText(SessionManager.getCurrentLocationName()));
         locationLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        locationLabel.setForeground(new Color(75, 85, 99));
+        locationLabel.setForeground(DeckersPalette.muted());
         preserveForeground(locationLabel);
 
         titlePanel.add(titleLabel);
@@ -134,23 +138,19 @@ public class TimeClock extends JFrame {
         // Current Session Panel with rounded corners
         currentSessionPanel = new RoundedPanel(12);
         currentSessionPanel.setLayout(new BoxLayout(currentSessionPanel, BoxLayout.Y_AXIS));
-        currentSessionPanel.setBackground(new Color(254, 249, 195));
         preserveBackground(currentSessionPanel);
-        currentSessionPanel.setBorder(BorderFactory.createCompoundBorder(
-                new RoundedBorder(new Color(250, 204, 21), 2, 12),
-                new EmptyBorder(8, 12, 8, 12)
-        ));
+        DeckersSwing.styleBand(currentSessionPanel, DeckersPalette.LIME, new Insets(8, 12, 8, 12));
         currentSessionPanel.setVisible(false);
 
         JLabel sessionTitle = new JLabel("Current Session");
         sessionTitle.setFont(new Font("SansSerif", Font.BOLD, 14));
-        sessionTitle.setForeground(new Color(113, 63, 18));
+        sessionTitle.setForeground(DeckersPalette.text());
         preserveForeground(sessionTitle);
         sessionTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         sessionTimeLabel = new JLabel("Session Time: 0:00:00");
         sessionTimeLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        sessionTimeLabel.setForeground(new Color(113, 63, 18));
+        sessionTimeLabel.setForeground(DeckersPalette.text());
         preserveForeground(sessionTimeLabel);
         sessionTimeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
@@ -175,10 +175,10 @@ public class TimeClock extends JFrame {
 
         statusLabel = new JLabel("Status: Loading");
         statusLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        statusLabel.setForeground(new Color(37, 99, 235));
+        statusLabel.setForeground(DeckersPalette.text());
         preserveForeground(statusLabel);
         statusLabel.setBorder(BorderFactory.createCompoundBorder(
-                new RoundedBorder(new Color(209, 213, 219), 1, 8),
+                new RoundedBorder(DeckersPalette.sectionBorder(EMPLOYEE_ACCENT), 1, 8),
                 new EmptyBorder(12, 14, 12, 14)
         ));
         statusLabel.setOpaque(false);
@@ -193,7 +193,7 @@ public class TimeClock extends JFrame {
         lunchStartButton = createActionButton("Lunch Start", lunchStartColor);
         lunchEndButton = createActionButton("Lunch End", lunchEndColor);
         clockOutButton = createActionButton("Clock Out", clockOutColor);
-        refreshButton = createStyledButton("Refresh", new Color(107, 114, 128));
+        refreshButton = createStyledButton("Refresh", DeckersPalette.PURPLE);
         actionPanel.add(clockInButton);
         actionPanel.add(lunchStartButton);
         actionPanel.add(lunchEndButton);
@@ -212,12 +212,12 @@ public class TimeClock extends JFrame {
 
         prevMonthButton = createNavButton("←");
         nextMonthButton = createNavButton("→");
-        todayButton = createStyledButton("Today", new Color(59, 130, 246));
+        todayButton = createStyledButton("Today", EMPLOYEE_ACCENT);
         todayButton.setPreferredSize(new Dimension(100, 32));
 
         monthYearLabel = new JLabel(currentMonth.format(MONTH_YEAR_FORMAT), SwingConstants.CENTER);
         monthYearLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        monthYearLabel.setForeground(new Color(31, 41, 55));
+        monthYearLabel.setForeground(DeckersPalette.text());
         preserveForeground(monthYearLabel);
 
         JPanel navButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
@@ -238,9 +238,9 @@ public class TimeClock extends JFrame {
         monthStatsPanel.setOpaque(false);
         monthStatsPanel.setBorder(new EmptyBorder(12, 0, 0, 0));
 
-        monthDaysLabel = createStatCard("Days Worked", "0");
-        monthHoursLabel = createStatCard("Total Hours", "0.00");
-        monthPayLabel = createStatCard("Total Pay", "$0.00");
+        monthDaysLabel = createStatCard("Days Worked", "0", DeckersPalette.ORANGE);
+        monthHoursLabel = createStatCard("Total Hours", "0.00", DeckersPalette.LIME);
+        monthPayLabel = createStatCard("Total Pay", "$0.00", DeckersPalette.MAGENTA);
 
         monthStatsPanel.add(monthDaysLabel);
         monthStatsPanel.add(monthHoursLabel);
@@ -253,9 +253,8 @@ public class TimeClock extends JFrame {
 
         RoundedPanel calendarCard = new RoundedPanel(12);
         calendarCard.setLayout(new BorderLayout(0, 8));
-        calendarCard.setBackground(Color.WHITE);
         preserveBackground(calendarCard);
-        calendarCard.setBorder(new EmptyBorder(16, 16, 16, 16));
+        DeckersSwing.styleBand(calendarCard, EMPLOYEE_ACCENT, new Insets(16, 16, 16, 16));
         calendarCard.add(calendarNavPanel, BorderLayout.NORTH);
         calendarCard.add(calendarPanel, BorderLayout.CENTER);
         calendarCard.add(monthStatsPanel, BorderLayout.SOUTH);
@@ -265,13 +264,12 @@ public class TimeClock extends JFrame {
         // Details panel with card styling
         RoundedPanel detailsCard = new RoundedPanel(12);
         detailsCard.setLayout(new BorderLayout(0, 12));
-        detailsCard.setBackground(Color.WHITE);
         preserveBackground(detailsCard);
-        detailsCard.setBorder(new EmptyBorder(16, 16, 16, 16));
+        DeckersSwing.styleBand(detailsCard, DeckersPalette.CORAL, new Insets(16, 16, 16, 16));
 
         JLabel detailsTitle = new JLabel("Time Clock Details");
         detailsTitle.setFont(new Font("SansSerif", Font.BOLD, 16));
-        detailsTitle.setForeground(new Color(31, 41, 55));
+        detailsTitle.setForeground(DeckersPalette.text());
         preserveForeground(detailsTitle);
 
         detailsModel = new DefaultTableModel(
@@ -285,12 +283,11 @@ public class TimeClock extends JFrame {
         };
 
         detailsTable = new JTable(detailsModel);
+        DeckersSwing.styleTable(detailsTable, DeckersPalette.CORAL);
         detailsTable.setRowHeight(32);
         detailsTable.setFont(new Font("SansSerif", Font.PLAIN, 13));
         detailsTable.setShowGrid(false);
         detailsTable.setIntercellSpacing(new Dimension(0, 0));
-        detailsTable.setSelectionBackground(new Color(219, 234, 254));
-        detailsTable.setSelectionForeground(new Color(30, 64, 175));
 
         // Alternating row colors
         detailsTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
@@ -299,7 +296,10 @@ public class TimeClock extends JFrame {
                     boolean isSelected, boolean hasFocus, int row, int column) {
                 Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
                 if (!isSelected) {
-                    c.setBackground(row % 2 == 0 ? Color.WHITE : new Color(249, 250, 251));
+                    c.setBackground(row % 2 == 0
+                            ? DeckersPalette.tableBody(DeckersPalette.CORAL)
+                            : DeckersPalette.tableStripe());
+                    c.setForeground(DeckersPalette.text());
                 }
                 setBorder(new EmptyBorder(4, 8, 4, 8));
                 return c;
@@ -307,7 +307,8 @@ public class TimeClock extends JFrame {
         });
 
         JScrollPane detailsScroll = new JScrollPane(detailsTable);
-        detailsScroll.setBorder(null);
+        detailsScroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.CORAL)));
+        detailsScroll.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.CORAL));
 
         detailsCard.add(detailsTitle, BorderLayout.NORTH);
         detailsCard.add(detailsScroll, BorderLayout.CENTER);
@@ -332,58 +333,69 @@ public class TimeClock extends JFrame {
     private JButton createActionButton(String text, Color color) {
         JButton button = new RoundedButton(text, 8);
         button.setFont(new Font("SansSerif", Font.BOLD, 14));
-        button.setForeground(Color.WHITE);
-        button.setBackground(color);
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileHover(color));
+        button.setBorder(deckersButtonBorder(color, new Insets(10, 16, 10, 16)));
         button.setPreferredSize(new Dimension(130, 42));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return button;
     }
 
     private JButton createStyledButton(String text, Color color) {
         JButton button = new RoundedButton(text, 8);
         button.setFont(new Font("SansSerif", Font.BOLD, 14));
-        button.setForeground(Color.WHITE);
-        button.setBackground(color);
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileHover(color));
+        button.setBorder(deckersButtonBorder(color, new Insets(10, 16, 10, 16)));
         button.setPreferredSize(new Dimension(120, 42));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return button;
     }
 
     private JButton createNavButton(String text) {
         JButton button = new RoundedButton(text, 6);
         button.setFont(new Font("SansSerif", Font.BOLD, 18));
-        button.setForeground(new Color(75, 85, 99));
-        button.setBackground(Color.WHITE);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                new RoundedBorder(new Color(209, 213, 219), 1, 6),
-                new EmptyBorder(4, 12, 4, 12)
-        ));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(EMPLOYEE_ACCENT));
+        button.setBorder(deckersButtonBorder(EMPLOYEE_ACCENT, new Insets(4, 12, 4, 12)));
         button.setPreferredSize(new Dimension(50, 32));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return button;
+    }
+
+    private static Border deckersButtonBorder(Color accent, Insets padding) {
+        return BorderFactory.createCompoundBorder(
+                new RoundedBorder(DeckersPalette.sectionBorder(accent), 1, 8),
+                BorderFactory.createCompoundBorder(
+                        BorderFactory.createMatteBorder(0, 4, 0, 0, accent),
+                        new EmptyBorder(padding)
+                )
+        );
     }
 
     private JLabel createSessionDetailLabel(String text) {
         JLabel label = new JLabel(text);
         label.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        label.setForeground(new Color(120, 53, 15));
+        label.setForeground(DeckersPalette.muted());
         preserveForeground(label);
         return label;
     }
 
-    private JLabel createStatCard(String title, String value) {
+    private JLabel createStatCard(String title, String value, Color accent) {
         JPanel card = new RoundedPanel(8);
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
-        card.setBackground(new Color(249, 250, 251));
         preserveBackground(card);
-        card.setBorder(new EmptyBorder(10, 12, 10, 12));
+        DeckersSwing.styleBand(card, accent, new Insets(10, 12, 10, 12));
 
         JLabel titleLabel = new JLabel(title);
         titleLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        titleLabel.setForeground(new Color(107, 114, 128));
+        titleLabel.setForeground(DeckersPalette.muted());
         preserveForeground(titleLabel);
         titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         JLabel valueLabel = new JLabel(value);
         valueLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
-        valueLabel.setForeground(new Color(31, 41, 55));
+        valueLabel.setForeground(DeckersPalette.text());
         preserveForeground(valueLabel);
         valueLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
@@ -485,9 +497,9 @@ public class TimeClock extends JFrame {
 
         if (currentRecord != null) {
             isCurrentlyWorking = true;
-            currentClockIn = currentRecord.clockIn();
-            currentLunchStart = currentRecord.lunchStart();
-            currentLunchEnd = currentRecord.lunchEnd();
+            currentClockIn = currentRecord.shiftClockIn();
+            currentLunchStart = currentRecord.shiftLunchStart();
+            currentLunchEnd = currentRecord.shiftLunchEnd();
 
             sessionClockInLabel.setText("Clock In: " + formatTime(currentClockIn));
             sessionLunchStartLabel.setText("Lunch Start: " + (currentLunchStart != null ? formatTime(currentLunchStart) : "--"));
@@ -541,7 +553,8 @@ public class TimeClock extends JFrame {
                     pulseIncreasing = true;
                 }
             }
-            sessionTimeLabel.setForeground(new Color(113, 63, 18, (int)(255 * pulseAlpha)));
+            Color text = DeckersPalette.text();
+            sessionTimeLabel.setForeground(new Color(text.getRed(), text.getGreen(), text.getBlue(), (int)(255 * pulseAlpha)));
         });
         pulseTimer.start();
     }
@@ -600,13 +613,13 @@ public class TimeClock extends JFrame {
         for (int i = 0; i < dayNames.length; i++) {
             JLabel dayLabel = new JLabel(dayNames[i], SwingConstants.CENTER);
             dayLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
-            dayLabel.setForeground(new Color(107, 114, 128));
+            dayLabel.setForeground(DeckersPalette.muted());
             preserveForeground(dayLabel);
             dayLabel.setBorder(new EmptyBorder(4, 0, 4, 0));
 
             // Highlight weekends
             if (i == 0 || i == 6) {
-                dayLabel.setForeground(new Color(239, 68, 68));
+                dayLabel.setForeground(DeckersPalette.CORAL);
             }
 
             calendarPanel.add(dayLabel);
@@ -666,7 +679,6 @@ public class TimeClock extends JFrame {
     private JPanel createDayCell(LocalDate date, DayData dayData) {
         RoundedPanel cell = new RoundedPanel(8);
         cell.setLayout(new BorderLayout());
-        cell.setBorder(new EmptyBorder(6, 4, 6, 4));
         cell.setPreferredSize(new Dimension(80, 65));
         preserveBackground(cell);
 
@@ -674,22 +686,28 @@ public class TimeClock extends JFrame {
         boolean hasData = dayData != null && !dayData.rows.isEmpty();
         boolean isWeekend = date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY;
 
+        Color accent = isToday ? EMPLOYEE_ACCENT : hasData ? DeckersPalette.LIME : isWeekend ? DeckersPalette.CORAL : EMPLOYEE_ACCENT;
+
         // Background colors
         if (isToday && hasData) {
-            cell.setBackground(new Color(187, 247, 208)); // Bright green for today with data
+            cell.setBackground(DeckersPalette.tilePressed(DeckersPalette.LIME));
         } else if (isToday) {
-            cell.setBackground(new Color(219, 234, 254)); // Light blue for today
+            cell.setBackground(DeckersPalette.tilePressed(EMPLOYEE_ACCENT));
         } else if (hasData) {
-            cell.setBackground(new Color(240, 253, 244)); // Light green for work days
+            cell.setBackground(DeckersPalette.tileHover(DeckersPalette.LIME));
         } else if (isWeekend) {
-            cell.setBackground(new Color(254, 242, 242)); // Light red for weekends
+            cell.setBackground(DeckersPalette.tileFill(DeckersPalette.CORAL));
         } else {
-            cell.setBackground(Color.WHITE);
+            cell.setBackground(DeckersPalette.surface());
         }
+        cell.setBorder(BorderFactory.createCompoundBorder(
+                new RoundedBorder(DeckersPalette.sectionBorder(accent), 1, 8),
+                new EmptyBorder(6, 4, 6, 4)
+        ));
 
         JLabel dayNumber = new JLabel(String.valueOf(date.getDayOfMonth()), SwingConstants.CENTER);
         dayNumber.setFont(new Font("SansSerif", isToday ? Font.BOLD : Font.PLAIN, 14));
-        dayNumber.setForeground(isToday ? new Color(37, 99, 235) : new Color(31, 41, 55));
+        dayNumber.setForeground(DeckersPalette.text());
         preserveForeground(dayNumber);
         dayNumber.setBorder(new EmptyBorder(2, 0, 2, 0));
 
@@ -698,7 +716,7 @@ public class TimeClock extends JFrame {
 
             JLabel hoursLabel = new JLabel(formatHours(dayData.totalHours) + " hrs", SwingConstants.CENTER);
             hoursLabel.setFont(new Font("SansSerif", Font.PLAIN, 10));
-            hoursLabel.setForeground(new Color(75, 85, 99));
+            hoursLabel.setForeground(DeckersPalette.muted());
             preserveForeground(hoursLabel);
 
             // Multiple entries indicator
@@ -706,7 +724,7 @@ public class TimeClock extends JFrame {
             if (dayData.rows.size() > 1) {
                 countLabel = new JLabel("●".repeat(Math.min(dayData.rows.size(), 3)), SwingConstants.CENTER);
                 countLabel.setFont(new Font("SansSerif", Font.PLAIN, 8));
-                countLabel.setForeground(new Color(59, 130, 246));
+                countLabel.setForeground(DeckersPalette.MAGENTA);
                 preserveForeground(countLabel);
             }
 
@@ -832,34 +850,16 @@ public class TimeClock extends JFrame {
     }
 
     private void updateStatusLabelColors(ClockState state) {
-        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color accent = switch (state) {
+            case CLOCKED_IN -> DeckersPalette.LIME;
+            case ON_LUNCH -> DeckersPalette.ORANGE;
+            case CLOCKED_OUT -> DeckersPalette.CORAL;
+            default -> EMPLOYEE_ACCENT;
+        };
 
-        Color backgroundColor;
-        Color textColor;
-        Color borderColor;
-
-        switch (state) {
-            case CLOCKED_IN -> {
-                backgroundColor = dark ? new Color(20, 83, 45) : new Color(240, 253, 244);
-                textColor = dark ? new Color(134, 239, 172) : new Color(21, 128, 61);
-                borderColor = dark ? new Color(34, 197, 94) : new Color(134, 239, 172);
-            }
-            case ON_LUNCH -> {
-                backgroundColor = dark ? new Color(120, 53, 15) : new Color(254, 249, 195);
-                textColor = dark ? new Color(253, 224, 71) : new Color(161, 98, 7);
-                borderColor = dark ? new Color(250, 204, 21) : new Color(253, 224, 71);
-            }
-            case CLOCKED_OUT -> {
-                backgroundColor = dark ? new Color(55, 65, 81) : new Color(243, 244, 246);
-                textColor = dark ? new Color(209, 213, 219) : new Color(75, 85, 99);
-                borderColor = dark ? new Color(107, 114, 128) : new Color(209, 213, 219);
-            }
-            default -> {
-                backgroundColor = dark ? new Color(30, 58, 138) : new Color(239, 246, 255);
-                textColor = dark ? new Color(147, 197, 253) : new Color(29, 78, 216);
-                borderColor = dark ? new Color(59, 130, 246) : new Color(147, 197, 253);
-            }
-        }
+        Color backgroundColor = DeckersPalette.tileHover(accent);
+        Color textColor = DeckersPalette.text();
+        Color borderColor = DeckersPalette.sectionBorder(accent);
 
         if (statusLabel instanceof JLabel) {
             JLabel label = (JLabel) statusLabel;
@@ -883,22 +883,9 @@ public class TimeClock extends JFrame {
     }
 
     private void setActionButtonState(JButton button, Color enabledColor, boolean enabled) {
-        boolean dark = ThemeManager.isDarkModeEnabled();
-        Color disabledBackground = mutedButtonColor(enabledColor, dark);
-        Color disabledText = dark ? new Color(225, 225, 225) : new Color(75, 85, 99);
-
         button.setEnabled(enabled);
-        button.setBackground(enabled ? enabledColor : disabledBackground);
-        button.setForeground(enabled ? Color.WHITE : disabledText);
-    }
-
-    private Color mutedButtonColor(Color color, boolean dark) {
-        Color base = dark ? new Color(42, 42, 42) : new Color(229, 231, 235);
-        double colorWeight = dark ? 0.46 : 0.28;
-        int red = (int) Math.round((color.getRed() * colorWeight) + (base.getRed() * (1 - colorWeight)));
-        int green = (int) Math.round((color.getGreen() * colorWeight) + (base.getGreen() * (1 - colorWeight)));
-        int blue = (int) Math.round((color.getBlue() * colorWeight) + (base.getBlue() * (1 - colorWeight)));
-        return new Color(red, green, blue);
+        button.setBackground(enabled ? DeckersPalette.tileHover(enabledColor) : DeckersPalette.sectionFill(enabledColor));
+        button.setForeground(enabled ? DeckersPalette.text() : DeckersPalette.muted());
     }
 
     private static String formatTime(LocalDateTime value) {
@@ -979,7 +966,7 @@ public class TimeClock extends JFrame {
             putClientProperty("SmartStock.customPaintedButton", Boolean.TRUE);
             setContentAreaFilled(false);
             setFocusPainted(false);
-            setBorderPainted(false);
+            setBorderPainted(true);
             setOpaque(false);
         }
 

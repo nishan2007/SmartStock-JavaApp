@@ -4,11 +4,14 @@ import managers.TimeClockManager;
 import managers.TimeClockManager.PayrollSummary;
 import managers.TimeClockManager.TimeClockRow;
 import ui.components.AppMenuBar;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
@@ -29,9 +32,9 @@ import java.util.Set;
 
 public class PayrollDashboard extends JFrame {
 
-    private final JLabel totalEmployeesLabel;
-    private final JLabel totalHoursLabel;
-    private final JLabel totalPayLabel;
+    private final MetricCard totalEmployeesCard;
+    private final MetricCard totalHoursCard;
+    private final MetricCard totalPayCard;
     private final JComboBox<PayPeriodOption> payPeriodBox;
     private final JComboBox<EmployeeOption> employeeBox;
     private final JTextField searchField;
@@ -60,14 +63,15 @@ public class PayrollDashboard extends JFrame {
 
         JPanel mainPanel = new JPanel(new BorderLayout(16, 16));
         mainPanel.setBorder(new EmptyBorder(18, 18, 18, 18));
-        mainPanel.setBackground(new Color(245, 247, 250));
+        mainPanel.setBackground(DeckersPalette.background());
 
         JLabel titleLabel = new JLabel("Payroll Dashboard");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
-        titleLabel.setForeground(new Color(31, 41, 55));
+        titleLabel.setForeground(DeckersPalette.text());
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel filterPanel = new JPanel(new GridBagLayout());
-        filterPanel.setOpaque(false);
+        DeckersSwing.styleBand(filterPanel, DeckersPalette.ORANGE, new Insets(12, 12, 12, 12));
         payPeriodBox = new JComboBox<>();
         employeeBox = new JComboBox<>();
         searchField = new JTextField();
@@ -76,21 +80,27 @@ public class PayrollDashboard extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JPanel leftFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         leftFilterPanel.setOpaque(false);
-        leftFilterPanel.add(new JLabel("Pay Period:"));
+        leftFilterPanel.add(createFilterLabel("Pay Period:"));
         leftFilterPanel.add(payPeriodBox);
-        leftFilterPanel.add(new JLabel("Employee:"));
+        leftFilterPanel.add(createFilterLabel("Employee:"));
         leftFilterPanel.add(employeeBox);
         payPeriodBox.setPreferredSize(new Dimension(250, 30));
         employeeBox.setPreferredSize(new Dimension(220, 30));
+        styleComboBox(payPeriodBox);
+        styleComboBox(employeeBox);
         searchField.setColumns(22);
         searchField.setPreferredSize(new Dimension(260, 30));
         searchField.setMinimumSize(new Dimension(220, 30));
+        DeckersSwing.styleField(searchField);
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
         searchPanel.setOpaque(false);
-        searchPanel.add(new JLabel("Search:"), BorderLayout.WEST);
+        searchPanel.add(createFilterLabel("Search:"), BorderLayout.WEST);
         searchPanel.add(searchField, BorderLayout.CENTER);
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttonPanel.setOpaque(false);
+        DeckersSwing.styleUtilityButton(generateCurrentButton, DeckersPalette.LIME);
+        DeckersSwing.styleUtilityButton(markPaidButton, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(refreshButton, DeckersPalette.PURPLE);
         buttonPanel.add(generateCurrentButton);
         buttonPanel.add(markPaidButton);
         buttonPanel.add(refreshButton);
@@ -118,14 +128,14 @@ public class PayrollDashboard extends JFrame {
         headerPanel.add(titleLabel, BorderLayout.NORTH);
         headerPanel.add(filterPanel, BorderLayout.SOUTH);
 
-        totalEmployeesLabel = createMetricLabel("Employees: 0");
-        totalHoursLabel = createMetricLabel("Hours: 0.00");
-        totalPayLabel = createMetricLabel("Total Pay: $0.00");
+        totalEmployeesCard = new MetricCard("Employees", DeckersPalette.ORANGE);
+        totalHoursCard = new MetricCard("Hours", DeckersPalette.MAGENTA);
+        totalPayCard = new MetricCard("Total Pay", DeckersPalette.LIME);
         JPanel metricsPanel = new JPanel(new GridLayout(1, 3, 12, 0));
         metricsPanel.setOpaque(false);
-        metricsPanel.add(totalEmployeesLabel);
-        metricsPanel.add(totalHoursLabel);
-        metricsPanel.add(totalPayLabel);
+        metricsPanel.add(totalEmployeesCard);
+        metricsPanel.add(totalHoursCard);
+        metricsPanel.add(totalPayCard);
 
         summaryModel = new DefaultTableModel(
                 new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
@@ -139,6 +149,8 @@ public class PayrollDashboard extends JFrame {
         summaryTable = new JTable(summaryModel);
         summaryTable.setRowHeight(30);
         summaryTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        DeckersSwing.styleTable(summaryTable, DeckersPalette.YELLOW);
+        summaryTable.setDefaultRenderer(Object.class, new PayrollCellRenderer());
         summarySorter = new TableRowSorter<>(summaryModel);
         summaryTable.setRowSorter(summarySorter);
 
@@ -153,12 +165,15 @@ public class PayrollDashboard extends JFrame {
         };
         JTable detailTable = new JTable(detailModel);
         detailTable.setRowHeight(28);
+        DeckersSwing.styleTable(detailTable, DeckersPalette.MAGENTA);
         detailSorter = new TableRowSorter<>(detailModel);
         detailTable.setRowSorter(detailSorter);
 
         tabbedPane = new JTabbedPane();
-        tabbedPane.addTab("Payroll Summary", new JScrollPane(summaryTable));
-        tabbedPane.addTab("Time Records", new JScrollPane(detailTable));
+        tabbedPane.setBackground(DeckersPalette.background());
+        tabbedPane.setForeground(DeckersPalette.text());
+        tabbedPane.addTab("Payroll Summary", createTableScrollPane(summaryTable));
+        tabbedPane.addTab("Time Records", createTableScrollPane(detailTable));
 
         JPanel centerPanel = new JPanel(new BorderLayout(0, 12));
         centerPanel.setOpaque(false);
@@ -203,17 +218,24 @@ public class PayrollDashboard extends JFrame {
         WindowHelper.configurePosWindow(this);
     }
 
-    private JLabel createMetricLabel(String text) {
-        JLabel label = new JLabel(text);
-        label.setFont(new Font("SansSerif", Font.BOLD, 16));
-        label.setForeground(new Color(31, 41, 55));
-        label.setOpaque(true);
-        label.setBackground(Color.WHITE);
-        label.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(209, 213, 219), 1),
-                new EmptyBorder(12, 14, 12, 14)
-        ));
+    private JLabel createFilterLabel(String text) {
+        JLabel label = DeckersSwing.metaLabel(text);
         return label;
+    }
+
+    private JScrollPane createTableScrollPane(JTable table) {
+        JScrollPane scrollPane = new JScrollPane(table);
+        scrollPane.getViewport().setBackground(DeckersPalette.surface());
+        scrollPane.setBackground(DeckersPalette.surface());
+        scrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+        return scrollPane;
+    }
+
+    private <T> void styleComboBox(JComboBox<T> comboBox) {
+        comboBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        comboBox.setForeground(DeckersPalette.text());
+        comboBox.setBackground(DeckersPalette.fieldBackground());
+        comboBox.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
     }
 
     private void loadPayroll() {
@@ -231,11 +253,14 @@ public class PayrollDashboard extends JFrame {
 
     private void populatePayPeriods() {
         Object selected = payPeriodBox.getSelectedItem();
-        String selectedKey = selected instanceof PayPeriodOption option ? option.key() : "ALL";
+        String selectedKey = selected instanceof PayPeriodOption option ? option.key() : "DEFAULT";
+        PayPeriodOption defaultPeriod = defaultPayPeriodOption();
         updatingPayPeriodOptions = true;
         payPeriodBox.removeAllItems();
-        payPeriodBox.addItem(new PayPeriodOption("ALL", "All Pay Periods", null, null, false));
-        payPeriodBox.addItem(new PayPeriodOption("CURRENT", "Current Payroll", null, null, true));
+        payPeriodBox.addItem(new PayPeriodOption("ALL", "All Pay Periods", null, null));
+        if (defaultPeriod != null) {
+            payPeriodBox.addItem(defaultPeriod);
+        }
 
         Map<String, PayPeriodOption> options = new LinkedHashMap<>();
         for (PayrollSummary summary : allSummaries) {
@@ -245,8 +270,7 @@ public class PayrollDashboard extends JFrame {
                     summary.payPeriodStart().format(DATE_FORMAT) + " - " + summary.payPeriodEnd().format(DATE_FORMAT)
                             + "  Paid " + summary.payDate().format(DATE_FORMAT),
                     summary.payPeriodStart(),
-                    summary.payPeriodEnd(),
-                    false
+                    summary.payPeriodEnd()
             ));
         }
 
@@ -261,8 +285,38 @@ public class PayrollDashboard extends JFrame {
                 return;
             }
         }
-        payPeriodBox.setSelectedIndex(0);
+        payPeriodBox.setSelectedIndex(defaultPeriod == null ? 0 : 1);
         updatingPayPeriodOptions = false;
+    }
+
+    private PayPeriodOption defaultPayPeriodOption() {
+        LocalDate today = StoreTimeZoneHelper.today();
+        PayrollSummary payDateMatch = null;
+        PayrollSummary currentMatch = null;
+
+        for (PayrollSummary summary : allSummaries) {
+            if (today.equals(summary.payDate())) {
+                payDateMatch = summary;
+                break;
+            }
+            if (!today.isBefore(summary.payPeriodStart()) && !today.isAfter(summary.payPeriodEnd())) {
+                currentMatch = summary;
+            }
+        }
+
+        PayrollSummary target = payDateMatch != null ? payDateMatch : currentMatch;
+        if (target == null) {
+            return null;
+        }
+
+        String labelPrefix = payDateMatch != null ? "Pay Date Today" : "Current Pay Period";
+        return new PayPeriodOption(
+                "DEFAULT",
+                labelPrefix + ": " + formatPayPeriod(target.payPeriodStart(), target.payPeriodEnd())
+                        + "  Paid " + target.payDate().format(DATE_FORMAT),
+                target.payPeriodStart(),
+                target.payPeriodEnd()
+        );
     }
 
     private void populateEmployees() {
@@ -357,9 +411,12 @@ public class PayrollDashboard extends JFrame {
             });
         }
 
-        totalEmployeesLabel.setText("Employees: " + employeeIds.size());
-        totalHoursLabel.setText("Hours: " + formatHours(totalHours));
-        totalPayLabel.setText("Total Pay: " + CURRENCY_FORMAT.format(totalPay));
+        int totalEmployees = totalEmployeeCount();
+        BigDecimal allHours = totalDashboardHours();
+        BigDecimal allPay = totalDashboardPay();
+        totalEmployeesCard.setMetric(String.valueOf(employeeIds.size()), ratio(BigDecimal.valueOf(employeeIds.size()), BigDecimal.valueOf(totalEmployees)));
+        totalHoursCard.setMetric(formatHours(totalHours), ratio(totalHours, allHours));
+        totalPayCard.setMetric(CURRENCY_FORMAT.format(totalPay), ratio(totalPay, allPay));
         applyFilter();
     }
 
@@ -412,7 +469,7 @@ public class PayrollDashboard extends JFrame {
 
         for (int i = 0; i < payPeriodBox.getItemCount(); i++) {
             PayPeriodOption option = payPeriodBox.getItemAt(i);
-            if ("CURRENT".equals(option.key())) {
+            if ("DEFAULT".equals(option.key())) {
                 payPeriodBox.setSelectedIndex(i);
                 renderTables();
                 tabbedPane.setSelectedIndex(0);
@@ -430,11 +487,6 @@ public class PayrollDashboard extends JFrame {
     }
 
     private boolean matchesPeriod(LocalDate start, LocalDate end, PayPeriodOption selectedPeriod) {
-        if (selectedPeriod != null && selectedPeriod.currentOnly()) {
-            LocalDate today = StoreTimeZoneHelper.today();
-            return !today.isBefore(start) && !today.isAfter(end);
-        }
-
         return selectedPeriod == null
                 || selectedPeriod.start() == null
                 || (selectedPeriod.start().equals(start) && selectedPeriod.end().equals(end));
@@ -511,7 +563,114 @@ public class PayrollDashboard extends JFrame {
         return "Hourly";
     }
 
-    private record PayPeriodOption(String key, String label, LocalDate start, LocalDate end, boolean currentOnly) {
+    private int totalEmployeeCount() {
+        Set<Integer> ids = new HashSet<>();
+        for (PayrollSummary summary : allSummaries) {
+            ids.add(summary.userId());
+        }
+        return ids.size();
+    }
+
+    private BigDecimal totalDashboardHours() {
+        BigDecimal total = BigDecimal.ZERO;
+        for (PayrollSummary summary : allSummaries) {
+            total = total.add(summary.totalHours());
+        }
+        return total;
+    }
+
+    private BigDecimal totalDashboardPay() {
+        BigDecimal total = BigDecimal.ZERO;
+        for (PayrollSummary summary : allSummaries) {
+            total = total.add(summary.totalPay());
+        }
+        return total;
+    }
+
+    private static int ratio(BigDecimal value, BigDecimal total) {
+        if (value == null || total == null || total.compareTo(BigDecimal.ZERO) <= 0) {
+            return 0;
+        }
+        return value.multiply(BigDecimal.valueOf(100))
+                .divide(total, 0, RoundingMode.HALF_UP)
+                .min(BigDecimal.valueOf(100))
+                .intValue();
+    }
+
+    private class PayrollCellRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table,
+                Object value,
+                boolean isSelected,
+                boolean hasFocus,
+                int row,
+                int column
+        ) {
+            Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            component.setForeground(DeckersPalette.text());
+            component.setBackground(isSelected ? DeckersPalette.tilePressed(DeckersPalette.YELLOW) : DeckersPalette.tableBody(DeckersPalette.YELLOW));
+            if (!isSelected && column == 10) {
+                String status = value == null ? "" : value.toString();
+                if ("Paid".equals(status)) {
+                    component.setBackground(DeckersPalette.tileFill(DeckersPalette.LIME));
+                } else if ("Additional Due".equals(status)) {
+                    component.setBackground(DeckersPalette.tileFill(DeckersPalette.YELLOW));
+                } else if ("Unpaid".equals(status)) {
+                    component.setBackground(DeckersPalette.tileFill(DeckersPalette.CORAL));
+                }
+            }
+            return component;
+        }
+    }
+
+    private static class MetricCard extends JPanel {
+        private final JLabel titleLabel;
+        private final JLabel valueLabel;
+        private final JProgressBar progressBar;
+
+        MetricCard(String title, Color accent) {
+            super(new BorderLayout(0, 8));
+            setOpaque(true);
+            setBackground(DeckersPalette.sectionFill(accent));
+            setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(DeckersPalette.sectionBorder(accent), 1),
+                    BorderFactory.createCompoundBorder(
+                            BorderFactory.createMatteBorder(0, 5, 0, 0, accent),
+                            new EmptyBorder(12, 14, 12, 14)
+                    )
+            ));
+
+            titleLabel = new JLabel(title);
+            titleLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
+            titleLabel.setForeground(DeckersPalette.muted());
+            titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+
+            valueLabel = new JLabel("0");
+            valueLabel.setFont(new Font("SansSerif", Font.BOLD, 22));
+            valueLabel.setForeground(DeckersPalette.text());
+            valueLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+
+            progressBar = new JProgressBar(0, 100);
+            progressBar.setValue(0);
+            progressBar.setStringPainted(false);
+            progressBar.setForeground(accent);
+            progressBar.setBackground(DeckersPalette.tileFill(accent));
+            progressBar.setBorderPainted(false);
+            progressBar.setPreferredSize(new Dimension(1, 8));
+
+            add(titleLabel, BorderLayout.NORTH);
+            add(valueLabel, BorderLayout.CENTER);
+            add(progressBar, BorderLayout.SOUTH);
+        }
+
+        void setMetric(String value, int percent) {
+            valueLabel.setText(value);
+            progressBar.setValue(Math.max(0, Math.min(100, percent)));
+        }
+    }
+
+    private record PayPeriodOption(String key, String label, LocalDate start, LocalDate end) {
         @Override
         public String toString() {
             return label;

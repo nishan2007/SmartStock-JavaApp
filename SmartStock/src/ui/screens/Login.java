@@ -210,9 +210,13 @@ public class Login extends JFrame {
 
                 SupabaseLoginResult authResult = authenticateWithSupabase(email.trim(), password);
                 if (!authResult.success) {
-                    if (isReachabilityAuthFailure(authResult.message)
-                            && tryOfflineCachedLogin(conn, loginIdentifier, password)) {
-                        openMainMenu();
+                    if (isReachabilityAuthFailure(authResult.message)) {
+                        OfflineLoginAttempt offlineAttempt = tryOfflineCachedLogin(conn, loginIdentifier, password);
+                        if (offlineAttempt.success()) {
+                            openMainMenu();
+                            return;
+                        }
+                        JOptionPane.showMessageDialog(this, offlineAttempt.message(), "Offline Login", JOptionPane.WARNING_MESSAGE);
                         return;
                     }
                     JOptionPane.showMessageDialog(this, authResult.message);
@@ -270,7 +274,19 @@ public class Login extends JFrame {
                 SupabaseSessionManager.setSession(SessionManager.getCurrentAccessToken(), SessionManager.getCurrentRefreshToken());
                 DeviceService.registerOrUpdateDevice(conn, SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
                 SupabaseSessionManager.savePersistedSession(SessionManager.getCurrentUserId(), SessionManager.getCurrentLocationId());
-                offerLocalPinCache(conn, userId, foundUsername, fullName, email, userRs.getString("badge_id"), role, selectedLocation);
+                LocalAuthCacheService.CachedUser cachedUser = new LocalAuthCacheService.CachedUser(
+                        userId,
+                        foundUsername,
+                        fullName,
+                        email,
+                        userRs.getString("badge_id"),
+                        role,
+                        selectedLocation.locationId,
+                        selectedLocation.locationName,
+                        selectedLocation.timezone
+                );
+                LocalAuthCacheService.savePasswordVerifier(conn, cachedUser, password.toCharArray());
+                offerEmployeePinSetup(conn, cachedUser);
                 hydrateSelectedStoreInBackground(selectedLocation.locationId);
 
                 JOptionPane.showMessageDialog(
@@ -450,24 +466,30 @@ public class Login extends JFrame {
                 && elapsed <= 1_200;
     }
 
-    private boolean tryOfflineCachedLogin(Connection conn, String loginIdentifier, String enteredSecret) throws Exception {
+    private OfflineLoginAttempt tryOfflineCachedLogin(Connection conn, String loginIdentifier, String enteredSecret) throws Exception {
         if (!LocalAuthCacheService.shouldUseLocalAuthCache()) {
-            return false;
-        }
-        LocalAuthCacheService.CachedUser cached = LocalAuthCacheService.verify(conn, loginIdentifier, enteredSecret.toCharArray());
-        if (cached == null) {
-            return false;
+            return OfflineLoginAttempt.failure("Offline login is only available in server/client mode.");
         }
         Integer lockedLocationId = lockedStoreLocationId();
+        LocalAuthCacheService.CachedUser cached = LocalAuthCacheService.verify(conn, loginIdentifier, enteredSecret.toCharArray(), lockedLocationId);
+        if (cached == null) {
+            if (LocalAuthCacheService.hasCachedUser(conn, loginIdentifier)) {
+                if (LocalAuthCacheService.hasPasswordVerifier(conn, loginIdentifier)) {
+                    return OfflineLoginAttempt.failure("Offline password/employee PIN was not accepted. Use the last online password cached on this local server, or the employee PIN.");
+                }
+                if (LocalAuthCacheService.hasAnyPasswordVerifier(conn, loginIdentifier)) {
+                    return OfflineLoginAttempt.failure("The cached offline password for this user was invalidated by a password change. Connect to the cloud once and log in with the new password to refresh this store server.");
+                }
+                return OfflineLoginAttempt.failure("Employee PIN was not accepted. This local server does not have a cached password for that user yet.");
+            }
+            if (LocalAuthCacheService.hasGlobalEmployeePin(conn, loginIdentifier, lockedLocationId)) {
+                return OfflineLoginAttempt.failure("Employee PIN was not accepted.");
+            }
+            return OfflineLoginAttempt.failure("No offline login is saved for this user on this local server. Connect to the cloud once and log in normally to cache the password.");
+        }
         if (lockedLocationId != null && cached.locationId() != lockedLocationId) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "This workstation is locked to store ID " + lockedLocationId
-                            + ". Use an offline PIN cached for this store.",
-                    "Store Locked",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return false;
+            return OfflineLoginAttempt.failure("This workstation is locked to store ID " + lockedLocationId
+                    + ". Use an employee PIN cached for this store.");
         }
         SessionManager.setCurrentUserId(cached.userId());
         SessionManager.setCurrentUsername(cached.username());
@@ -482,7 +504,7 @@ public class Login extends JFrame {
                         + "\nStore: " + SessionManager.getCurrentLocationName(),
                 "Offline Login",
                 JOptionPane.INFORMATION_MESSAGE);
-        return true;
+        return OfflineLoginAttempt.accepted();
     }
 
     private String refreshAssignedStoresIfPossible(Connection conn, int userId) {
@@ -526,43 +548,32 @@ public class Login extends JFrame {
         worker.execute();
     }
 
-    private void offerLocalPinCache(Connection conn, int userId, String username, String fullName, String email, String badgeId,
-                                    String role, LocationOption location) {
+    private void offerEmployeePinSetup(Connection conn, LocalAuthCacheService.CachedUser cachedUser) {
         if (!LocalAuthCacheService.shouldUseLocalAuthCache()) {
             return;
         }
         JPasswordField pinField = new JPasswordField();
         JPasswordField confirmField = new JPasswordField();
         JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
-        panel.add(new JLabel("Create a local offline PIN for this register/store."));
+        panel.add(new JLabel("Create an employee PIN for this register/store."));
         panel.add(new JLabel("PIN"));
         panel.add(pinField);
         panel.add(new JLabel("Confirm PIN"));
         panel.add(confirmField);
-        int choice = JOptionPane.showConfirmDialog(this, panel, "Offline Login PIN", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int choice = JOptionPane.showConfirmDialog(this, panel, "Employee PIN", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) {
             return;
         }
         char[] pin = pinField.getPassword();
         char[] confirm = confirmField.getPassword();
         if (pin.length < 4 || !java.util.Arrays.equals(pin, confirm)) {
-            JOptionPane.showMessageDialog(this, "Offline PIN was not saved. Use at least 4 characters and confirm it exactly.");
+            JOptionPane.showMessageDialog(this, "Employee PIN was not saved. Use at least 4 characters and confirm it exactly.");
             return;
         }
         try {
-            LocalAuthCacheService.saveUser(conn, new LocalAuthCacheService.CachedUser(
-                    userId,
-                    username,
-                    fullName,
-                    email,
-                    badgeId,
-                    role,
-                    location.locationId,
-                    location.locationName,
-                    location.timezone
-            ), pin);
+            LocalAuthCacheService.saveEmployeePin(conn, cachedUser, pin);
         } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Offline PIN could not be saved: " + ex.getMessage(), "Offline Login PIN", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Employee PIN could not be saved: " + ex.getMessage(), "Employee PIN", JOptionPane.WARNING_MESSAGE);
         }
     }
 
@@ -800,6 +811,16 @@ public class Login extends JFrame {
                 .replace("\\\\", "\\");
     }
 
+
+    private record OfflineLoginAttempt(boolean success, String message) {
+        private static OfflineLoginAttempt accepted() {
+            return new OfflineLoginAttempt(true, null);
+        }
+
+        private static OfflineLoginAttempt failure(String message) {
+            return new OfflineLoginAttempt(false, message);
+        }
+    }
 
     private static class SupabaseLoginResult {
         private final boolean success;

@@ -102,7 +102,7 @@ public class Quotations extends JFrame {
         return panel;
     }
 
-    private void refreshQuotations() {
+    void refreshQuotations() {
         quotationModel.setRowCount(0);
         try {
             for (QuotationInvoiceViewService.QuotationSummary row : QuotationInvoiceViewService.listQuotations()) {
@@ -120,7 +120,7 @@ public class Quotations extends JFrame {
         }
     }
 
-    private void openQuotationDialog() {
+    void openQuotationDialog() {
         QuotationEditor editor = new QuotationEditor(this);
         editor.setVisible(true);
         if (editor.created) {
@@ -128,7 +128,7 @@ public class Quotations extends JFrame {
         }
     }
 
-    private void editSelectedDraftQuotation() {
+    void editSelectedDraftQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
@@ -147,7 +147,7 @@ public class Quotations extends JFrame {
         }
     }
 
-    private void issueSelectedQuotation() {
+    void issueSelectedQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
@@ -159,7 +159,7 @@ public class Quotations extends JFrame {
         }
     }
 
-    private void acceptSelectedQuotation() {
+    void acceptSelectedQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
@@ -216,7 +216,7 @@ public class Quotations extends JFrame {
         return dialog.deliveryEventId();
     }
 
-    private void previewQuotation() {
+    void previewQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
@@ -250,7 +250,7 @@ public class Quotations extends JFrame {
         ), this);
     }
 
-    private Long selectedId(JTable table) {
+    Long selectedId(JTable table) {
         int row = table.getSelectedRow();
         if (row < 0) {
             JOptionPane.showMessageDialog(this, "Select a row first.");
@@ -396,11 +396,11 @@ public class Quotations extends JFrame {
         return text.isBlank() || "null".equalsIgnoreCase(text) ? null : text;
     }
 
-    private void showError(String title, Exception ex) {
+    void showError(String title, Exception ex) {
         JOptionPane.showMessageDialog(this, title + ".\n\n" + ex.getMessage(), "Quotations", JOptionPane.ERROR_MESSAGE);
     }
 
-    private static class PaymentPrompt extends JDialog {
+    static class PaymentPrompt extends JDialog {
         private final JTextField amountField = new JTextField("0.00");
         private final JComboBox<String> methodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG"});
         private final JTextField referenceField = new JTextField();
@@ -447,7 +447,7 @@ public class Quotations extends JFrame {
         }
     }
 
-    private static class QuotationEditor extends JDialog {
+    static class QuotationEditor extends JDialog {
         private final JComboBox<QuotationInvoiceViewService.CustomerOption> customerBox = new JComboBox<>();
         private final JTextField validUntilField = new JTextField(LocalDate.now().plusDays(30).toString());
         private final JTextArea notesArea = new JTextArea(3, 40);
@@ -460,7 +460,7 @@ public class Quotations extends JFrame {
         private final String editQuotationNumber;
         private JButton createButton;
         private JButton cancelButton;
-        private boolean created;
+        boolean created;
 
         QuotationEditor(JFrame owner) {
             this(owner, null);
@@ -980,6 +980,6 @@ public class Quotations extends JFrame {
                              Integer priceOverrideByUserId, String priceOverrideByName) {
     }
 
-    private record PaymentInput(BigDecimal amount, String method, String reference) {
+    record PaymentInput(BigDecimal amount, String method, String reference) {
     }
 }

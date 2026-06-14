@@ -98,6 +98,7 @@ public final class BaseSchemaInstaller {
                         email TEXT,
                         phone TEXT,
                         employee_photo_url TEXT,
+                        employee_id_card_document_url TEXT,
                         date_of_birth DATE,
                         badge_id TEXT,
                         badge_secret_salt TEXT,
@@ -112,6 +113,10 @@ public final class BaseSchemaInstaller {
                         deactivated_at TIMESTAMPTZ,
                         deactivated_by_user_id INTEGER,
                         deactivated_by_name TEXT,
+                        password_cache_invalidated_at TIMESTAMPTZ,
+                        employee_pin_salt TEXT,
+                        employee_pin_hash TEXT,
+                        employee_pin_updated_at TIMESTAMPTZ,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
@@ -128,7 +133,12 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_cache_invalidated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_photo_url TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id_card_document_url TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_salt TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");

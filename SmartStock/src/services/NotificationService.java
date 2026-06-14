@@ -457,25 +457,6 @@ public final class NotificationService {
         if (!hasTable(conn, "devices")) {
             return;
         }
-        if (PermissionManager.hasPermission("DEVICE_MANAGEMENT")) {
-            String sql = """
-                    SELECT device_id::text AS device_id, COALESCE(device_name, hostname, installation_id, device_id::text) AS label
-                    FROM devices
-                    WHERE COALESCE(is_approved, FALSE) = FALSE
-                      AND COALESCE(is_blocked, FALSE) = FALSE
-                    ORDER BY last_seen DESC NULLS LAST
-                    LIMIT 25
-                    """;
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    notifications.add(notification("DEVICE_PENDING_APPROVAL:" + rs.getString("device_id"),
-                            AppNotification.Severity.URGENT, AppNotification.Source.DEVICES,
-                            "Device needs approval",
-                            rs.getString("label") + " is waiting for device approval.", "DeviceManagement"));
-                }
-            }
-        }
         Integer userId = SessionManager.getCurrentUserId();
         if (userId != null) {
             String sql = """

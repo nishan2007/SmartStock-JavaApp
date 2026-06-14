@@ -26,7 +26,6 @@ import ui.screens.Reports;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
 import ui.screens.Invoices;
-import ui.screens.Quotations;
 import ui.screens.StoreTransfer;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
@@ -177,7 +176,7 @@ public final class NavigationManager {
     }
 
     public static void openQuotations(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.QUOTATIONS));
+        openScreen(parent, new Invoices(Invoices.InitialTab.QUOTATIONS));
     }
 
     public static void openInvoices(JFrame parent) {
@@ -252,7 +251,7 @@ public final class NavigationManager {
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
-            case QUOTATIONS -> new Quotations();
+            case QUOTATIONS -> new Invoices(Invoices.InitialTab.QUOTATIONS);
             case INVOICES -> new Invoices();
             case CUSTOM_ORDERS -> new CustomOrders();
             case ORDERS -> new Orders();

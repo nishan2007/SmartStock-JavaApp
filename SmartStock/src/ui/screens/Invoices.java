@@ -16,15 +16,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Invoices extends JFrame {
+    public enum InitialTab {
+        QUOTATIONS,
+        INVOICES
+    }
+
+    private final DefaultTableModel quotationModel = Quotations.readOnlyModel("ID", "Quotation #", "Customer", "Status", "Valid Until", "Total");
     private final DefaultTableModel invoiceModel = Quotations.readOnlyModel("ID", "Invoice #", "Customer", "Status", "Payment", "Balance", "Quotation #");
     private final DefaultTableModel deliveryModel = Quotations.readOnlyModel("ID", "Delivery #", "Invoice #", "Customer", "Method", "Balance", "Created");
     private final DefaultTableModel auditModel = Quotations.readOnlyModel("Time", "Document", "Action", "Field", "Old", "New", "User", "Reason");
+    private final JTable quotationTable = new JTable(quotationModel);
     private final JTable invoiceTable = new JTable(invoiceModel);
     private final JTable deliveryTable = new JTable(deliveryModel);
     private final JTable auditTable = new JTable(auditModel);
 
     public Invoices() {
-        setTitle("Invoices");
+        this(InitialTab.QUOTATIONS);
+    }
+
+    public Invoices(InitialTab initialTab) {
+        setTitle("Quotations & Invoices");
         setSize(1280, 760);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -34,18 +45,49 @@ public class Invoices extends JFrame {
         mainPanel.setBorder(new EmptyBorder(14, 14, 14, 14));
         add(mainPanel, BorderLayout.CENTER);
 
-        JLabel title = new JLabel("Invoices");
+        JLabel title = new JLabel("Quotations & Invoices");
         title.setFont(new Font("SansSerif", Font.BOLD, 26));
         mainPanel.add(title, BorderLayout.NORTH);
 
         JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Quotations", tablePanel(quotationTable, quotationButtons()));
         tabs.addTab("Invoices", tablePanel(invoiceTable, invoiceButtons()));
         tabs.addTab("Deliveries", tablePanel(deliveryTable, deliveryButtons()));
         tabs.addTab("Audit", tablePanel(auditTable, auditButtons()));
+        tabs.setSelectedIndex(initialTab == InitialTab.QUOTATIONS ? 0 : 1);
         mainPanel.add(tabs, BorderLayout.CENTER);
 
         refreshAll();
         WindowHelper.configurePosWindow(this);
+    }
+
+    private JPanel quotationButtons() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JButton newQuotation = new JButton("New Quotation");
+        JButton editDraft = new JButton("Edit Draft");
+        JButton issue = new JButton("Issue");
+        JButton accept = new JButton("Accept Quotation");
+        JButton preview = new JButton("Preview Quotation");
+        JButton refresh = new JButton("Refresh");
+        panel.add(newQuotation);
+        panel.add(editDraft);
+        panel.add(issue);
+        panel.add(accept);
+        panel.add(preview);
+        panel.add(refresh);
+        Quotations.stylePrimaryButton(newQuotation);
+        Quotations.styleSecondaryButton(editDraft);
+        Quotations.styleSecondaryButton(issue);
+        Quotations.styleSecondaryButton(accept);
+        Quotations.styleSecondaryButton(preview);
+        Quotations.styleSecondaryButton(refresh);
+        newQuotation.addActionListener(e -> openQuotationDialog());
+        editDraft.addActionListener(e -> editSelectedDraftQuotation());
+        issue.addActionListener(e -> issueSelectedQuotation());
+        accept.addActionListener(e -> acceptSelectedQuotation());
+        preview.addActionListener(e -> previewQuotation());
+        refresh.addActionListener(e -> loadQuotations());
+        return panel;
     }
 
     private JPanel invoiceButtons() {
@@ -102,9 +144,28 @@ public class Invoices extends JFrame {
     }
 
     private void refreshAll() {
+        loadQuotations();
         loadInvoices();
         loadDeliveries();
         loadAudit();
+    }
+
+    private void loadQuotations() {
+        quotationModel.setRowCount(0);
+        try {
+            for (QuotationInvoiceViewService.QuotationSummary row : QuotationInvoiceViewService.listQuotations()) {
+                quotationModel.addRow(new Object[]{
+                        row.quotationId(),
+                        row.quotationNumber(),
+                        row.customerName(),
+                        row.status(),
+                        row.validUntil(),
+                        row.totalAmount()
+                });
+            }
+        } catch (SQLException ex) {
+            showError("Failed to load quotations", ex);
+        }
     }
 
     private void loadInvoices() {
@@ -227,6 +288,136 @@ public class Invoices extends JFrame {
         } catch (SQLException ex) {
             showError("Failed to preview delivery bill", ex);
         }
+    }
+
+    private void openQuotationDialog() {
+        Quotations.QuotationEditor editor = new Quotations.QuotationEditor(this);
+        editor.setVisible(true);
+        if (editor.created) {
+            refreshAll();
+        }
+    }
+
+    private void editSelectedDraftQuotation() {
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        try {
+            QuotationInvoiceViewService.QuotationEditData quotation = QuotationInvoiceViewService.loadQuotationForEdit(quotationId);
+            if (!"DRAFT".equals(quotation.status())) {
+                JOptionPane.showMessageDialog(this, "Only draft quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            Quotations.QuotationEditor editor = new Quotations.QuotationEditor(this, quotation);
+            editor.setVisible(true);
+            if (editor.created) {
+                refreshAll();
+            }
+        } catch (SQLException ex) {
+            showError("Failed to load draft quotation", ex);
+        }
+    }
+
+    private void issueSelectedQuotation() {
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        try {
+            QuotationInvoiceService.issueQuotation(quotationId);
+            refreshAll();
+            openQuotationPrintDialog(quotationId);
+        } catch (SQLException ex) {
+            showError("Failed to issue quotation", ex);
+        }
+    }
+
+    private void acceptSelectedQuotation() {
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        try {
+            QuotationInvoiceService.InvoiceResult result = QuotationInvoiceService.acceptQuotation(quotationId);
+            promptForAcceptedQuotationPayment(result.invoiceId());
+            Long deliveryEventId = promptForAcceptedQuotationDelivery(result.invoiceId());
+            refreshAll();
+            openSalesInvoicePrintDialog(result.invoiceId());
+            if (deliveryEventId != null) {
+                openDeliveryPrintDialog(deliveryEventId);
+            }
+        } catch (SQLException ex) {
+            showError("Failed to accept quotation", ex);
+        }
+    }
+
+    private void promptForAcceptedQuotationPayment(long invoiceId) {
+        try {
+            QuotationInvoiceViewService.InvoiceFinancials financials = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
+            Quotations.PaymentPrompt prompt = new Quotations.PaymentPrompt(this, financials);
+            prompt.setVisible(true);
+            Quotations.PaymentInput payment = prompt.paymentInput();
+            if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
+                try {
+                    QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                } catch (SQLException ex) {
+                    showError("Payment was not recorded; remaining balance will be placed on account if possible", ex);
+                }
+            }
+            QuotationInvoiceViewService.InvoiceFinancials updated = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
+            if (updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+                QuotationInvoiceService.chargeInvoiceToAccount(invoiceId, "Remaining balance from accepted quotation.");
+            }
+        } catch (SQLException ex) {
+            showError("Failed to place remaining balance on customer account", ex);
+        }
+    }
+
+    private Long promptForAcceptedQuotationDelivery(long invoiceId) throws SQLException {
+        if (QuotationInvoiceViewService.listDeliverableLines(invoiceId).isEmpty()) {
+            return null;
+        }
+        int choice = JOptionPane.showConfirmDialog(
+                this,
+                "Enter any quantities being delivered now?",
+                "Invoice Delivery",
+                JOptionPane.YES_NO_OPTION
+        );
+        if (choice != JOptionPane.YES_OPTION) {
+            return null;
+        }
+        DeliveryDialog dialog = new DeliveryDialog(this, invoiceId);
+        dialog.setVisible(true);
+        return dialog.deliveryEventId();
+    }
+
+    private void previewQuotation() {
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        try {
+            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId)), this);
+        } catch (SQLException ex) {
+            showError("Failed to preview quotation", ex);
+        }
+    }
+
+    private void openQuotationPrintDialog(long quotationId) throws SQLException {
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Quotation Print",
+                QuotationInvoiceDocumentBuilder.buildQuotation(quotationId),
+                true
+        ), this);
+    }
+
+    private void openSalesInvoicePrintDialog(long invoiceId) throws SQLException {
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Invoice Print",
+                QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId),
+                true
+        ), this);
+    }
+
+    private void openDeliveryPrintDialog(long deliveryEventId) throws SQLException {
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Delivery Bill Print",
+                QuotationInvoiceDocumentBuilder.buildDelivery(deliveryEventId),
+                true
+        ), this);
     }
 
     private Long selectedId(JTable table) {

@@ -5,6 +5,7 @@ import managers.SessionManager;
 import managers.CompanyCustomizationManager;
 import services.OfflineWriteGuard;
 import services.BadgeCredentialService;
+import services.EmployeeDocumentService;
 import services.BadgePrintService;
 import services.EmployeePhotoService;
 import services.ReferenceDataSyncService;
@@ -76,6 +77,7 @@ public class EmployeeManagement extends JFrame {
     private JTextField phoneField;
     private JTextField employeePhotoField;
     private JLabel employeePhotoPreviewLabel;
+    private JTextField employeeIdCardDocumentField;
     private JTextField dateOfBirthField;
     private JTextField badgeIdField;
     private JComboBox<CompensationOption> compensationTypeBox;
@@ -124,7 +126,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active", "ID Card Document"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -193,6 +195,7 @@ public class EmployeeManagement extends JFrame {
         hideEmployeeColumn(10);
         hideEmployeeColumn(12);
         hideEmployeeColumn(13);
+        hideEmployeeColumn(16);
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
@@ -209,6 +212,8 @@ public class EmployeeManagement extends JFrame {
         phoneField = new JTextField();
         employeePhotoField = new JTextField();
         employeePhotoField.setEditable(false);
+        employeeIdCardDocumentField = new JTextField();
+        employeeIdCardDocumentField.setEditable(false);
         dateOfBirthField = new JTextField();
         dateOfBirthField.setToolTipText("Optional. Use YYYY-MM-DD. If present, it is included in the badge verification hash.");
         badgeIdField = new JTextField();
@@ -327,6 +332,15 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 8;
         gbc.weightx = 0;
+        formPanel.add(new JLabel("ID Card Document:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(buildIdCardDocumentSelectorPanel(), gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 9;
+        gbc.weightx = 0;
         formPanel.add(new JLabel("Date of Birth:"), gbc);
 
         gbc.gridx = 1;
@@ -334,7 +348,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(dateOfBirthField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 9;
+        gbc.gridy = 10;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Badge ID (auto):"), gbc);
 
@@ -343,7 +357,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(badgeIdField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 10;
+        gbc.gridy = 11;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Pay Type:"), gbc);
 
@@ -352,7 +366,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(compensationTypeBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 11;
+        gbc.gridy = 12;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Salary:"), gbc);
 
@@ -361,7 +375,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(salaryAmountField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 12;
+        gbc.gridy = 13;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Role:"), gbc);
 
@@ -370,7 +384,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 13;
+        gbc.gridy = 14;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
@@ -409,7 +423,7 @@ public class EmployeeManagement extends JFrame {
         storeIdColumn.setMaxWidth(90);
 
         gbc.gridx = 0;
-        gbc.gridy = 14;
+        gbc.gridy = 15;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.weighty = 0.0;
@@ -418,7 +432,7 @@ public class EmployeeManagement extends JFrame {
 
         gbc.gridwidth = 1;
         gbc.gridx = 0;
-        gbc.gridy = 15;
+        gbc.gridy = 16;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(Box.createVerticalGlue(), gbc);
@@ -614,6 +628,7 @@ public class EmployeeManagement extends JFrame {
                 emailField,
                 phoneField,
                 employeePhotoField,
+                employeeIdCardDocumentField,
                 dateOfBirthField,
                 badgeIdField,
                 salaryAmountField
@@ -735,6 +750,75 @@ public class EmployeeManagement extends JFrame {
             refreshEmployeePhotoPreview();
         });
         return panel;
+    }
+
+    private JPanel buildIdCardDocumentSelectorPanel() {
+        JPanel panel = new JPanel(new BorderLayout(6, 4));
+        panel.setOpaque(false);
+        panel.add(employeeIdCardDocumentField, BorderLayout.CENTER);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        buttons.setOpaque(false);
+        JButton chooseButton = new JButton("Choose");
+        JButton openButton = new JButton("Open");
+        JButton clearButton = new JButton("Clear");
+        styleButton(chooseButton, false);
+        styleButton(openButton, false);
+        styleButton(clearButton, false);
+        buttons.add(chooseButton);
+        buttons.add(openButton);
+        buttons.add(clearButton);
+        panel.add(buttons, BorderLayout.SOUTH);
+        chooseButton.addActionListener(e -> chooseEmployeeIdCardDocument());
+        openButton.addActionListener(e -> openEmployeeIdCardDocument());
+        clearButton.addActionListener(e -> employeeIdCardDocumentField.setText(""));
+        return panel;
+    }
+
+    private void chooseEmployeeIdCardDocument() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Employee ID Card Document");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "ID Card Documents", "pdf", "png", "jpg", "jpeg", "heic", "doc", "docx"
+        ));
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path source = chooser.getSelectedFile().toPath();
+        try {
+            Path targetDirectory = Path.of(System.getProperty("user.home"), ".smartstock", "employee-id-cards");
+            Files.createDirectories(targetDirectory);
+            String extension = extension(source.getFileName().toString());
+            String namePrefix = selectedUserId == null ? "pending" : "employee-" + selectedUserId;
+            Path target = targetDirectory.resolve(namePrefix + "-" + System.currentTimeMillis() + "." + extension);
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            employeeIdCardDocumentField.setText(target.toString());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to copy ID card document.\n\n" + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void openEmployeeIdCardDocument() {
+        String value = employeeIdCardDocumentField.getText().trim();
+        if (value.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No ID card document is saved for this employee.", "ID Card Document", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (!Desktop.isDesktopSupported()) {
+            JOptionPane.showMessageDialog(this, "Opening documents is not supported on this workstation.", "ID Card Document", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try {
+            if (EmployeeDocumentService.isAuthenticatedStorageUrl(value)) {
+                Desktop.getDesktop().open(EmployeeDocumentService.downloadAuthenticatedDocument(value));
+            } else if (value.startsWith("http://") || value.startsWith("https://")) {
+                Desktop.getDesktop().browse(URI.create(value));
+            } else {
+                Desktop.getDesktop().open(Path.of(value).toFile());
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to open ID card document.\n\n" + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void chooseEmployeePhoto() {
@@ -965,7 +1049,8 @@ public class EmployeeManagement extends JFrame {
                        COALESCE(u.compensation_type, 'HOURLY') AS compensation_type,
                        COALESCE(u.salary, 0) AS salary,
                        COALESCE(r.role_name, 'USER') AS role,
-                       COALESCE(u.is_active, TRUE) AS is_active
+                       COALESCE(u.is_active, TRUE) AS is_active,
+                       COALESCE(u.employee_id_card_document_url, '') AS employee_id_card_document_url
                 FROM users u
                 LEFT JOIN roles r ON u.role_id = r.role_id
                 ORDER BY u.user_id
@@ -992,7 +1077,8 @@ public class EmployeeManagement extends JFrame {
                         rs.getString("compensation_type"),
                         rs.getBigDecimal("salary"),
                         rs.getString("role"),
-                        rs.getBoolean("is_active")
+                        rs.getBoolean("is_active"),
+                        rs.getString("employee_id_card_document_url")
                 });
             }
 
@@ -1060,6 +1146,7 @@ public class EmployeeManagement extends JFrame {
         phoneField.setText(employeeModel.getValueAt(selectedRow, 7) == null ? "" : employeeModel.getValueAt(selectedRow, 7).toString());
         employeePhotoField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
         refreshEmployeePhotoPreview();
+        employeeIdCardDocumentField.setText(employeeModel.getValueAt(selectedRow, 16) == null ? "" : employeeModel.getValueAt(selectedRow, 16).toString());
         dateOfBirthField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
         badgeIdField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
         selectCompensationType(employeeModel.getValueAt(selectedRow, 12) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 12).toString());
@@ -1100,6 +1187,7 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String employeePhotoUrl = employeePhotoField.getText().trim();
+        String idCardDocumentUrl = employeeIdCardDocumentField.getText().trim();
         LocalDate dateOfBirth = parseOptionalDateOfBirth();
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
@@ -1152,6 +1240,13 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        try {
+            idCardDocumentUrl = EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(idCardDocumentUrl, username);
+            employeeIdCardDocumentField.setText(idCardDocumentUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload ID card document: " + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -1162,10 +1257,10 @@ public class EmployeeManagement extends JFrame {
                 String sql = """
                         INSERT INTO users (
                             username, password_hash, first_name, middle_name, last_name, full_name,
-                            email, phone, employee_photo_url, date_of_birth, badge_id, badge_secret_salt, badge_secret_hash, badge_generated_at,
-                            compensation_type, salary, role_id, auth_user_id, is_active
+                            email, phone, employee_photo_url, employee_id_card_document_url, date_of_birth, badge_id, badge_secret_salt, badge_secret_hash, badge_generated_at,
+                            compensation_type, salary, role_id, auth_user_id, is_active, password_cache_invalidated_at
                         )
-                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?)
+                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?, CURRENT_TIMESTAMP)
                         RETURNING user_id
                         """;
 
@@ -1179,15 +1274,16 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(6, email);
                     ps.setString(7, phoneNumber);
                     ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
-                    ps.setDate(9, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(10, badgeId);
-                    ps.setString(11, badgeHash.salt());
-                    ps.setString(12, badgeHash.hash());
-                    ps.setObject(13, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(14, salary);
-                    ps.setString(15, role);
-                    ps.setString(16, normalizeUuid(authUserId));
-                    ps.setBoolean(17, isActive);
+                    ps.setString(9, idCardDocumentUrl.isEmpty() ? null : idCardDocumentUrl);
+                    ps.setDate(10, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
+                    ps.setString(11, badgeId);
+                    ps.setString(12, badgeHash.salt());
+                    ps.setString(13, badgeHash.hash());
+                    ps.setObject(14, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(15, salary);
+                    ps.setString(16, role);
+                    ps.setString(17, normalizeUuid(authUserId));
+                    ps.setBoolean(18, isActive);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (!rs.next()) {
                             throw new SQLException("Employee was not created.");
@@ -1235,6 +1331,7 @@ public class EmployeeManagement extends JFrame {
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
         String employeePhotoUrl = employeePhotoField.getText().trim();
+        String idCardDocumentUrl = employeeIdCardDocumentField.getText().trim();
         LocalDate dateOfBirth = parseOptionalDateOfBirth();
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
@@ -1286,6 +1383,13 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        try {
+            idCardDocumentUrl = EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(idCardDocumentUrl, username);
+            employeeIdCardDocumentField.setText(idCardDocumentUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to upload ID card document: " + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -1329,6 +1433,7 @@ public class EmployeeManagement extends JFrame {
                             email = ?,
                             phone = ?,
                             employee_photo_url = ?,
+                            employee_id_card_document_url = ?,
                             date_of_birth = ?,
                             badge_id = ?,
                             badge_secret_salt = ?,
@@ -1339,6 +1444,10 @@ public class EmployeeManagement extends JFrame {
                             role_id = (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)),
                             auth_user_id = ?::uuid,
                             is_active = ?,
+                            password_cache_invalidated_at = CASE
+                                WHEN ? THEN CURRENT_TIMESTAMP
+                                ELSE password_cache_invalidated_at
+                            END,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE user_id = ?
                         """;
@@ -1352,16 +1461,18 @@ public class EmployeeManagement extends JFrame {
                     ps.setString(6, email);
                     ps.setString(7, phoneNumber);
                     ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
-                    ps.setDate(9, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(10, badgeId);
-                    ps.setString(11, badgeHash.salt());
-                    ps.setString(12, badgeHash.hash());
-                    ps.setObject(13, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(14, salary);
-                    ps.setString(15, role);
-                    ps.setString(16, normalizeUuid(authUserId));
-                    ps.setBoolean(17, isActive);
-                    ps.setInt(18, selectedUserId);
+                    ps.setString(9, idCardDocumentUrl.isEmpty() ? null : idCardDocumentUrl);
+                    ps.setDate(10, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
+                    ps.setString(11, badgeId);
+                    ps.setString(12, badgeHash.salt());
+                    ps.setString(13, badgeHash.hash());
+                    ps.setObject(14, compensationType, java.sql.Types.OTHER);
+                    ps.setBigDecimal(15, salary);
+                    ps.setString(16, role);
+                    ps.setString(17, normalizeUuid(authUserId));
+                    ps.setBoolean(18, isActive);
+                    ps.setBoolean(19, !password.isBlank());
+                    ps.setInt(20, selectedUserId);
                     ps.executeUpdate();
                 }
 
@@ -1396,6 +1507,7 @@ public class EmployeeManagement extends JFrame {
         phoneField.setText("");
         employeePhotoField.setText("");
         refreshEmployeePhotoPreview();
+        employeeIdCardDocumentField.setText("");
         dateOfBirthField.setText("");
         badgeIdField.setText("");
         selectCompensationType("HOURLY");

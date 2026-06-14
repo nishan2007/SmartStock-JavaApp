@@ -36,7 +36,6 @@ import ui.screens.Reports;
 import ui.screens.Roles_Permission;
 import ui.screens.ReturnSale;
 import ui.screens.Invoices;
-import ui.screens.Quotations;
 import ui.screens.StoreTransfer;
 import ui.screens.SyncStatus;
 import ui.screens.TimeClock;
@@ -47,6 +46,7 @@ import ui.screens.WorkstationPreferences;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -55,10 +55,18 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
 
 public class AppMenuBar {
+    private static final String NOTIFICATIONS_MENU_PROPERTY = "SmartStock.notificationsMenuItem";
+    private static final Color NOTIFICATION_URGENT_COLOR = new Color(185, 28, 28);
+    private static final DateTimeFormatter SESSION_CLOCK_FORMATTER =
+            DateTimeFormatter.ofPattern("h:mm EEE, MMM d", Locale.US);
 
     public static JMenuBar create(JFrame parent, String currentScreen) {
         JMenuBar menuBar = new JMenuBar();
@@ -88,6 +96,7 @@ public class AppMenuBar {
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
+        JMenuItem sessionTimeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem deviceManagementItem = new JMenuItem("Device Management");
@@ -96,12 +105,13 @@ public class AppMenuBar {
         JMenuItem companyCustomizationItem = new JMenuItem("Company Preferences");
         JMenuItem workstationPreferencesItem = new JMenuItem("Workstation Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
-        JMenuItem quotationsItem = new JMenuItem("Quotations");
-        JMenuItem invoicesItem = new JMenuItem("Invoices");
+        JMenuItem invoicesItem = new JMenuItem("Quotations & Invoices");
         JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
+        JMenuItem notificationsItem = new JMenuItem(NotificationService.loadSummary().label());
+        notificationsItem.putClientProperty(NOTIFICATIONS_MENU_PROPERTY, Boolean.TRUE);
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
         boolean canProcessReturns = PermissionManager.hasPermission("PROCESS_RETURNS");
@@ -125,9 +135,8 @@ public class AppMenuBar {
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canCustomerAccounts = PermissionManager.hasPermission("CUSTOMER_ACCOUNTS");
-        boolean canQuotations = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
-                || PermissionManager.hasPermission("CREATE_QUOTATION");
-        boolean canInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+        boolean canQuotationsInvoices = PermissionManager.hasPermission("QUOTATIONS_ORDERS")
+                || PermissionManager.hasPermission("CREATE_QUOTATION")
                 || PermissionManager.hasPermission("MANAGE_INVOICES")
                 || PermissionManager.hasPermission("POST_INVOICE_DELIVERY");
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
@@ -145,7 +154,7 @@ public class AppMenuBar {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotations || canInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -213,10 +222,7 @@ public class AppMenuBar {
         if (!canCustomerAccounts || "CustomerAccounts".equalsIgnoreCase(screenKey)) {
             customerAccountsItem.setEnabled(false);
         }
-        if (!canQuotations || "Quotations".equalsIgnoreCase(screenKey)) {
-            quotationsItem.setEnabled(false);
-        }
-        if (!canInvoices || "Invoices".equalsIgnoreCase(screenKey)) {
+        if (!canQuotationsInvoices || "Invoices".equalsIgnoreCase(screenKey) || "Quotations".equalsIgnoreCase(screenKey)) {
             invoicesItem.setEnabled(false);
         }
         if (!canCustomOrders || "CustomOrders".equalsIgnoreCase(screenKey)) {
@@ -230,6 +236,7 @@ public class AppMenuBar {
         }
         if (!canTimeClock || "TimeClock".equalsIgnoreCase(screenKey)) {
             timeClockItem.setEnabled(false);
+            sessionTimeClockItem.setEnabled(false);
         }
         if (!canPayrollDashboard || "PayrollDashboard".equalsIgnoreCase(screenKey)) {
             payrollDashboardItem.setEnabled(false);
@@ -462,23 +469,10 @@ public class AppMenuBar {
             }
         });
 
-        quotationsItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                if (!canQuotations) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Quotations.", "Access Denied", JOptionPane.WARNING_MESSAGE);
-                    return;
-                }
-                if (WindowHelper.focusIfAlreadyOpen(Quotations.class)) {
-                    return;
-                }
-                NavigationManager.openQuotations(parent);
-            }
-        });
-
         invoicesItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!canInvoices) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                if (!canQuotationsInvoices) {
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Quotations & Invoices.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(Invoices.class)) {
@@ -525,7 +519,7 @@ public class AppMenuBar {
             }
         });
 
-        timeClockItem.addActionListener(new ActionListener() {
+        ActionListener timeClockAction = new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.requirePermission("TIME_CLOCK", parent, "Time Clock")) {
                     return;
@@ -535,7 +529,9 @@ public class AppMenuBar {
                 }
                 NavigationManager.openTimeClock(parent);
             }
-        });
+        };
+        timeClockItem.addActionListener(timeClockAction);
+        sessionTimeClockItem.addActionListener(timeClockAction);
 
         payrollDashboardItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -646,20 +642,17 @@ public class AppMenuBar {
         operationsMenu.add(balanceDrawItem);
         operationsMenu.add(balanceSheetItem);
         operationsMenu.add(reportsItem);
+        operationsMenu.add(maintenanceManagementItem);
 
         ordersMenu.add(ordersManagerDashboardItem);
-        ordersMenu.add(quotationsItem);
         ordersMenu.add(invoicesItem);
         ordersMenu.add(customOrdersItem);
         ordersMenu.add(ordersItem);
-        ordersMenu.add(customOrderItemsItem);
 
         inventoryMenu.add(enterInventoryItem);
         inventoryMenu.add(receivingHistoryItem);
         inventoryMenu.add(storeTransferItem);
-        inventoryMenu.add(departmentListItem);
-        inventoryMenu.add(vendorListItem);
-        inventoryMenu.add(maintenanceManagementItem);
+        inventoryMenu.add(customOrderItemsItem);
         inventoryMenu.add(viewInventoryItem);
         inventoryMenu.add(newItemItem);
         inventoryMenu.add(editItemItem);
@@ -668,6 +661,8 @@ public class AppMenuBar {
         employeeMenu.add(timeClockItem);
         employeeMenu.add(payrollDashboardItem);
 
+        adminMenu.add(departmentListItem);
+        adminMenu.add(vendorListItem);
         adminMenu.add(rolesPermissionItem);
         adminMenu.add(deviceManagementItem);
         adminMenu.add(machineManagementItem);
@@ -675,9 +670,10 @@ public class AppMenuBar {
         adminMenu.add(companyCustomizationItem);
         adminMenu.add(workstationPreferencesItem);
 
-        JMenu sessionMenu = new JMenu("Session");
+        JMenu statusMenu = new JMenu("Status");
+        JMenu sessionMenu = new JMenu(currentSessionMenuTitle());
+        JLabel sessionDateLabel = createSessionDateLabel();
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
-        JMenuItem notificationsItem = new JMenuItem(NotificationService.loadSummary().label());
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem databaseSetupItem = new JMenuItem("Database Setup");
@@ -695,7 +691,16 @@ public class AppMenuBar {
         });
         notificationsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                new NotificationsDialog(parent).setVisible(true);
+                NotificationsDialog dialog = new NotificationsDialog(parent);
+                if (parent instanceof MainMenu mainMenu) {
+                    dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+                        @Override
+                        public void windowClosed(java.awt.event.WindowEvent e) {
+                            mainMenu.refreshNotificationMenu();
+                        }
+                    });
+                }
+                dialog.setVisible(true);
             }
         });
         syncNowItem.addActionListener(new ActionListener() {
@@ -737,11 +742,12 @@ public class AppMenuBar {
 
 
 
+        statusMenu.add(syncNowItem);
+        statusMenu.add(syncStatusItem);
+        statusMenu.add(databaseSetupItem);
+
         sessionMenu.add(changeStoreItem);
-        sessionMenu.add(notificationsItem);
-        sessionMenu.add(syncNowItem);
-        sessionMenu.add(syncStatusItem);
-        sessionMenu.add(databaseSetupItem);
+        sessionMenu.add(sessionTimeClockItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
         sessionMenu.add(logoutItem);
@@ -753,9 +759,69 @@ public class AppMenuBar {
         menuBar.add(inventoryMenu);
         menuBar.add(employeeMenu);
         menuBar.add(adminMenu);
+        menuBar.add(statusMenu);
+        menuBar.add(notificationsItem);
+        menuBar.add(Box.createHorizontalGlue());
+        menuBar.add(sessionDateLabel);
         menuBar.add(sessionMenu);
+        menuBar.add(Box.createHorizontalStrut(14));
 
         return menuBar;
+    }
+
+    public static void updateNotificationMenuLabel(JMenuBar menuBar, int unreadCount, int urgentCount) {
+        JMenuItem item = findNotificationMenuItem(menuBar);
+        if (item == null) {
+            return;
+        }
+        item.setText(new NotificationService.NotificationSummary(unreadCount, urgentCount).label());
+        item.setForeground(urgentCount > 0 ? NOTIFICATION_URGENT_COLOR : UIManager.getColor("MenuItem.foreground"));
+    }
+
+    private static JMenuItem findNotificationMenuItem(MenuElement element) {
+        if (element instanceof JMenuItem item
+                && Boolean.TRUE.equals(item.getClientProperty(NOTIFICATIONS_MENU_PROPERTY))) {
+            return item;
+        }
+        for (MenuElement child : element.getSubElements()) {
+            JMenuItem match = findNotificationMenuItem(child);
+            if (match != null) {
+                return match;
+            }
+        }
+        return null;
+    }
+
+    private static String currentSessionMenuTitle() {
+        String username = SessionManager.getCurrentUsername();
+        return username == null || username.isBlank() ? "Session" : username.trim();
+    }
+
+    private static JLabel createSessionDateLabel() {
+        JLabel label = new JLabel();
+        label.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+        updateSessionDateLabel(label);
+
+        Timer timer = new Timer(60_000, e -> updateSessionDateLabel(label));
+        timer.setInitialDelay(60_000 - (int) (System.currentTimeMillis() % 60_000));
+        timer.start();
+        return label;
+    }
+
+    private static void updateSessionDateLabel(JLabel label) {
+        label.setText(ZonedDateTime.now(currentSessionZone()).format(SESSION_CLOCK_FORMATTER));
+    }
+
+    private static ZoneId currentSessionZone() {
+        String timezone = SessionManager.getCurrentLocationTimezone();
+        if (timezone != null && !timezone.isBlank()) {
+            try {
+                return ZoneId.of(timezone.trim());
+            } catch (Exception ignored) {
+                // Fall back to the workstation zone if a stored location timezone is invalid.
+            }
+        }
+        return ZoneId.systemDefault();
     }
 
     private static void runManualSync(Component parent, JMenuItem syncNowItem) {
