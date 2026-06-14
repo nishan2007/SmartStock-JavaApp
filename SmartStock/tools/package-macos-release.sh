@@ -5,7 +5,17 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="$ROOT_DIR/target"
 RELEASE_DIR="$TARGET_DIR/release-mac"
 APP_NAME="SmartStock"
-APP_BUNDLE="$RELEASE_DIR/${APP_NAME}.app"
+WORK_DIR="$(mktemp -d /tmp/smartstock-mac-release.XXXXXX)"
+APP_BUNDLE="$WORK_DIR/${APP_NAME}.app"
+DMG_STAGING_DIR="$WORK_DIR/dmg-root"
+JPACKAGE_INPUT_DIR="$WORK_DIR/jpackage-input"
+
+clear_extended_attributes() {
+  local target="$1"
+  if [[ -e "$target" ]]; then
+    find "$target" -exec xattr -c {} + 2>/dev/null || true
+  fi
+}
 
 cd "$ROOT_DIR"
 mvn package -DskipTests
@@ -18,51 +28,75 @@ ZIP_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.dmg"
 
 rm -rf "$RELEASE_DIR"
-mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/app/dependency" "$APP_BUNDLE/Contents/Resources"
+trap 'rm -rf "$WORK_DIR"' EXIT
+mkdir -p "$RELEASE_DIR"
+mkdir -p "$JPACKAGE_INPUT_DIR/dependency"
 
-cp "$JAR_PATH" "$APP_BUNDLE/Contents/app/"
-cp -R "$TARGET_DIR/dependency/." "$APP_BUNDLE/Contents/app/dependency/"
+cp "$JAR_PATH" "$JPACKAGE_INPUT_DIR/"
+cp -R "$TARGET_DIR/dependency/." "$JPACKAGE_INPUT_DIR/dependency/"
 
-cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key>
-  <string>SmartStock</string>
-  <key>CFBundleDisplayName</key>
-  <string>SmartStock</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.smartstock.desktop</string>
-  <key>CFBundleVersion</key>
-  <string>${VERSION}</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${VERSION}</string>
-  <key>CFBundleExecutable</key>
-  <string>SmartStock</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>12.0</string>
-</dict>
-</plist>
+if ! command -v jpackage >/dev/null 2>&1; then
+  cat >&2 <<EOF
+Missing jpackage.
+
+Install a full JDK, not just a JRE, then rerun this script. On Apple Silicon:
+  brew install openjdk@17
 EOF
+  exit 1
+fi
 
-cat > "$APP_BUNDLE/Contents/MacOS/SmartStock" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-APP_HOME="\$(cd "\$(dirname "\$0")/.." && pwd)"
-exec java -jar "\$APP_HOME/app/${JAR_NAME}"
-EOF
-chmod +x "$APP_BUNDLE/Contents/MacOS/SmartStock"
+set +e
+JPACKAGE_OUTPUT="$(jpackage \
+  --type app-image \
+  --name "$APP_NAME" \
+  --input "$JPACKAGE_INPUT_DIR" \
+  --main-jar "$JAR_NAME" \
+  --main-class app.Main \
+  --dest "$WORK_DIR" \
+  --app-version "$VERSION" \
+  --mac-package-identifier "com.smartstock.desktop" \
+  --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
+JPACKAGE_STATUS=$?
+set -e
+if [[ $JPACKAGE_STATUS -ne 0 ]]; then
+  if [[ -d "$APP_BUNDLE" && "$JPACKAGE_OUTPUT" == *"codesign"* ]]; then
+    printf '%s\n' "$JPACKAGE_OUTPUT" >&2
+    printf 'jpackage created the app image but codesign rejected extended attributes. Cleaning and ad-hoc signing locally.\n' >&2
+    clear_extended_attributes "$APP_BUNDLE"
+    codesign --force --deep --sign - "$APP_BUNDLE"
+  else
+    printf '%s\n' "$JPACKAGE_OUTPUT" >&2
+    exit "$JPACKAGE_STATUS"
+  fi
+fi
+
+if [[ ! -d "$APP_BUNDLE/Contents/runtime" ]]; then
+  echo "SmartStock.app was created without a bundled runtime." >&2
+  exit 1
+fi
+clear_extended_attributes "$APP_BUNDLE"
 
 (
-  cd "$RELEASE_DIR"
+  cd "$WORK_DIR"
   zip -qr "$ZIP_PATH" "${APP_NAME}.app"
 )
 
 if command -v hdiutil >/dev/null 2>&1; then
-  hdiutil create -volname "$APP_NAME" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" >/dev/null
+  rm -rf "$DMG_STAGING_DIR"
+  mkdir -p "$DMG_STAGING_DIR"
+  cp -R "$APP_BUNDLE" "$DMG_STAGING_DIR/"
+  ln -s /Applications "$DMG_STAGING_DIR/Applications"
+  cat > "$DMG_STAGING_DIR/INSTALL.txt" <<EOF
+Install SmartStock
+
+Drag SmartStock.app onto Applications.
+
+If macOS says the app cannot be verified, SmartStock has not been signed and
+notarized yet. For internal testing, right-click SmartStock.app and choose Open.
+For customer distribution, run tools/notarize-macos-release.sh with an Apple
+Developer ID Application certificate.
+EOF
+  hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
 fi
 
 SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
@@ -86,4 +120,8 @@ EOF
 
 if [[ -f "$DMG_PATH" ]]; then
   printf '\nBootstrap DMG: %s\n' "$DMG_PATH"
+fi
+
+if [[ -d "$APP_BUNDLE/Contents/runtime" ]]; then
+  printf 'Bundled runtime: %s\n' "$APP_BUNDLE/Contents/runtime"
 fi

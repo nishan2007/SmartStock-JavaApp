@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="$ROOT_DIR/target/release-mac"
-APP_BUNDLE="$RELEASE_DIR/SmartStock.app"
+WORK_DIR="$(mktemp -d /tmp/smartstock-mac-notary.XXXXXX)"
+APP_BUNDLE="$WORK_DIR/SmartStock.app"
+DMG_STAGING_DIR="$WORK_DIR/dmg-root"
 
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 DEVELOPER_ID_INSTALLER="${DEVELOPER_ID_INSTALLER:-}"
@@ -60,11 +62,23 @@ require_command hdiutil
 require_command shasum
 
 cd "$ROOT_DIR"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
-if [[ ! -d "$APP_BUNDLE" ]]; then
-  echo "Missing $APP_BUNDLE. Run bash tools/package-macos-release.sh first." >&2
+clear_extended_attributes() {
+  local target="$1"
+  if [[ -e "$target" ]]; then
+    find "$target" -exec xattr -c {} + 2>/dev/null || true
+  fi
+}
+
+ZIP_PATH="$(find "$RELEASE_DIR" -maxdepth 1 -name 'smartstock-mac-*.zip' ! -name '*.notary.zip' -type f | sort | tail -n 1)"
+if [[ -z "$ZIP_PATH" ]]; then
+  echo "Missing SmartStock Mac release zip. Run bash tools/package-macos-release.sh first." >&2
   exit 1
 fi
+
+echo "Extracting release zip"
+ditto -x -k "$ZIP_PATH" "$WORK_DIR"
 
 JAR_PATH="$(find "$APP_BUNDLE/Contents/app" -maxdepth 1 -name 'inventory-management-*.jar' -type f | sort | tail -n 1)"
 if [[ -z "$JAR_PATH" ]]; then
@@ -80,6 +94,7 @@ DMG_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.dmg"
 NOTARY_ZIP="$RELEASE_DIR/smartstock-mac-$VERSION.notary.zip"
 
 echo "Signing SmartStock.app"
+clear_extended_attributes "$APP_BUNDLE"
 codesign --force --deep --options runtime --timestamp \
   --sign "$DEVELOPER_ID_APPLICATION" \
   "$APP_BUNDLE"
@@ -109,7 +124,16 @@ rm -f "$ZIP_PATH"
 
 echo "Rebuilding DMG"
 rm -f "$DMG_PATH"
-hdiutil create -volname "SmartStock" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" >/dev/null
+rm -rf "$DMG_STAGING_DIR"
+mkdir -p "$DMG_STAGING_DIR"
+cp -R "$APP_BUNDLE" "$DMG_STAGING_DIR/"
+ln -s /Applications "$DMG_STAGING_DIR/Applications"
+cat > "$DMG_STAGING_DIR/INSTALL.txt" <<EOF
+Install SmartStock
+
+Drag SmartStock.app onto Applications.
+EOF
+hdiutil create -volname "SmartStock" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
 
 if [[ -n "$DEVELOPER_ID_INSTALLER" ]]; then
   echo "Signing DMG"
