@@ -23,6 +23,8 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -51,6 +53,9 @@ public class WelcomeFrame extends JFrame {
     private final JButton setupBtn = new JButton("Initial Database Setup");
     private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Log In");
+    private Timer displayRefreshTimer;
+    private Timer systemStatusRefreshTimer;
+    private boolean systemStatusRefreshInProgress;
     private String lastGreetingKey = "";
     private record SystemStatus(String localStatus, String onlineStatus, String message, boolean canLogin) {}
 
@@ -115,7 +120,9 @@ public class WelcomeFrame extends JFrame {
         refreshModeLabel();
         refreshSystemStats();
         updateGreeting();
-        startGreetingTimer();
+        startDisplayRefreshTimer();
+        startSystemStatusRefreshTimer();
+        wireWindowTimers();
         wireActions();
         continueBtn.setEnabled(false);
         ThemeManager.applyToWindow(this);
@@ -172,11 +179,39 @@ public class WelcomeFrame extends JFrame {
         DeckersSwing.styleBand(panel, DeckersPalette.MAGENTA, new Insets(18, 18, 18, 18));
         panel.add(sectionTitle("Get Started"), BorderLayout.NORTH);
 
-        JPanel buttons = new JPanel(new GridLayout(0, 1, 0, 10));
-        buttons.setOpaque(false);
-        styleWelcomeButton(continueBtn, DeckersPalette.LIME);
-        buttons.add(continueBtn);
-        panel.add(buttons, BorderLayout.CENTER);
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+
+        JLabel readyLabel = new JLabel("Ready to continue");
+        readyLabel.setFont(new Font("SansSerif", Font.BOLD, 22));
+        readyLabel.setForeground(DeckersPalette.text());
+        readyLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        readyLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel helperLabel = new JLabel("Sign in to open SmartStock and continue working.");
+        helperLabel.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        helperLabel.setForeground(DeckersPalette.muted());
+        helperLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        helperLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel actionRow = new JPanel(new BorderLayout());
+        actionRow.setOpaque(false);
+        actionRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        stylePrimaryLoginButton();
+        Dimension actionRowSize = new Dimension(Integer.MAX_VALUE, continueBtn.getPreferredSize().height);
+        actionRow.setPreferredSize(actionRowSize);
+        actionRow.setMaximumSize(actionRowSize);
+        actionRow.add(continueBtn, BorderLayout.WEST);
+
+        content.add(Box.createVerticalStrut(22));
+        content.add(readyLabel);
+        content.add(Box.createVerticalStrut(8));
+        content.add(helperLabel);
+        content.add(Box.createVerticalStrut(12));
+        content.add(actionRow);
+        content.add(Box.createVerticalGlue());
+        panel.add(content, BorderLayout.CENTER);
         return panel;
     }
 
@@ -205,6 +240,16 @@ public class WelcomeFrame extends JFrame {
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
     }
 
+    private void stylePrimaryLoginButton() {
+        continueBtn.setText("Log In >");
+        styleWelcomeButton(continueBtn, DeckersPalette.LIME);
+        continueBtn.setHorizontalAlignment(SwingConstants.CENTER);
+        Dimension buttonSize = new Dimension(112, 38);
+        continueBtn.setPreferredSize(buttonSize);
+        continueBtn.setMinimumSize(buttonSize);
+        continueBtn.setMaximumSize(buttonSize);
+    }
+
     private void setDeckersLogo() {
         ImageIcon icon = DeckersLogoManager.loadDeckersLogoIcon(getClass());
         if (icon == null || icon.getIconWidth() <= 0) {
@@ -225,10 +270,45 @@ public class WelcomeFrame extends JFrame {
         smartStockLogoLabel.setIcon(new ImageIcon(scaled));
     }
 
-    private void startGreetingTimer() {
-        Timer timer = new Timer(60_000, e -> updateGreeting());
-        timer.setInitialDelay(0);
-        timer.start();
+    private void startDisplayRefreshTimer() {
+        if (displayRefreshTimer != null && displayRefreshTimer.isRunning()) {
+            return;
+        }
+        displayRefreshTimer = new Timer(60_000, e -> {
+            updateGreeting();
+            refreshSystemStats();
+        });
+        displayRefreshTimer.setInitialDelay(0);
+        displayRefreshTimer.start();
+    }
+
+    private void startSystemStatusRefreshTimer() {
+        if (systemStatusRefreshTimer != null && systemStatusRefreshTimer.isRunning()) {
+            return;
+        }
+        systemStatusRefreshTimer = new Timer(60_000, e -> refreshSystemStatus(false));
+        systemStatusRefreshTimer.setInitialDelay(60_000);
+        systemStatusRefreshTimer.start();
+    }
+
+    private void wireWindowTimers() {
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                stopWelcomeTimers();
+            }
+        });
+    }
+
+    private void stopWelcomeTimers() {
+        if (displayRefreshTimer != null) {
+            displayRefreshTimer.stop();
+            displayRefreshTimer = null;
+        }
+        if (systemStatusRefreshTimer != null) {
+            systemStatusRefreshTimer.stop();
+            systemStatusRefreshTimer = null;
+        }
     }
 
     private void updateGreeting() {
@@ -302,17 +382,27 @@ public class WelcomeFrame extends JFrame {
     }
 
     private void refreshSystemStatus() {
+        refreshSystemStatus(true);
+    }
+
+    private void refreshSystemStatus(boolean showCheckingState) {
+        if (systemStatusRefreshInProgress) {
+            return;
+        }
+        systemStatusRefreshInProgress = true;
         refreshModeLabel();
         refreshSystemStats();
         DatabaseConfig config = DatabaseConfig.load();
         setupBtn.setVisible(isInitialSetupRequired(config));
-        localDbLabel.setText("Local DB: Checking...");
-        onlineDbLabel.setText("Online DB: Checking...");
-        localDbLabel.setForeground(DeckersPalette.muted());
-        onlineDbLabel.setForeground(DeckersPalette.muted());
-        statusLabel.setText("Status: Refreshing system status...");
+        if (showCheckingState) {
+            localDbLabel.setText("Local DB: Checking...");
+            onlineDbLabel.setText("Online DB: Checking...");
+            localDbLabel.setForeground(DeckersPalette.muted());
+            onlineDbLabel.setForeground(DeckersPalette.muted());
+            statusLabel.setText("Status: Refreshing system status...");
+            continueBtn.setEnabled(false);
+        }
         refreshStatusBtn.setEnabled(false);
-        continueBtn.setEnabled(false);
 
         SwingWorker<SystemStatus, Void> worker = new SwingWorker<>() {
             @Override
@@ -326,6 +416,7 @@ public class WelcomeFrame extends JFrame {
 
             @Override
             protected void done() {
+                systemStatusRefreshInProgress = false;
                 refreshStatusBtn.setEnabled(true);
                 try {
                     SystemStatus result = get();

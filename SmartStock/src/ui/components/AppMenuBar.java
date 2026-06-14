@@ -48,6 +48,7 @@ import ui.helpers.WindowHelper;
 import javax.swing.*;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.sql.Connection;
@@ -804,7 +805,17 @@ public class AppMenuBar {
 
         Timer timer = new Timer(60_000, e -> updateSessionDateLabel(label));
         timer.setInitialDelay(60_000 - (int) (System.currentTimeMillis() % 60_000));
-        timer.start();
+        label.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) == 0) {
+                return;
+            }
+            if (label.isDisplayable()) {
+                updateSessionDateLabel(label);
+                timer.restart();
+            } else {
+                timer.stop();
+            }
+        });
         return label;
     }
 
