@@ -1,6 +1,7 @@
 package ui.screens;
 
 import managers.SupabaseSessionManager;
+import services.AppUpdateService;
 import services.BadgeCredentialService;
 import services.DeviceService;
 import services.LocalAuthCacheService;
@@ -614,6 +615,7 @@ public class Login extends JFrame {
     private void openMainMenu() {
         MainMenu mainMenu = new MainMenu();
         WindowHelper.showPosWindow(mainMenu, this);
+        AppUpdateService.checkForUpdatesAsync(mainMenu, false);
         dispose();
     }
 

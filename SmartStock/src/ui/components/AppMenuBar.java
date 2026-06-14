@@ -1,6 +1,7 @@
 package ui.components;
 import services.DeviceService;
 import services.NotificationService;
+import services.AppUpdateService;
 import services.StoreHydrationService;
 import services.SyncWorker;
 import managers.NavigationManager;
@@ -677,6 +678,7 @@ public class AppMenuBar {
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
+        JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
         JMenuItem databaseSetupItem = new JMenuItem("Database Setup");
         JMenuItem closeItem = new JMenuItem("Close");
         JMenuItem logoutItem = new JMenuItem("Logout");
@@ -714,6 +716,11 @@ public class AppMenuBar {
                 new SyncStatus().setVisible(true);
             }
         });
+        checkUpdatesItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                AppUpdateService.checkForUpdatesAsync(parent, true);
+            }
+        });
         databaseSetupItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 new DatabaseSetup(parent).setVisible(true);
@@ -745,6 +752,7 @@ public class AppMenuBar {
 
         statusMenu.add(syncNowItem);
         statusMenu.add(syncStatusItem);
+        statusMenu.add(checkUpdatesItem);
         statusMenu.add(databaseSetupItem);
 
         sessionMenu.add(changeStoreItem);

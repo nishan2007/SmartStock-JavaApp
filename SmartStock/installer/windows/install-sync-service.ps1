@@ -1,0 +1,39 @@
+param(
+    [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [string]$TaskName = "SmartStockBackgroundSync"
+)
+
+$ErrorActionPreference = "Stop"
+
+$serviceDir = Join-Path $env:USERPROFILE ".smartstock\sync-service"
+$serviceAppDir = Join-Path $serviceDir "app"
+New-Item -ItemType Directory -Force -Path $serviceAppDir | Out-Null
+
+$jar = Get-ChildItem -Path (Join-Path $AppDir "target") -Filter "inventory-management-*.jar" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if ($null -eq $jar) {
+    throw "No SmartStock jar found in $AppDir\target. Run mvn package first."
+}
+Copy-Item -Force $jar.FullName $serviceAppDir
+$sourceDependency = Join-Path $AppDir "target\dependency"
+$targetDependency = Join-Path $serviceAppDir "dependency"
+if (Test-Path $sourceDependency) {
+    Remove-Item -Recurse -Force $targetDependency -ErrorAction SilentlyContinue
+    Copy-Item -Recurse -Force $sourceDependency $targetDependency
+}
+
+$runner = Join-Path $serviceDir "run-smartstock-sync-service.cmd"
+$jarName = Split-Path -Leaf $jar.FullName
+Set-Content -Path $runner -Encoding ASCII -Value @(
+    "@echo off",
+    "cd /d `"$serviceAppDir`"",
+    "java -jar $jarName --sync-service"
+)
+
+schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /F | Out-Host
+schtasks /Run /TN $TaskName | Out-Host
+schtasks /Query /TN $TaskName /FO LIST | Out-Host
+
+Write-Host "SmartStock background sync task installed: $TaskName"
+Write-Host "Runner: $runner"

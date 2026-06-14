@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import data.DatabaseConfig;
 import services.SyncLockService;
 import services.SyncSchemaInstaller;
 import services.SyncServiceStatusService;
@@ -99,23 +100,16 @@ public class SyncStatus extends JFrame {
 
     private void refresh() {
         SyncWorker.SyncStatus status = SyncWorker.latestStatus();
+        boolean cloudOnline = status.cloudReachable();
         SyncLockService.LockInfo lock = status.currentSync();
         SyncServiceStatusService.ServiceInfo service = status.serviceInfo();
-        String backgroundStatus = service == null ? "Unknown" : service.status();
-        String appSyncStatus = SyncWorker.isStarted() ? "Running while UI is open" : "Not running";
-        statusLabel.setText("Cloud: " + (status.cloudReachable() ? "Online" : "Offline")
-                + " | Background Service: " + backgroundStatus
-                + " | In-App Sync: " + appSyncStatus
-                + " | Current Sync: " + (lock != null && lock.running() ? "Running by " + lock.ownerLabel() : "Idle")
-                + " | Pending: " + status.pendingCount()
-                + " | Failed: " + status.failedCount()
-                + " | Conflicts: " + status.conflictCount()
-                + " | Last success: " + (status.lastSuccess() == null ? "Never" : status.lastSuccess())
-                + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
         conflictModel.setRowCount(0);
         auditModel.setRowCount(0);
         try (Connection conn = DB.getConnection()) {
             SyncSchemaInstaller.ensureSchema(conn);
+            cloudOnline = isCloudOnline();
+            service = SyncServiceStatusService.current(conn);
+            lock = SyncLockService.currentLock(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
                      SELECT conflict_id, event_type, conflict_type, status, created_at
                      FROM sync_conflicts
@@ -137,6 +131,29 @@ public class SyncStatus extends JFrame {
             loadAuditRows(conn);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Sync Status", JOptionPane.ERROR_MESSAGE);
+        }
+        String backgroundStatus = service == null ? "Unknown" : service.status();
+        String appSyncStatus = SyncWorker.isStarted() ? "Running while UI is open" : "Not running";
+        statusLabel.setText("Cloud: " + (cloudOnline ? "Online" : "Offline")
+                + " | Background Service: " + backgroundStatus
+                + " | In-App Sync: " + appSyncStatus
+                + " | Current Sync: " + (lock != null && lock.running() ? "Running by " + lock.ownerLabel() : "Idle")
+                + " | Pending: " + status.pendingCount()
+                + " | Failed: " + status.failedCount()
+                + " | Conflicts: " + status.conflictCount()
+                + " | Last success: " + (status.lastSuccess() == null ? "Never" : status.lastSuccess())
+                + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
+    }
+
+    private boolean isCloudOnline() {
+        DatabaseConfig config = DatabaseConfig.load();
+        if (!config.hasCloudConnection() && config.mode() != data.DatabaseMode.CLOUD_DIRECT) {
+            return false;
+        }
+        try (Connection ignored = config.hasCloudConnection() ? DB.getCloudConnection() : DB.getConnection()) {
+            return true;
+        } catch (Exception ex) {
+            return false;
         }
     }
 

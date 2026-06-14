@@ -101,7 +101,7 @@ public class DeviceUtils {
         }
     }
 
-    private static String getAppVersion() {
+    public static String getAppVersion() {
         Package pkg = DeviceUtils.class.getPackage();
         if (pkg != null) {
             String implementationVersion = pkg.getImplementationVersion();

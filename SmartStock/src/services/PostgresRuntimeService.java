@@ -107,7 +107,14 @@ public final class PostgresRuntimeService {
                 SERVICE_DIR="$HOME/.smartstock/sync-service"
                 SERVICE_APP_DIR="$SERVICE_DIR/app"
                 mkdir -p "$APP_DIR/target" "$SERVICE_APP_DIR/dependency" "$HOME/.smartstock" "$HOME/Library/LaunchAgents"
-                cp "$APP_DIR/target/inventory-management-1.0-SNAPSHOT.jar" "$SERVICE_APP_DIR/"
+                JAR_PATH="$(find "$APP_DIR/target" -maxdepth 1 -name 'inventory-management-*.jar' -type f | sort | tail -n 1)"
+                if [ -z "$JAR_PATH" ]; then
+                  echo "No SmartStock jar found in $APP_DIR/target. Run mvn package first." >&2
+                  exit 1
+                fi
+                JAR_NAME="$(basename "$JAR_PATH")"
+                rm -f "$SERVICE_APP_DIR"/inventory-management-*.jar
+                cp "$JAR_PATH" "$SERVICE_APP_DIR/"
                 if [ -d "$APP_DIR/target/dependency" ]; then
                   rm -rf "$SERVICE_APP_DIR/dependency"
                   cp -R "$APP_DIR/target/dependency" "$SERVICE_APP_DIR/dependency"
@@ -115,9 +122,8 @@ public final class PostgresRuntimeService {
                 cat > "$SERVICE_DIR/run-smartstock-sync-service.command" <<EOF
                 #!/usr/bin/env bash
                 cd "$SERVICE_APP_DIR"
-                exec java -jar target/inventory-management-1.0-SNAPSHOT.jar --sync-service
+                exec java -jar "$JAR_NAME" --sync-service
                 EOF
-                perl -0pi -e 's#target/inventory-management-1.0-SNAPSHOT.jar#inventory-management-1.0-SNAPSHOT.jar#g' "$SERVICE_DIR/run-smartstock-sync-service.command"
                 chmod +x "$SERVICE_DIR/run-smartstock-sync-service.command"
                 PLIST="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"
                 cat > "$PLIST" <<EOF
@@ -159,7 +165,14 @@ public final class PostgresRuntimeService {
                 $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
                 $ServiceAppDir = Join-Path $ServiceDir 'app'
                 New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
-                Copy-Item -Force (Join-Path $AppDir 'target\\inventory-management-1.0-SNAPSHOT.jar') $ServiceAppDir
+                $Jar = Get-ChildItem -Path (Join-Path $AppDir 'target') -Filter 'inventory-management-*.jar' |
+                  Sort-Object LastWriteTime -Descending |
+                  Select-Object -First 1
+                if ($null -eq $Jar) {
+                  throw "No SmartStock jar found in $AppDir\\target. Run mvn package first."
+                }
+                Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
+                Copy-Item -Force $Jar.FullName $ServiceAppDir
                 $SourceDependency = Join-Path $AppDir 'target\\dependency'
                 $TargetDependency = Join-Path $ServiceAppDir 'dependency'
                 if (Test-Path $SourceDependency) {
@@ -167,10 +180,11 @@ public final class PostgresRuntimeService {
                   Copy-Item -Recurse -Force $SourceDependency $TargetDependency
                 }
                 $Cmd = Join-Path $ServiceDir 'run-smartstock-sync-service.cmd'
+                $JarName = Split-Path -Leaf $Jar.FullName
                 Set-Content -Path $Cmd -Encoding ASCII -Value @(
                   '@echo off',
                   'cd /d "' + $ServiceAppDir + '"',
-                  'java -jar inventory-management-1.0-SNAPSHOT.jar --sync-service'
+                  'java -jar ' + $JarName + ' --sync-service'
                 )
                 schtasks /Create /TN SmartStockBackgroundSync /TR "`"$Cmd`"" /SC ONSTART /F
                 schtasks /Run /TN SmartStockBackgroundSync

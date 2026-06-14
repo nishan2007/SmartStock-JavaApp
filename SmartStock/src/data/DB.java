@@ -4,6 +4,7 @@ import services.SyncSchemaInstaller;
 import services.BaseSchemaInstaller;
 import services.QuotationInvoiceSchemaInstaller;
 import services.WorkflowSyncIdentitySchemaInstaller;
+import services.AppUpdateSchemaInstaller;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -91,6 +92,7 @@ public class DB {
             SyncSchemaInstaller.ensureSchema(conn);
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
             WorkflowSyncIdentitySchemaInstaller.ensureSchema(conn);
+            AppUpdateSchemaInstaller.ensureSchema(conn);
             ENSURED_SCHEMA_KEYS.add(key);
         }
     }

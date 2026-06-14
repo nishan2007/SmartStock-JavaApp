@@ -97,7 +97,8 @@ public final class ServerProvisioningService {
                 "database/custom_order_safety_controls_setup.sql",
                 "database/quotations_invoices_setup.sql",
                 "database/notification_permissions_setup.sql",
-                "database/workflow_sync_identity_setup.sql"
+                "database/workflow_sync_identity_setup.sql",
+                "database/app_updates_setup.sql"
         ));
     }
 
