@@ -10,6 +10,7 @@ APP_BUNDLE="$WORK_DIR/${APP_NAME}.app"
 DMG_STAGING_DIR="$WORK_DIR/dmg-root"
 JPACKAGE_INPUT_DIR="$WORK_DIR/jpackage-input"
 MAC_ICON_PATH="$WORK_DIR/${APP_NAME}.icns"
+MAC_DARK_ICON_PATH="$WORK_DIR/${APP_NAME}Dark.icns"
 
 clear_extended_attributes() {
   local target="$1"
@@ -18,11 +19,22 @@ clear_extended_attributes() {
   fi
 }
 
-build_macos_icon() {
-  local source_png="$ROOT_DIR/src/Images/CenterLogo.png"
-  local base_png="$WORK_DIR/${APP_NAME}-icon-base.png"
-  local padded_png="$WORK_DIR/${APP_NAME}-icon-padded.png"
-  local icon_png_dir="$WORK_DIR/${APP_NAME}-icon-pngs"
+generate_source_icons() {
+  local classes_dir="$WORK_DIR/icon-generator-classes"
+  if ! command -v javac >/dev/null 2>&1 || ! command -v java >/dev/null 2>&1; then
+    echo "Missing javac or java, which are required to generate SmartStock app icons." >&2
+    exit 1
+  fi
+
+  mkdir -p "$classes_dir"
+  javac -d "$classes_dir" "$ROOT_DIR/tools/GenerateAppIcons.java"
+  java -cp "$classes_dir" GenerateAppIcons "$ROOT_DIR/src/Images"
+}
+
+build_icns_from_png() {
+  local source_png="$1"
+  local output_icns="$2"
+  local icon_png_dir="$WORK_DIR/$(basename "$output_icns" .icns)-pngs"
 
   if [[ ! -f "$source_png" ]]; then
     echo "Missing icon source: $source_png" >&2
@@ -34,14 +46,11 @@ build_macos_icon() {
   fi
 
   mkdir -p "$icon_png_dir"
-  sips -Z 900 "$source_png" --out "$base_png" >/dev/null
-  sips --padToHeightWidth 1024 1024 --padColor FFFFFF "$base_png" --out "$padded_png" >/dev/null
-
   for size in 16 32 128 256 512 1024; do
-    sips -z "$size" "$size" "$padded_png" --out "$icon_png_dir/icon_${size}.png" >/dev/null
+    sips -z "$size" "$size" "$source_png" --out "$icon_png_dir/icon_${size}.png" >/dev/null
   done
 
-  python3 - "$icon_png_dir" "$MAC_ICON_PATH" <<'PY'
+  python3 - "$icon_png_dir" "$output_icns" <<'PY'
 import pathlib
 import struct
 import sys
@@ -66,6 +75,12 @@ output_path.write_bytes(b"icns" + struct.pack(">I", len(body) + 8) + body)
 PY
 }
 
+build_macos_icons() {
+  generate_source_icons
+  build_icns_from_png "$ROOT_DIR/src/Images/AppIconLight.png" "$MAC_ICON_PATH"
+  build_icns_from_png "$ROOT_DIR/src/Images/AppIconDark.png" "$MAC_DARK_ICON_PATH"
+}
+
 cd "$ROOT_DIR"
 mvn package -DskipTests
 
@@ -83,7 +98,7 @@ mkdir -p "$JPACKAGE_INPUT_DIR/dependency"
 
 cp "$JAR_PATH" "$JPACKAGE_INPUT_DIR/"
 cp -R "$TARGET_DIR/dependency/." "$JPACKAGE_INPUT_DIR/dependency/"
-build_macos_icon
+build_macos_icons
 
 if ! command -v jpackage >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -125,6 +140,7 @@ if [[ ! -d "$APP_BUNDLE/Contents/runtime" ]]; then
   echo "SmartStock.app was created without a bundled runtime." >&2
   exit 1
 fi
+cp "$MAC_DARK_ICON_PATH" "$APP_BUNDLE/Contents/Resources/${APP_NAME}Dark.icns"
 clear_extended_attributes "$APP_BUNDLE"
 
 (
