@@ -1,5 +1,8 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
+
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -26,6 +29,9 @@ public final class CustomerAccountLedgerService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (!isServerMode()) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             if (tableExists(conn, "customer_account_transactions")) {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_id TEXT");
@@ -73,6 +79,9 @@ public final class CustomerAccountLedgerService {
 
     public static void repairAllBalances(Connection conn) throws SQLException {
         ensureSchema(conn);
+        if (!isServerMode()) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     WITH ledger AS (
@@ -104,6 +113,9 @@ public final class CustomerAccountLedgerService {
     public static BigDecimal repairCustomerBalance(Connection conn, int customerId) throws SQLException {
         ensureSchema(conn);
         BigDecimal balance = calculateCustomerBalance(conn, customerId);
+        if (!isServerMode()) {
+            return balance;
+        }
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE customer_accounts
                 SET current_balance = ?,
@@ -117,6 +129,10 @@ public final class CustomerAccountLedgerService {
             ps.executeUpdate();
         }
         return balance;
+    }
+
+    private static boolean isServerMode() {
+        return DatabaseConfig.load().mode() == DatabaseMode.SERVER;
     }
 
     public static String balanceDeltaSql(String tableAlias) {

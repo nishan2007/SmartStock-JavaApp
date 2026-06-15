@@ -12,7 +12,7 @@ The installer will:
 - install Java 17, Maven, and PostgreSQL when missing;
 - start PostgreSQL;
 - create the local `smartstock` database and `smartstock_server` role;
-- create a `smartstock_client` role for register/client computers;
+- create or repair the built-in `smartstock_client` role for register/client computers;
 - save both server and client credentials to `~/.smartstock/database-credentials.txt`;
 - repair old installs that accidentally saved placeholders such as `SMARTSTOCK_DB_USER`;
 - back up existing config/credential files before rewriting them;
@@ -56,7 +56,7 @@ SMARTSTOCK_DB_NAME=smartstock \
 SMARTSTOCK_DB_USER=smartstock_server \
 SMARTSTOCK_DB_PASSWORD='change-me' \
 SMARTSTOCK_CLIENT_DB_USER=smartstock_client \
-SMARTSTOCK_CLIENT_DB_PASSWORD='change-me-too' \
+SMARTSTOCK_CLIENT_DB_PASSWORD='SmartStockClientLan2026!' \
 SMARTSTOCK_DB_PORT=5432 \
 SmartStock/installer/macos/install.command server
 ```
@@ -70,7 +70,7 @@ Credentials are saved here:
 ```
 
 Use the `SMARTSTOCK_DB_USER` / `SMARTSTOCK_DB_PASSWORD` values on the server machine.
-Use the `SMARTSTOCK_CLIENT_DB_USER` / `SMARTSTOCK_CLIENT_DB_PASSWORD` values on register/client machines.
+Register/client machines fill the SmartStock client credentials automatically; use the saved hostname/JDBC URL if manual setup is ever needed.
 
 ## Repair Existing Install
 

@@ -1,6 +1,8 @@
 package managers;
 
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import utils.DeviceUtils;
 
 import java.io.IOException;
@@ -207,52 +209,54 @@ public class ReceiptNumberManager {
     }
 
     private static void ensureReceiptCounterRow(Connection conn, int locationId) throws SQLException {
-        try (PreparedStatement create = conn.prepareStatement("""
-                CREATE TABLE IF NOT EXISTS company_customization (
-                    customization_id SERIAL PRIMARY KEY,
-                    location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
-                    receipt_header_line TEXT NOT NULL DEFAULT '',
-                    receipt_footer_line TEXT NOT NULL DEFAULT 'Thank you',
-                    show_logo BOOLEAN NOT NULL DEFAULT FALSE,
-                    show_sale_id BOOLEAN NOT NULL DEFAULT TRUE,
-                    show_device BOOLEAN NOT NULL DEFAULT TRUE,
-                    show_customer BOOLEAN NOT NULL DEFAULT TRUE,
-                    show_sku BOOLEAN NOT NULL DEFAULT TRUE,
-                    show_item_discount BOOLEAN NOT NULL DEFAULT TRUE,
-                    show_payment_status BOOLEAN NOT NULL DEFAULT TRUE,
-                    vat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-                    vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE,
-                    vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
-                    next_receipt_counter INTEGER NOT NULL DEFAULT 1,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (location_id)
-                )
-                """)) {
-            create.executeUpdate();
-        }
-        try (PreparedStatement alter = conn.prepareStatement("""
-                ALTER TABLE company_customization
-                ADD COLUMN IF NOT EXISTS next_receipt_counter INTEGER NOT NULL DEFAULT 1
-                """)) {
-            alter.executeUpdate();
-        }
-        try (PreparedStatement alter = conn.prepareStatement("""
-                ALTER TABLE company_customization
-                ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE
-                """)) {
-            alter.executeUpdate();
-        }
-        try (PreparedStatement alter = conn.prepareStatement("""
-                ALTER TABLE company_customization
-                ADD COLUMN IF NOT EXISTS vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE
-                """)) {
-            alter.executeUpdate();
-        }
-        try (PreparedStatement alter = conn.prepareStatement("""
-                ALTER TABLE company_customization
-                ADD COLUMN IF NOT EXISTS vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0
-                """)) {
-            alter.executeUpdate();
+        if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
+            try (PreparedStatement create = conn.prepareStatement("""
+                    CREATE TABLE IF NOT EXISTS company_customization (
+                        customization_id SERIAL PRIMARY KEY,
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+                        receipt_header_line TEXT NOT NULL DEFAULT '',
+                        receipt_footer_line TEXT NOT NULL DEFAULT 'Thank you',
+                        show_logo BOOLEAN NOT NULL DEFAULT FALSE,
+                        show_sale_id BOOLEAN NOT NULL DEFAULT TRUE,
+                        show_device BOOLEAN NOT NULL DEFAULT TRUE,
+                        show_customer BOOLEAN NOT NULL DEFAULT TRUE,
+                        show_sku BOOLEAN NOT NULL DEFAULT TRUE,
+                        show_item_discount BOOLEAN NOT NULL DEFAULT TRUE,
+                        show_payment_status BOOLEAN NOT NULL DEFAULT TRUE,
+                        vat_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                        vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE,
+                        vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
+                        next_receipt_counter INTEGER NOT NULL DEFAULT 1,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE (location_id)
+                    )
+                    """)) {
+                create.executeUpdate();
+            }
+            try (PreparedStatement alter = conn.prepareStatement("""
+                    ALTER TABLE company_customization
+                    ADD COLUMN IF NOT EXISTS next_receipt_counter INTEGER NOT NULL DEFAULT 1
+                    """)) {
+                alter.executeUpdate();
+            }
+            try (PreparedStatement alter = conn.prepareStatement("""
+                    ALTER TABLE company_customization
+                    ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE
+                    """)) {
+                alter.executeUpdate();
+            }
+            try (PreparedStatement alter = conn.prepareStatement("""
+                    ALTER TABLE company_customization
+                    ADD COLUMN IF NOT EXISTS vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE
+                    """)) {
+                alter.executeUpdate();
+            }
+            try (PreparedStatement alter = conn.prepareStatement("""
+                    ALTER TABLE company_customization
+                    ADD COLUMN IF NOT EXISTS vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0
+                    """)) {
+                alter.executeUpdate();
+            }
         }
         String insertSql = """
                 WITH max_sale_sequence AS (

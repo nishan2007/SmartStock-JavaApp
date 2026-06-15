@@ -38,6 +38,7 @@ public final class ServerProvisioningService {
         JdbcParts localParts = JdbcParts.parse(config.jdbcUrl());
         List<String> steps = new ArrayList<>();
         createDatabaseIfMissing(localParts, config.dbUser(), config.dbPassword(), steps);
+        ensureClientRole(localParts, config.dbUser(), config.dbPassword(), steps);
 
         try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
             BaseSchemaInstaller.ensureSchema(local);
@@ -45,6 +46,7 @@ public final class ServerProvisioningService {
             SyncSchemaInstaller.ensureSchema(local);
             SyncSchemaInstaller.ensureSecurityHardening(local);
             LocalAuthCacheService.ensureSchema(local);
+            ensureClientGrants(local, steps);
             steps.add("Installed local base schema, custom order workflow schema, and sync/employee credential tables ("
                     + customOrderStatements + " custom-order statements).");
         }
@@ -73,9 +75,13 @@ public final class ServerProvisioningService {
         }
 
         config.save();
+        PostgresRuntimeService.CommandResult lanResult = PostgresRuntimeService.ensureLanServerAccess(config.serverPort());
         PostgresRuntimeService.CommandResult syncServiceResult = PostgresRuntimeService.ensureSyncServiceInstalled();
         SyncWorker.startIfServerMode();
         steps.add("Saved server-mode configuration.");
+        steps.add(lanResult.success()
+                ? "PostgreSQL is configured to accept SmartStock client connections from the local network."
+                : "PostgreSQL LAN setup needs manual attention: " + lanResult.output());
         steps.add(syncServiceResult.success()
                 ? "Background sync service is installed and ready."
                 : "Background sync service install failed: " + syncServiceResult.output());
@@ -85,13 +91,36 @@ public final class ServerProvisioningService {
 
     private static int installLocalWorkflowSchemas(Connection local) throws Exception {
         return SqlScriptRunner.runScripts(local, List.of(
+                "database/permission_descriptions_setup.sql",
+                "database/permission_descriptions_and_sections_backfill.sql",
+                "database/location_management_setup.sql",
+                "database/store_timezone_setup.sql",
+                "database/department_setup.sql",
+                "database/vendor_setup.sql",
+                "database/held_cart_setup.sql",
+                "database/product_type_setup.sql",
+                "database/product_size_setup.sql",
+                "database/product_sku_setup.sql",
+                "database/customer_type_setup.sql",
                 "database/device_management_setup.sql",
+                "database/hardware_setup_permission.sql",
                 "database/company_customization_setup.sql",
+                "database/company_customization_permission.sql",
+                "database/company_preferences_permission.sql",
                 "database/returns_setup.sql",
+                "database/sale_discount_setup.sql",
                 "database/normal_sales_audit_setup.sql",
                 "database/sale_override_controls_setup.sql",
+                "database/sales_transaction_source_setup.sql",
                 "database/cash_drawer_management_setup.sql",
+                "database/balance_sheet_expenses_setup.sql",
+                "database/time_clock_setup.sql",
+                "database/store_transfer_setup.sql",
+                "database/end_of_day_setup.sql",
+                "database/maintenance_management_setup.sql",
+                "database/inventory_sensitive_permissions.sql",
                 "database/custom_orders_setup.sql",
+                "database/custom_order_sku_setup.sql",
                 "database/custom_order_controls_setup.sql",
                 "database/custom_order_line_discount_setup.sql",
                 "database/custom_order_safety_controls_setup.sql",
@@ -117,9 +146,57 @@ public final class ServerProvisioningService {
         }
     }
 
+    private static void ensureClientRole(JdbcParts localParts, String user, String password, List<String> steps) throws SQLException {
+        String adminUrl = localParts.withDatabase("postgres");
+        String clientUser = DatabaseCredentials.DEFAULT_CLIENT_DB_USER;
+        String clientPassword = DatabaseCredentials.DEFAULT_CLIENT_DB_PASSWORD;
+        try (Connection admin = DriverManager.getConnection(adminUrl, user, password);
+             Statement stmt = admin.createStatement()) {
+            admin.setAutoCommit(true);
+            try {
+                if (roleExists(admin, clientUser)) {
+                    stmt.executeUpdate("ALTER ROLE " + quoteIdentifier(clientUser)
+                            + " WITH LOGIN PASSWORD " + quoteLiteral(clientPassword));
+                    steps.add("Updated SmartStock client database role: " + clientUser);
+                } else {
+                    stmt.executeUpdate("CREATE ROLE " + quoteIdentifier(clientUser)
+                            + " LOGIN PASSWORD " + quoteLiteral(clientPassword));
+                    steps.add("Created SmartStock client database role: " + clientUser);
+                }
+            } catch (SQLException ex) {
+                steps.add("Skipped SmartStock client role password repair because this PostgreSQL user cannot manage roles. "
+                        + "Run the macOS installer or repair command on the server if client login credentials need repair: "
+                        + rootCauseMessage(ex));
+            }
+            stmt.executeUpdate("GRANT CONNECT ON DATABASE " + quoteIdentifier(localParts.database())
+                    + " TO " + quoteIdentifier(clientUser));
+        }
+    }
+
+    private static void ensureClientGrants(Connection local, List<String> steps) throws SQLException {
+        String clientUser = DatabaseCredentials.DEFAULT_CLIENT_DB_USER;
+        try (Statement stmt = local.createStatement()) {
+            stmt.executeUpdate("GRANT USAGE ON SCHEMA public TO " + quoteIdentifier(clientUser));
+            stmt.executeUpdate("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + quoteIdentifier(clientUser));
+            stmt.executeUpdate("GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO " + quoteIdentifier(clientUser));
+            stmt.executeUpdate("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + quoteIdentifier(clientUser));
+            stmt.executeUpdate("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO " + quoteIdentifier(clientUser));
+        }
+        steps.add("Granted SmartStock client role access to local app tables and sequences.");
+    }
+
     private static boolean databaseExists(Connection conn, String databaseName) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM pg_database WHERE datname = ?")) {
             ps.setString(1, databaseName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean roleExists(Connection conn, String roleName) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM pg_roles WHERE rolname = ?")) {
+            ps.setString(1, roleName);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
@@ -134,6 +211,19 @@ public final class ServerProvisioningService {
             throw new SQLException("Database name must contain only letters, numbers, and underscores.");
         }
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
+    private static String quoteLiteral(String value) {
+        return "'" + (value == null ? "" : value).replace("'", "''") + "'";
+    }
+
+    private static String rootCauseMessage(SQLException ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
 
     private static boolean isBlank(String value) {

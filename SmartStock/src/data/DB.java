@@ -34,7 +34,7 @@ public class DB {
         }
         try {
             Connection conn = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword());
-            if (config.mode() == DatabaseMode.SERVER || config.mode() == DatabaseMode.CLIENT) {
+            if (config.mode() == DatabaseMode.SERVER) {
                 ensureSchemaOnce(conn, config);
             }
             return conn;

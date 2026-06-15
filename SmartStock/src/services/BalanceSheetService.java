@@ -1,6 +1,8 @@
 package services;
 
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.SessionManager;
 
 import java.math.BigDecimal;
@@ -31,6 +33,9 @@ public final class BalanceSheetService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         String cacheKey = databaseCacheKey(conn);
         if (SCHEMA_READY.contains(cacheKey)) {
             return;

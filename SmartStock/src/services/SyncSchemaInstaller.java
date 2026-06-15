@@ -1,5 +1,8 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
+
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -14,6 +17,9 @@ public final class SyncSchemaInstaller {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         String key = databaseKey(conn);
         if (INSTALLED_DATABASES.contains(key)) {
             return;
@@ -28,6 +34,9 @@ public final class SyncSchemaInstaller {
     }
 
     public static void ensureSecurityHardening(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         String key = databaseKey(conn);
         if (HARDENED_DATABASES.contains(key)) {
             return;

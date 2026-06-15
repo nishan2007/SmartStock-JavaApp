@@ -45,7 +45,7 @@ public final class DeviceManagementService {
                        d.blocked_at,
                        COALESCE(blocked_by.full_name, blocked_by.username, '') AS blocked_by_name,
                        COALESCE(d.status_notes, '') AS status_notes,
-                       COALESCE(session_totals.session_count, 0) AS session_count,
+                       COALESCE(d.session_count, 0) AS session_count,
                        COALESCE(session_totals.active_session_count, 0) AS active_session_count,
                        latest_session.login_time AS latest_login_time,
                        latest_session.logout_time AS latest_logout_time,
@@ -56,8 +56,7 @@ public final class DeviceManagementService {
                 LEFT JOIN users approved_by ON approved_by.user_id = d.approved_by_user_id
                 LEFT JOIN users blocked_by ON blocked_by.user_id = d.blocked_by_user_id
                 LEFT JOIN LATERAL (
-                    SELECT COUNT(*) AS session_count,
-                           COUNT(*) FILTER (
+                    SELECT COUNT(*) FILTER (
                                WHERE UPPER(COALESCE(ds.session_status, '')) = 'ACTIVE'
                                  AND ds.logout_time IS NULL
                            ) AS active_session_count

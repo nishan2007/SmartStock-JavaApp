@@ -2,6 +2,8 @@ package ui.screens.customorders;
 
 import Receipt.CustomOrderSlipPrinter;
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.PermissionManager;
 import managers.SessionManager;
 import managers.CompanyCustomizationManager;
@@ -4268,6 +4270,9 @@ public class CustomOrders extends JFrame {
     }
 
     private void ensureCustomOrderMovementAuditColumns(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
             stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");

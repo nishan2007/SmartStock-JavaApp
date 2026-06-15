@@ -22,6 +22,10 @@ public record DatabaseConfig(
 ) {
     public static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "database.properties");
 
+    public static boolean hasConfigFile() {
+        return Files.isRegularFile(CONFIG_PATH);
+    }
+
     public static DatabaseConfig load() {
         Properties props = new Properties();
         if (Files.exists(CONFIG_PATH)) {

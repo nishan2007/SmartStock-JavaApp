@@ -432,6 +432,9 @@ public class CompanyCustomizationManager {
     }
 
     private static void ensureReceiptSettingsSchema(Connection conn) throws SQLException {
+        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             ensureCompanyInfoSchema(stmt);
             ensureLocationIdentitySchema(stmt);

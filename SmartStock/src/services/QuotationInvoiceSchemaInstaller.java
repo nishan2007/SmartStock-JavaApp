@@ -1,5 +1,8 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
+
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -15,6 +18,9 @@ public final class QuotationInvoiceSchemaInstaller {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         String key = databaseKey(conn);
         if (INSTALLED_DATABASES.contains(key)) {
             return;

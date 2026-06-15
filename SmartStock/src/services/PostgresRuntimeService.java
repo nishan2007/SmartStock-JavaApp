@@ -55,6 +55,49 @@ public final class PostgresRuntimeService {
         return runShell("command -v psql && psql --version && brew services list | grep -E 'postgresql|Name' || true", Duration.ofSeconds(30));
     }
 
+    public static CommandResult ensureLanServerAccess(int port) throws Exception {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (os.contains("win")) {
+            return new CommandResult(false,
+                    "Automatic PostgreSQL LAN configuration is not implemented for Windows yet. "
+                            + "Configure postgresql.conf listen_addresses and pg_hba.conf manually on the server.");
+        }
+        int cleanPort = port <= 0 ? 5432 : port;
+        String script = """
+                set -e
+                find_pg_formula() {
+                  brew services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1
+                }
+                formula="$(find_pg_formula)"
+                if [ -z "$formula" ]; then formula="postgresql"; fi
+                brew services start "$formula" >/dev/null 2>&1 || brew services restart "$formula" >/dev/null 2>&1 || true
+
+                CONFIG_FILE="$(psql -h 127.0.0.1 -p %d -d postgres -Atc 'show config_file')"
+                HBA_FILE="$(psql -h 127.0.0.1 -p %d -d postgres -Atc 'show hba_file')"
+                TS="$(date +%%Y%%m%%d%%H%%M%%S)"
+                cp "$CONFIG_FILE" "$CONFIG_FILE.smartstock-lan-backup-$TS"
+                cp "$HBA_FILE" "$HBA_FILE.smartstock-lan-backup-$TS"
+
+                if grep -Eq "^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=" "$CONFIG_FILE"; then
+                  perl -0pi -e "s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*$/listen_addresses = '*'\\t\\t# SmartStock LAN server/m" "$CONFIG_FILE"
+                else
+                  printf "\\nlisten_addresses = '*'\\t\\t# SmartStock LAN server\\n" >> "$CONFIG_FILE"
+                fi
+
+                if ! grep -Eq "^[[:space:]]*host[[:space:]]+smartstock[[:space:]]+all[[:space:]]+samenet[[:space:]]+scram-sha-256" "$HBA_FILE"; then
+                  cat >> "$HBA_FILE" <<'EOF'
+
+# SmartStock LAN clients on directly connected local networks. Password authentication is required.
+host    smartstock      all             samenet                 scram-sha-256
+EOF
+                fi
+
+                brew services restart "$formula"
+                psql -h 127.0.0.1 -p %d -d postgres -Atc 'show listen_addresses'
+                """.formatted(cleanPort, cleanPort, cleanPort);
+        return runShell(script, Duration.ofMinutes(2));
+    }
+
     public static CommandResult installSyncService() throws Exception {
         Path appDir = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);

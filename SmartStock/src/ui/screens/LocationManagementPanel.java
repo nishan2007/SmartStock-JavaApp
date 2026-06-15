@@ -424,6 +424,9 @@ public class LocationManagementPanel extends JPanel {
     }
 
     private void ensureLocationIdentitySchema() {
+        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) {
+            return;
+        }
         try (Connection conn = DB.getConnection();
              java.sql.Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");

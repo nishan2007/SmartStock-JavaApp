@@ -1,5 +1,7 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -208,6 +210,9 @@ public final class NotificationService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS notification_user_state (

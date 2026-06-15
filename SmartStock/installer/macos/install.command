@@ -39,7 +39,7 @@ DB_NAME="${SMARTSTOCK_DB_NAME:-smartstock}"
 DB_USER="${SMARTSTOCK_DB_USER:-smartstock_server}"
 DB_PASSWORD="${SMARTSTOCK_DB_PASSWORD:-}"
 CLIENT_DB_USER="${SMARTSTOCK_CLIENT_DB_USER:-smartstock_client}"
-CLIENT_DB_PASSWORD="${SMARTSTOCK_CLIENT_DB_PASSWORD:-}"
+CLIENT_DB_PASSWORD="${SMARTSTOCK_CLIENT_DB_PASSWORD:-SmartStockClientLan2026!}"
 DB_PORT="${SMARTSTOCK_DB_PORT:-5432}"
 SYNC_INTERVAL="${SMARTSTOCK_SYNC_INTERVAL:-60}"
 CLOUD_JDBC_URL="${SMARTSTOCK_CLOUD_JDBC_URL:-}"
@@ -129,7 +129,7 @@ load_or_create_credentials() {
     DB_PASSWORD="$(generate_password)"
   fi
   if [[ -z "$CLIENT_DB_PASSWORD" ]]; then
-    CLIENT_DB_PASSWORD="$(generate_password)"
+    CLIENT_DB_PASSWORD="SmartStockClientLan2026!"
   fi
 }
 
@@ -366,6 +366,14 @@ EOF
 
 write_credentials_note() {
   log "Writing database credentials note"
+  local server_host
+  server_host="$(scutil --get LocalHostName 2>/dev/null || hostname -s || true)"
+  if [[ -n "$server_host" && "$server_host" != *.local ]]; then
+    server_host="${server_host}.local"
+  fi
+  if [[ -z "$server_host" ]]; then
+    server_host="<SERVER-HOSTNAME-OR-IP>"
+  fi
   cat > "$CREDENTIALS_PATH" <<EOF
 # SmartStock local database credentials
 # Keep this file private. It is used by the installer if you rerun setup.
@@ -381,7 +389,7 @@ SMARTSTOCK_SERVER_JDBC_URL='jdbc:postgresql://127.0.0.1:${DB_PORT}/${DB_NAME}'
 # Use these on register/client computers.
 SMARTSTOCK_CLIENT_DB_USER='${CLIENT_DB_USER}'
 SMARTSTOCK_CLIENT_DB_PASSWORD='${CLIENT_DB_PASSWORD}'
-SMARTSTOCK_CLIENT_JDBC_URL='jdbc:postgresql://<SERVER-LAN-IP>:${DB_PORT}/${DB_NAME}'
+SMARTSTOCK_CLIENT_JDBC_URL='jdbc:postgresql://${server_host}:${DB_PORT}/${DB_NAME}'
 EOF
   chmod 600 "$CREDENTIALS_PATH"
 }

@@ -56,6 +56,7 @@ public class WelcomeFrame extends JFrame {
     private Timer displayRefreshTimer;
     private Timer systemStatusRefreshTimer;
     private boolean systemStatusRefreshInProgress;
+    private boolean initialSetupWindowOpened;
     private String lastGreetingKey = "";
     private record SystemStatus(String localStatus, String onlineStatus, String message, boolean canLogin) {}
 
@@ -126,8 +127,12 @@ public class WelcomeFrame extends JFrame {
         wireActions();
         continueBtn.setEnabled(false);
         ThemeManager.applyToWindow(this);
-        SwingUtilities.invokeLater(this::refreshSystemStatus);
-        SwingUtilities.invokeLater(this::continueIfStoredSessionExists);
+        if (DatabaseConfig.hasConfigFile()) {
+            SwingUtilities.invokeLater(this::refreshSystemStatus);
+            SwingUtilities.invokeLater(this::continueIfStoredSessionExists);
+        } else {
+            SwingUtilities.invokeLater(this::showInitialDatabaseSetup);
+        }
     }
 
     private JPanel buildStatusPanel() {
@@ -225,12 +230,23 @@ public class WelcomeFrame extends JFrame {
 
     private void wireActions() {
         refreshStatusBtn.addActionListener(e -> refreshSystemStatus());
-        setupBtn.addActionListener(e -> {
-            new DatabaseSetup(this).setVisible(true);
-            SwingUtilities.invokeLater(this::refreshSystemStatus);
-        });
+        setupBtn.addActionListener(e -> openDatabaseSetup());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> openLogin());
+    }
+
+    private void openDatabaseSetup() {
+        DatabaseSetup setup = new DatabaseSetup(this);
+        setup.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                refreshSystemStatus();
+                continueIfStoredSessionExists();
+            }
+        });
+        setup.setVisible(true);
+        setup.toFront();
+        setup.requestFocus();
     }
 
     private void styleWelcomeButton(JButton button, Color accent) {
@@ -347,28 +363,56 @@ public class WelcomeFrame extends JFrame {
     }
 
     private void continueIfStoredSessionExists() {
+        if (!DatabaseConfig.hasConfigFile()) {
+            return;
+        }
         if (!SupabaseSessionManager.hasPersistedSession()) {
             return;
         }
-        try (Connection ignored = DB.getConnection()) {
-            // Continue only after the configured database is reachable.
-        } catch (Exception ex) {
-            statusLabel.setText("Status: Database setup required");
-            refreshStatusBtn.setEnabled(true);
-            continueBtn.setEnabled(false);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Saved sign-in was found, but the database is not ready yet.\n\n"
-                            + getRootCauseMessage(ex)
-                            + "\n\nRun Initial Database Setup if this workstation is being installed.",
-                    "Database Setup Required",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return;
-        }
+        statusLabel.setText("Status: Checking saved sign-in...");
+        continueBtn.setEnabled(false);
+        refreshStatusBtn.setEnabled(false);
 
-        statusLabel.setText("Status: Saved sign-in found. Click Log In to continue.");
-        continueBtn.setEnabled(true);
+        SwingWorker<String, Void> worker = new SwingWorker<>() {
+            @Override
+            protected String doInBackground() {
+                try (Connection ignored = DB.getConnection()) {
+                    // Continue only after the configured database is reachable.
+                    return null;
+                } catch (Exception ex) {
+                    return getRootCauseMessage(ex);
+                }
+            }
+
+            @Override
+            protected void done() {
+                refreshStatusBtn.setEnabled(true);
+                String errorMessage;
+                try {
+                    errorMessage = get();
+                } catch (Exception ex) {
+                    errorMessage = getRootCauseMessage(ex);
+                }
+
+                if (errorMessage == null || errorMessage.isBlank()) {
+                    statusLabel.setText("Status: Saved sign-in found. Click Log In to continue.");
+                    continueBtn.setEnabled(true);
+                    return;
+                }
+
+                statusLabel.setText("Status: Database setup required");
+                continueBtn.setEnabled(false);
+                JOptionPane.showMessageDialog(
+                        WelcomeFrame.this,
+                        "Saved sign-in was found, but the database is not ready yet.\n\n"
+                                + errorMessage
+                                + "\n\nRun Initial Database Setup if this workstation is being installed.",
+                        "Database Setup Required",
+                        JOptionPane.WARNING_MESSAGE
+                );
+            }
+        };
+        worker.execute();
     }
 
     private String getRootCauseMessage(Exception ex) {
@@ -394,6 +438,17 @@ public class WelcomeFrame extends JFrame {
         refreshSystemStats();
         DatabaseConfig config = DatabaseConfig.load();
         setupBtn.setVisible(isInitialSetupRequired(config));
+        if (!DatabaseConfig.hasConfigFile()) {
+            systemStatusRefreshInProgress = false;
+            localDbLabel.setText("Local DB: Setup required");
+            onlineDbLabel.setText("Online DB: Setup required");
+            localDbLabel.setForeground(DeckersPalette.CORAL);
+            onlineDbLabel.setForeground(DeckersPalette.CORAL);
+            statusLabel.setText("Status: Initial Database Setup is required on this Mac.");
+            continueBtn.setEnabled(false);
+            refreshStatusBtn.setEnabled(true);
+            return;
+        }
         if (showCheckingState) {
             localDbLabel.setText("Local DB: Checking...");
             onlineDbLabel.setText("Online DB: Checking...");
@@ -439,10 +494,15 @@ public class WelcomeFrame extends JFrame {
     }
 
     private boolean isInitialSetupRequired(DatabaseConfig config) {
-        return !config.hasPrimaryConnection() || config.hasUnresolvedCredentialPlaceholders();
+        return !DatabaseConfig.hasConfigFile()
+                || !config.hasPrimaryConnection()
+                || config.hasUnresolvedCredentialPlaceholders();
     }
 
     private String checkLocalDb(DatabaseConfig config) {
+        if (!DatabaseConfig.hasConfigFile()) {
+            return "Setup required";
+        }
         if (config.mode() == data.DatabaseMode.CLOUD_DIRECT) {
             return "Not used in cloud-direct mode";
         }
@@ -457,6 +517,9 @@ public class WelcomeFrame extends JFrame {
     }
 
     private String checkOnlineDb(DatabaseConfig config) {
+        if (!DatabaseConfig.hasConfigFile()) {
+            return "Setup required";
+        }
         if (!config.hasCloudConnection() && config.mode() != data.DatabaseMode.CLOUD_DIRECT) {
             return "Not configured";
         }
@@ -465,6 +528,22 @@ public class WelcomeFrame extends JFrame {
         } catch (Exception ex) {
             return "Offline - " + getRootCauseMessage(ex);
         }
+    }
+
+    private void showInitialDatabaseSetup() {
+        if (initialSetupWindowOpened || DatabaseConfig.hasConfigFile()) {
+            return;
+        }
+        initialSetupWindowOpened = true;
+        setupBtn.setVisible(true);
+        localDbLabel.setText("Local DB: Setup required");
+        onlineDbLabel.setText("Online DB: Setup required");
+        localDbLabel.setForeground(DeckersPalette.CORAL);
+        onlineDbLabel.setForeground(DeckersPalette.CORAL);
+        statusLabel.setText("Status: Choose a database mode to finish setup.");
+        continueBtn.setEnabled(false);
+        refreshStatusBtn.setEnabled(true);
+        openDatabaseSetup();
     }
 
     private void updateStatusLabel(JLabel label, String text, String status) {

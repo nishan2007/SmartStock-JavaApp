@@ -1,10 +1,10 @@
 import java.awt.BasicStroke;
 import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
@@ -13,6 +13,22 @@ import javax.imageio.ImageIO;
 
 public final class GenerateAppIcons {
     private static final int SIZE = 1024;
+    private static final Color ORANGE = new Color(255, 91, 0);
+    private static final Color MAGENTA = new Color(241, 0, 255);
+    private static final Color LIME = new Color(60, 255, 0);
+    private static final Color YELLOW = new Color(255, 242, 0);
+    private static final Color PURPLE = new Color(112, 34, 168);
+    private static final Color CORAL = new Color(240, 79, 69);
+    private static final Color LIGHT_BACKGROUND = new Color(241, 245, 249);
+    private static final Color LIGHT_SURFACE = Color.WHITE;
+    private static final Color LIGHT_TEXT = new Color(15, 23, 42);
+    private static final Color LIGHT_MUTED = new Color(71, 85, 105);
+    private static final Color LIGHT_BORDER = new Color(203, 213, 225);
+    private static final Color DARK_BACKGROUND = new Color(18, 18, 18);
+    private static final Color DARK_SURFACE = new Color(30, 30, 30);
+    private static final Color DARK_TEXT = new Color(245, 245, 245);
+    private static final Color DARK_MUTED = new Color(190, 190, 190);
+    private static final Color DARK_BORDER = new Color(75, 75, 75);
 
     private GenerateAppIcons() {
     }
@@ -33,143 +49,109 @@ public final class GenerateAppIcons {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 
-        Color bgTop = dark ? new Color(27, 33, 40) : new Color(255, 255, 255);
-        Color bgBottom = dark ? new Color(7, 11, 17) : new Color(234, 244, 250);
-        Color border = dark ? new Color(73, 91, 107) : new Color(190, 210, 220);
-        Color text = dark ? new Color(245, 250, 253) : new Color(28, 45, 58);
-        Color subText = dark ? new Color(150, 172, 187) : new Color(92, 112, 126);
-        Color blue = dark ? new Color(68, 169, 241) : new Color(16, 117, 183);
-        Color brightBlue = dark ? new Color(93, 197, 255) : new Color(40, 146, 213);
-        Color green = dark ? new Color(123, 208, 69) : new Color(88, 172, 54);
-        Color yellow = dark ? new Color(246, 199, 70) : new Color(218, 165, 36);
-
-        RoundRectangle2D card = new RoundRectangle2D.Double(48, 48, 928, 928, 210, 210);
-        g.setColor(new Color(0, 0, 0, dark ? 110 : 35));
-        g.fill(new RoundRectangle2D.Double(64, 82, 896, 872, 200, 200));
-        g.setPaint(new GradientPaint(48, 48, bgTop, 976, 976, bgBottom));
-        g.fill(card);
-        g.setColor(border);
-        g.setStroke(new BasicStroke(6f));
-        g.draw(card);
-
-        drawShelf(g, dark, blue, brightBlue, green, yellow);
-        drawWordmark(g, text, subText);
+        drawMenuTileGlyph(g, dark);
         g.dispose();
         return image;
     }
 
-    private static void drawShelf(Graphics2D g, boolean dark, Color blue, Color brightBlue, Color green, Color yellow) {
-        int left = 178;
-        int bottom = 618;
-        int barWidth = 96;
-        int gap = 34;
-        int[] heights = {176, 270, 374, 470};
-        Color[] colors = {yellow, green, blue, brightBlue};
+    private static void drawMenuTileGlyph(Graphics2D g, boolean dark) {
+        int tileX = 0;
+        int tileY = 0;
+        int tileSize = SIZE;
+        int radius = 232;
+        Shape oldClip = g.getClip();
+        RoundRectangle2D tile = new RoundRectangle2D.Double(tileX, tileY, tileSize, tileSize, radius, radius);
 
-        g.setColor(new Color(0, 0, 0, dark ? 70 : 28));
-        g.fillRoundRect(142, bottom + 30, 734, 46, 30, 30);
+        g.setClip(tile);
+        drawPaletteField(g, tileX, tileY, tileSize, dark);
+        g.setColor(new Color(255, 255, 255, dark ? 42 : 58));
+        g.fill(new Ellipse2D.Double(tileX - 190, tileY - 220, 480, 480));
+        g.setColor(new Color(255, 255, 255, dark ? 24 : 36));
+        g.fill(new Ellipse2D.Double(tileX + 590, tileY + 570, 420, 420));
+        g.setClip(oldClip);
 
-        g.setStroke(new BasicStroke(20f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(dark ? new Color(86, 106, 122) : new Color(153, 176, 188));
-        g.drawLine(164, bottom + 10, 860, bottom + 10);
+        drawCartInventoryGlyph(g, tileX + 186, tileY + 280);
+        drawBadge(g, tileX + 590, tileY + 590, dark);
+    }
 
-        for (int i = 0; i < heights.length; i++) {
-            int x = left + i * (barWidth + gap);
-            int h = heights[i];
-            g.setColor(new Color(0, 0, 0, dark ? 90 : 38));
-            g.fillRoundRect(x + 14, bottom - h + 18, barWidth, h, 36, 36);
-            g.setPaint(new GradientPaint(x, bottom - h, colors[i].brighter(), x + barWidth, bottom, colors[i].darker()));
-            g.fillRoundRect(x, bottom - h, barWidth, h, 36, 36);
-            g.setColor(new Color(255, 255, 255, dark ? 58 : 78));
-            g.setStroke(new BasicStroke(7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g.drawLine(x + 28, bottom - h + 38, x + 28, bottom - 34);
-        }
+    private static void drawPaletteField(Graphics2D g, int x, int y, int size, boolean dark) {
+        Color top = dark ? blend(ORANGE, Color.WHITE, 0.06) : blend(ORANGE, Color.WHITE, 0.10);
+        Color bottom = dark ? blend(CORAL, DARK_BACKGROUND, 0.18) : blend(CORAL, Color.BLACK, 0.12);
+        g.setPaint(new GradientPaint(x, y, top, x + size, y + size, bottom));
+        g.fillRect(x, y, size, size);
 
-        Path2D line = new Path2D.Double();
-        line.moveTo(230, 430);
-        line.curveTo(335, 365, 385, 405, 480, 314);
-        line.curveTo(560, 236, 650, 292, 770, 164);
-        g.setColor(dark ? new Color(140, 226, 91) : new Color(70, 154, 47));
+        g.setColor(new Color(PURPLE.getRed(), PURPLE.getGreen(), PURPLE.getBlue(), dark ? 92 : 78));
+        g.fill(new Ellipse2D.Double(x + size - 260, y - 116, 390, 390));
+        g.setColor(new Color(MAGENTA.getRed(), MAGENTA.getGreen(), MAGENTA.getBlue(), dark ? 62 : 56));
+        g.fill(new Ellipse2D.Double(x - 164, y - 178, 410, 410));
+        g.setColor(new Color(LIME.getRed(), LIME.getGreen(), LIME.getBlue(), dark ? 190 : 170));
+        g.fill(new Ellipse2D.Double(x + 72, y + 504, 360, 360));
+
+        g.setColor(new Color(YELLOW.getRed(), YELLOW.getGreen(), YELLOW.getBlue(), dark ? 54 : 48));
+        g.fill(new Ellipse2D.Double(x + 82, y + size - 280, 270, 270));
+        g.setColor(new Color(LIME.getRed(), LIME.getGreen(), LIME.getBlue(), dark ? 210 : 188));
+        g.fill(new Ellipse2D.Double(x + 286, y + size - 250, 250, 250));
+        g.setColor(new Color(MAGENTA.getRed(), MAGENTA.getGreen(), MAGENTA.getBlue(), dark ? 54 : 48));
+        g.fill(new Ellipse2D.Double(x + size - 324, y + size - 284, 330, 330));
+
+        g.setColor(new Color(0, 0, 0, dark ? 42 : 18));
+        g.fillRect(x, y + size - 92, size, 92);
+    }
+
+    private static void drawCartInventoryGlyph(Graphics2D g, int x, int y) {
+        g.setColor(new Color(0, 0, 0, 38));
+        g.fillRoundRect(x + 36, y + 92, 362, 214, 42, 42);
+        g.fillOval(x + 96, y + 342, 54, 54);
+        g.fillOval(x + 314, y + 342, 54, 54);
+
+        g.setColor(Color.WHITE);
+        g.setStroke(new BasicStroke(34f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        Path2D handle = new Path2D.Double();
+        handle.moveTo(x + 4, y + 20);
+        handle.lineTo(x + 82, y + 20);
+        handle.lineTo(x + 116, y + 110);
+        g.draw(handle);
+
+        g.setStroke(new BasicStroke(30f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        Path2D basket = new Path2D.Double();
+        basket.moveTo(x + 112, y + 108);
+        basket.lineTo(x + 392, y + 108);
+        basket.lineTo(x + 358, y + 292);
+        basket.lineTo(x + 148, y + 292);
+        basket.closePath();
+        g.draw(basket);
+
+        g.setStroke(new BasicStroke(22f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.drawLine(x + 168, y + 158, x + 342, y + 158);
+        g.drawLine(x + 184, y + 214, x + 326, y + 214);
+        g.drawLine(x + 204, y + 270, x + 306, y + 270);
+
+        g.fillOval(x + 94, y + 326, 70, 70);
+        g.fillOval(x + 298, y + 326, 70, 70);
+    }
+
+    private static void drawBadge(Graphics2D g, int x, int y, boolean dark) {
+        g.setColor(new Color(0, 0, 0, dark ? 85 : 48));
+        g.fillOval(x + 10, y + 14, 184, 184);
+        g.setPaint(new GradientPaint(x, y, blend(PURPLE, MAGENTA, 0.34), x + 184, y + 184, blend(CORAL, ORANGE, 0.22)));
+        g.fillOval(x, y, 184, 184);
+        g.setColor(Color.WHITE);
         g.setStroke(new BasicStroke(26f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(line);
-
-        g.setColor(dark ? new Color(214, 249, 192) : new Color(255, 255, 255));
-        g.setStroke(new BasicStroke(10f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(line);
-
-        Path2D arrow = new Path2D.Double();
-        arrow.moveTo(766, 164);
-        arrow.lineTo(756, 238);
-        arrow.moveTo(766, 164);
-        arrow.lineTo(690, 176);
-        g.setColor(dark ? new Color(140, 226, 91) : new Color(70, 154, 47));
-        g.setStroke(new BasicStroke(24f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(arrow);
-
-        drawBox(g, 678, 410, dark);
+        g.drawLine(x + 92, y + 46, x + 92, y + 138);
+        g.drawLine(x + 46, y + 92, x + 138, y + 92);
     }
 
-    private static void drawBox(Graphics2D g, int x, int y, boolean dark) {
-        Color face = dark ? new Color(199, 138, 61) : new Color(207, 145, 61);
-        Color side = dark ? new Color(153, 94, 43) : new Color(172, 103, 42);
-        Color top = dark ? new Color(242, 184, 92) : new Color(236, 181, 83);
-
-        Path2D topFace = new Path2D.Double();
-        topFace.moveTo(x + 72, y);
-        topFace.lineTo(x + 160, y + 42);
-        topFace.lineTo(x + 86, y + 82);
-        topFace.lineTo(x, y + 38);
-        topFace.closePath();
-
-        Path2D leftFace = new Path2D.Double();
-        leftFace.moveTo(x, y + 38);
-        leftFace.lineTo(x + 86, y + 82);
-        leftFace.lineTo(x + 86, y + 178);
-        leftFace.lineTo(x, y + 132);
-        leftFace.closePath();
-
-        Path2D rightFace = new Path2D.Double();
-        rightFace.moveTo(x + 160, y + 42);
-        rightFace.lineTo(x + 86, y + 82);
-        rightFace.lineTo(x + 86, y + 178);
-        rightFace.lineTo(x + 160, y + 132);
-        rightFace.closePath();
-
-        g.setColor(new Color(0, 0, 0, dark ? 80 : 32));
-        g.fillRoundRect(x + 16, y + 64, 150, 136, 30, 30);
-        g.setColor(top);
-        g.fill(topFace);
-        g.setColor(face);
-        g.fill(leftFace);
-        g.setColor(side);
-        g.fill(rightFace);
-        g.setColor(new Color(255, 255, 255, dark ? 48 : 80));
-        g.setStroke(new BasicStroke(7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.drawLine(x + 72, y, x + 86, y + 82);
-        g.drawLine(x + 86, y + 82, x + 86, y + 178);
+    private static Color blend(Color base, Color overlay, double overlayRatio) {
+        double ratio = Math.max(0, Math.min(1, overlayRatio));
+        double baseRatio = 1 - ratio;
+        return new Color(
+                clamp((int) Math.round(base.getRed() * baseRatio + overlay.getRed() * ratio)),
+                clamp((int) Math.round(base.getGreen() * baseRatio + overlay.getGreen() * ratio)),
+                clamp((int) Math.round(base.getBlue() * baseRatio + overlay.getBlue() * ratio))
+        );
     }
 
-    private static void drawWordmark(Graphics2D g, Color text, Color subText) {
-        Font title = new Font("Avenir Next", Font.BOLD, 112);
-        if (!title.getFamily().contains("Avenir")) {
-            title = new Font("Helvetica Neue", Font.BOLD, 112);
-        }
-        g.setFont(title);
-        FontMetrics titleMetrics = g.getFontMetrics();
-        String name = "SmartStock";
-        int x = (SIZE - titleMetrics.stringWidth(name)) / 2;
-        g.setColor(text);
-        g.drawString(name, x, 786);
-
-        Font subtitle = new Font("Avenir Next", Font.BOLD, 42);
-        if (!subtitle.getFamily().contains("Avenir")) {
-            subtitle = new Font("Helvetica Neue", Font.BOLD, 42);
-        }
-        g.setFont(subtitle);
-        FontMetrics subtitleMetrics = g.getFontMetrics();
-        String label = "INVENTORY";
-        int subtitleX = (SIZE - subtitleMetrics.stringWidth(label)) / 2;
-        g.setColor(subText);
-        g.drawString(label, subtitleX, 846);
+    private static int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
     }
 }

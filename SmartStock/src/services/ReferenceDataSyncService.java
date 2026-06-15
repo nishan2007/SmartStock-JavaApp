@@ -2978,6 +2978,7 @@ public final class ReferenceDataSyncService {
     private static void installDeviceUpdatedAtSchema(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            stmt.executeUpdate("ALTER TABLE devices ADD COLUMN IF NOT EXISTS session_count BIGINT NOT NULL DEFAULT 0");
             stmt.executeUpdate("""
                     CREATE OR REPLACE FUNCTION set_devices_updated_at()
                     RETURNS TRIGGER AS $$
@@ -2999,6 +3000,56 @@ public final class ReferenceDataSyncService {
                     EXECUTE FUNCTION set_devices_updated_at()
                     """);
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS devices_updated_at_idx ON devices(updated_at DESC)");
+            if (tableExists(conn, "device_sessions")) {
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS device_sessions_login_time_idx ON device_sessions(login_time DESC)");
+                stmt.executeUpdate("""
+                        UPDATE devices d
+                        SET session_count = COALESCE(session_totals.session_count, 0)
+                        FROM (
+                            SELECT d2.device_id, COUNT(ds.session_id)::BIGINT AS session_count
+                            FROM devices d2
+                            LEFT JOIN device_sessions ds ON ds.device_id = d2.device_id
+                            GROUP BY d2.device_id
+                        ) session_totals
+                        WHERE session_totals.device_id = d.device_id
+                        """);
+                stmt.executeUpdate("""
+                        CREATE OR REPLACE FUNCTION refresh_device_session_count()
+                        RETURNS TRIGGER AS $$
+                        BEGIN
+                            IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                                UPDATE devices
+                                SET session_count = (
+                                    SELECT COUNT(*)::BIGINT
+                                    FROM device_sessions
+                                    WHERE device_id = NEW.device_id
+                                )
+                                WHERE device_id = NEW.device_id;
+                            END IF;
+
+                            IF TG_OP IN ('DELETE', 'UPDATE')
+                               AND (TG_OP = 'DELETE' OR OLD.device_id IS DISTINCT FROM NEW.device_id) THEN
+                                UPDATE devices
+                                SET session_count = (
+                                    SELECT COUNT(*)::BIGINT
+                                    FROM device_sessions
+                                    WHERE device_id = OLD.device_id
+                                )
+                                WHERE device_id = OLD.device_id;
+                            END IF;
+
+                            RETURN COALESCE(NEW, OLD);
+                        END;
+                        $$ LANGUAGE plpgsql
+                        """);
+                stmt.executeUpdate("DROP TRIGGER IF EXISTS device_sessions_refresh_count ON device_sessions");
+                stmt.executeUpdate("""
+                        CREATE OR REPLACE TRIGGER device_sessions_refresh_count
+                        AFTER INSERT OR UPDATE OR DELETE ON device_sessions
+                        FOR EACH ROW
+                        EXECUTE FUNCTION refresh_device_session_count()
+                        """);
+            }
         }
     }
 

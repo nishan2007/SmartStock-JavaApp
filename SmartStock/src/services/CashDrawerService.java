@@ -1,5 +1,7 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.SessionManager;
 import models.CashDrawer;
 import models.CashDrawerAssignment;
@@ -807,6 +809,9 @@ public final class CashDrawerService {
     }
 
     private static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         if (schemaEnsured) {
             return;
         }

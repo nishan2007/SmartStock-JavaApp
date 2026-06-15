@@ -1,6 +1,8 @@
 package ui.screens;
 
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.PermissionManager;
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
@@ -1337,6 +1339,9 @@ public class EnterInventory extends JFrame {
     }
 
     private static void ensureMovementAuditColumns(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
             stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS device_id TEXT");

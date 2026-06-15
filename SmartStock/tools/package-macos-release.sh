@@ -142,21 +142,65 @@ if [[ ! -d "$APP_BUNDLE/Contents/runtime" ]]; then
 fi
 cp "$MAC_DARK_ICON_PATH" "$APP_BUNDLE/Contents/Resources/${APP_NAME}Dark.icns"
 clear_extended_attributes "$APP_BUNDLE"
+codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
-(
-  cd "$WORK_DIR"
-  zip -qr "$ZIP_PATH" "${APP_NAME}.app"
-)
+ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 if command -v hdiutil >/dev/null 2>&1; then
   rm -rf "$DMG_STAGING_DIR"
   mkdir -p "$DMG_STAGING_DIR"
   cp -R "$APP_BUNDLE" "$DMG_STAGING_DIR/"
   ln -s /Applications "$DMG_STAGING_DIR/Applications"
+  cat > "$DMG_STAGING_DIR/Install SmartStock.command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_APP="$SCRIPT_DIR/SmartStock.app"
+TARGET_APP="/Applications/SmartStock.app"
+
+if [[ ! -d "$SOURCE_APP" ]]; then
+  echo "SmartStock.app was not found next to this installer."
+  exit 1
+fi
+
+echo "Installing SmartStock to /Applications..."
+if [[ -d "$TARGET_APP" ]]; then
+  sudo rm -rf "$TARGET_APP"
+fi
+sudo ditto "$SOURCE_APP" "$TARGET_APP"
+
+echo "Clearing download quarantine metadata..."
+sudo xattr -rc "$TARGET_APP" 2>/dev/null || true
+
+echo "Applying local personal-use signature..."
+sudo codesign --force --deep --sign - "$TARGET_APP"
+sudo codesign --verify --deep --strict --verbose=2 "$TARGET_APP"
+
+echo
+echo "SmartStock installed successfully."
+echo "You can open it from /Applications now."
+read -r -p "Press Return to close this window. " _
+EOF
+  chmod +x "$DMG_STAGING_DIR/Install SmartStock.command"
   cat > "$DMG_STAGING_DIR/INSTALL.txt" <<EOF
 Install SmartStock
 
-Drag SmartStock.app onto Applications.
+For personal/internal installs, open Terminal and run:
+  bash "/Volumes/SmartStock/Install SmartStock.command"
+
+If macOS allows it, you can also right-click Install SmartStock.command and
+choose Open.
+
+That installer copies SmartStock.app to Applications, clears quarantine metadata,
+and applies a local ad-hoc signature for this Mac.
+
+Manual install:
+  1. Drag SmartStock.app onto Applications.
+  2. Run:
+     sudo xattr -rc /Applications/SmartStock.app
+     sudo codesign --force --deep --sign - /Applications/SmartStock.app
 
 If macOS says the app cannot be verified, SmartStock has not been signed and
 notarized yet. For internal testing, right-click SmartStock.app and choose Open.

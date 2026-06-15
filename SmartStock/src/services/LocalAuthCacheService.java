@@ -25,6 +25,9 @@ public final class LocalAuthCacheService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS local_auth_cache (
@@ -135,10 +138,12 @@ public final class LocalAuthCacheService {
     }
 
     private static void saveGlobalEmployeePin(Connection conn, int userId, String salt, String hash) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
-            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
-            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
+        if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
+                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
+                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
+            }
         }
         String sql = """
                 UPDATE users

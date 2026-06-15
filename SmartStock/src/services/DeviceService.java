@@ -1,4 +1,6 @@
 package services;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.SessionManager;
 import utils.DeviceUtils;
 import models.DeviceInfo;
@@ -199,6 +201,8 @@ public class DeviceService {
     }
 
     public static void startDeviceSession(Connection conn, String deviceId, Integer userId, Integer storeId) throws SQLException {
+        pruneOldDeviceSessions(conn);
+
         String sessionSql = """
                 insert into device_sessions (
                     device_id,
@@ -231,6 +235,8 @@ public class DeviceService {
                 }
             }
         }
+
+        refreshDeviceSessionCount(conn, UUID.fromString(deviceId));
     }
 
     public static void endCurrentSession(Connection conn) throws SQLException {
@@ -251,5 +257,59 @@ public class DeviceService {
         }
 
         SessionManager.setCurrentDeviceSessionId(null);
+    }
+
+    private static void pruneOldDeviceSessions(Connection conn) throws SQLException {
+        DatabaseMode mode = DatabaseConfig.load().mode();
+        if ((mode != DatabaseMode.SERVER && mode != DatabaseMode.CLOUD_DIRECT) || !hasColumn(conn, "devices", "session_count")) {
+            return;
+        }
+
+        String sql = """
+                delete from device_sessions
+                where login_time < current_timestamp - interval '30 days'
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.executeUpdate();
+        }
+    }
+
+    private static void refreshDeviceSessionCount(Connection conn, UUID deviceId) throws SQLException {
+        if (!hasColumn(conn, "devices", "session_count")) {
+            return;
+        }
+
+        String sql = """
+                update devices
+                set session_count = (
+                    select count(*)::bigint
+                    from device_sessions
+                    where device_id = ?
+                )
+                where device_id = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, deviceId);
+            ps.setObject(2, deviceId);
+            ps.executeUpdate();
+        }
+    }
+
+    private static boolean hasColumn(Connection conn, String table, String column) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                  AND column_name = ?
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 }

@@ -1,5 +1,8 @@
 package services;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,6 +21,9 @@ public final class WorkflowSyncIdentitySchemaInstaller {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         String key = databaseKey(conn);
         if (INSTALLED_DATABASES.contains(key)) {
             return;
@@ -32,6 +38,9 @@ public final class WorkflowSyncIdentitySchemaInstaller {
     }
 
     public static HealthReport repairAndReport(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return new HealthReport(true, true, List.of());
+        }
         synchronized (INSTALL_LOCK) {
             runInstaller(conn);
             INSTALLED_DATABASES.add(databaseKey(conn));

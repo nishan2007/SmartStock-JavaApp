@@ -1,6 +1,8 @@
 package managers;
 
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import services.BalanceSheetService;
 import services.ManagerApprovalService;
 import services.SyncOutboxService;
@@ -873,6 +875,9 @@ public final class TimeClockManager {
     }
 
     private static void ensurePayrollPaymentsSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
             stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_number INTEGER NOT NULL DEFAULT 1");
@@ -886,6 +891,9 @@ public final class TimeClockManager {
     }
 
     private static void ensureTimeClockOverrideSchema(Connection conn) throws SQLException {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            return;
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_required BOOLEAN NOT NULL DEFAULT FALSE");
             stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_reason TEXT");
