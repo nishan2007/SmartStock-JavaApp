@@ -12,6 +12,8 @@ import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import services.BadgePrintService;
+import services.CompanyBackupService;
+import services.CompanyBackupScheduler;
 import services.OfflineWriteGuard;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
@@ -43,6 +45,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -55,6 +58,7 @@ public class CompanyCustomization extends JFrame {
     public static final String NAV_EMPLOYEE_BADGES = "Employee Badges";
     public static final String NAV_LOCATIONS = "Locations";
     public static final String NAV_CASH_DRAWER_MANAGER = "Cash Drawer Manager";
+    private static final String NAV_BACKUPS = "Backups";
     private static final String NAV_SALE = "Sale";
     private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
@@ -87,6 +91,11 @@ public class CompanyCustomization extends JFrame {
     private final JTextField receiptStartCounterField = new JTextField("1");
     private final JTextField logoPathField = new JTextField();
     private final JTextField configPathField = new JTextField();
+    private final JCheckBox backupSchedulerEnabledBox = new JCheckBox("Run automatic company backups");
+    private final JTextField backupDirectoryField = new JTextField();
+    private final JSpinner backupIntervalMinutesSpinner = new JSpinner(new SpinnerNumberModel(1440, 15, 525600, 15));
+    private final JSpinner backupRetentionCountSpinner = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1));
+    private final JLabel backupStatusLabel = new JLabel("Not run yet");
     private final JCheckBox showLogoBox = new JCheckBox("Show logo on receipt");
     private final JCheckBox showSaleIdBox = new JCheckBox("Show sale ID");
     private final JCheckBox showDeviceBox = new JCheckBox("Show device ID");
@@ -231,9 +240,13 @@ public class CompanyCustomization extends JFrame {
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttonPanel.setOpaque(false);
+        JButton exportBackupButton = new JButton("Export Backup");
+        JButton restoreBackupButton = new JButton("Restore Backup");
         JButton refreshButton = new JButton("Refresh");
         JButton closeButton = new JButton("Close");
         saveButton = new JButton("Save");
+        buttonPanel.add(exportBackupButton);
+        buttonPanel.add(restoreBackupButton);
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
         buttonPanel.add(saveButton);
@@ -241,6 +254,8 @@ public class CompanyCustomization extends JFrame {
 
         add(rootPanel);
 
+        exportBackupButton.addActionListener(e -> exportCompanyBackup());
+        restoreBackupButton.addActionListener(e -> restoreCompanyBackup());
         refreshButton.addActionListener(e -> loadSettings());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveButton.addActionListener(e -> saveSettings());
@@ -258,6 +273,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_EMPLOYEE_BADGES);
         addNodeIfPermitted(root, NAV_LOCATIONS);
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
+        addNodeIfPermitted(root, NAV_BACKUPS);
 
         DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
         addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
@@ -341,6 +357,9 @@ public class CompanyCustomization extends JFrame {
         if (canAccessPreferenceSection(NAV_CASH_DRAWER_MANAGER)) {
             rightContentPanel.add(buildCashDrawerEmbeddedScreen(), NAV_CASH_DRAWER_MANAGER);
         }
+        if (canAccessPreferenceSection(NAV_BACKUPS)) {
+            rightContentPanel.add(buildBackupSchedulerScreen(), NAV_BACKUPS);
+        }
         if (canAccessPreferenceSection(NAV_SALE)) {
             rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE);
         }
@@ -382,7 +401,7 @@ public class CompanyCustomization extends JFrame {
         return switch (key) {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_BACKUPS, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
@@ -402,6 +421,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_EMPLOYEE_BADGES,
                 NAV_LOCATIONS,
                 NAV_CASH_DRAWER_MANAGER,
+                NAV_BACKUPS,
                 NAV_SALE,
                 NAV_SALE_RECEIPT_FORMATTING,
                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
@@ -469,6 +489,107 @@ public class CompanyCustomization extends JFrame {
         contentPanel.add(buildBadgeEditorLaunchPanel(), BorderLayout.NORTH);
         contentPanel.add(buildBadgeMagStripePanel(), BorderLayout.CENTER);
         return contentPanel;
+    }
+
+    private JPanel buildBackupSchedulerScreen() {
+        JPanel panel = new JPanel(new BorderLayout(0, 14));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(18, 18, 18, 18)
+        ));
+
+        JLabel title = new JLabel("Company Backups");
+        title.setFont(new Font("SansSerif", Font.BOLD, 18));
+        title.setForeground(new Color(32, 41, 57));
+
+        backupDirectoryField.setEditable(false);
+        backupStatusLabel.setForeground(new Color(55, 65, 81));
+        backupStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
+
+        JPanel form = new JPanel(new GridBagLayout());
+        form.setOpaque(false);
+        addBackupCheckRow(form, 0, "Scheduler", backupSchedulerEnabledBox);
+        addBackupDirectoryRow(form, 1);
+        addBackupSpinnerRow(form, 2, "Run Every", backupIntervalMinutesSpinner, "minutes");
+        addBackupSpinnerRow(form, 3, "Keep Last", backupRetentionCountSpinner, "backup files");
+        addBackupLabelRow(form, 4, "Status", backupStatusLabel);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        buttons.setOpaque(false);
+        JButton refreshButton = new JButton("Refresh");
+        JButton runNowButton = new JButton("Run Backup Now");
+        JButton saveButton = new JButton("Save Schedule");
+        buttons.add(refreshButton);
+        buttons.add(runNowButton);
+        buttons.add(saveButton);
+
+        panel.add(title, BorderLayout.NORTH);
+        panel.add(form, BorderLayout.CENTER);
+        panel.add(buttons, BorderLayout.SOUTH);
+
+        refreshButton.addActionListener(e -> loadBackupSchedulerSettings());
+        saveButton.addActionListener(e -> saveBackupSchedulerSettings());
+        runNowButton.addActionListener(e -> runScheduledBackupNow(runNowButton));
+        loadBackupSchedulerSettings();
+        return panel;
+    }
+
+    private void addBackupCheckRow(JPanel panel, int row, String label, JCheckBox checkBox) {
+        addBackupLabel(panel, row, label);
+        GridBagConstraints valueConstraints = backupValueConstraints(row);
+        panel.add(checkBox, valueConstraints);
+    }
+
+    private void addBackupDirectoryRow(JPanel panel, int row) {
+        addBackupLabel(panel, row, "Folder");
+        JPanel chooserPanel = new JPanel(new BorderLayout(8, 0));
+        chooserPanel.setOpaque(false);
+        JButton browseButton = new JButton("Choose");
+        chooserPanel.add(backupDirectoryField, BorderLayout.CENTER);
+        chooserPanel.add(browseButton, BorderLayout.EAST);
+        browseButton.addActionListener(e -> chooseBackupDirectory());
+        panel.add(chooserPanel, backupValueConstraints(row));
+    }
+
+    private void addBackupSpinnerRow(JPanel panel, int row, String label, JSpinner spinner, String suffix) {
+        addBackupLabel(panel, row, label);
+        JPanel valuePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        valuePanel.setOpaque(false);
+        spinner.setPreferredSize(new Dimension(110, spinner.getPreferredSize().height));
+        JLabel suffixLabel = new JLabel(suffix);
+        suffixLabel.setForeground(new Color(55, 65, 81));
+        valuePanel.add(spinner);
+        valuePanel.add(suffixLabel);
+        panel.add(valuePanel, backupValueConstraints(row));
+    }
+
+    private void addBackupLabelRow(JPanel panel, int row, String label, JLabel valueLabel) {
+        addBackupLabel(panel, row, label);
+        panel.add(valueLabel, backupValueConstraints(row));
+    }
+
+    private void addBackupLabel(JPanel panel, int row, String labelText) {
+        JLabel label = new JLabel(labelText);
+        label.setFont(new Font("SansSerif", Font.BOLD, 14));
+        label.setForeground(new Color(55, 65, 81));
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = row;
+        constraints.insets = new Insets(0, 0, 12, 16);
+        constraints.anchor = GridBagConstraints.WEST;
+        panel.add(label, constraints);
+    }
+
+    private GridBagConstraints backupValueConstraints(int row) {
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 1;
+        constraints.gridy = row;
+        constraints.insets = new Insets(0, 0, 12, 0);
+        constraints.weightx = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        return constraints;
     }
 
     private JPanel buildBadgeEditorLaunchPanel() {
@@ -1886,6 +2007,164 @@ public class CompanyCustomization extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void exportCompanyBackup() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Export Company Backup");
+        chooser.setFileFilter(new FileNameExtensionFilter("SmartStock Backup (*.ssbackup)", "ssbackup"));
+        chooser.setSelectedFile(new File(defaultBackupFileName()));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path backupPath = ensureBackupExtension(chooser.getSelectedFile().toPath());
+        try {
+            CompanyBackupService.BackupSummary summary = CompanyBackupService.exportBackup(backupPath);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Company backup saved.\n\nFile: " + backupPath + "\nTables: " + summary.tableCount() + "\nRows: " + summary.rowCount()
+                            + "\nFiles: " + summary.assetCount()
+                            + (summary.skippedAssetCount() > 0 ? "\nFiles skipped: " + summary.skippedAssetCount() : ""),
+                    "Company Backup",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to export company backup.\n\n" + ex.getMessage(), "Company Backup", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void restoreCompanyBackup() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Restore Company Backup");
+        chooser.setFileFilter(new FileNameExtensionFilter("SmartStock Backup (*.ssbackup, *.sql)", "ssbackup", "sql"));
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path backupPath = chooser.getSelectedFile().toPath();
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Restore this backup?\n\nThis replaces the current SmartStock company data in the configured database.",
+                "Restore Company Backup",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE
+        );
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try {
+            OfflineWriteGuard.requireCloudForGlobalWrite("Company backup restore");
+            CompanyBackupService.BackupSummary summary = CompanyBackupService.restoreBackup(backupPath);
+            CompanyCustomizationManager.clearPreviewOverrideSettings();
+            loadSettings();
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Company backup restored."
+                            + (summary.assetCount() > 0 ? "\n\nFiles restored: " + summary.assetCount() : "")
+                            + (summary.skippedAssetCount() > 0 ? "\nFiles skipped: " + summary.skippedAssetCount() : ""),
+                    "Company Backup",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to restore company backup.\n\n" + ex.getMessage(), "Company Backup", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static String defaultBackupFileName() {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+        return "smartstock-company-backup-" + timestamp + ".ssbackup";
+    }
+
+    private static Path ensureBackupExtension(Path path) {
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
+        if (fileName.toLowerCase().endsWith(".ssbackup")) {
+            return path;
+        }
+        return path.resolveSibling(fileName + ".ssbackup");
+    }
+
+    private void loadBackupSchedulerSettings() {
+        CompanyBackupScheduler.BackupScheduleSettings settings = CompanyBackupScheduler.loadSettings();
+        backupSchedulerEnabledBox.setSelected(settings.enabled());
+        backupDirectoryField.setText(settings.directory().toString());
+        backupIntervalMinutesSpinner.setValue((int) Math.max(15, Math.min(525600, settings.intervalMinutes())));
+        backupRetentionCountSpinner.setValue(Math.max(1, settings.retentionCount()));
+        backupStatusLabel.setText(settings.lastStatus() == null || settings.lastStatus().isBlank()
+                ? "Not run yet"
+                : settings.lastStatus());
+    }
+
+    private void saveBackupSchedulerSettings() {
+        try {
+            CompanyBackupScheduler.saveSettings(getBackupSchedulerSettingsFromFields());
+            CompanyBackupScheduler.pruneOldBackups(Path.of(backupDirectoryField.getText().trim()), (Integer) backupRetentionCountSpinner.getValue());
+            loadBackupSchedulerSettings();
+            JOptionPane.showMessageDialog(this, "Backup schedule saved.", "Company Backups", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save backup schedule.\n\n" + ex.getMessage(), "Company Backups", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private CompanyBackupScheduler.BackupScheduleSettings getBackupSchedulerSettingsFromFields() {
+        String directoryText = backupDirectoryField.getText() == null ? "" : backupDirectoryField.getText().trim();
+        Path directory = directoryText.isBlank() ? CompanyBackupScheduler.DEFAULT_BACKUP_DIRECTORY : Path.of(directoryText);
+        int intervalMinutes = (Integer) backupIntervalMinutesSpinner.getValue();
+        int retentionCount = (Integer) backupRetentionCountSpinner.getValue();
+        CompanyBackupScheduler.BackupScheduleSettings existing = CompanyBackupScheduler.loadSettings();
+        return new CompanyBackupScheduler.BackupScheduleSettings(
+                backupSchedulerEnabledBox.isSelected(),
+                directory,
+                Math.max(15, intervalMinutes),
+                Math.max(1, retentionCount),
+                existing.lastSuccessEpochMillis(),
+                existing.lastStatus(),
+                existing.lastError()
+        );
+    }
+
+    private void chooseBackupDirectory() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Choose Backup Folder");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        String current = backupDirectoryField.getText() == null ? "" : backupDirectoryField.getText().trim();
+        if (!current.isBlank()) {
+            chooser.setSelectedFile(Path.of(current).toFile());
+        }
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            backupDirectoryField.setText(chooser.getSelectedFile().toPath().toString());
+        }
+    }
+
+    private void runScheduledBackupNow(JButton runNowButton) {
+        CompanyBackupScheduler.BackupScheduleSettings settings = getBackupSchedulerSettingsFromFields();
+        runNowButton.setEnabled(false);
+        backupStatusLabel.setText("Backup running...");
+        new SwingWorker<CompanyBackupScheduler.BackupRunResult, Void>() {
+            @Override
+            protected CompanyBackupScheduler.BackupRunResult doInBackground() throws Exception {
+                CompanyBackupScheduler.saveSettings(settings);
+                return CompanyBackupScheduler.runNow();
+            }
+
+            @Override
+            protected void done() {
+                runNowButton.setEnabled(true);
+                loadBackupSchedulerSettings();
+                try {
+                    CompanyBackupScheduler.BackupRunResult result = get();
+                    JOptionPane.showMessageDialog(
+                            CompanyCustomization.this,
+                            "Backup saved.\n\nFile: " + result.backupFile()
+                                    + "\nRows: " + result.summary().rowCount()
+                                    + "\nFiles: " + result.summary().assetCount()
+                                    + (result.summary().skippedAssetCount() > 0 ? "\nFiles skipped: " + result.summary().skippedAssetCount() : ""),
+                            "Company Backups",
+                            JOptionPane.INFORMATION_MESSAGE
+                    );
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(CompanyCustomization.this, "Backup failed.\n\n" + ex.getMessage(), "Company Backups", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private CompanyCustomizationManager.CustomOrderSettings getCustomOrderSettingsFromFields(CompanyCustomizationManager.CustomOrderSettings existingSettings) {

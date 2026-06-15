@@ -5,6 +5,7 @@ import ui.helpers.ThemeManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.PostgresRuntimeService;
+import services.CompanyBackupScheduler;
 import services.SyncWorker;
 
 import javax.swing.*;
@@ -33,6 +34,7 @@ public class Main {
         try {
             applyModeArgument(args);
             ensureBackgroundSyncForServerMode();
+            CompanyBackupScheduler.start();
             SyncWorker.startIfServerMode();
         } catch (Throwable ex) {
             logStartupException("Startup preparation failed", ex);
