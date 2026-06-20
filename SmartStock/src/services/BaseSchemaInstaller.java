@@ -25,6 +25,7 @@ public final class BaseSchemaInstaller {
                         permission_name TEXT,
                         description TEXT,
                         permission_group TEXT,
+                        permission_subgroup TEXT,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """);
@@ -42,6 +43,7 @@ public final class BaseSchemaInstaller {
                         permission_name TEXT,
                         description TEXT,
                         permission_group TEXT,
+                        permission_subgroup TEXT,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """);
@@ -144,6 +146,10 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_print_count INTEGER NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_name TEXT");
+            stmt.executeUpdate("ALTER TABLE permissions ADD COLUMN IF NOT EXISTS description TEXT");
+            stmt.executeUpdate("ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_group TEXT");
+            stmt.executeUpdate("ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_subgroup TEXT");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
@@ -509,11 +515,53 @@ public final class BaseSchemaInstaller {
             ensureUpdatedAtTableSchema(stmt, "product_barcodes");
             ensureUpdatedAtTableSchema(stmt, "inventory");
             ensureUpdatedAtTableSchema(stmt, "customer_accounts");
+            EmployeeScheduleService.ensureSchema(conn);
             services.CustomerAccountLedgerService.ensureSchema(conn);
             services.NotificationService.ensureSchema(conn);
             stmt.execute("SELECT setval(pg_get_serial_sequence('roles', 'role_id'), COALESCE((SELECT MAX(role_id) FROM roles), 1), (SELECT COUNT(*) FROM roles) > 0)");
             stmt.execute("SELECT setval(pg_get_serial_sequence('locations', 'location_id'), COALESCE((SELECT MAX(location_id) FROM locations), 1), (SELECT COUNT(*) FROM locations) > 0)");
             stmt.executeUpdate("INSERT INTO roles (role_name, description) VALUES ('ADMIN', 'Administrator'), ('MANAGER', 'Manager'), ('USER', 'User') ON CONFLICT (role_name) DO NOTHING");
+            stmt.executeUpdate("""
+                    INSERT INTO permissions (
+                        permission_key, permission_name, description, permission_group, permission_subgroup
+                    ) VALUES
+                        ('VIEW_EMPLOYEE_SCHEDULE', 'View Employee Schedule', 'Allows viewing who is scheduled to work each day.', 'People', 'Scheduling'),
+                        ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling')
+                    ON CONFLICT (permission_key) DO UPDATE SET
+                        permission_name = EXCLUDED.permission_name,
+                        description = EXCLUDED.description,
+                        permission_group = EXCLUDED.permission_group,
+                        permission_subgroup = EXCLUDED.permission_subgroup
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.role_id, p.permission_id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE UPPER(p.permission_key) = 'VIEW_EMPLOYEE_SCHEDULE'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM role_permissions existing
+                          JOIN permissions existing_permission ON existing_permission.permission_id = existing.permission_id
+                          WHERE UPPER(existing_permission.permission_key) = 'VIEW_EMPLOYEE_SCHEDULE'
+                      )
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.role_id, p.permission_id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE (UPPER(r.role_name) IN ('ADMIN', 'CEO') OR UPPER(r.role_name) LIKE '%MANAGER%')
+                      AND UPPER(p.permission_key) = 'EDIT_EMPLOYEE_SCHEDULE'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM role_permissions existing
+                          JOIN permissions existing_permission ON existing_permission.permission_id = existing.permission_id
+                          WHERE UPPER(existing_permission.permission_key) = 'EDIT_EMPLOYEE_SCHEDULE'
+                      )
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                    """);
             stmt.executeUpdate("INSERT INTO locations (name, receipt_store_code, timezone) SELECT 'Default Store', '0001', 'America/New_York' WHERE NOT EXISTS (SELECT 1 FROM locations)");
         }
     }

@@ -95,11 +95,18 @@ BEGIN
     END IF;
 END $$;
 
-INSERT INTO permissions (permission_key, permission_name)
-SELECT 'APP_UPDATES', 'App Updates'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'APP_UPDATES'
-);
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_group TEXT;
+
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
+
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
+VALUES ('APP_UPDATES', 'App Updates', 'Operations', 'App Updates')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
 
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id

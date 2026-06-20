@@ -87,6 +87,7 @@ public final class SyncWorker {
         }
         try (Connection local = DB.getConnection()) {
             SyncSchemaInstaller.ensureSchema(local);
+            EmailSchemaInstaller.ensureSchema(local);
             Optional<SyncLockService.SyncLease> lease = SyncLockService.tryAcquire(local, ownerLabel);
             if (lease.isEmpty()) {
                 SyncLockService.LockInfo lock = SyncLockService.currentLock(local);
@@ -97,10 +98,11 @@ public final class SyncWorker {
             try (SyncLockService.SyncLease ignored = lease.get()) {
                 try (Connection cloud = DB.getCloudConnection()) {
                     SyncSchemaInstaller.ensureSchema(cloud);
-                    ignored.heartbeat();
-                    int rowPushes = ReferenceDataSyncService.pushLocalOperationalChanges(local, cloud);
+                    EmailSchemaInstaller.ensureSchema(cloud);
                     ignored.heartbeat();
                     int devicePushes = ReferenceDataSyncService.syncDevicesByUpdatedAt(local, cloud);
+                    ignored.heartbeat();
+                    int rowPushes = ReferenceDataSyncService.pushLocalOperationalChanges(local, cloud);
                     ignored.heartbeat();
                     int eventPushes = pushBatch(local, cloud);
                     int pushed = rowPushes + devicePushes + eventPushes;

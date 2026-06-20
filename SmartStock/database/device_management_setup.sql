@@ -158,11 +158,18 @@ AFTER INSERT OR UPDATE OR DELETE ON device_sessions
 FOR EACH ROW
 EXECUTE FUNCTION refresh_device_session_count();
 
-INSERT INTO permissions (permission_key, permission_name)
-SELECT 'DEVICE_MANAGEMENT', 'Device Management'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'DEVICE_MANAGEMENT'
-);
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_group TEXT;
+
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
+
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
+VALUES ('DEVICE_MANAGEMENT', 'Device Management', 'Administration', 'Devices')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
 
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id

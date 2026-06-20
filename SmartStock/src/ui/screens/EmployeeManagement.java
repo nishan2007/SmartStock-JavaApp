@@ -92,6 +92,7 @@ public class EmployeeManagement extends JFrame {
     private JButton deleteButton;
     private JButton previewBadgeButton;
     private JButton printBadgeButton;
+    private JButton saveBadgePdfButton;
     private JButton writeMagStripeButton;
 
     private Integer selectedUserId = null;
@@ -449,6 +450,7 @@ public class EmployeeManagement extends JFrame {
         deleteButton = new JButton("Deactivate Employee");
         previewBadgeButton = new JButton("Preview Badge");
         printBadgeButton = new JButton("Print Badge");
+        saveBadgePdfButton = new JButton("Save Badge PDF");
         writeMagStripeButton = new JButton("Write Stripe");
 
         Dimension compactButtonSize = new Dimension(145, 32);
@@ -466,6 +468,7 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(deleteButton);
         topButtonPanel.add(previewBadgeButton);
         topButtonPanel.add(printBadgeButton);
+        topButtonPanel.add(saveBadgePdfButton);
         topButtonPanel.add(writeMagStripeButton);
 
         bottomButtonPanel.add(clearButton);
@@ -522,6 +525,7 @@ public class EmployeeManagement extends JFrame {
 
         previewBadgeButton.addActionListener(e -> previewSelectedBadge());
         printBadgeButton.addActionListener(e -> printSelectedBadge());
+        saveBadgePdfButton.addActionListener(e -> saveSelectedBadgePdf());
         writeMagStripeButton.addActionListener(e -> writeSelectedMagStripe());
 
         clearButton.addActionListener(new ActionListener() {
@@ -599,6 +603,7 @@ public class EmployeeManagement extends JFrame {
         deleteButton.setEnabled(false);
         previewBadgeButton.setEnabled(false);
         printBadgeButton.setEnabled(false);
+        saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
         loadRoles();
         loadStoresForUser(null);
@@ -708,6 +713,7 @@ public class EmployeeManagement extends JFrame {
         styleButton(deleteButton, false);
         styleButton(previewBadgeButton, false);
         styleButton(printBadgeButton, false);
+        styleButton(saveBadgePdfButton, false);
         styleButton(writeMagStripeButton, false);
         styleButton(clearButton, false);
         styleButton(refreshButton, false);
@@ -892,6 +898,59 @@ public class EmployeeManagement extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to print badge.\n\n" + ex.getMessage(), "Badge Print", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void saveSelectedBadgePdf() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            BadgePrintService.BadgePrintSide side = chooseBadgePrintSide();
+            if (side == null) {
+                return;
+            }
+            LocalDate expiryDate = chooseBadgeExpiryDate(side);
+            if (expiryDate == null) {
+                return;
+            }
+            CompanyCustomizationManager.BadgeTemplateSettings settings = chooseBadgeTemplateSettings("Save Badge PDF");
+            if (settings == null) {
+                return;
+            }
+
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Save Badge PDF");
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("PDF files", "pdf"));
+            chooser.setSelectedFile(new java.io.File(defaultBadgePdfFileName(employee, side)));
+            if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+
+            Path outputPath = ensurePdfExtension(chooser.getSelectedFile().toPath());
+            BadgePrintService.saveBadgePdf(outputPath, employee, settings, side, expiryDate);
+            JOptionPane.showMessageDialog(this, "Badge PDF saved:\n" + outputPath, "Badge PDF", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save badge PDF.\n\n" + ex.getMessage(), "Badge PDF", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static String defaultBadgePdfFileName(BadgePrintService.EmployeeBadgeData employee, BadgePrintService.BadgePrintSide side) {
+        String name = employee.displayName() == null || employee.displayName().isBlank() ? employee.username() : employee.displayName();
+        return sanitizeFileName(name) + "-badge-" + side.name().toLowerCase() + ".pdf";
+    }
+
+    private static String sanitizeFileName(String value) {
+        String cleaned = value == null ? "" : value.trim().replaceAll("[^A-Za-z0-9._-]+", "-");
+        cleaned = cleaned.replaceAll("^-+|-+$", "");
+        return cleaned.isBlank() ? "employee" : cleaned;
+    }
+
+    private static Path ensurePdfExtension(Path path) {
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
+        if (fileName.toLowerCase().endsWith(".pdf")) {
+            return path;
+        }
+        Path parent = path.getParent();
+        Path withExtension = Path.of(fileName + ".pdf");
+        return parent == null ? withExtension : parent.resolve(withExtension);
     }
 
     private CompanyCustomizationManager.BadgeTemplateSettings chooseBadgeTemplateSettings(String title) {
@@ -1168,6 +1227,7 @@ public class EmployeeManagement extends JFrame {
         deleteButton.setEnabled(true);
         previewBadgeButton.setEnabled(true);
         printBadgeButton.setEnabled(true);
+        saveBadgePdfButton.setEnabled(true);
         writeMagStripeButton.setEnabled(true);
     }
 
@@ -1528,6 +1588,7 @@ public class EmployeeManagement extends JFrame {
         deleteButton.setEnabled(false);
         previewBadgeButton.setEnabled(false);
         printBadgeButton.setEnabled(false);
+        saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
         usernameField.requestFocusInWindow();
     }

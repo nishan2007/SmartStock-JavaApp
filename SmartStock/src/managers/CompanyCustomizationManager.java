@@ -275,6 +275,69 @@ public class CompanyCustomizationManager {
         cachedBadgeTemplateSettings = settings;
     }
 
+    /** Five shared price-tag designs, each with its own physical label size. */
+    public static List<PriceTagTemplateSettings> loadPriceTagTemplateSettings() {
+        Integer locationId = SessionManager.getCurrentLocationId();
+        try (Connection conn = DB.getConnection()) {
+            if (locationId != null && data.DatabaseConfig.load().mode() == data.DatabaseMode.SERVER) {
+                ensurePriceTagTemplateSchema(conn);
+                try (PreparedStatement ps = conn.prepareStatement("SELECT price_tag_templates, price_tag_show_company, price_tag_show_sku, price_tag_show_barcode, price_tag_width_inches, price_tag_height_inches FROM company_customization WHERE location_id = ?")) {
+                    ps.setInt(1, locationId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) return decodePriceTagTemplates(rs.getString(1), legacyPriceTagTemplate(rs.getBoolean(2), rs.getBoolean(3), rs.getBoolean(4), rs.getDouble(5), rs.getDouble(6)));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        Properties p = loadProperties();
+        return decodePriceTagTemplates(p.getProperty("price_tag.templates"), legacyPriceTagTemplate(Boolean.parseBoolean(p.getProperty("price_tag.show_company", "true")), Boolean.parseBoolean(p.getProperty("price_tag.show_sku", "true")), Boolean.parseBoolean(p.getProperty("price_tag.show_barcode", "true")), parseDouble(p.getProperty("price_tag.width_inches"), 2.25), parseDouble(p.getProperty("price_tag.height_inches"), 1.25)));
+    }
+
+    public static PriceTagTemplateSettings loadPriceTagTemplateSettings(int slot) { return loadPriceTagTemplateSettings().get(Math.max(0, Math.min(4, slot))); }
+
+    public static void savePriceTagTemplateSettings(PriceTagTemplateSettings settings) throws IOException, SQLException {
+        List<PriceTagTemplateSettings> templates = loadPriceTagTemplateSettings(); templates.set(0, settings); savePriceTagTemplateSettings(templates);
+    }
+
+    public static void savePriceTagTemplateSettings(List<PriceTagTemplateSettings> templates) throws IOException, SQLException {
+        List<PriceTagTemplateSettings> complete = completePriceTagTemplates(templates); String encoded = encodePriceTagTemplates(complete);
+        Integer locationId = SessionManager.getCurrentLocationId();
+        if (locationId != null && data.DatabaseConfig.load().mode() == data.DatabaseMode.SERVER) {
+            try (Connection conn = DB.getConnection()) {
+                ensurePriceTagTemplateSchema(conn);
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        INSERT INTO company_customization (location_id, price_tag_templates, updated_at)
+                        VALUES (?, ?, NOW()) ON CONFLICT (location_id) DO UPDATE SET price_tag_templates = EXCLUDED.price_tag_templates, updated_at = NOW()
+                        """)) {
+                    ps.setInt(1, locationId); ps.setString(2, encoded); ps.executeUpdate();
+                }
+            }
+        }
+        Properties p = loadProperties(); p.setProperty("price_tag.templates", encoded);
+        saveProperties(p);
+    }
+
+    private static void ensurePriceTagTemplateSchema(Connection conn) throws SQLException {
+        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) return;
+        try (Statement stmt = conn.createStatement()) {
+            ensureReceiptSettingsSchema(conn);
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_width_inches NUMERIC(5, 2) NOT NULL DEFAULT 2.25");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT ''");
+        }
+    }
+
+    private static PriceTagTemplateSettings legacyPriceTagTemplate(boolean company, boolean sku, boolean barcode, double width, double height) { return new PriceTagTemplateSettings("Standard", company, true, true, sku, barcode, true, true, width, height, ""); }
+    private static List<PriceTagTemplateSettings> defaultPriceTagTemplates() { return new ArrayList<>(List.of(new PriceTagTemplateSettings("Standard", true,true,true,true,true,true,true,2.25,1.25,""),new PriceTagTemplateSettings("Small", true,true,true,true,true,true,true,1.5,.75,""),new PriceTagTemplateSettings("Large", true,true,true,true,true,true,true,3,2,""),new PriceTagTemplateSettings("Wide", true,true,true,true,true,true,true,4,1,""),new PriceTagTemplateSettings("Square", true,true,true,true,true,true,true,2,2,""))); }
+    private static List<PriceTagTemplateSettings> completePriceTagTemplates(List<PriceTagTemplateSettings> templates) { List<PriceTagTemplateSettings> result=defaultPriceTagTemplates(); if(templates!=null)for(int i=0;i<Math.min(5,templates.size());i++)if(templates.get(i)!=null)result.set(i,templates.get(i)); return result; }
+    private static String encodePriceTagTemplates(List<PriceTagTemplateSettings> templates) { StringBuilder out=new StringBuilder(); for(PriceTagTemplateSettings s:completePriceTagTemplates(templates)){if(!out.isEmpty())out.append(';');out.append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.name().getBytes(StandardCharsets.UTF_8))).append('|').append(s.showCompany()).append('|').append(s.showName()).append('|').append(s.showPrice()).append('|').append(s.showSku()).append('|').append(s.showBarcode()).append('|').append(s.showSize()).append('|').append(s.showDescription()).append('|').append(s.widthInches()).append('|').append(s.heightInches()).append('|').append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.layoutData().getBytes(StandardCharsets.UTF_8)));}return out.toString(); }
+    private static List<PriceTagTemplateSettings> decodePriceTagTemplates(String value, PriceTagTemplateSettings legacy) { if(value==null||value.isBlank()){List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();d.set(0,legacy);return d;} List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();String[] rows=value.split(";");for(int i=0;i<Math.min(5,rows.length);i++){try{String[] p=rows[i].split("\\|");boolean newest=p.length>=11, modern=p.length>=9;String layout=newest?new String(Base64.getUrlDecoder().decode(p[10]),StandardCharsets.UTF_8):(modern?new String(Base64.getUrlDecoder().decode(p[8]),StandardCharsets.UTF_8):(p.length>6?new String(Base64.getUrlDecoder().decode(p[6]),StandardCharsets.UTF_8):""));d.set(i,new PriceTagTemplateSettings(new String(Base64.getUrlDecoder().decode(p[0]),StandardCharsets.UTF_8),Boolean.parseBoolean(p[1]),newest?Boolean.parseBoolean(p[2]):true,newest?Boolean.parseBoolean(p[3]):true,Boolean.parseBoolean(p[newest?4:2]),Boolean.parseBoolean(p[newest?5:3]),modern?Boolean.parseBoolean(p[newest?6:4]):true,modern?Boolean.parseBoolean(p[newest?7:5]):true,Double.parseDouble(p[newest?8:(modern?6:4)]),Double.parseDouble(p[newest?9:(modern?7:5)]),layout));}catch(Exception ignored){}}return d; }
+
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT ci.company_name,
@@ -300,7 +363,19 @@ public class CompanyCustomizationManager {
                        COALESCE(cc.vat_enabled, FALSE) AS vat_enabled,
                        COALESCE(cc.vat_use_department_rates, FALSE) AS vat_use_department_rates,
                        COALESCE(cc.vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
-                       COALESCE(cc.next_receipt_counter, 1) AS next_receipt_counter
+                       COALESCE(cc.next_receipt_counter, 1) AS next_receipt_counter,
+                       COALESCE(cc.change_basket_target_amount, 60000) AS change_basket_target_amount,
+                       COALESCE(cc.account_payment_receipt_title, 'CUSTOMER ACCOUNT PAYMENT') AS account_payment_receipt_title,
+                       COALESCE(cc.account_payment_receipt_show_user, TRUE) AS account_payment_receipt_show_user,
+                       COALESCE(cc.account_payment_receipt_show_customer, TRUE) AS account_payment_receipt_show_customer,
+                       COALESCE(cc.account_payment_receipt_show_account_number, TRUE) AS account_payment_receipt_show_account_number,
+                       COALESCE(cc.account_payment_receipt_show_method, TRUE) AS account_payment_receipt_show_method,
+                       COALESCE(cc.account_payment_receipt_show_reference, TRUE) AS account_payment_receipt_show_reference,
+                       COALESCE(cc.account_payment_receipt_show_device, TRUE) AS account_payment_receipt_show_device,
+                       COALESCE(cc.account_payment_receipt_show_drawer, TRUE) AS account_payment_receipt_show_drawer,
+                       COALESCE(cc.account_payment_receipt_show_allocations, TRUE) AS account_payment_receipt_show_allocations,
+                       COALESCE(cc.account_payment_receipt_show_balance, TRUE) AS account_payment_receipt_show_balance,
+                       COALESCE(cc.account_payment_receipt_show_barcode, TRUE) AS account_payment_receipt_show_barcode
                 FROM company_info ci
                 LEFT JOIN company_customization cc ON cc.location_id = ?
                 LEFT JOIN locations l ON l.location_id = ?
@@ -341,7 +416,21 @@ public class CompanyCustomizationManager {
                         rs.getBoolean("vat_enabled"),
                         rs.getBoolean("vat_use_department_rates"),
                         rs.getBigDecimal("vat_fixed_rate_percent"),
-                        rs.getInt("next_receipt_counter")
+                        rs.getInt("next_receipt_counter"),
+                        rs.getBigDecimal("change_basket_target_amount"),
+                        new AccountPaymentReceiptSettings(
+                                rs.getString("account_payment_receipt_title"),
+                                rs.getBoolean("account_payment_receipt_show_user"),
+                                rs.getBoolean("account_payment_receipt_show_customer"),
+                                rs.getBoolean("account_payment_receipt_show_account_number"),
+                                rs.getBoolean("account_payment_receipt_show_method"),
+                                rs.getBoolean("account_payment_receipt_show_reference"),
+                                rs.getBoolean("account_payment_receipt_show_device"),
+                                rs.getBoolean("account_payment_receipt_show_drawer"),
+                                rs.getBoolean("account_payment_receipt_show_allocations"),
+                                rs.getBoolean("account_payment_receipt_show_balance"),
+                                rs.getBoolean("account_payment_receipt_show_barcode")
+                        )
                 );
             }
             }
@@ -382,9 +471,21 @@ public class CompanyCustomizationManager {
                     vat_use_department_rates,
                     vat_fixed_rate_percent,
                     next_receipt_counter,
+                    change_basket_target_amount,
+                    account_payment_receipt_title,
+                    account_payment_receipt_show_user,
+                    account_payment_receipt_show_customer,
+                    account_payment_receipt_show_account_number,
+                    account_payment_receipt_show_method,
+                    account_payment_receipt_show_reference,
+                    account_payment_receipt_show_device,
+                    account_payment_receipt_show_drawer,
+                    account_payment_receipt_show_allocations,
+                    account_payment_receipt_show_balance,
+                    account_payment_receipt_show_barcode,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     receipt_header_line = EXCLUDED.receipt_header_line,
                     receipt_footer_line = EXCLUDED.receipt_footer_line,
@@ -399,6 +500,18 @@ public class CompanyCustomizationManager {
                     vat_use_department_rates = EXCLUDED.vat_use_department_rates,
                     vat_fixed_rate_percent = EXCLUDED.vat_fixed_rate_percent,
                     next_receipt_counter = EXCLUDED.next_receipt_counter,
+                    change_basket_target_amount = EXCLUDED.change_basket_target_amount,
+                    account_payment_receipt_title = EXCLUDED.account_payment_receipt_title,
+                    account_payment_receipt_show_user = EXCLUDED.account_payment_receipt_show_user,
+                    account_payment_receipt_show_customer = EXCLUDED.account_payment_receipt_show_customer,
+                    account_payment_receipt_show_account_number = EXCLUDED.account_payment_receipt_show_account_number,
+                    account_payment_receipt_show_method = EXCLUDED.account_payment_receipt_show_method,
+                    account_payment_receipt_show_reference = EXCLUDED.account_payment_receipt_show_reference,
+                    account_payment_receipt_show_device = EXCLUDED.account_payment_receipt_show_device,
+                    account_payment_receipt_show_drawer = EXCLUDED.account_payment_receipt_show_drawer,
+                    account_payment_receipt_show_allocations = EXCLUDED.account_payment_receipt_show_allocations,
+                    account_payment_receipt_show_balance = EXCLUDED.account_payment_receipt_show_balance,
+                    account_payment_receipt_show_barcode = EXCLUDED.account_payment_receipt_show_barcode,
                     updated_at = NOW()
                 """;
 
@@ -426,6 +539,19 @@ public class CompanyCustomizationManager {
                 ps.setBoolean(12, settings.vatUseDepartmentRates());
                 ps.setBigDecimal(13, settings.vatFixedRatePercent());
                 ps.setInt(14, settings.nextReceiptCounter());
+                ps.setBigDecimal(15, settings.changeBasketTargetAmount());
+                AccountPaymentReceiptSettings paymentReceiptSettings = settings.accountPaymentReceiptSettings();
+                ps.setString(16, paymentReceiptSettings.title());
+                ps.setBoolean(17, paymentReceiptSettings.showUser());
+                ps.setBoolean(18, paymentReceiptSettings.showCustomer());
+                ps.setBoolean(19, paymentReceiptSettings.showAccountNumber());
+                ps.setBoolean(20, paymentReceiptSettings.showMethod());
+                ps.setBoolean(21, paymentReceiptSettings.showReference());
+                ps.setBoolean(22, paymentReceiptSettings.showDevice());
+                ps.setBoolean(23, paymentReceiptSettings.showDrawer());
+                ps.setBoolean(24, paymentReceiptSettings.showAllocations());
+                ps.setBoolean(25, paymentReceiptSettings.showBalance());
+                ps.setBoolean(26, paymentReceiptSettings.showBarcode());
                 ps.executeUpdate();
             }
         }
@@ -438,6 +564,76 @@ public class CompanyCustomizationManager {
         try (Statement stmt = conn.createStatement()) {
             ensureCompanyInfoSchema(stmt);
             ensureLocationIdentitySchema(stmt);
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
+            ensureAccountPaymentReceiptSchema(stmt);
+        }
+    }
+
+    private static void ensureAccountPaymentReceiptSchema(Statement stmt) throws SQLException {
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT'");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE");
+        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
+    }
+
+    public static java.math.BigDecimal loadChangeBasketTargetAmount() {
+        return loadReceiptSettings().changeBasketTargetAmount();
+    }
+
+    public static java.math.BigDecimal loadChangeBasketTargetAmount(int locationId) throws SQLException {
+        String sql = """
+                SELECT COALESCE(change_basket_target_amount, 60000) AS change_basket_target_amount
+                FROM company_customization
+                WHERE location_id = ?
+                """;
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setInt(1, locationId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        java.math.BigDecimal amount = rs.getBigDecimal("change_basket_target_amount");
+                        return amount == null ? java.math.BigDecimal.valueOf(60000) : amount;
+                    }
+                }
+            }
+        }
+        return java.math.BigDecimal.valueOf(60000);
+    }
+
+    public static void saveChangeBasketTargetAmount(int locationId, java.math.BigDecimal targetAmount) throws SQLException {
+        java.math.BigDecimal cleanAmount = targetAmount == null ? java.math.BigDecimal.valueOf(60000) : targetAmount;
+        if (cleanAmount.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Change basket target cannot be negative.");
+        }
+        String sql = """
+                INSERT INTO company_customization (
+                    location_id,
+                    change_basket_target_amount,
+                    updated_at
+                )
+                VALUES (?, ?, NOW())
+                ON CONFLICT (location_id) DO UPDATE SET
+                    change_basket_target_amount = EXCLUDED.change_basket_target_amount,
+                    updated_at = NOW()
+                """;
+        try (Connection conn = DB.getConnection()) {
+            ensureReceiptSettingsSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setInt(1, locationId);
+                ps.setBigDecimal(2, cleanAmount);
+                ps.executeUpdate();
+            }
+        }
+        if (Objects.equals(cachedLocationId, locationId)) {
+            cachedReceiptSettings = null;
         }
     }
 
@@ -1002,7 +1198,21 @@ public class CompanyCustomizationManager {
                 Boolean.parseBoolean(properties.getProperty("receipt.vat_enabled", "false")),
                 Boolean.parseBoolean(properties.getProperty("receipt.vat_use_department_rates", "false")),
                 parsePercent(properties.getProperty("receipt.vat_fixed_rate_percent", "0")),
-                parseIntInRange(properties.getProperty("receipt.next_receipt_counter", "1"), 1, 999999, 1)
+                parseIntInRange(properties.getProperty("receipt.next_receipt_counter", "1"), 1, 999999, 1),
+                parseMoney(properties.getProperty("receipt.change_basket_target_amount", "60000")),
+                new AccountPaymentReceiptSettings(
+                        properties.getProperty("account_payment_receipt.title", "CUSTOMER ACCOUNT PAYMENT"),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_user", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_customer", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_account_number", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_method", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_reference", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_device", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_drawer", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_allocations", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_balance", "true")),
+                        Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_barcode", "true"))
+                )
         );
     }
 
@@ -1151,6 +1361,19 @@ public class CompanyCustomizationManager {
         properties.setProperty("receipt.vat_use_department_rates", String.valueOf(settings.vatUseDepartmentRates()));
         properties.setProperty("receipt.vat_fixed_rate_percent", settings.vatFixedRatePercent().toPlainString());
         properties.setProperty("receipt.next_receipt_counter", String.valueOf(settings.nextReceiptCounter()));
+        properties.setProperty("receipt.change_basket_target_amount", settings.changeBasketTargetAmount().toPlainString());
+        AccountPaymentReceiptSettings paymentReceiptSettings = settings.accountPaymentReceiptSettings();
+        properties.setProperty("account_payment_receipt.title", paymentReceiptSettings.title());
+        properties.setProperty("account_payment_receipt.show_user", String.valueOf(paymentReceiptSettings.showUser()));
+        properties.setProperty("account_payment_receipt.show_customer", String.valueOf(paymentReceiptSettings.showCustomer()));
+        properties.setProperty("account_payment_receipt.show_account_number", String.valueOf(paymentReceiptSettings.showAccountNumber()));
+        properties.setProperty("account_payment_receipt.show_method", String.valueOf(paymentReceiptSettings.showMethod()));
+        properties.setProperty("account_payment_receipt.show_reference", String.valueOf(paymentReceiptSettings.showReference()));
+        properties.setProperty("account_payment_receipt.show_device", String.valueOf(paymentReceiptSettings.showDevice()));
+        properties.setProperty("account_payment_receipt.show_drawer", String.valueOf(paymentReceiptSettings.showDrawer()));
+        properties.setProperty("account_payment_receipt.show_allocations", String.valueOf(paymentReceiptSettings.showAllocations()));
+        properties.setProperty("account_payment_receipt.show_balance", String.valueOf(paymentReceiptSettings.showBalance()));
+        properties.setProperty("account_payment_receipt.show_barcode", String.valueOf(paymentReceiptSettings.showBarcode()));
 
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
@@ -1755,6 +1978,23 @@ public class CompanyCustomizationManager {
         return value;
     }
 
+    private static Properties loadProperties() {
+        Properties properties = new Properties();
+        if (Files.exists(CONFIG_PATH)) {
+            try (InputStream input = Files.newInputStream(CONFIG_PATH)) { properties.load(input); } catch (IOException ignored) { }
+        }
+        return properties;
+    }
+
+    private static void saveProperties(Properties properties) throws IOException {
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream output = Files.newOutputStream(CONFIG_PATH)) { properties.store(output, "SmartStock company preferences"); }
+    }
+
+    private static double parseDouble(String value, double fallback) {
+        try { return Double.parseDouble(value); } catch (Exception ignored) { return fallback; }
+    }
+
     public record UploadedImageOption(String name, String url) {
         public UploadedImageOption {
             name = Objects.requireNonNullElse(name, "").trim();
@@ -1764,6 +2004,17 @@ public class CompanyCustomizationManager {
         @Override
         public String toString() {
             return name.isBlank() ? url : name;
+        }
+    }
+
+    public record PriceTagTemplateSettings(String name, boolean showCompany, boolean showName, boolean showPrice, boolean showSku, boolean showBarcode, boolean showSize, boolean showDescription,
+                                           double widthInches, double heightInches, String layoutData) {
+        public PriceTagTemplateSettings {
+            name = Objects.requireNonNullElse(name, "Template").trim();
+            if (name.isBlank()) name = "Template";
+            layoutData = Objects.requireNonNullElse(layoutData, "");
+            widthInches = Math.max(.75, Math.min(6, widthInches <= 0 ? 2.25 : widthInches));
+            heightInches = Math.max(.5, Math.min(4, heightInches <= 0 ? 1.25 : heightInches));
         }
     }
 
@@ -1791,7 +2042,9 @@ public class CompanyCustomizationManager {
             boolean vatEnabled,
             boolean vatUseDepartmentRates,
             java.math.BigDecimal vatFixedRatePercent,
-            int nextReceiptCounter
+            int nextReceiptCounter,
+            java.math.BigDecimal changeBasketTargetAmount,
+            AccountPaymentReceiptSettings accountPaymentReceiptSettings
     ) {
         public ReceiptSettings {
             companyName = clean(companyName, "SmartStock");
@@ -1816,6 +2069,52 @@ public class CompanyCustomizationManager {
             if (nextReceiptCounter < 1) {
                 nextReceiptCounter = 1;
             }
+            changeBasketTargetAmount = changeBasketTargetAmount == null ? java.math.BigDecimal.valueOf(60000) : changeBasketTargetAmount;
+            if (changeBasketTargetAmount.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                changeBasketTargetAmount = java.math.BigDecimal.ZERO;
+            }
+            accountPaymentReceiptSettings = accountPaymentReceiptSettings == null
+                    ? AccountPaymentReceiptSettings.defaults()
+                    : accountPaymentReceiptSettings;
+        }
+
+        private static String clean(String value, String fallback) {
+            String cleaned = Objects.requireNonNullElse(value, "").trim();
+            return cleaned.isBlank() ? fallback : cleaned;
+        }
+    }
+
+    public record AccountPaymentReceiptSettings(
+            String title,
+            boolean showUser,
+            boolean showCustomer,
+            boolean showAccountNumber,
+            boolean showMethod,
+            boolean showReference,
+            boolean showDevice,
+            boolean showDrawer,
+            boolean showAllocations,
+            boolean showBalance,
+            boolean showBarcode
+    ) {
+        public AccountPaymentReceiptSettings {
+            title = clean(title, "CUSTOMER ACCOUNT PAYMENT");
+        }
+
+        public static AccountPaymentReceiptSettings defaults() {
+            return new AccountPaymentReceiptSettings(
+                    "CUSTOMER ACCOUNT PAYMENT",
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true
+            );
         }
 
         private static String clean(String value, String fallback) {

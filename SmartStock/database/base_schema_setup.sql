@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS permissions (
     permission_name TEXT,
     description TEXT,
     permission_group TEXT,
+    permission_subgroup TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -24,11 +25,17 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     PRIMARY KEY (role_id, permission_id)
 );
 
+ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_name TEXT;
+ALTER TABLE permissions ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_group TEXT;
+ALTER TABLE permissions ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
+
 CREATE TABLE IF NOT EXISTS mobile_permissions (
     permission_key TEXT PRIMARY KEY,
     permission_name TEXT,
     description TEXT,
     permission_group TEXT,
+    permission_subgroup TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,6 +73,16 @@ CREATE TABLE IF NOT EXISTS locations (
     company_phone_line2 TEXT NOT NULL DEFAULT '',
     company_email_line1 TEXT NOT NULL DEFAULT '',
     company_email_line2 TEXT NOT NULL DEFAULT '',
+    email_sender_address TEXT NOT NULL DEFAULT '',
+    email_sender_name TEXT NOT NULL DEFAULT '',
+    email_bcc_address TEXT NOT NULL DEFAULT '',
+    email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    email_quotes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    email_invoices_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    email_delivery_bills_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    email_connected_at TIMESTAMPTZ,
+    email_last_tested_at TIMESTAMPTZ,
     receipt_store_code TEXT,
     timezone TEXT NOT NULL DEFAULT 'America/New_York',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -126,6 +143,60 @@ CREATE TABLE IF NOT EXISTS user_locations (
     PRIMARY KEY (user_id, location_id)
 );
 
+CREATE TABLE IF NOT EXISTS employee_schedule_assignments (
+    location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    work_date DATE NOT NULL,
+    lunch_start_time TIME,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (location_id, user_id, work_date)
+);
+
+CREATE INDEX IF NOT EXISTS employee_schedule_location_date_idx
+ON employee_schedule_assignments(location_id, work_date);
+
+ALTER TABLE employee_schedule_assignments
+ADD COLUMN IF NOT EXISTS lunch_start_time TIME;
+
+ALTER TABLE employee_schedule_assignments ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION set_employee_schedule_assignments_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS employee_schedule_assignments_set_updated_at ON employee_schedule_assignments;
+CREATE TRIGGER employee_schedule_assignments_set_updated_at
+BEFORE INSERT OR UPDATE ON employee_schedule_assignments
+FOR EACH ROW EXECUTE FUNCTION set_employee_schedule_assignments_updated_at();
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON employee_schedule_assignments FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON employee_schedule_assignments FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT ALL ON employee_schedule_assignments TO service_role;
+    END IF;
+END;
+$$;
+
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT '';
 
@@ -146,6 +217,26 @@ ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_sender_address TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_sender_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_bcc_address TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_quotes_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_invoices_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_delivery_bills_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_connected_at TIMESTAMPTZ;
+ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS email_last_tested_at TIMESTAMPTZ;
 
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
@@ -206,6 +297,8 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+ALTER FUNCTION set_email_outbox_updated_at() SET search_path = public;
 
 DROP TRIGGER IF EXISTS users_set_updated_at ON users;
 CREATE TRIGGER users_set_updated_at
@@ -522,6 +615,105 @@ CREATE TABLE IF NOT EXISTS customer_accounts (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS email_outbox (
+    email_outbox_id BIGSERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES locations(location_id),
+    sender_email TEXT NOT NULL,
+    sender_name TEXT NOT NULL DEFAULT '',
+    recipient_email TEXT NOT NULL,
+    bcc_email TEXT,
+    subject TEXT NOT NULL,
+    body_text TEXT NOT NULL DEFAULT '',
+    body_html TEXT NOT NULL DEFAULT '',
+    attachment_name TEXT,
+    attachment_content_type TEXT,
+    attachment_body TEXT,
+    document_type TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'QUEUED',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    last_error TEXT,
+    sent_at TIMESTAMPTZ,
+    queued_by_user_id INTEGER REFERENCES users(user_id),
+    queued_by_name TEXT,
+    device_id TEXT,
+    device_name TEXT,
+    sync_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT email_outbox_status_chk CHECK (status IN ('QUEUED', 'SENDING', 'SENT', 'FAILED', 'CANCELLED')),
+    CONSTRAINT email_outbox_attempts_chk CHECK (attempts >= 0 AND max_attempts > 0)
+);
+
+CREATE TABLE IF NOT EXISTS email_outbox_events (
+    email_outbox_event_id BIGSERIAL PRIMARY KEY,
+    email_outbox_id BIGINT NOT NULL REFERENCES email_outbox(email_outbox_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER REFERENCES users(user_id),
+    user_name TEXT,
+    device_id TEXT,
+    device_name TEXT,
+    sync_uuid UUID NOT NULL DEFAULT gen_random_uuid()
+);
+
+CREATE OR REPLACE FUNCTION set_email_outbox_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS email_outbox_set_updated_at ON email_outbox;
+CREATE TRIGGER email_outbox_set_updated_at
+BEFORE INSERT OR UPDATE ON email_outbox
+FOR EACH ROW
+EXECUTE FUNCTION set_email_outbox_updated_at();
+
+CREATE INDEX IF NOT EXISTS email_outbox_status_idx
+ON email_outbox(status, created_at);
+
+CREATE INDEX IF NOT EXISTS email_outbox_document_idx
+ON email_outbox(document_type, document_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS email_outbox_location_idx
+ON email_outbox(location_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS email_outbox_sync_uuid_key
+ON email_outbox(sync_uuid);
+
+CREATE INDEX IF NOT EXISTS email_outbox_events_outbox_idx
+ON email_outbox_events(email_outbox_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS email_outbox_events_sync_uuid_key
+ON email_outbox_events(sync_uuid);
+
+ALTER TABLE email_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_outbox_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS email_outbox_service_role_all ON email_outbox;
+CREATE POLICY email_outbox_service_role_all
+ON email_outbox
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS email_outbox_events_service_role_all ON email_outbox_events;
+CREATE POLICY email_outbox_events_service_role_all
+ON email_outbox_events
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -690,6 +882,43 @@ SELECT setval(pg_get_serial_sequence('locations', 'location_id'), COALESCE((SELE
 INSERT INTO roles (role_name, description)
 VALUES ('ADMIN', 'Administrator'), ('MANAGER', 'Manager'), ('USER', 'User')
 ON CONFLICT (role_name) DO NOTHING;
+
+INSERT INTO permissions (permission_key, permission_name, description, permission_group, permission_subgroup)
+VALUES
+    ('VIEW_EMPLOYEE_SCHEDULE', 'View Employee Schedule', 'Allows viewing who is scheduled to work each day.', 'People', 'Scheduling'),
+    ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling')
+ON CONFLICT (permission_key) DO UPDATE SET
+    permission_name = EXCLUDED.permission_name,
+    description = EXCLUDED.description,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.role_id, p.permission_id
+FROM roles r
+CROSS JOIN permissions p
+WHERE UPPER(p.permission_key) = 'VIEW_EMPLOYEE_SCHEDULE'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM role_permissions existing
+      JOIN permissions existing_permission ON existing_permission.permission_id = existing.permission_id
+      WHERE UPPER(existing_permission.permission_key) = 'VIEW_EMPLOYEE_SCHEDULE'
+  )
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.role_id, p.permission_id
+FROM roles r
+CROSS JOIN permissions p
+WHERE (UPPER(r.role_name) IN ('ADMIN', 'CEO') OR UPPER(r.role_name) LIKE '%MANAGER%')
+  AND UPPER(p.permission_key) = 'EDIT_EMPLOYEE_SCHEDULE'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM role_permissions existing
+      JOIN permissions existing_permission ON existing_permission.permission_id = existing.permission_id
+      WHERE UPPER(existing_permission.permission_key) = 'EDIT_EMPLOYEE_SCHEDULE'
+  )
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 INSERT INTO locations (name, receipt_store_code, timezone)
 SELECT 'Default Store', '0001', 'America/New_York'

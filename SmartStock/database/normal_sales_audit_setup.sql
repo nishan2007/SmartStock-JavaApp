@@ -145,6 +145,14 @@ DECLARE
     old_value TEXT;
     new_value TEXT;
 BEGIN
+    IF TG_OP = 'UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'UPDATE' AND TG_TABLE_NAME IN ('sales', 'sale_items') THEN
+        RETURN NEW;
+    END IF;
+
     row_sale_item_id := NULL;
     row_return_id := NULL;
     row_return_item_id := NULL;
@@ -199,6 +207,33 @@ BEGIN
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION suppress_duplicate_sale_db_update_audit()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.action_type = 'DB_UPDATE'
+       AND NEW.action_scope IN ('sales', 'sale_items')
+       AND EXISTS (
+           SELECT 1
+           FROM sale_audit_log existing
+           WHERE existing.action_type = NEW.action_type
+             AND existing.action_scope = NEW.action_scope
+             AND existing.sale_id IS NOT DISTINCT FROM NEW.sale_id
+             AND existing.sale_item_id IS NOT DISTINCT FROM NEW.sale_item_id
+           LIMIT 1
+       ) THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS suppress_duplicate_sale_db_update_audit ON sale_audit_log;
+CREATE TRIGGER suppress_duplicate_sale_db_update_audit
+BEFORE INSERT ON sale_audit_log
+FOR EACH ROW
+EXECUTE FUNCTION suppress_duplicate_sale_db_update_audit();
 
 DROP TRIGGER IF EXISTS sales_update_delete_audit ON sales;
 CREATE TRIGGER sales_update_delete_audit

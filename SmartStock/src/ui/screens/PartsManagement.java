@@ -31,7 +31,7 @@ public class PartsManagement extends JFrame {
     private final JTextField quantityField = new JTextField("0");
     private final JTextField reorderPointField = new JTextField("0");
     private final JTextField reorderQuantityField = new JTextField("0");
-    private final JTextField unitCostField = new JTextField("0.00");
+    private final JTextField unitCostField = new JTextField("0");
     private final JTextField vendorField = new JTextField();
     private final JTextField binLocationField = new JTextField();
     private final JCheckBox activeBox = new JCheckBox("Active", true);
@@ -253,7 +253,7 @@ public class PartsManagement extends JFrame {
             ps.setBigDecimal(4, decimal(quantityField, "On hand"));
             ps.setBigDecimal(5, decimal(reorderPointField, "Reorder point"));
             ps.setBigDecimal(6, decimal(reorderQuantityField, "Reorder quantity"));
-            ps.setBigDecimal(7, decimal(unitCostField, "Unit cost"));
+            ps.setBigDecimal(7, moneyDecimal(unitCostField, "Unit cost"));
             ps.setString(8, nullable(vendorField));
             ps.setString(9, nullable(binLocationField));
             ps.setBoolean(10, activeBox.isSelected());
@@ -304,7 +304,7 @@ public class PartsManagement extends JFrame {
         quantityField.setText("0");
         reorderPointField.setText("0");
         reorderQuantityField.setText("0");
-        unitCostField.setText("0.00");
+        unitCostField.setText("0");
         vendorField.setText("");
         binLocationField.setText("");
         activeBox.setSelected(true);
@@ -349,6 +349,10 @@ public class PartsManagement extends JFrame {
         } catch (NumberFormatException ex) {
             throw new IllegalArgumentException(label + " must be a number.");
         }
+    }
+
+    private static BigDecimal moneyDecimal(JTextField field, String label) {
+        return utils.CurrencyFormatter.normalize(decimal(field, label));
     }
 
     private static String value(String text) {

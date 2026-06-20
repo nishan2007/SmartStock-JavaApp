@@ -3,6 +3,8 @@ package ui.screens;
 import Receipt.ReceiptData;
 import Receipt.ReceiptFormatter;
 import Receipt.ReceiptItem;
+import Receipt.AccountPaymentReceiptData;
+import Receipt.AccountPaymentReceiptFormatter;
 import Receipt.CustomOrderSlipBuilder;
 import Receipt.CustomOrderSlipData;
 import Receipt.CustomOrderSlipFormatter;
@@ -12,6 +14,7 @@ import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import services.BadgePrintService;
+import services.PriceTagPrintService;
 import services.CompanyBackupService;
 import services.CompanyBackupScheduler;
 import services.OfflineWriteGuard;
@@ -19,6 +22,7 @@ import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 import utils.ImageCacheManager;
 import ui.screens.companyprefs.CompanyIdentityPanel;
+import ui.screens.companyprefs.AccountPaymentReceiptPanel;
 import ui.screens.companyprefs.CustomOrderDepositPanel;
 import ui.screens.companyprefs.CustomOrderReceiptPanel;
 import ui.screens.companyprefs.SaleReceiptPanel;
@@ -35,6 +39,7 @@ import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
+import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -61,10 +66,12 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_BACKUPS = "Backups";
     private static final String NAV_SALE = "Sale";
     private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
+    private static final String NAV_ACCOUNT_PAYMENT_RECEIPTS = "Account Payment Receipts";
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
     private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
     private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
     private static final String NAV_QUOTATION_ORDER_PRINTING = "Quotation/Invoice Printouts";
+    private static final String NAV_PRICE_TAG_TEMPLATE = "Price Tag Template";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -103,13 +110,24 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
+    private final JTextField accountPaymentReceiptTitleField = new JTextField("CUSTOMER ACCOUNT PAYMENT");
+    private final JCheckBox accountPaymentReceiptShowUserBox = new JCheckBox("User");
+    private final JCheckBox accountPaymentReceiptShowCustomerBox = new JCheckBox("Customer");
+    private final JCheckBox accountPaymentReceiptShowAccountNumberBox = new JCheckBox("Account number");
+    private final JCheckBox accountPaymentReceiptShowMethodBox = new JCheckBox("Payment method");
+    private final JCheckBox accountPaymentReceiptShowReferenceBox = new JCheckBox("Payment reference");
+    private final JCheckBox accountPaymentReceiptShowDeviceBox = new JCheckBox("Device");
+    private final JCheckBox accountPaymentReceiptShowDrawerBox = new JCheckBox("Cash drawer");
+    private final JCheckBox accountPaymentReceiptShowAllocationsBox = new JCheckBox("Applied charges");
+    private final JCheckBox accountPaymentReceiptShowBalanceBox = new JCheckBox("Balance due");
+    private final JCheckBox accountPaymentReceiptShowBarcodeBox = new JCheckBox("Barcode");
     private final JCheckBox vatEnabledBox = new JCheckBox("Enable VAT");
     private final JCheckBox vatUseDepartmentRatesBox = new JCheckBox("Use department VAT rates");
     private final JTextField vatFixedRatePercentField = new JTextField("0", 8);
     private final JTextField saleDiscountLimitPercentField = new JTextField("5", 8);
-    private final JTextField saleReturnApprovalLimitField = new JTextField("0.00", 8);
+    private final JTextField saleReturnApprovalLimitField = new JTextField("0", 8);
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
-    private final JTextField customOrderRefundApprovalLimitField = new JTextField("0.00", 8);
+    private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
     private final JCheckBox slipAutoPrintBox = new JCheckBox("Print automatically after saving a custom order");
     private final JTextField slipTitleField = new JTextField("CUSTOMER'S ORDER SLIP");
@@ -195,12 +213,28 @@ public class CompanyCustomization extends JFrame {
     private BadgeTemplateEditorPanel sampleBadgeBackPanel;
     private final JLabel logoPreviewLabel = new JLabel("No Logo", SwingConstants.CENTER);
     private final ReceiptPreview.ReceiptPaperPanel sampleReceiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
+    private final ReceiptPreview.ReceiptPaperPanel sampleAccountPaymentReceipt40Panel = new ReceiptPreview.ReceiptPaperPanel();
+    private final ReceiptPreview.ReceiptPaperPanel sampleAccountPaymentReceiptLetterPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final CustomOrderSlipPreviewPanel sampleSlipPanel = new CustomOrderSlipPreviewPanel();
     private final ReceiptPreview.ReceiptPaperPanel sampleSlip40ColumnPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final JEditorPane sampleQuotationPane = createSalesDocumentPreviewPane();
     private final JEditorPane sampleInvoicePane = createSalesDocumentPreviewPane();
     private final JEditorPane sampleSalesDeliveryPane = createSalesDocumentPreviewPane();
     private final JPanel rightContentPanel = new JPanel(new CardLayout());
+    private final JCheckBox priceTagShowCompanyBox = new JCheckBox("Show company name");
+    private final JCheckBox priceTagShowNameBox = new JCheckBox("Show item name");
+    private final JCheckBox priceTagShowPriceBox = new JCheckBox("Show price");
+    private final JCheckBox priceTagShowSkuBox = new JCheckBox("Show SKU");
+    private final JCheckBox priceTagShowBarcodeBox = new JCheckBox("Show barcode");
+    private final JCheckBox priceTagShowSizeBox = new JCheckBox("Show size");
+    private final JCheckBox priceTagShowDescriptionBox = new JCheckBox("Show description");
+    private final JComboBox<String> priceTagTemplateSlotBox = new JComboBox<>(new String[]{"Template 1", "Template 2", "Template 3", "Template 4", "Template 5"});
+    private final JTextField priceTagTemplateNameField = new JTextField(16);
+    private final JSpinner priceTagWidthSpinner = new JSpinner(new SpinnerNumberModel(2.25d, .75d, 6d, .25d));
+    private final JSpinner priceTagHeightSpinner = new JSpinner(new SpinnerNumberModel(1.25d, .5d, 4d, .25d));
+    private final JLabel priceTagPreviewLabel = new JLabel();
+    private List<CompanyCustomizationManager.PriceTagTemplateSettings> priceTagTemplates = new ArrayList<>();
+    private int activePriceTagTemplateSlot = 0;
     private JTree navigationTree;
     private boolean loadingSettings = false;
     private JButton saveButton;
@@ -271,12 +305,14 @@ public class CompanyCustomization extends JFrame {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("Preferences");
         addNodeIfPermitted(root, NAV_COMPANY_IDENTITY);
         addNodeIfPermitted(root, NAV_EMPLOYEE_BADGES);
+        addNodeIfPermitted(root, NAV_PRICE_TAG_TEMPLATE);
         addNodeIfPermitted(root, NAV_LOCATIONS);
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
         addNodeIfPermitted(root, NAV_BACKUPS);
 
         DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
         addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
+        addNodeIfPermitted(saleNode, NAV_ACCOUNT_PAYMENT_RECEIPTS);
         if (saleNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_SALE)) {
             root.add(saleNode);
         }
@@ -351,6 +387,9 @@ public class CompanyCustomization extends JFrame {
         if (canAccessPreferenceSection(NAV_EMPLOYEE_BADGES)) {
             rightContentPanel.add(buildEmployeeBadgesScreen(), NAV_EMPLOYEE_BADGES);
         }
+        if (canAccessPreferenceSection(NAV_PRICE_TAG_TEMPLATE)) {
+            rightContentPanel.add(buildPriceTagTemplateScreen(), NAV_PRICE_TAG_TEMPLATE);
+        }
         if (canAccessPreferenceSection(NAV_LOCATIONS)) {
             rightContentPanel.add(buildLocationsEmbeddedScreen(), NAV_LOCATIONS);
         }
@@ -365,6 +404,9 @@ public class CompanyCustomization extends JFrame {
         }
         if (canAccessPreferenceSection(NAV_SALE_RECEIPT_FORMATTING)) {
             rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE_RECEIPT_FORMATTING);
+        }
+        if (canAccessPreferenceSection(NAV_ACCOUNT_PAYMENT_RECEIPTS)) {
+            rightContentPanel.add(buildAccountPaymentReceiptPreferencesScreen(), NAV_ACCOUNT_PAYMENT_RECEIPTS);
         }
         if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_DEPOSIT_REFUND)) {
             rightContentPanel.add(buildCustomOrderDepositRefundScreen(), NAV_CUSTOM_ORDER_DEPOSIT_REFUND);
@@ -401,7 +443,7 @@ public class CompanyCustomization extends JFrame {
         return switch (key) {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_BACKUPS, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_CUSTOM_ORDERS,
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_BACKUPS, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
@@ -424,6 +466,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_BACKUPS,
                 NAV_SALE,
                 NAV_SALE_RECEIPT_FORMATTING,
+                NAV_ACCOUNT_PAYMENT_RECEIPTS,
                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDERS,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING,
@@ -482,6 +525,14 @@ public class CompanyCustomization extends JFrame {
         return contentPanel;
     }
 
+    private JPanel buildAccountPaymentReceiptPreferencesScreen() {
+        JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
+        contentPanel.setOpaque(false);
+        contentPanel.add(buildAccountPaymentReceiptPanel(), BorderLayout.CENTER);
+        contentPanel.add(buildAccountPaymentReceiptPreviewPanel(), BorderLayout.EAST);
+        return contentPanel;
+    }
+
     private JPanel buildEmployeeBadgesScreen() {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
@@ -489,6 +540,42 @@ public class CompanyCustomization extends JFrame {
         contentPanel.add(buildBadgeEditorLaunchPanel(), BorderLayout.NORTH);
         contentPanel.add(buildBadgeMagStripePanel(), BorderLayout.CENTER);
         return contentPanel;
+    }
+
+    private JPanel buildPriceTagTemplateScreen() {
+        JPanel panel = new JPanel(new BorderLayout(18, 18)); panel.setOpaque(false);
+        JPanel controls = new JPanel(); controls.setLayout(new BoxLayout(controls, BoxLayout.Y_AXIS)); controls.setBorder(new EmptyBorder(16, 16, 16, 16));
+        JLabel heading = new JLabel("Price Tag Sticker Template"); heading.setFont(new Font("SansSerif", Font.BOLD, 20)); controls.add(heading); controls.add(Box.createVerticalStrut(12));
+        controls.add(new JLabel("Each template has its own size and is available in Price Tag Printing.")); controls.add(Box.createVerticalStrut(14));
+        JPanel slot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); slot.add(new JLabel("Template:")); slot.add(priceTagTemplateSlotBox); slot.add(new JLabel("Name:")); slot.add(priceTagTemplateNameField); controls.add(slot); controls.add(Box.createVerticalStrut(8));
+        controls.add(priceTagShowCompanyBox); controls.add(priceTagShowNameBox); controls.add(priceTagShowPriceBox); controls.add(priceTagShowSkuBox); controls.add(priceTagShowBarcodeBox); controls.add(priceTagShowSizeBox); controls.add(priceTagShowDescriptionBox); controls.add(Box.createVerticalStrut(10));
+        JPanel sizes = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); sizes.add(new JLabel("Sticker size (inches):")); sizes.add(priceTagWidthSpinner); sizes.add(new JLabel("wide ×")); sizes.add(priceTagHeightSpinner); sizes.add(new JLabel("high")); controls.add(sizes);
+        JButton preview = new JButton("Refresh preview"); JButton editLayout = new JButton("Open Template Editor"); JButton save = new JButton("Save template"); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 10)); buttons.add(preview); buttons.add(editLayout); buttons.add(save); controls.add(buttons);
+        priceTagTemplateSlotBox.addActionListener(e -> { savePriceTagFieldsToSlot(); activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); loadPriceTagTemplateFields(); });
+        preview.addActionListener(e -> refreshPriceTagPreview()); editLayout.addActionListener(e -> openPriceTagTemplateEditor()); save.addActionListener(e -> { try { savePriceTagFieldsToSlot(); CompanyCustomizationManager.savePriceTagTemplateSettings(priceTagTemplates); refreshPriceTagPreview(); JOptionPane.showMessageDialog(this, "All five price tag templates saved."); } catch (Exception ex) { JOptionPane.showMessageDialog(this, ex.getMessage(), "Price Tags", JOptionPane.ERROR_MESSAGE); } });
+        panel.add(controls, BorderLayout.WEST); priceTagPreviewLabel.setHorizontalAlignment(SwingConstants.CENTER); panel.add(new JScrollPane(priceTagPreviewLabel), BorderLayout.CENTER); loadPriceTagTemplateFields(); return panel;
+    }
+
+    private CompanyCustomizationManager.PriceTagTemplateSettings priceTagSettingsFromFields() { String layout = priceTagTemplates.size() == 5 ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout); }
+    private void savePriceTagFieldsToSlot() { if (priceTagTemplates.size() == 5) priceTagTemplates.set(activePriceTagTemplateSlot, priceTagSettingsFromFields()); }
+    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) priceTagTemplates = new ArrayList<>(CompanyCustomizationManager.loadPriceTagTemplateSettings()); activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); refreshPriceTagPreview(); }
+    private void refreshPriceTagPreview() { priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "A sample product description", "SKU-10025", "SKU-10025", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); }
+    private void openPriceTagTemplateEditor() {
+        savePriceTagFieldsToSlot(); int slot = priceTagTemplateSlotBox.getSelectedIndex();
+        JDialog dialog = new JDialog(this, "Price Tag Template Editor — " + priceTagTemplates.get(slot).name(), Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setLayout(new BorderLayout(10, 10)); dialog.getRootPane().setBorder(new EmptyBorder(14,14,14,14));
+        PriceTagLayoutCanvas canvas = new PriceTagLayoutCanvas(priceTagTemplates.get(slot)); dialog.add(canvas, BorderLayout.CENTER);
+        JButton reset = new JButton("Reset layout"); JButton done = new JButton("Done"); JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT)); actions.add(reset); actions.add(done); dialog.add(actions, BorderLayout.SOUTH);
+        reset.addActionListener(e -> canvas.reset()); done.addActionListener(e -> { try { priceTagTemplates.set(slot, canvas.settings()); CompanyCustomizationManager.savePriceTagTemplateSettings(priceTagTemplates); refreshPriceTagPreview(); dialog.dispose(); } catch (Exception ex) { JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Price Tags", JOptionPane.ERROR_MESSAGE); } });
+        dialog.pack(); dialog.setLocationRelativeTo(this); dialog.setVisible(true);
+    }
+    private static final class PriceTagLayoutCanvas extends JPanel {
+        private final CompanyCustomizationManager.PriceTagTemplateSettings settings; private final LinkedHashMap<String,Rectangle> rects; private String selected="name"; private Point press; private boolean resize;
+        PriceTagLayoutCanvas(CompanyCustomizationManager.PriceTagTemplateSettings s){settings=s;rects=PriceTagPrintService.layoutRects(s.layoutData());rects.entrySet().removeIf(e->!visible(e.getKey()));setPreferredSize(new Dimension(1040,560));setBackground(new Color(242,244,248));addMouseListener(new java.awt.event.MouseAdapter(){public void mousePressed(java.awt.event.MouseEvent e){press=e.getPoint();selected=hit(e.getPoint());Rectangle r=rects.get(selected);resize=e.getX()>r.x+r.width-16&&e.getY()>r.y+r.height-16;repaint();}});addMouseMotionListener(new java.awt.event.MouseMotionAdapter(){public void mouseDragged(java.awt.event.MouseEvent e){Rectangle r=rects.get(selected);int dx=e.getX()-press.x,dy=e.getY()-press.y;if(resize){r.width=Math.max(35,r.width+dx);r.height=Math.max(25,r.height+dy);}else{r.x=Math.max(0,Math.min(1000-r.width,r.x+dx));r.y=Math.max(0,Math.min(500-r.height,r.y+dy));}press=e.getPoint();repaint();}});}
+        private boolean visible(String id){return switch(id){case "company"->settings.showCompany();case "name"->settings.showName();case "price"->settings.showPrice();case "sku"->settings.showSku();case "barcode"->settings.showBarcode();case "size"->settings.showSize();case "description"->settings.showDescription();default->true;};}
+        private String hit(Point p){for(var e:rects.entrySet())if(visible(e.getKey())&&e.getValue().contains(p))return e.getKey();return selected;} void reset(){rects.clear();rects.putAll(PriceTagPrintService.defaultLayout());repaint();}
+        CompanyCustomizationManager.PriceTagTemplateSettings settings(){return new CompanyCustomizationManager.PriceTagTemplateSettings(settings.name(),settings.showCompany(),settings.showName(),settings.showPrice(),settings.showSku(),settings.showBarcode(),settings.showSize(),settings.showDescription(),settings.widthInches(),settings.heightInches(),PriceTagPrintService.encodeLayout(rects));}
+        protected void paintComponent(Graphics g){super.paintComponent(g);Graphics2D g2=(Graphics2D)g;g2.setColor(Color.WHITE);g2.fillRect(0,0,1000,500);g2.setColor(new Color(235,238,244));for(int x=0;x<1000;x+=50)g2.drawLine(x,0,x,500);for(int y=0;y<500;y+=50)g2.drawLine(0,y,1000,y);g2.setColor(new Color(30,41,59));g2.setStroke(new BasicStroke(4));g2.drawRect(1,1,998,498);g2.setFont(new Font("SansSerif",Font.BOLD,14));g2.drawString(String.format("Printable label boundary — %.2f × %.2f in",settings.widthInches(),settings.heightInches()),16,22);for(var e:rects.entrySet()){Rectangle r=e.getValue();boolean on=e.getKey().equals(selected);g2.setColor(on?new Color(255,112,0,55):new Color(0,85,145,35));g2.fill(r);g2.setColor(on?new Color(255,112,0):new Color(0,85,145));g2.setStroke(new BasicStroke(on?3:2));g2.draw(r);g2.setColor(Color.BLACK);String sample=switch(e.getKey()){case "company"->"[ Company Logo ]";case "name"->"Sample Inventory Item";case "size"->"Large";case "description"->"A sample product description";case "price"->"$2,500";case "sku"->"SKU: 10025";default->"||| || ||| || |||| ||| ||";};g2.setFont(new Font("SansSerif",e.getKey().equals("price")?Font.BOLD:Font.PLAIN,Math.max(12,Math.min(32,r.height/2))));g2.drawString(sample,r.x+8,r.y+Math.min(r.height-8,g2.getFontMetrics().getAscent()+8));if(on)g2.fillRect(r.x+r.width-12,r.y+r.height-12,12,12);}g2.setColor(Color.DARK_GRAY);g2.drawString("Click an element; drag it to move. Drag its bottom-right handle to resize.",15,525);}
     }
 
     private JPanel buildBackupSchedulerScreen() {
@@ -765,7 +852,52 @@ public class CompanyCustomization extends JFrame {
         toolbar.add(backwardButton);
         toolbar.add(forwardButton);
         toolbar.add(bringFrontButton);
+        JLabel magStripeLabel = new JLabel("  Mag strip:");
+        magStripeLabel.setForeground(new Color(17, 24, 39));
+        magStripeLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        toolbar.add(magStripeLabel);
+        toolbar.add(buildBadgeMagStripeTogglePanel());
         return toolbar;
+    }
+
+    private JPanel buildBadgeMagStripeTogglePanel() {
+        JPanel panel = new JPanel(new GridLayout(1, 2, 0, 0));
+        panel.setOpaque(false);
+        JToggleButton onButton = new JToggleButton("On");
+        JToggleButton offButton = new JToggleButton("Off");
+        ButtonGroup group = new ButtonGroup();
+        group.add(onButton);
+        group.add(offButton);
+        onButton.setSelected(badgeMagStripeEnabledBox.isSelected());
+        offButton.setSelected(!badgeMagStripeEnabledBox.isSelected());
+
+        ActionListener listener = e -> {
+            boolean enabled = onButton.isSelected();
+            if (badgeMagStripeEnabledBox.isSelected() != enabled) {
+                badgeMagStripeEnabledBox.setSelected(enabled);
+            }
+            styleBadgeMagStripeToggle(onButton, onButton.isSelected());
+            styleBadgeMagStripeToggle(offButton, offButton.isSelected());
+            refreshBadgePreview();
+        };
+        onButton.addActionListener(listener);
+        offButton.addActionListener(listener);
+        styleBadgeMagStripeToggle(onButton, onButton.isSelected());
+        styleBadgeMagStripeToggle(offButton, offButton.isSelected());
+        panel.add(onButton);
+        panel.add(offButton);
+        return panel;
+    }
+
+    private static void styleBadgeMagStripeToggle(JToggleButton button, boolean selected) {
+        button.setFocusPainted(false);
+        button.setOpaque(true);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(selected ? new Color(37, 99, 235) : new Color(203, 213, 225)),
+                new EmptyBorder(4, 10, 4, 10)
+        ));
+        button.setBackground(selected ? new Color(37, 99, 235) : Color.WHITE);
+        button.setForeground(selected ? Color.WHITE : new Color(31, 41, 55));
     }
 
     private JPanel buildBadgeElementVisibilityPanel() {
@@ -1721,7 +1853,7 @@ public class CompanyCustomization extends JFrame {
                 ? "Default percentage required upfront for custom orders."
                 : "Requires Custom Order Deposit Settings permission.");
         customOrderRefundApprovalLimitField.setToolTipText(canEditRefundLimit
-                ? "Refunds above this amount require approval permission. Use 0.00 to disable."
+                ? "Refunds above this amount require approval permission. Use 0 to disable."
                 : "Requires Custom Order Refund Approval Settings permission.");
 
         return new CustomOrderDepositPanel(customOrderMinimumDepositPercentField, customOrderRefundApprovalLimitField);
@@ -1741,7 +1873,7 @@ public class CompanyCustomization extends JFrame {
                 ? "Default discount limit without manager override."
                 : "Requires Sale Discount Limit Settings permission.");
         saleReturnApprovalLimitField.setToolTipText(canEditReturnApprovalLimit
-                ? "Returns above this amount require override permission. Use 0.00 to disable."
+                ? "Returns above this amount require override permission. Use 0 to disable."
                 : "Requires Sale Return Approval Settings permission.");
 
         return new SaleReceiptPanel(
@@ -1761,6 +1893,22 @@ public class CompanyCustomization extends JFrame {
                 vatEnabledBox,
                 vatUseDepartmentRatesBox,
                 vatFixedRatePercentField
+        );
+    }
+
+    private JPanel buildAccountPaymentReceiptPanel() {
+        return new AccountPaymentReceiptPanel(
+                accountPaymentReceiptTitleField,
+                accountPaymentReceiptShowUserBox,
+                accountPaymentReceiptShowCustomerBox,
+                accountPaymentReceiptShowAccountNumberBox,
+                accountPaymentReceiptShowMethodBox,
+                accountPaymentReceiptShowReferenceBox,
+                accountPaymentReceiptShowDeviceBox,
+                accountPaymentReceiptShowDrawerBox,
+                accountPaymentReceiptShowAllocationsBox,
+                accountPaymentReceiptShowBalanceBox,
+                accountPaymentReceiptShowBarcodeBox
         );
     }
 
@@ -1910,6 +2058,34 @@ public class CompanyCustomization extends JFrame {
         return panel;
     }
 
+    private JPanel buildAccountPaymentReceiptPreviewPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setPreferredSize(new Dimension(430, 0));
+        panel.setMinimumSize(new Dimension(380, 0));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        JLabel sectionLabel = new JLabel("Sample Account Payment Receipt");
+        sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        panel.add(sectionLabel, BorderLayout.NORTH);
+
+        JTabbedPane previewTabs = new JTabbedPane();
+        JScrollPane receiptScrollPane = new JScrollPane(sampleAccountPaymentReceipt40Panel);
+        receiptScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        receiptScrollPane.getHorizontalScrollBar().setUnitIncrement(16);
+        JScrollPane letterScrollPane = new JScrollPane(sampleAccountPaymentReceiptLetterPanel);
+        letterScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        letterScrollPane.getHorizontalScrollBar().setUnitIncrement(16);
+        previewTabs.addTab("40 Column", receiptScrollPane);
+        previewTabs.addTab("Letter", letterScrollPane);
+        panel.add(previewTabs, BorderLayout.CENTER);
+
+        return panel;
+    }
+
     private JPanel buildSlipPreviewPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setPreferredSize(new Dimension(430, 0));
@@ -1967,12 +2143,13 @@ public class CompanyCustomization extends JFrame {
         vatUseDepartmentRatesBox.setSelected(settings.vatUseDepartmentRates());
         vatFixedRatePercentField.setText(settings.vatFixedRatePercent().stripTrailingZeros().toPlainString());
         receiptStartCounterField.setText(String.valueOf(settings.nextReceiptCounter()));
+        loadAccountPaymentReceiptFields(settings.accountPaymentReceiptSettings());
         CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
-        saleReturnApprovalLimitField.setText(saleSafetySettings.returnApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        saleReturnApprovalLimitField.setText(utils.CurrencyFormatter.normalize(saleSafetySettings.returnApprovalLimit()).toPlainString());
         CompanyCustomizationManager.CustomOrderSettings customOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
-        customOrderRefundApprovalLimitField.setText(customOrderSettings.refundApprovalLimit().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        customOrderRefundApprovalLimitField.setText(utils.CurrencyFormatter.normalize(customOrderSettings.refundApprovalLimit()).toPlainString());
         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
         loadSlipFields(slipSettings);
         CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = CompanyCustomizationManager.loadQuotationInvoicePrintSettings();
@@ -1982,6 +2159,7 @@ public class CompanyCustomization extends JFrame {
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
+        refreshAccountPaymentReceiptPreview();
         refreshSlipPreview();
         refreshQuotationInvoicePrintPreview();
         refreshBadgePreview();
@@ -2224,8 +2402,43 @@ public class CompanyCustomization extends JFrame {
                 vatEnabledBox.isSelected(),
                 vatUseDepartmentRatesBox.isSelected(),
                 parsePercentField(vatFixedRatePercentField.getText(), "Fixed VAT percent"),
-                parsePositiveCounter(receiptStartCounterField.getText())
+                parsePositiveCounter(receiptStartCounterField.getText()),
+                CompanyCustomizationManager.loadReceiptSettings().changeBasketTargetAmount(),
+                getAccountPaymentReceiptSettingsFromFields()
         );
+    }
+
+    private CompanyCustomizationManager.AccountPaymentReceiptSettings getAccountPaymentReceiptSettingsFromFields() {
+        return new CompanyCustomizationManager.AccountPaymentReceiptSettings(
+                accountPaymentReceiptTitleField.getText(),
+                accountPaymentReceiptShowUserBox.isSelected(),
+                accountPaymentReceiptShowCustomerBox.isSelected(),
+                accountPaymentReceiptShowAccountNumberBox.isSelected(),
+                accountPaymentReceiptShowMethodBox.isSelected(),
+                accountPaymentReceiptShowReferenceBox.isSelected(),
+                accountPaymentReceiptShowDeviceBox.isSelected(),
+                accountPaymentReceiptShowDrawerBox.isSelected(),
+                accountPaymentReceiptShowAllocationsBox.isSelected(),
+                accountPaymentReceiptShowBalanceBox.isSelected(),
+                accountPaymentReceiptShowBarcodeBox.isSelected()
+        );
+    }
+
+    private void loadAccountPaymentReceiptFields(CompanyCustomizationManager.AccountPaymentReceiptSettings settings) {
+        CompanyCustomizationManager.AccountPaymentReceiptSettings cleanSettings = settings == null
+                ? CompanyCustomizationManager.AccountPaymentReceiptSettings.defaults()
+                : settings;
+        accountPaymentReceiptTitleField.setText(cleanSettings.title());
+        accountPaymentReceiptShowUserBox.setSelected(cleanSettings.showUser());
+        accountPaymentReceiptShowCustomerBox.setSelected(cleanSettings.showCustomer());
+        accountPaymentReceiptShowAccountNumberBox.setSelected(cleanSettings.showAccountNumber());
+        accountPaymentReceiptShowMethodBox.setSelected(cleanSettings.showMethod());
+        accountPaymentReceiptShowReferenceBox.setSelected(cleanSettings.showReference());
+        accountPaymentReceiptShowDeviceBox.setSelected(cleanSettings.showDevice());
+        accountPaymentReceiptShowDrawerBox.setSelected(cleanSettings.showDrawer());
+        accountPaymentReceiptShowAllocationsBox.setSelected(cleanSettings.showAllocations());
+        accountPaymentReceiptShowBalanceBox.setSelected(cleanSettings.showBalance());
+        accountPaymentReceiptShowBarcodeBox.setSelected(cleanSettings.showBarcode());
     }
 
     private BigDecimal parsePercentField(String value, String label) {
@@ -2667,6 +2880,7 @@ public class CompanyCustomization extends JFrame {
             @Override
             public void insertUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshAccountPaymentReceiptPreview();
                 refreshSlipPreview();
                 refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
@@ -2675,6 +2889,7 @@ public class CompanyCustomization extends JFrame {
             @Override
             public void removeUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshAccountPaymentReceiptPreview();
                 refreshSlipPreview();
                 refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
@@ -2683,6 +2898,7 @@ public class CompanyCustomization extends JFrame {
             @Override
             public void changedUpdate(DocumentEvent e) {
                 refreshSamplePreview();
+                refreshAccountPaymentReceiptPreview();
                 refreshSlipPreview();
                 refreshQuotationInvoicePrintPreview();
                 refreshBadgePreview();
@@ -2724,6 +2940,18 @@ public class CompanyCustomization extends JFrame {
         showPaymentStatusBox.addActionListener(e -> refreshSamplePreview());
         vatEnabledBox.addActionListener(e -> refreshSamplePreview());
         vatUseDepartmentRatesBox.addActionListener(e -> refreshSamplePreview());
+
+        accountPaymentReceiptTitleField.getDocument().addDocumentListener(previewDocumentListener);
+        accountPaymentReceiptShowUserBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowCustomerBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowAccountNumberBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowMethodBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowReferenceBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowDeviceBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowDrawerBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowAllocationsBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowBalanceBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
+        accountPaymentReceiptShowBarcodeBox.addActionListener(e -> refreshAccountPaymentReceiptPreview());
 
         slipEnabledBox.addActionListener(e -> refreshSlipPreview());
         slipAutoPrintBox.addActionListener(e -> refreshSlipPreview());
@@ -2770,7 +2998,8 @@ public class CompanyCustomization extends JFrame {
         CompanyCustomizationManager.ReceiptSettings previewSettings = getSettingsFromFields();
         CompanyCustomizationManager.setPreviewOverrideSettings(previewSettings);
         try {
-            sampleReceiptPaperPanel.setReceiptText(ReceiptFormatter.formatText(createSampleReceipt()), false);
+            ReceiptData sampleReceipt = createSampleReceipt();
+            sampleReceiptPaperPanel.setReceiptText(ReceiptFormatter.formatText(sampleReceipt), false, sampleReceipt.getReceiptNumber());
             updateSampleLogoPreview(previewSettings);
         } finally {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
@@ -2791,6 +3020,27 @@ public class CompanyCustomization extends JFrame {
         );
         sampleSlip40ColumnPanel.setReceiptText(CustomOrderSlipFormatter.format40Column(sampleSlip, receiptSettings, slipSettings), false);
         updateSlipLogoPreview();
+    }
+
+    private void refreshAccountPaymentReceiptPreview() {
+        if (loadingSettings) {
+            return;
+        }
+        CompanyCustomizationManager.ReceiptSettings receiptSettings = getSettingsFromFields();
+        CompanyCustomizationManager.AccountPaymentReceiptSettings paymentSettings = getAccountPaymentReceiptSettingsFromFields();
+        AccountPaymentReceiptData sampleReceipt = createSampleAccountPaymentReceipt();
+        String barcodeText = paymentSettings.showBarcode() ? sampleReceipt.getPaymentId() : "";
+        sampleAccountPaymentReceipt40Panel.setReceiptText(
+                AccountPaymentReceiptFormatter.formatText(sampleReceipt, receiptSettings, paymentSettings),
+                false,
+                barcodeText
+        );
+        sampleAccountPaymentReceiptLetterPanel.setReceiptText(
+                AccountPaymentReceiptFormatter.formatLetterText(sampleReceipt, receiptSettings, paymentSettings),
+                true,
+                barcodeText
+        );
+        updateAccountPaymentReceiptLogoPreview(receiptSettings);
     }
 
     private void refreshQuotationInvoicePrintPreview() {
@@ -2907,6 +3157,44 @@ public class CompanyCustomization extends JFrame {
         );
     }
 
+    private AccountPaymentReceiptData createSampleAccountPaymentReceipt() {
+        return new AccountPaymentReceiptData(
+                42,
+                managers.SessionManager.getCurrentLocationId(),
+                "PAY-000042",
+                Timestamp.valueOf(LocalDateTime.of(2026, 4, 21, 15, 10)),
+                "Main Store",
+                "Sample Cashier",
+                "Alex Customer",
+                "C-000100",
+                "alex.customer@example.com",
+                "CASH",
+                "Drawer closeout",
+                "POS-DEMO",
+                "Front Register",
+                new BigDecimal("125.00"),
+                new BigDecimal("75.00"),
+                List.of(
+                        new AccountPaymentReceiptData.AllocationLine(
+                                "Sale 0001-0001-000101",
+                                new BigDecimal("80.00"),
+                                new BigDecimal("150.00"),
+                                new BigDecimal("150.00"),
+                                "PAID",
+                                Timestamp.valueOf(LocalDateTime.of(2026, 4, 18, 11, 25))
+                        ),
+                        new AccountPaymentReceiptData.AllocationLine(
+                                "Invoice INV-MAIN-POS1-000088",
+                                new BigDecimal("45.00"),
+                                new BigDecimal("120.00"),
+                                new BigDecimal("45.00"),
+                                "UNPAID",
+                                Timestamp.valueOf(LocalDateTime.of(2026, 4, 20, 13, 40))
+                        )
+                )
+        );
+    }
+
     private void updateSampleLogoPreview(CompanyCustomizationManager.ReceiptSettings settings) {
         sampleReceiptPaperPanel.setLogo(null, false);
         if (settings == null || !settings.showLogo() || settings.logoPath().isBlank()) {
@@ -2926,6 +3214,35 @@ public class CompanyCustomization extends JFrame {
                     sampleReceiptPaperPanel.setLogo(get(), false);
                 } catch (Exception ex) {
                     sampleReceiptPaperPanel.setLogo(null, false);
+                }
+            }
+        }.execute();
+    }
+
+    private void updateAccountPaymentReceiptLogoPreview(CompanyCustomizationManager.ReceiptSettings settings) {
+        sampleAccountPaymentReceipt40Panel.setLogo(null, false);
+        sampleAccountPaymentReceiptLetterPanel.setLogo(null, false);
+        if (settings == null || !settings.showLogo() || settings.logoPath().isBlank()) {
+            return;
+        }
+
+        sampleAccountPaymentReceipt40Panel.setLogoLoading(true);
+        sampleAccountPaymentReceiptLetterPanel.setLogoLoading(true);
+        new SwingWorker<BufferedImage, Void>() {
+            @Override
+            protected BufferedImage doInBackground() {
+                return CompanyCustomizationManager.loadReceiptLogo(settings);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    BufferedImage logo = get();
+                    sampleAccountPaymentReceipt40Panel.setLogo(logo, false);
+                    sampleAccountPaymentReceiptLetterPanel.setLogo(logo, false);
+                } catch (Exception ex) {
+                    sampleAccountPaymentReceipt40Panel.setLogo(null, false);
+                    sampleAccountPaymentReceiptLetterPanel.setLogo(null, false);
                 }
             }
         }.execute();
@@ -3150,7 +3467,7 @@ public class CompanyCustomization extends JFrame {
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.drawString("HOLE PUNCH - DO NOT PRINT", punchX, Math.max(card.y + 12, punchY - 5));
 
-            if ("back".equals(side)) {
+            if ("back".equals(side) && settings != null && settings.magStripeEnabled()) {
                 int stripeX = card.x + (int) Math.round(420 * scale);
                 int stripeWidth = (int) Math.round(118 * scale);
                 int stripeY = card.y + (int) Math.round(42 * scale);

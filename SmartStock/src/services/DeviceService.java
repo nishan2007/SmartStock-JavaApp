@@ -202,6 +202,8 @@ public class DeviceService {
 
     public static void startDeviceSession(Connection conn, String deviceId, Integer userId, Integer storeId) throws SQLException {
         pruneOldDeviceSessions(conn);
+        UUID currentDeviceId = UUID.fromString(deviceId);
+        closeStaleActiveSessions(conn, currentDeviceId);
 
         String sessionSql = """
                 insert into device_sessions (
@@ -215,7 +217,7 @@ public class DeviceService {
                 """;
 
         try (PreparedStatement sessionStmt = conn.prepareStatement(sessionSql)) {
-            sessionStmt.setObject(1, UUID.fromString(deviceId));
+            sessionStmt.setObject(1, currentDeviceId);
 
             if (userId == null) {
                 sessionStmt.setNull(2, Types.INTEGER);
@@ -236,7 +238,22 @@ public class DeviceService {
             }
         }
 
-        refreshDeviceSessionCount(conn, UUID.fromString(deviceId));
+        refreshDeviceSessionCount(conn, currentDeviceId);
+    }
+
+    private static void closeStaleActiveSessions(Connection conn, UUID deviceId) throws SQLException {
+        String sql = """
+                update device_sessions
+                set logout_time = current_timestamp,
+                    session_status = 'STALE_ENDED'
+                where device_id = ?
+                  and logout_time is null
+                  and upper(coalesce(session_status, '')) = 'ACTIVE'
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, deviceId);
+            ps.executeUpdate();
+        }
     }
 
     public static void endCurrentSession(Connection conn) throws SQLException {

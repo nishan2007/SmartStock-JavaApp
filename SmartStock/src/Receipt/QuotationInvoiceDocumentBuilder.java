@@ -1,5 +1,6 @@
 package Receipt;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.CompanyCustomizationManager;
 
@@ -17,7 +18,7 @@ import java.util.Locale;
 public final class QuotationInvoiceDocumentBuilder {
     private static final int WIDTH = 92;
     private static final int ROWS_PER_PAGE = 14;
-    private static final NumberFormat MONEY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat MONEY = CurrencyFormatter.create(Locale.US);
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("MM/dd/yyyy");
 
     private QuotationInvoiceDocumentBuilder() {

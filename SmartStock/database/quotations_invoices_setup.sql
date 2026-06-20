@@ -548,18 +548,27 @@ ADD COLUMN IF NOT EXISTS price_override_by_user_id INTEGER REFERENCES users(user
 ALTER TABLE invoice_lines
 ADD COLUMN IF NOT EXISTS price_override_by_name TEXT;
 
-INSERT INTO permissions (permission_key, permission_name, permission_group)
-VALUES
-    ('CHANGE_SALE_ITEM_PRICE', 'Change Sale Item Price', 'Sales')
-ON CONFLICT (permission_key) DO NOTHING;
+ALTER TABLE permissions
+ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
 
-INSERT INTO permissions (permission_key, permission_name, permission_group)
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
 VALUES
-    ('QUOTATIONS_ORDERS', 'Quotations / Invoices', 'Invoices'),
-    ('CREATE_QUOTATION', 'Create Quotation', 'Invoices'),
-    ('MANAGE_INVOICES', 'Manage Invoices', 'Invoices'),
-    ('POST_INVOICE_DELIVERY', 'Post Invoice Delivery', 'Invoices')
-ON CONFLICT (permission_key) DO NOTHING;
+    ('CHANGE_SALE_ITEM_PRICE', 'Change Sale Item Price', 'Sales', 'Discounts')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
+
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
+VALUES
+    ('QUOTATIONS_ORDERS', 'Quotations / Invoices', 'Quotations & Invoices', 'General'),
+    ('CREATE_QUOTATION', 'Create Quotation', 'Quotations & Invoices', 'General'),
+    ('MANAGE_INVOICES', 'Manage Invoices', 'Quotations & Invoices', 'General'),
+    ('POST_INVOICE_DELIVERY', 'Post Invoice Delivery', 'Quotations & Invoices', 'General')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
 
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id

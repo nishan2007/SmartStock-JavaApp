@@ -24,6 +24,18 @@ CREATE TABLE IF NOT EXISTS company_customization (
     vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE,
     vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
     next_receipt_counter INTEGER NOT NULL DEFAULT 1,
+    change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000,
+    account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT',
+    account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE,
+    account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE,
     custom_order_minimum_deposit_percent NUMERIC(7, 4) NOT NULL DEFAULT 0,
     custom_order_refund_approval_limit NUMERIC(12, 2) NOT NULL DEFAULT 0,
     custom_order_slip_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -64,6 +76,12 @@ CREATE TABLE IF NOT EXISTS company_customization (
     badge_template_magstripe_track3 TEXT NOT NULL DEFAULT '',
     badge_template_magstripe_command TEXT NOT NULL DEFAULT '',
     badge_template_layout_data TEXT NOT NULL DEFAULT '',
+    price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE,
+    price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE,
+    price_tag_show_barcode BOOLEAN NOT NULL DEFAULT TRUE,
+    price_tag_width_inches NUMERIC(5, 2) NOT NULL DEFAULT 2.25,
+    price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25,
+    price_tag_templates TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (location_id)
 );
@@ -174,6 +192,32 @@ ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS custom_order_minimum_deposit_percent NUMERIC(7, 4) NOT NULL DEFAULT 0;
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS next_receipt_counter INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000;
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT';
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE;
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE;
@@ -300,6 +344,19 @@ ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT 
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_show_barcode BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_width_inches NUMERIC(5, 2) NOT NULL DEFAULT 2.25;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE company_customization
 DROP CONSTRAINT IF EXISTS company_customization_custom_order_deposit_percent_chk;

@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import managers.TimeClockManager;
 import managers.TimeClockManager.PayrollSummary;
 import managers.TimeClockManager.TimeClockRow;
@@ -53,7 +54,7 @@ public class PayrollDashboard extends JFrame {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy h:mm a");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
-    private static final NumberFormat CURRENCY_FORMAT = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY_FORMAT = CurrencyFormatter.create(Locale.US);
 
     public PayrollDashboard() {
         setTitle("Payroll Dashboard");
@@ -76,6 +77,8 @@ public class PayrollDashboard extends JFrame {
         employeeBox = new JComboBox<>();
         searchField = new JTextField();
         JButton generateCurrentButton = new JButton("Generate Current Payroll");
+        JButton bonusSelectedButton = new JButton("Bonus Selected");
+        JButton bonusAllButton = new JButton("Bonus All in Period");
         JButton markPaidButton = new JButton("Mark Selected Paid");
         JButton refreshButton = new JButton("Refresh");
         JPanel leftFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
@@ -99,9 +102,13 @@ public class PayrollDashboard extends JFrame {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttonPanel.setOpaque(false);
         DeckersSwing.styleUtilityButton(generateCurrentButton, DeckersPalette.LIME);
+        DeckersSwing.styleUtilityButton(bonusSelectedButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(bonusAllButton, DeckersPalette.ORANGE);
         DeckersSwing.styleUtilityButton(markPaidButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(refreshButton, DeckersPalette.PURPLE);
         buttonPanel.add(generateCurrentButton);
+        buttonPanel.add(bonusSelectedButton);
+        buttonPanel.add(bonusAllButton);
         buttonPanel.add(markPaidButton);
         buttonPanel.add(refreshButton);
 
@@ -138,7 +145,7 @@ public class PayrollDashboard extends JFrame {
         metricsPanel.add(totalPayCard);
 
         summaryModel = new DefaultTableModel(
-                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
+                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Bonus", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
                 0
         ) {
             @Override
@@ -195,6 +202,8 @@ public class PayrollDashboard extends JFrame {
             }
         });
         generateCurrentButton.addActionListener(e -> generateCurrentPayroll());
+        bonusSelectedButton.addActionListener(e -> giveSelectedEmployeeBonus());
+        bonusAllButton.addActionListener(e -> giveAllEmployeesBonus());
         markPaidButton.addActionListener(e -> markSelectedPayrollPaid());
         refreshButton.addActionListener(e -> loadPayroll());
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -376,6 +385,7 @@ public class PayrollDashboard extends JFrame {
                     summary.payDate().format(DATE_FORMAT),
                     summary.daysWorked(),
                     formatHours(summary.totalHours()),
+                    CURRENCY_FORMAT.format(summary.bonusAmount()),
                     CURRENCY_FORMAT.format(summary.totalPay()),
                     CURRENCY_FORMAT.format(summary.paidAmount()),
                     CURRENCY_FORMAT.format(summary.amountDue()),
@@ -420,6 +430,96 @@ public class PayrollDashboard extends JFrame {
         applyFilter();
     }
 
+    private void giveSelectedEmployeeBonus() {
+        int viewRow = summaryTable.getSelectedRow();
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(this, "Select the employee pay period that should receive the bonus.", "Payroll Bonus", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int modelRow = summaryTable.convertRowIndexToModel(viewRow);
+        if (modelRow < 0 || modelRow >= renderedSummaries.size()) {
+            JOptionPane.showMessageDialog(this, "The selected payroll row could not be found. Refresh and try again.", "Payroll Bonus", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        PayrollSummary summary = renderedSummaries.get(modelRow);
+        BonusInput input = showBonusDialog("Bonus for " + summary.employeeName(), 1);
+        if (input == null) {
+            return;
+        }
+        try {
+            TimeClockManager.addPayrollBonus(summary, input.amount(), input.reason());
+            loadPayroll();
+            JOptionPane.showMessageDialog(this, "Bonus added for " + summary.employeeName() + ".", "Payroll Bonus", JOptionPane.INFORMATION_MESSAGE);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to add payroll bonus: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void giveAllEmployeesBonus() {
+        PayPeriodOption selectedPeriod = (PayPeriodOption) payPeriodBox.getSelectedItem();
+        if (selectedPeriod == null || selectedPeriod.start() == null || selectedPeriod.end() == null) {
+            JOptionPane.showMessageDialog(this, "Select one specific pay period before giving all employees a bonus.", "Payroll Bonus", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        List<PayrollSummary> periodSummaries = new ArrayList<>();
+        for (PayrollSummary summary : allSummaries) {
+            if (matchesPeriod(summary.payPeriodStart(), summary.payPeriodEnd(), selectedPeriod)) {
+                periodSummaries.add(summary);
+            }
+        }
+        if (periodSummaries.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No employees were found in the selected pay period.", "Payroll Bonus", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        BonusInput input = showBonusDialog("Bonus for All Employees", periodSummaries.size());
+        if (input == null) {
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Give " + CURRENCY_FORMAT.format(input.amount()) + " to each of " + periodSummaries.size()
+                        + " employees?\n\nTotal bonuses: "
+                        + CURRENCY_FORMAT.format(input.amount().multiply(BigDecimal.valueOf(periodSummaries.size()))),
+                "Confirm Bonuses",
+                JOptionPane.YES_NO_OPTION
+        );
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try {
+            TimeClockManager.addPayrollBonuses(periodSummaries, input.amount(), input.reason());
+            loadPayroll();
+            JOptionPane.showMessageDialog(this, "Bonus added for all " + periodSummaries.size() + " employees.", "Payroll Bonus", JOptionPane.INFORMATION_MESSAGE);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to add payroll bonuses: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private BonusInput showBonusDialog(String title, int employeeCount) {
+        JTextField amountField = new JTextField(14);
+        JTextField reasonField = new JTextField(24);
+        JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
+        panel.add(new JLabel(employeeCount == 1 ? "Bonus amount:" : "Bonus amount for each employee:"));
+        panel.add(amountField);
+        panel.add(new JLabel("Reason / note (optional):"));
+        panel.add(reasonField);
+        int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION);
+        if (result != JOptionPane.OK_OPTION) {
+            return null;
+        }
+        try {
+            String rawAmount = amountField.getText().replace("$", "").replace(",", "").trim();
+            BigDecimal amount = CurrencyFormatter.normalize(new BigDecimal(rawAmount));
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new NumberFormatException();
+            }
+            return new BonusInput(amount, reasonField.getText().trim());
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Enter a valid bonus amount greater than zero.", "Payroll Bonus", JOptionPane.WARNING_MESSAGE);
+            return null;
+        }
+    }
+
     private void markSelectedPayrollPaid() {
         int viewRow = summaryTable.getSelectedRow();
         if (viewRow < 0) {
@@ -449,15 +549,35 @@ public class PayrollDashboard extends JFrame {
             message += "\n\nThis will create a supplemental payroll payment for the additional amount due.";
         }
 
-        int result = JOptionPane.showConfirmDialog(this, message, "Mark Payroll Paid", JOptionPane.YES_NO_OPTION);
-        if (result != JOptionPane.YES_OPTION) {
+        JComboBox<String> paymentMethodBox = new JComboBox<>(new String[]{"Cash in Hand", "Bank Account"});
+        JTextField bankReferenceField = new JTextField(22);
+        bankReferenceField.setEnabled(false);
+        paymentMethodBox.addActionListener(e -> bankReferenceField.setEnabled(paymentMethodBox.getSelectedIndex() == 1));
+        JPanel paymentPanel = new JPanel(new GridLayout(0, 1, 4, 4));
+        paymentPanel.add(new JLabel("Payment method:"));
+        paymentPanel.add(paymentMethodBox);
+        paymentPanel.add(new JLabel("Bank reference (required for Bank Account):"));
+        paymentPanel.add(bankReferenceField);
+
+        Object[] prompt = {message, paymentPanel};
+        int result = JOptionPane.showConfirmDialog(this, prompt, "Mark Payroll Paid", JOptionPane.OK_CANCEL_OPTION);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        boolean bankPayment = paymentMethodBox.getSelectedIndex() == 1;
+        String bankReference = bankReferenceField.getText().trim();
+        if (bankPayment && bankReference.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Enter the bank transaction reference.", "Payroll", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
         try {
-            TimeClockManager.markPayrollPaid(summary);
+            TimeClockManager.markPayrollPaid(summary, bankPayment ? "BANK" : "CASH", bankReference);
             loadPayroll();
-            JOptionPane.showMessageDialog(this, "Payroll marked as paid.", "Payroll", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this,
+                    "Payroll marked as paid through " + (bankPayment ? "Bank Account." : "Cash in Hand."),
+                    "Payroll", JOptionPane.INFORMATION_MESSAGE);
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to mark payroll as paid: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -610,7 +730,7 @@ public class PayrollDashboard extends JFrame {
             Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             component.setForeground(DeckersPalette.text());
             component.setBackground(isSelected ? DeckersPalette.tilePressed(DeckersPalette.YELLOW) : DeckersPalette.tableBody(DeckersPalette.YELLOW));
-            if (!isSelected && column == 10) {
+            if (!isSelected && column == 11) {
                 String status = value == null ? "" : value.toString();
                 if ("Paid".equals(status)) {
                     component.setBackground(DeckersPalette.tileFill(DeckersPalette.LIME));
@@ -682,5 +802,8 @@ public class PayrollDashboard extends JFrame {
         public String toString() {
             return label;
         }
+    }
+
+    private record BonusInput(BigDecimal amount, String reason) {
     }
 }

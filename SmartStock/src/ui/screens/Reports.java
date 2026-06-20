@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
@@ -31,7 +32,7 @@ import java.util.Locale;
 public class Reports extends JFrame {
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
 
     private final JTextField fromField = new JTextField();
     private final JTextField toField = new JTextField();

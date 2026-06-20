@@ -3,6 +3,9 @@
 ALTER TABLE permissions
     ADD COLUMN IF NOT EXISTS description TEXT;
 
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
+
 UPDATE permissions p
 SET description = v.description
 FROM (VALUES
@@ -58,6 +61,8 @@ FROM (VALUES
     ('TIME_CLOCK_MANAGEMENT', 'Allows viewing and correcting staff time clock records.'),
     ('TIME_CLOCK_OVERRIDE', 'Allows approving additional employee time clock sessions after a completed session on the same day.'),
     ('PAYROLL_DASHBOARD', 'Allows viewing payroll and labor summary dashboards.'),
+    ('VIEW_EMPLOYEE_SCHEDULE', 'Allows viewing who is scheduled to work each day.'),
+    ('EDIT_EMPLOYEE_SCHEDULE', 'Allows adding and removing employees from the weekly schedule.'),
     ('ROLE_MANAGEMENT', 'Allows editing role definitions and assigning permissions.'),
     ('LOCATION_MANAGEMENT', 'Allows creating and editing store locations.'),
     ('CASH_DRAWER_MANAGEMENT', 'Allows configuring cash drawer workflows and sessions.'),
@@ -74,3 +79,6 @@ WHERE UPPER(p.permission_key) = UPPER(v.permission_key)
 -- Ensure app permissions table has a description column as well.
 ALTER TABLE mobile_permissions
     ADD COLUMN IF NOT EXISTS description TEXT;
+
+ALTER TABLE mobile_permissions
+    ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;

@@ -135,14 +135,14 @@ public final class QuotationInvoiceService {
         }
     }
 
-    public static void recordPayment(long invoiceId, BigDecimal amount, String method, String reference) throws SQLException {
+    public static PaymentReceiptRef recordPayment(long invoiceId, BigDecimal amount, String method, String reference) throws SQLException {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new SQLException("Payment amount must be greater than zero.");
         }
         String safeMethod = normalizePaymentMethod(method);
         if ("ACCOUNT".equals(safeMethod)) {
             chargeInvoiceToAccount(invoiceId, "Placed on customer account.");
-            return;
+            return null;
         }
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
@@ -172,10 +172,14 @@ public final class QuotationInvoiceService {
                     reduceCustomerBalance(conn, invoice.customerId(), applied);
                     long paymentTransactionId = insertCustomerPaymentTransaction(conn, invoice, applied.negate(), safeMethod, reference, drawer);
                     insertAccountAllocation(conn, paymentTransactionId, invoice, applied);
+                    PaymentReceiptRef paymentReceipt = new PaymentReceiptRef(invoice.customerId(), paymentTransactionId);
+                    QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "PAYMENT_CREATED", "amount_paid", invoice.amountPaid(), invoice.amountPaid().add(applied), safeMethod);
+                    SyncOutboxService.recordEvent(conn, "INVOICE_PAYMENT_CREATED", Map.of("invoice_id", invoiceId, "payment_amount", applied));
+                    conn.commit();
+                    return paymentReceipt;
                 }
-                QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "PAYMENT_CREATED", "amount_paid", invoice.amountPaid(), invoice.amountPaid().add(applied), safeMethod);
-                SyncOutboxService.recordEvent(conn, "INVOICE_PAYMENT_CREATED", Map.of("invoice_id", invoiceId, "payment_amount", applied));
                 conn.commit();
+                return null;
             } catch (SQLException ex) {
                 conn.rollback();
                 throw ex;
@@ -968,7 +972,7 @@ public final class QuotationInvoiceService {
                 ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                 : vatAmount.multiply(BigDecimal.valueOf(100)).divide(preVatTotal, 2, RoundingMode.HALF_UP);
         String mode = settings.vatEnabled() ? (settings.vatUseDepartmentRates() ? "DEPARTMENT" : "FIXED") : "";
-        return new Totals(money(subtotal), money(discount), vatAmount, effectiveRate, mode, preVatTotal.add(vatAmount).setScale(2, RoundingMode.HALF_UP));
+        return new Totals(money(subtotal), money(discount), vatAmount, effectiveRate, mode, money(preVatTotal.add(vatAmount)));
     }
 
     private static LineAmounts lineAmounts(Connection conn, SalesVatSettings settings, QuotationLineInput line) throws SQLException {
@@ -1061,7 +1065,7 @@ public final class QuotationInvoiceService {
     }
 
     private static BigDecimal money(BigDecimal value) {
-        return zero(value).setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(value);
     }
 
     private static BigDecimal percent(BigDecimal value) {
@@ -1118,6 +1122,9 @@ public final class QuotationInvoiceService {
     }
 
     public record DeliveryResult(long deliveryEventId, String deliveryNumber) {
+    }
+
+    public record PaymentReceiptRef(int customerId, long transactionId) {
     }
 
     private record CustomerInfo(int customerId, String name, String phone, String email) {

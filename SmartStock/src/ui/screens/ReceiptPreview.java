@@ -1,10 +1,12 @@
 package ui.screens;
 
 import Receipt.ReceiptData;
+import Receipt.ReceiptBarcodeRenderer;
 import Receipt.ReceiptFormatter;
 import Receipt.ReceiptPrinter;
 import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
+import services.EmailOutboxService;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -60,12 +62,15 @@ public class ReceiptPreview extends JFrame {
         mainPanel.add(previewScrollPane, BorderLayout.CENTER);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        JButton emailButton = new JButton("Email Receipt");
         JButton printButton = new JButton("Print Receipt");
         JButton closeButton = new JButton("Close");
+        buttonPanel.add(emailButton);
         buttonPanel.add(printButton);
         buttonPanel.add(closeButton);
         mainPanel.add(buttonPanel, BorderLayout.SOUTH);
 
+        emailButton.addActionListener(e -> emailReceipt());
         printButton.addActionListener(e -> printReceipt());
         closeButton.addActionListener(e -> dispose());
         printerBox.addActionListener(e -> updateFormatFromPrinter());
@@ -112,9 +117,9 @@ public class ReceiptPreview extends JFrame {
     private void updateReceiptPreview() {
         HardwareSettingsManager.PrintFormat format = getSelectedPrintFormat();
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
-            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatLetterText(receiptData, receiptSettings), true);
+            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatLetterText(receiptData, receiptSettings), true, receiptData.getReceiptNumber());
         } else {
-            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatText(receiptData, receiptSettings), false);
+            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatText(receiptData, receiptSettings), false, receiptData.getReceiptNumber());
         }
     }
 
@@ -157,6 +162,33 @@ public class ReceiptPreview extends JFrame {
         }
     }
 
+    private void emailReceipt() {
+        String recipient = JOptionPane.showInputDialog(
+                this,
+                "Customer email (leave blank to use account email):",
+                "Email Receipt",
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (recipient == null) {
+            return;
+        }
+        try {
+            EmailOutboxService.QueueResult result = EmailOutboxService.queueSaleReceipt(receiptData.getSaleId(), recipient.trim(), false);
+            if (result.queued()) {
+                JOptionPane.showMessageDialog(this, "Receipt email queued. Outbox #" + result.outboxId() + ".");
+            } else {
+                JOptionPane.showMessageDialog(this, result.message(), "Email Receipt", JOptionPane.WARNING_MESSAGE);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to queue receipt email.\n\n" + ex.getMessage(),
+                    "Email Receipt",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
     private HardwareSettingsManager.PrintFormat getSelectedPrintFormat() {
         Object selectedFormat = formatBox.getSelectedItem();
         if (selectedFormat instanceof HardwareSettingsManager.PrintFormat format) {
@@ -184,6 +216,7 @@ public class ReceiptPreview extends JFrame {
         private static final int PADDING = 20;
 
         private String receiptText = "";
+        private String barcodeText = "";
         private boolean letterFormat = false;
         private BufferedImage logo;
         private boolean logoLoading = false;
@@ -197,7 +230,12 @@ public class ReceiptPreview extends JFrame {
         }
 
         void setReceiptText(String receiptText, boolean letterFormat) {
+            setReceiptText(receiptText, letterFormat, "");
+        }
+
+        void setReceiptText(String receiptText, boolean letterFormat, String barcodeText) {
             this.receiptText = receiptText == null ? "" : receiptText;
+            this.barcodeText = barcodeText == null ? "" : barcodeText.trim();
             this.letterFormat = letterFormat;
             revalidate();
             repaint();
@@ -222,7 +260,8 @@ public class ReceiptPreview extends JFrame {
             int paperWidth = getPaperWidth();
             int textHeight = receiptText.split("\\R", -1).length * metrics.getHeight();
             int logoHeight = getLogoDisplayHeight(paperWidth) + (hasLogoSpace() ? 12 : 0);
-            int paperHeight = Math.max(360, PADDING + logoHeight + textHeight + PADDING);
+            int barcodeHeight = getBarcodeDisplayHeight() + (hasBarcode() ? 12 : 0);
+            int paperHeight = Math.max(360, PADDING + logoHeight + textHeight + barcodeHeight + PADDING);
             return new Dimension(paperWidth + 80, paperHeight + 40);
         }
 
@@ -265,6 +304,16 @@ public class ReceiptPreview extends JFrame {
                 y += metrics.getHeight();
                 g2.drawString(line, textX, y);
             }
+            if (hasBarcode()) {
+                y += 12;
+                Dimension barcodeSize = getBarcodeDisplaySize(paperWidth);
+                BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(barcodeText, barcodeSize.width, barcodeSize.height);
+                int x = paperX + ((paperWidth - barcodeSize.width) / 2);
+                ReceiptBarcodeRenderer.drawBarcodeFit(g2, barcode, x, y, barcodeSize.width, barcodeSize.height);
+                y += barcodeSize.height + metrics.getAscent() + 4;
+                int barcodeTextX = paperX + ((paperWidth - metrics.stringWidth(barcodeText)) / 2);
+                g2.drawString(barcodeText, barcodeTextX, y);
+            }
 
             g2.dispose();
         }
@@ -279,6 +328,20 @@ public class ReceiptPreview extends JFrame {
 
         private boolean hasLogoSpace() {
             return logo != null || logoLoading;
+        }
+
+        private boolean hasBarcode() {
+            return ReceiptBarcodeRenderer.hasScannableText(barcodeText);
+        }
+
+        private int getBarcodeDisplayHeight() {
+            return hasBarcode() ? getBarcodeDisplaySize(getPaperWidth()).height + getFontMetrics(getPreviewFont()).getHeight() + 4 : 0;
+        }
+
+        private Dimension getBarcodeDisplaySize(int paperWidth) {
+            int width = Math.min(letterFormat ? 260 : 260, paperWidth - (PADDING * 2));
+            int height = letterFormat ? 58 : 64;
+            return new Dimension(width, height);
         }
 
         private int getLogoDisplayHeight(int paperWidth) {

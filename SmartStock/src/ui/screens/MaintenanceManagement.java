@@ -48,7 +48,7 @@ public class MaintenanceManagement extends JFrame {
     private final JTextField quantityField = new JTextField("0");
     private final JTextField reorderPointField = new JTextField("0");
     private final JTextField reorderQuantityField = new JTextField("0");
-    private final JTextField unitCostField = new JTextField("0.00");
+    private final JTextField unitCostField = new JTextField("0");
     private final JTextField vendorField = new JTextField();
     private final JTextField binLocationField = new JTextField();
     private final JCheckBox partActiveBox = new JCheckBox("Active", true);
@@ -62,7 +62,7 @@ public class MaintenanceManagement extends JFrame {
     private final JComboBox<String> logTypeBox = new JComboBox<>(new String[]{"PREVENTIVE", "REPAIR", "INSPECTION", "CLEANING", "CALIBRATION", "OTHER"});
     private final JTextField technicianField = new JTextField();
     private final JTextField laborHoursField = new JTextField("0.00");
-    private final JTextField logCostField = new JTextField("0.00");
+    private final JTextField logCostField = new JTextField("0");
     private final JTextArea logSummaryArea = textArea(3, 24);
     private final JTextArea logDetailsArea = textArea(4, 24);
     private final JTextArea partsUsedArea = textArea(3, 24);
@@ -599,7 +599,7 @@ public class MaintenanceManagement extends JFrame {
             ps.setBigDecimal(4, decimal(quantityField, "On hand"));
             ps.setBigDecimal(5, decimal(reorderPointField, "Reorder point"));
             ps.setBigDecimal(6, decimal(reorderQuantityField, "Reorder quantity"));
-            ps.setBigDecimal(7, decimal(unitCostField, "Unit cost"));
+            ps.setBigDecimal(7, moneyDecimal(unitCostField, "Unit cost"));
             ps.setString(8, nullable(vendorField));
             ps.setString(9, nullable(binLocationField));
             ps.setBoolean(10, partActiveBox.isSelected());
@@ -642,7 +642,7 @@ public class MaintenanceManagement extends JFrame {
             ps.setString(3, selected(logTypeBox));
             ps.setString(4, nullable(technicianField));
             ps.setBigDecimal(5, decimal(laborHoursField, "Labor hours"));
-            ps.setBigDecimal(6, decimal(logCostField, "Cost"));
+            ps.setBigDecimal(6, moneyDecimal(logCostField, "Cost"));
             ps.setString(7, nullable(logSummaryArea));
             ps.setString(8, nullable(logDetailsArea));
             ps.setString(9, nullable(partsUsedArea));
@@ -945,7 +945,7 @@ public class MaintenanceManagement extends JFrame {
         quantityField.setText("0");
         reorderPointField.setText("0");
         reorderQuantityField.setText("0");
-        unitCostField.setText("0.00");
+        unitCostField.setText("0");
         vendorField.setText("");
         binLocationField.setText("");
         partActiveBox.setSelected(true);
@@ -962,7 +962,7 @@ public class MaintenanceManagement extends JFrame {
         logTypeBox.setSelectedItem("PREVENTIVE");
         technicianField.setText("");
         laborHoursField.setText("0.00");
-        logCostField.setText("0.00");
+        logCostField.setText("0");
         logSummaryArea.setText("");
         logDetailsArea.setText("");
         partsUsedArea.setText("");
@@ -1129,6 +1129,10 @@ public class MaintenanceManagement extends JFrame {
         } catch (NumberFormatException ex) {
             throw new IllegalArgumentException(label + " must be a number.");
         }
+    }
+
+    private static BigDecimal moneyDecimal(JTextField field, String label) {
+        return utils.CurrencyFormatter.normalize(decimal(field, label));
     }
 
     private static void setDate(PreparedStatement ps, int index, JTextField field) throws SQLException {

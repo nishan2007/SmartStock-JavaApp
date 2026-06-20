@@ -4,6 +4,7 @@ import data.DB;
 import services.DeviceService;
 import ui.screens.BalanceDraw;
 import ui.screens.BalanceSheet;
+import ui.screens.ChangeBasket;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
@@ -29,10 +30,12 @@ import ui.screens.Invoices;
 import ui.screens.StoreTransfer;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
+import ui.screens.PriceTagPrinting;
 import ui.screens.ViewSales;
 import ui.screens.Login;
 import ui.screens.PayrollDashboard;
 import ui.screens.TimeClock;
+import ui.screens.WeeklySchedule;
 import ui.screens.WorkstationPreferences;
 import ui.helpers.WindowHelper;
 
@@ -56,6 +59,7 @@ public final class NavigationManager {
         MAKE_SALE,
         RETURN_SALE,
         BALANCE_DRAW,
+        CHANGE_BASKET,
         BALANCE_SHEET,
         ORDERS_MANAGER_DASHBOARD,
         REPORTS,
@@ -69,6 +73,7 @@ public final class NavigationManager {
         EDIT_ITEM,
         VIEW_SALES,
         VIEW_INVENTORY,
+        PRICE_TAG_PRINTING,
         CUSTOMER_ACCOUNTS,
         QUOTATIONS,
         INVOICES,
@@ -76,6 +81,7 @@ public final class NavigationManager {
         ORDERS,
         TIME_CLOCK,
         PAYROLL_DASHBOARD,
+        WEEKLY_SCHEDULE,
         EMPLOYEE_MANAGEMENT,
         ROLES_PERMISSION,
         DEVICE_MANAGEMENT,
@@ -117,6 +123,10 @@ public final class NavigationManager {
 
     public static void openBalanceDraw(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.BALANCE_DRAW));
+    }
+
+    public static void openChangeBasket(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.CHANGE_BASKET));
     }
 
     public static void openBalanceSheet(JFrame parent) {
@@ -171,6 +181,8 @@ public final class NavigationManager {
         openScreen(parent, createScreen(ScreenType.VIEW_INVENTORY));
     }
 
+    public static void openPriceTagPrinting(JFrame parent) { openScreen(parent, createScreen(ScreenType.PRICE_TAG_PRINTING)); }
+
     public static void openCustomerAccounts(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
     }
@@ -197,6 +209,10 @@ public final class NavigationManager {
 
     public static void openPayrollDashboard(JFrame parent) {
         openScreen(parent, createScreen(ScreenType.PAYROLL_DASHBOARD));
+    }
+
+    public static void openWeeklySchedule(JFrame parent) {
+        openScreen(parent, createScreen(ScreenType.WEEKLY_SCHEDULE));
     }
 
     public static void openEmployeeManagement(JFrame parent) {
@@ -237,6 +253,7 @@ public final class NavigationManager {
             case MAKE_SALE -> new MakeASale();
             case RETURN_SALE -> new ReturnSale();
             case BALANCE_DRAW -> new BalanceDraw();
+            case CHANGE_BASKET -> new ChangeBasket();
             case BALANCE_SHEET -> new BalanceSheet();
             case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
             case REPORTS -> new Reports();
@@ -250,6 +267,7 @@ public final class NavigationManager {
             case EDIT_ITEM -> new EditItem();
             case VIEW_SALES -> new ViewSales();
             case VIEW_INVENTORY -> new ViewInventory();
+            case PRICE_TAG_PRINTING -> new PriceTagPrinting();
             case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
             case QUOTATIONS -> new Invoices(Invoices.InitialTab.QUOTATIONS);
             case INVOICES -> new Invoices();
@@ -257,6 +275,7 @@ public final class NavigationManager {
             case ORDERS -> new Orders();
             case TIME_CLOCK -> new TimeClock();
             case PAYROLL_DASHBOARD -> new PayrollDashboard();
+            case WEEKLY_SCHEDULE -> new WeeklySchedule();
             case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
             case ROLES_PERMISSION -> new Roles_Permission();
             case DEVICE_MANAGEMENT -> new DeviceManagement();
@@ -278,6 +297,7 @@ public final class NavigationManager {
             case "MakeASale" -> ScreenType.MAKE_SALE;
             case "ReturnSale" -> ScreenType.RETURN_SALE;
             case "BalanceDraw" -> ScreenType.BALANCE_DRAW;
+            case "ChangeBasket" -> ScreenType.CHANGE_BASKET;
             case "BalanceSheet" -> ScreenType.BALANCE_SHEET;
             case "OrdersManagerDashboard" -> ScreenType.ORDERS_MANAGER_DASHBOARD;
             case "Reports", "EndOfDay", "OrdersEndOfDay" -> ScreenType.REPORTS;
@@ -291,6 +311,7 @@ public final class NavigationManager {
             case "EditItem" -> ScreenType.EDIT_ITEM;
             case "ViewSales" -> ScreenType.VIEW_SALES;
             case "ViewInventory" -> ScreenType.VIEW_INVENTORY;
+            case "PriceTagPrinting" -> ScreenType.PRICE_TAG_PRINTING;
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
             case "Quotations", "QuotationsOrders" -> ScreenType.QUOTATIONS;
             case "Invoices" -> ScreenType.INVOICES;
@@ -298,6 +319,7 @@ public final class NavigationManager {
             case "Orders" -> ScreenType.ORDERS;
             case "TimeClock" -> ScreenType.TIME_CLOCK;
             case "PayrollDashboard" -> ScreenType.PAYROLL_DASHBOARD;
+            case "WeeklySchedule" -> ScreenType.WEEKLY_SCHEDULE;
             case "EmployeeManagement" -> ScreenType.EMPLOYEE_MANAGEMENT;
             case "Roles_Permission" -> ScreenType.ROLES_PERMISSION;
             case "DeviceManagement" -> ScreenType.DEVICE_MANAGEMENT;

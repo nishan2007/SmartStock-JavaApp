@@ -28,12 +28,14 @@ public class Roles_Permission extends JFrame {
         final String key;
         final String label;
         final String group;
+        final String subgroup;
         final String description;
 
-        PermissionDefinition(String key, String label, String group, String description) {
+        PermissionDefinition(String key, String label, String group, String subgroup, String description) {
             this.key = key;
             this.label = label;
             this.group = group;
+            this.subgroup = subgroup;
             this.description = description;
         }
     }
@@ -52,6 +54,19 @@ public class Roles_Permission extends JFrame {
     private static final Map<String, String> DEFAULT_PERMISSIONS = createDefaultPermissions();
     private static final Map<String, String> DEFAULT_PERMISSION_DESCRIPTIONS = createDefaultPermissionDescriptions();
     private static final Map<String, String> DEFAULT_PERMISSION_GROUPS = createDefaultPermissionGroups();
+    private static final Map<String, String> DEFAULT_PERMISSION_SUBGROUPS = createDefaultPermissionSubgroups();
+    private static final List<String> PERMISSION_GROUP_ORDER = List.of(
+            "Sales",
+            "Quotations & Invoices",
+            "Custom Orders",
+            "Inventory",
+            "Maintenance",
+            "Customers",
+            "Operations",
+            "People",
+            "Administration",
+            "General"
+    );
 
     public Roles_Permission() {
         setTitle("Role & Permission Management");
@@ -139,6 +154,16 @@ public class Roles_Permission extends JFrame {
         return cb;
     }
 
+    private JPanel createIndentedPermissionRow(JCheckBox checkBox) {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setBorder(BorderFactory.createEmptyBorder(1, 28, 1, 0));
+        row.add(checkBox, BorderLayout.WEST);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, checkBox.getPreferredSize().height + 2));
+        return row;
+    }
+
     private JPanel wrapPermissionColumn(String title, JPanel contentPanel) {
         JPanel wrapper = new JPanel(new BorderLayout(0, 8));
         wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -184,6 +209,9 @@ public class Roles_Permission extends JFrame {
             if (permissionColumns.contains("permission_group")) {
                 optionalColumns.add("permission_group");
             }
+            if (permissionColumns.contains("permission_subgroup")) {
+                optionalColumns.add("permission_subgroup");
+            }
 
             String columnsSql = "permission_key";
             String selectSql = "?";
@@ -210,6 +238,8 @@ public class Roles_Permission extends JFrame {
                             ps.setString(parameterIndex++, description);
                         } else if ("permission_group".equals(column)) {
                             ps.setString(parameterIndex++, group);
+                        } else if ("permission_subgroup".equals(column)) {
+                            ps.setString(parameterIndex++, defaultPermissionSubgroup(key));
                         } else {
                             ps.setString(parameterIndex++, label);
                         }
@@ -244,7 +274,11 @@ public class Roles_Permission extends JFrame {
                         UPDATE permissions
                         SET permission_group = ?
                         WHERE UPPER(permission_key) = UPPER(?)
-                          AND (permission_group IS NULL OR TRIM(permission_group) = '')
+                          AND (
+                              permission_group IS NULL
+                              OR TRIM(permission_group) = ''
+                              OR permission_group <> ?
+                          )
                         """;
                 try (PreparedStatement update = conn.prepareStatement(groupSql)) {
                     for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
@@ -252,6 +286,31 @@ public class Roles_Permission extends JFrame {
                         String group = defaultPermissionGroup(key);
                         update.setString(1, group);
                         update.setString(2, key);
+                        update.setString(3, group);
+                        update.addBatch();
+                    }
+                    update.executeBatch();
+                }
+            }
+
+            if (permissionColumns.contains("permission_subgroup")) {
+                String subgroupSql = """
+                        UPDATE permissions
+                        SET permission_subgroup = ?
+                        WHERE UPPER(permission_key) = UPPER(?)
+                          AND (
+                              permission_subgroup IS NULL
+                              OR TRIM(permission_subgroup) = ''
+                              OR permission_subgroup <> ?
+                          )
+                        """;
+                try (PreparedStatement update = conn.prepareStatement(subgroupSql)) {
+                    for (Map.Entry<String, String> entry : DEFAULT_PERMISSIONS.entrySet()) {
+                        String key = entry.getKey();
+                        String subgroup = defaultPermissionSubgroup(key);
+                        update.setString(1, subgroup);
+                        update.setString(2, key);
+                        update.setString(3, subgroup);
                         update.addBatch();
                     }
                     update.executeBatch();
@@ -283,15 +342,16 @@ public class Roles_Permission extends JFrame {
             String groupSelect = permissionColumns.contains("permission_group")
                     ? "permission_group"
                     : "NULL AS permission_group";
+            String subgroupSelect = permissionColumns.contains("permission_subgroup")
+                    ? "permission_subgroup"
+                    : "NULL AS permission_subgroup";
             String descriptionSelect = permissionColumns.contains("description")
                     ? "description"
                     : "NULL AS description";
-            String orderSql = permissionColumns.contains("sort_order")
-                    ? "permission_group NULLS LAST, sort_order NULLS LAST, display_name, permission_key"
-                    : "display_name, permission_key";
+            String orderSql = buildPermissionOrderSql(permissionColumns);
 
             String sql = "SELECT permission_key, " + displayExpression + " AS display_name, " +
-                    groupSelect + ", " + descriptionSelect + " " +
+                    groupSelect + ", " + subgroupSelect + ", " + descriptionSelect + " " +
                     "FROM permissions " +
                     "WHERE permission_key IS NOT NULL AND TRIM(permission_key) <> '' " +
                     "ORDER BY " + orderSql;
@@ -302,6 +362,7 @@ public class Roles_Permission extends JFrame {
                     String key = rs.getString("permission_key");
                     String label = rs.getString("display_name");
                     String group = rs.getString("permission_group");
+                    String subgroup = rs.getString("permission_subgroup");
                     String description = rs.getString("description");
                     if (key == null || key.isBlank()) {
                         continue;
@@ -311,6 +372,9 @@ public class Roles_Permission extends JFrame {
                     String resolvedGroup = (group == null || group.isBlank())
                             ? defaultPermissionGroup(normalizedKey)
                             : formatRoleName(group);
+                    String resolvedSubgroup = (subgroup == null || subgroup.isBlank())
+                            ? defaultPermissionSubgroup(normalizedKey)
+                            : formatRoleName(subgroup);
                     String resolvedDescription = (description == null || description.isBlank())
                             ? defaultPermissionDescription(normalizedKey, resolvedLabel)
                             : description;
@@ -318,6 +382,7 @@ public class Roles_Permission extends JFrame {
                             normalizedKey,
                             resolvedLabel,
                             resolvedGroup,
+                            resolvedSubgroup,
                             resolvedDescription
                     ));
                 }
@@ -338,6 +403,7 @@ public class Roles_Permission extends JFrame {
                         key,
                         label,
                         defaultPermissionGroup(key),
+                        defaultPermissionSubgroup(key),
                         defaultPermissionDescription(key, label)
                 ));
             }
@@ -371,14 +437,15 @@ public class Roles_Permission extends JFrame {
             String groupSelect = mobilePermissionColumns.contains("permission_group")
                     ? "permission_group"
                     : "NULL AS permission_group";
+            String subgroupSelect = mobilePermissionColumns.contains("permission_subgroup")
+                    ? "permission_subgroup"
+                    : "NULL AS permission_subgroup";
             String descriptionSelect = mobilePermissionColumns.contains("description")
                     ? "description"
                     : "NULL AS description";
-            String orderSql = mobilePermissionColumns.contains("sort_order")
-                    ? "permission_group NULLS LAST, sort_order NULLS LAST, display_name, permission_key"
-                    : "display_name, permission_key";
+            String orderSql = buildPermissionOrderSql(mobilePermissionColumns);
             String sql = "SELECT permission_key, " + displayExpression + " AS display_name, " +
-                    groupSelect + ", " + descriptionSelect + " " +
+                    groupSelect + ", " + subgroupSelect + ", " + descriptionSelect + " " +
                     "FROM mobile_permissions " +
                     "WHERE permission_key IS NOT NULL AND TRIM(permission_key) <> '' " +
                     "ORDER BY " + orderSql;
@@ -391,12 +458,16 @@ public class Roles_Permission extends JFrame {
                         continue;
                     }
                     String resolvedGroup = rs.getString("permission_group");
+                    String resolvedSubgroup = rs.getString("permission_subgroup");
                     String resolvedLabel = rs.getString("display_name");
                     if (resolvedLabel == null || resolvedLabel.isBlank()) {
                         resolvedLabel = formatRoleName(key);
                     }
                     if (resolvedGroup == null || resolvedGroup.isBlank()) {
-                        resolvedGroup = "General";
+                        resolvedGroup = defaultPermissionGroup(key.trim().toUpperCase());
+                    }
+                    if (resolvedSubgroup == null || resolvedSubgroup.isBlank()) {
+                        resolvedSubgroup = defaultPermissionSubgroup(key.trim().toUpperCase());
                     }
                     String description = rs.getString("description");
                     if (description == null || description.isBlank()) {
@@ -406,6 +477,7 @@ public class Roles_Permission extends JFrame {
                             key.trim(),
                             resolvedLabel,
                             formatRoleName(resolvedGroup),
+                            formatRoleName(resolvedSubgroup),
                             description
                     ));
                 }
@@ -432,7 +504,7 @@ public class Roles_Permission extends JFrame {
             List<PermissionDefinition> definitions
     ) {
         targetPanel.removeAll();
-        Map<String, List<PermissionDefinition>> bySection = new TreeMap<>();
+        Map<String, List<PermissionDefinition>> bySection = new TreeMap<>(Roles_Permission::comparePermissionGroups);
         for (PermissionDefinition definition : definitions) {
             String section = definition.group == null || definition.group.isBlank()
                     ? "General"
@@ -442,22 +514,72 @@ public class Roles_Permission extends JFrame {
 
         for (Map.Entry<String, List<PermissionDefinition>> sectionEntry : bySection.entrySet()) {
             JPanel sectionPanel = createSectionPanel(sectionEntry.getKey());
-            List<PermissionDefinition> sectionPermissions = sectionEntry.getValue();
-            sectionPermissions.sort(Comparator.comparing(permission -> permission.label.toLowerCase()));
-            for (PermissionDefinition definition : sectionPermissions) {
-                if (checkBoxMap.containsKey(definition.key)) {
-                    continue;
+            Map<String, List<PermissionDefinition>> bySubsection = new TreeMap<>();
+            for (PermissionDefinition definition : sectionEntry.getValue()) {
+                String subsection = definition.subgroup == null || definition.subgroup.isBlank()
+                        ? "General"
+                        : definition.subgroup;
+                bySubsection.computeIfAbsent(subsection, ignored -> new ArrayList<>()).add(definition);
+            }
+
+            for (Map.Entry<String, List<PermissionDefinition>> subsectionEntry : bySubsection.entrySet()) {
+                JLabel subsectionLabel = new JLabel(subsectionEntry.getKey());
+                subsectionLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+                subsectionLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+                subsectionLabel.setBorder(BorderFactory.createEmptyBorder(8, 16, 2, 2));
+                sectionPanel.add(subsectionLabel);
+
+                List<PermissionDefinition> subsectionPermissions = subsectionEntry.getValue();
+                subsectionPermissions.sort(Comparator.comparing(permission -> permission.label.toLowerCase()));
+                for (PermissionDefinition definition : subsectionPermissions) {
+                    if (checkBoxMap.containsKey(definition.key)) {
+                        continue;
+                    }
+                    JCheckBox checkBox = buildPermissionCheckBox(
+                            definition.key,
+                            definition.label,
+                            definition.description
+                    );
+                    checkBoxMap.put(definition.key, checkBox);
+                    sectionPanel.add(createIndentedPermissionRow(checkBox));
                 }
-                JCheckBox checkBox = buildPermissionCheckBox(
-                        definition.key,
-                        definition.label,
-                        definition.description
-                );
-                checkBoxMap.put(definition.key, checkBox);
-                sectionPanel.add(checkBox);
             }
             targetPanel.add(sectionPanel);
         }
+    }
+
+    private String buildPermissionOrderSql(Set<String> permissionColumns) {
+        List<String> orderColumns = new ArrayList<>();
+        if (permissionColumns.contains("permission_group")) {
+            orderColumns.add("permission_group NULLS LAST");
+        }
+        if (permissionColumns.contains("permission_subgroup")) {
+            orderColumns.add("permission_subgroup NULLS LAST");
+        }
+        if (permissionColumns.contains("sort_order")) {
+            orderColumns.add("sort_order NULLS LAST");
+        }
+        orderColumns.add("display_name");
+        orderColumns.add("permission_key");
+        return String.join(", ", orderColumns);
+    }
+
+    private static int comparePermissionGroups(String first, String second) {
+        int firstRank = permissionGroupRank(first);
+        int secondRank = permissionGroupRank(second);
+        if (firstRank != secondRank) {
+            return Integer.compare(firstRank, secondRank);
+        }
+        return String.CASE_INSENSITIVE_ORDER.compare(first, second);
+    }
+
+    private static int permissionGroupRank(String group) {
+        for (int i = 0; i < PERMISSION_GROUP_ORDER.size(); i++) {
+            if (PERMISSION_GROUP_ORDER.get(i).equalsIgnoreCase(group)) {
+                return i;
+            }
+        }
+        return PERMISSION_GROUP_ORDER.size();
     }
 
     private String buildPermissionDisplayExpression(Set<String> permissionColumns) {
@@ -897,6 +1019,14 @@ public class Roles_Permission extends JFrame {
         return (group == null || group.isBlank()) ? "General" : group;
     }
 
+    private static String defaultPermissionSubgroup(String permissionKey) {
+        if (permissionKey == null) {
+            return "General";
+        }
+        String subgroup = DEFAULT_PERMISSION_SUBGROUPS.get(permissionKey.toUpperCase());
+        return (subgroup == null || subgroup.isBlank()) ? "General" : subgroup;
+    }
+
     private static Map<String, String> createDefaultPermissions() {
         Map<String, String> permissions = new LinkedHashMap<>();
         permissions.put("MAKE_SALE", "Make Sale");
@@ -930,10 +1060,17 @@ public class Roles_Permission extends JFrame {
         permissions.put("CREATE_CUSTOM_ORDER", "Create Custom Order");
         permissions.put("MANAGE_CUSTOM_ORDERS", "Manage Custom Orders");
         permissions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "View Assigned Custom Orders");
+        permissions.put("CUSTOM_ORDER_OVERRIDES", "Custom Order Overrides");
+        permissions.put("CUSTOM_ORDER_ITEMS", "Custom Order Items");
+        permissions.put("CUSTOM_ORDER_PRINT_MATERIALS", "Custom Order Print Materials");
         permissions.put("QUOTATIONS_ORDERS", "Quotations / Invoices");
         permissions.put("CREATE_QUOTATION", "Create Quotation");
         permissions.put("MANAGE_INVOICES", "Manage Invoices");
         permissions.put("POST_INVOICE_DELIVERY", "Post Invoice Delivery");
+        permissions.put("SALES_QUOTES_ORDERS", "Sales Quotes / Orders");
+        permissions.put("CREATE_SALES_QUOTE", "Create Sales Quote");
+        permissions.put("MANAGE_SALES_ORDERS", "Manage Sales Orders");
+        permissions.put("POST_SALES_ORDER_DELIVERY", "Post Sales Order Delivery");
         permissions.put("ORDERS_MANAGER_DASHBOARD", "Orders Manager Dashboard");
         permissions.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Custom Order Work Notifications");
         permissions.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Custom Order Exception Notifications");
@@ -955,6 +1092,8 @@ public class Roles_Permission extends JFrame {
         permissions.put("TIME_CLOCK_MANAGEMENT", "Time Clock Management");
         permissions.put("TIME_CLOCK_OVERRIDE", "Time Clock Override");
         permissions.put("PAYROLL_DASHBOARD", "Payroll Dashboard");
+        permissions.put("VIEW_EMPLOYEE_SCHEDULE", "View Employee Schedule");
+        permissions.put("EDIT_EMPLOYEE_SCHEDULE", "Edit Employee Schedule");
         permissions.put("ROLE_MANAGEMENT", "Roles & Permission");
         permissions.put("LOCATION_MANAGEMENT", "Location Management");
         permissions.put("CASH_DRAWER_MANAGEMENT", "Cash Drawer Management");
@@ -964,6 +1103,9 @@ public class Roles_Permission extends JFrame {
         permissions.put("SYNC_NOTIFICATIONS", "Sync Notifications");
         permissions.put("LOCAL_DEVICE_SETTINGS", "Workstation Settings");
         permissions.put("HARDWARE_SETUP", "Hardware Settings");
+        permissions.put("MAINTENANCE_MANAGEMENT", "Maintenance Management");
+        permissions.put("MACHINE_MANAGEMENT", "Machine List");
+        permissions.put("PARTS_MANAGEMENT", "Parts List");
         permissions.put("MAINTENANCE_TECHNICIAN", "Maintenance Technician");
         return permissions;
     }
@@ -1001,10 +1143,17 @@ public class Roles_Permission extends JFrame {
         descriptions.put("CREATE_CUSTOM_ORDER", "Allows creating new custom orders.");
         descriptions.put("MANAGE_CUSTOM_ORDERS", "Allows full management access across all custom orders.");
         descriptions.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Allows viewing custom orders assigned to the logged-in user.");
+        descriptions.put("CUSTOM_ORDER_OVERRIDES", "Allows approving custom-order overrides.");
+        descriptions.put("CUSTOM_ORDER_ITEMS", "Allows managing items used in custom orders.");
+        descriptions.put("CUSTOM_ORDER_PRINT_MATERIALS", "Allows managing print materials used in custom orders.");
         descriptions.put("QUOTATIONS_ORDERS", "Allows opening the quotations and invoices workflow.");
         descriptions.put("CREATE_QUOTATION", "Allows creating and issuing customer quotations.");
         descriptions.put("MANAGE_INVOICES", "Allows accepting quotations, taking invoice payments, and managing invoices.");
         descriptions.put("POST_INVOICE_DELIVERY", "Allows posting partial or full invoice deliveries.");
+        descriptions.put("SALES_QUOTES_ORDERS", "Allows opening the quotations and invoices workflow.");
+        descriptions.put("CREATE_SALES_QUOTE", "Allows creating and issuing customer quotations.");
+        descriptions.put("MANAGE_SALES_ORDERS", "Allows accepting quotations, taking invoice payments, and managing invoices.");
+        descriptions.put("POST_SALES_ORDER_DELIVERY", "Allows posting partial or full invoice deliveries.");
         descriptions.put("ORDERS_MANAGER_DASHBOARD", "Allows access to manager-level custom order dashboard tools.");
         descriptions.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Allows receiving operational notifications for due, overdue, ready, unassigned, and balance-due custom orders.");
         descriptions.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Allows receiving custom-order exception notifications such as recent refunds.");
@@ -1026,6 +1175,8 @@ public class Roles_Permission extends JFrame {
         descriptions.put("TIME_CLOCK_MANAGEMENT", "Allows viewing and correcting staff time clock records.");
         descriptions.put("TIME_CLOCK_OVERRIDE", "Allows approving additional employee time clock sessions after a completed session on the same day.");
         descriptions.put("PAYROLL_DASHBOARD", "Allows viewing payroll and labor summary dashboards.");
+        descriptions.put("VIEW_EMPLOYEE_SCHEDULE", "Allows viewing who is scheduled to work each day.");
+        descriptions.put("EDIT_EMPLOYEE_SCHEDULE", "Allows adding and removing employees from the weekly schedule.");
         descriptions.put("ROLE_MANAGEMENT", "Allows editing role definitions and assigning permissions.");
         descriptions.put("LOCATION_MANAGEMENT", "Allows creating and editing store locations.");
         descriptions.put("CASH_DRAWER_MANAGEMENT", "Allows configuring cash drawer workflows and sessions.");
@@ -1035,6 +1186,9 @@ public class Roles_Permission extends JFrame {
         descriptions.put("SYNC_NOTIFICATIONS", "Allows receiving sync health notifications for offline cloud, failed events, conflicts, and backlogs.");
         descriptions.put("LOCAL_DEVICE_SETTINGS", "Allows changing workstation-specific app/receipt settings.");
         descriptions.put("HARDWARE_SETUP", "Allows configuring scanner, printer, and hardware integration settings.");
+        descriptions.put("MAINTENANCE_MANAGEMENT", "Allows managing maintenance tickets and workflows.");
+        descriptions.put("MACHINE_MANAGEMENT", "Allows managing the machine list used for maintenance.");
+        descriptions.put("PARTS_MANAGEMENT", "Allows managing maintenance parts and receiving maintenance part reorder notifications.");
         descriptions.put("MAINTENANCE_TECHNICIAN", "Allows receiving open maintenance ticket notifications and working maintenance tickets.");
         return descriptions;
     }
@@ -1050,34 +1204,41 @@ public class Roles_Permission extends JFrame {
         groups.put("SALE_RETURN_APPROVAL_SETTINGS", "Sales");
         groups.put("CHANGE_SALE_ITEM_PRICE", "Sales");
         groups.put("PROCESS_RETURNS", "Sales");
-        groups.put("END_OF_DAY", "Administration");
-        groups.put("BALANCE_DRAWER", "Sales");
-        groups.put("BALANCE_SHEET", "Sales");
+        groups.put("END_OF_DAY", "Operations");
+        groups.put("BALANCE_DRAWER", "Operations");
+        groups.put("BALANCE_SHEET", "Operations");
         groups.put("VIEW_SALES", "Sales");
-        groups.put("CUSTOMER_ACCOUNTS", "Sales");
-        groups.put("SET_CREDIT_LIMIT", "Sales");
-        groups.put("EDIT_ACCOUNT_NUMBER", "Sales");
-        groups.put("CREATE_CUSTOM_ORDER", "Orders");
-        groups.put("MANAGE_CUSTOM_ORDERS", "Orders");
-        groups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Orders");
-        groups.put("QUOTATIONS_ORDERS", "Orders");
-        groups.put("CREATE_QUOTATION", "Orders");
-        groups.put("MANAGE_INVOICES", "Orders");
-        groups.put("POST_INVOICE_DELIVERY", "Orders");
-        groups.put("ORDERS_MANAGER_DASHBOARD", "Orders");
-        groups.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Orders");
-        groups.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Orders");
-        groups.put("ORDERS_END_OF_DAY", "Administration");
-        groups.put("CUSTOM_ORDER_REFUNDS", "Orders");
-        groups.put("CUSTOM_ORDER_LINE_RETURNS", "Orders");
-        groups.put("CUSTOM_ORDER_LINE_DELIVERY", "Orders");
-        groups.put("CUSTOM_ORDER_LINE_DISCOUNT", "Orders");
-        groups.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Orders");
-        groups.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Orders");
-        groups.put("CUSTOM_ORDER_REFUND_APPROVAL", "Orders");
-        groups.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Orders");
-        groups.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Orders");
-        groups.put("CUSTOM_ORDER_CANCEL", "Orders");
+        groups.put("CUSTOMER_ACCOUNTS", "Customers");
+        groups.put("SET_CREDIT_LIMIT", "Customers");
+        groups.put("EDIT_ACCOUNT_NUMBER", "Customers");
+        groups.put("CREATE_CUSTOM_ORDER", "Custom Orders");
+        groups.put("MANAGE_CUSTOM_ORDERS", "Custom Orders");
+        groups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_OVERRIDES", "Custom Orders");
+        groups.put("CUSTOM_ORDER_ITEMS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_PRINT_MATERIALS", "Custom Orders");
+        groups.put("QUOTATIONS_ORDERS", "Quotations & Invoices");
+        groups.put("CREATE_QUOTATION", "Quotations & Invoices");
+        groups.put("MANAGE_INVOICES", "Quotations & Invoices");
+        groups.put("POST_INVOICE_DELIVERY", "Quotations & Invoices");
+        groups.put("SALES_QUOTES_ORDERS", "Quotations & Invoices");
+        groups.put("CREATE_SALES_QUOTE", "Quotations & Invoices");
+        groups.put("MANAGE_SALES_ORDERS", "Quotations & Invoices");
+        groups.put("POST_SALES_ORDER_DELIVERY", "Quotations & Invoices");
+        groups.put("ORDERS_MANAGER_DASHBOARD", "Custom Orders");
+        groups.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Custom Orders");
+        groups.put("ORDERS_END_OF_DAY", "Custom Orders");
+        groups.put("CUSTOM_ORDER_REFUNDS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_LINE_RETURNS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_LINE_DELIVERY", "Custom Orders");
+        groups.put("CUSTOM_ORDER_LINE_DISCOUNT", "Custom Orders");
+        groups.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Custom Orders");
+        groups.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_REFUND_APPROVAL", "Custom Orders");
+        groups.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Custom Orders");
+        groups.put("CUSTOM_ORDER_CANCEL", "Custom Orders");
 
         groups.put("NEW_ITEM", "Inventory");
         groups.put("EDIT_ITEM", "Inventory");
@@ -1100,17 +1261,144 @@ public class Roles_Permission extends JFrame {
         groups.put("TIME_CLOCK_MANAGEMENT", "People");
         groups.put("TIME_CLOCK_OVERRIDE", "People");
         groups.put("PAYROLL_DASHBOARD", "People");
+        groups.put("VIEW_EMPLOYEE_SCHEDULE", "People");
+        groups.put("EDIT_EMPLOYEE_SCHEDULE", "People");
 
         groups.put("ROLE_MANAGEMENT", "Administration");
         groups.put("LOCATION_MANAGEMENT", "Administration");
-        groups.put("CASH_DRAWER_MANAGEMENT", "Administration");
+        groups.put("CASH_DRAWER_MANAGEMENT", "Operations");
         groups.put("COMPANY_PREFERENCES", "Administration");
-        groups.put("CHANGE_STORE", "Administration");
-        groups.put("VIEW_REPORTS", "Administration");
-        groups.put("SYNC_NOTIFICATIONS", "Administration");
-        groups.put("LOCAL_DEVICE_SETTINGS", "Administration");
-        groups.put("HARDWARE_SETUP", "Administration");
-        groups.put("MAINTENANCE_TECHNICIAN", "Inventory");
+        groups.put("CHANGE_STORE", "Operations");
+        groups.put("VIEW_REPORTS", "Operations");
+        groups.put("SYNC_NOTIFICATIONS", "Operations");
+        groups.put("LOCAL_DEVICE_SETTINGS", "Operations");
+        groups.put("HARDWARE_SETUP", "Operations");
+        groups.put("APP_UPDATES", "Operations");
+        groups.put("MAINTENANCE_TECHNICIAN", "Maintenance");
+
+        groups.put("INVENTORY", "Inventory");
+        groups.put("RECEIVING", "Inventory");
+        groups.put("VERIFY_STORE_TRANSFER_QUANTITY", "Inventory");
+        groups.put("ADJUST_INVENTORY_QUANTITY", "Inventory");
+        groups.put("VIEW_ALL_STORES_INVENTORY", "Inventory");
+        groups.put("MAINTENANCE_MANAGEMENT", "Maintenance");
+        groups.put("MACHINE_MANAGEMENT", "Maintenance");
+        groups.put("PARTS_MANAGEMENT", "Maintenance");
+        groups.put("CUSTOMERS", "Customers");
+        groups.put("MANAGE_CUSTOMERS", "Customers");
+        groups.put("EDIT_CUSTOMER_CREDIT_LIMIT", "Customers");
+        groups.put("EMPLOYEES", "People");
+        groups.put("ROLE_PERMISSIONS", "Administration");
+        groups.put("DEVICE_RECEIPT_SETTINGS", "Operations");
+        groups.put("DEVICE_MANAGEMENT", "Administration");
+        groups.put("RETURNS", "Sales");
+        groups.put("VIEW_SALE_AUDIT", "Sales");
+        groups.put("EXPORT_SALE_AUDIT", "Sales");
+        groups.put("CUSTOM_ORDER_OVERRIDES", "Custom Orders");
         return groups;
+    }
+
+    private static Map<String, String> createDefaultPermissionSubgroups() {
+        Map<String, String> subgroups = new LinkedHashMap<>();
+
+        subgroups.put("MAKE_SALE", "Checkout");
+        subgroups.put("VIEW_SALES", "Sales History");
+        subgroups.put("PROCESS_RETURNS", "Returns");
+        subgroups.put("APPLY_SALE_DISCOUNT", "Discounts");
+        subgroups.put("CHANGE_SALE_ITEM_PRICE", "Discounts");
+        subgroups.put("SALE_DISCOUNT_OVERRIDE", "Overrides");
+        subgroups.put("RETURN_OVERRIDE", "Overrides");
+        subgroups.put("SALE_DISCOUNT_LIMIT_SETTINGS", "Settings");
+        subgroups.put("SALE_RETURN_APPROVAL_SETTINGS", "Settings");
+        subgroups.put("QUOTATIONS_ORDERS", "General");
+        subgroups.put("CREATE_QUOTATION", "General");
+        subgroups.put("MANAGE_INVOICES", "General");
+        subgroups.put("POST_INVOICE_DELIVERY", "General");
+        subgroups.put("SALES_QUOTES_ORDERS", "General");
+        subgroups.put("CREATE_SALES_QUOTE", "General");
+        subgroups.put("MANAGE_SALES_ORDERS", "General");
+        subgroups.put("POST_SALES_ORDER_DELIVERY", "General");
+
+        subgroups.put("CREATE_CUSTOM_ORDER", "Order Access");
+        subgroups.put("MANAGE_CUSTOM_ORDERS", "Order Access");
+        subgroups.put("VIEW_ASSIGNED_CUSTOM_ORDERS", "Order Access");
+        subgroups.put("ORDERS_MANAGER_DASHBOARD", "Management");
+        subgroups.put("ORDERS_END_OF_DAY", "Reports");
+        subgroups.put("CUSTOM_ORDER_WORK_NOTIFICATIONS", "Notifications");
+        subgroups.put("CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS", "Notifications");
+        subgroups.put("CUSTOM_ORDER_PRODUCTION_STEPS", "Workflow");
+        subgroups.put("CUSTOM_ORDER_LINE_DELIVERY", "Workflow");
+        subgroups.put("CUSTOM_ORDER_REFUNDS", "Refunds & Returns");
+        subgroups.put("CUSTOM_ORDER_LINE_RETURNS", "Refunds & Returns");
+        subgroups.put("CUSTOM_ORDER_CANCEL", "Refunds & Returns");
+        subgroups.put("CUSTOM_ORDER_LINE_DISCOUNT", "Pricing & Deposits");
+        subgroups.put("CUSTOM_ORDER_DEPOSIT_OVERRIDE", "Pricing & Deposits");
+        subgroups.put("CUSTOM_ORDER_DEPOSIT_SETTINGS", "Settings");
+        subgroups.put("CUSTOM_ORDER_REFUND_APPROVAL", "Approvals");
+        subgroups.put("CUSTOM_ORDER_REFUND_APPROVAL_SETTINGS", "Settings");
+        subgroups.put("CUSTOM_ORDER_OVERRIDES", "Approvals");
+        subgroups.put("CUSTOM_ORDER_ITEMS", "Order Items");
+        subgroups.put("CUSTOM_ORDER_PRINT_MATERIALS", "Order Items");
+
+        subgroups.put("NEW_ITEM", "Item Maintenance");
+        subgroups.put("EDIT_ITEM", "Item Maintenance");
+        subgroups.put("VIEW_INVENTORY", "Item Visibility");
+        subgroups.put("VIEW_ITEM_DETAILS", "Item Visibility");
+        subgroups.put("VIEW_COST_PRICE", "Sensitive Fields");
+        subgroups.put("VIEW_VENDOR", "Sensitive Fields");
+        subgroups.put("VIEW_CREATED_BY", "Sensitive Fields");
+        subgroups.put("RECEIVING_INVENTORY", "Receiving");
+        subgroups.put("RECEIVING_STOCK_OVERRIDE", "Receiving");
+        subgroups.put("VIEW_RECEIVING_HISTORY", "Receiving");
+        subgroups.put("STORE_TRANSFER", "Transfers");
+        subgroups.put("MANUAL_ADJUSTMENT", "Adjustments");
+        subgroups.put("DEPARTMENT_MANAGEMENT", "Setup");
+        subgroups.put("VENDOR_MANAGEMENT", "Setup");
+        subgroups.put("INVENTORY_STOCK_NOTIFICATIONS", "Notifications");
+        subgroups.put("PARTS_MANAGEMENT", "General");
+        subgroups.put("MAINTENANCE_TECHNICIAN", "General");
+
+        subgroups.put("CUSTOMER_ACCOUNTS", "Accounts");
+        subgroups.put("SET_CREDIT_LIMIT", "Credit Controls");
+        subgroups.put("EDIT_ACCOUNT_NUMBER", "Account Controls");
+
+        subgroups.put("END_OF_DAY", "Closeout");
+        subgroups.put("BALANCE_DRAWER", "Cash Drawer");
+        subgroups.put("BALANCE_SHEET", "Cash Drawer");
+        subgroups.put("CASH_DRAWER_MANAGEMENT", "Cash Drawer");
+        subgroups.put("CHANGE_STORE", "Store Context");
+        subgroups.put("VIEW_REPORTS", "Reports");
+        subgroups.put("SYNC_NOTIFICATIONS", "Sync");
+        subgroups.put("LOCAL_DEVICE_SETTINGS", "Device & Hardware");
+        subgroups.put("HARDWARE_SETUP", "Device & Hardware");
+        subgroups.put("APP_UPDATES", "App Updates");
+
+        subgroups.put("EMPLOYEE_MANAGEMENT", "Employees");
+        subgroups.put("TIME_CLOCK", "Time Clock");
+        subgroups.put("TIME_CLOCK_MANAGEMENT", "Time Clock");
+        subgroups.put("TIME_CLOCK_OVERRIDE", "Time Clock");
+        subgroups.put("PAYROLL_DASHBOARD", "Payroll");
+        subgroups.put("VIEW_EMPLOYEE_SCHEDULE", "Scheduling");
+        subgroups.put("EDIT_EMPLOYEE_SCHEDULE", "Scheduling");
+
+        subgroups.put("ROLE_MANAGEMENT", "Roles & Security");
+        subgroups.put("LOCATION_MANAGEMENT", "Locations");
+        subgroups.put("COMPANY_PREFERENCES", "Company Setup");
+        subgroups.put("DEVICE_MANAGEMENT", "Devices");
+
+        subgroups.put("INVENTORY", "Item Visibility");
+        subgroups.put("RECEIVING", "Receiving");
+        subgroups.put("VERIFY_STORE_TRANSFER_QUANTITY", "Transfers");
+        subgroups.put("ADJUST_INVENTORY_QUANTITY", "Adjustments");
+        subgroups.put("VIEW_ALL_STORES_INVENTORY", "Item Visibility");
+        subgroups.put("MAINTENANCE_MANAGEMENT", "General");
+        subgroups.put("MACHINE_MANAGEMENT", "General");
+        subgroups.put("CUSTOMERS", "Accounts");
+        subgroups.put("MANAGE_CUSTOMERS", "Accounts");
+        subgroups.put("EDIT_CUSTOMER_CREDIT_LIMIT", "Credit Controls");
+        subgroups.put("EMPLOYEES", "Employees");
+        subgroups.put("ROLE_PERMISSIONS", "Roles & Security");
+        subgroups.put("DEVICE_RECEIPT_SETTINGS", "Device & Hardware");
+        return subgroups;
     }
 }

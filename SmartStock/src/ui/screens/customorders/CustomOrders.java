@@ -12,6 +12,7 @@ import services.CashDrawerService;
 import services.CustomOrderAuditService;
 import services.CustomOrderDataService;
 import services.DeviceContextService;
+import services.EmailOutboxService;
 import services.ManagerApprovalService;
 import services.CustomOrderDataService.CustomItemOption;
 import services.CustomOrderDataService.CustomerOption;
@@ -637,7 +638,7 @@ public class CustomOrders extends JFrame {
         printChargeField.setEnabled(hasMaterial);
         printLineCountField.setEnabled(false);
         if (!hasMaterial) {
-            printChargeField.setText("0.00");
+            printChargeField.setText("0");
             printLineCountField.setText("1");
             return;
         }
@@ -675,7 +676,7 @@ public class CustomOrders extends JFrame {
         }
         PrintMaterialOption material = printMaterialBox == null ? null : (PrintMaterialOption) printMaterialBox.getSelectedItem();
         if (material == null || material.printMaterialId() == null) {
-            setTextIfDifferent(printChargeField, "0.00");
+            setTextIfDifferent(printChargeField, "0");
             printChargeField.setEnabled(false);
             return;
         }
@@ -718,7 +719,7 @@ public class CustomOrders extends JFrame {
         if (printSizePresetBox != null) {
             printSizePresetBox.setSelectedIndex(0);
         }
-        printChargeField.setText("0.00");
+        printChargeField.setText("0");
         printLineCountField.setText("1");
         printDescriptionField.setText("");
         updateOrderTotal();
@@ -1124,7 +1125,7 @@ public class CustomOrders extends JFrame {
             return;
         }
         if ("ACCOUNT".equals(selectedPaymentMethod) && upfrontPaid.compareTo(BigDecimal.ZERO) > 0) {
-            JOptionPane.showMessageDialog(this, "Account charges use the unpaid balance. Leave upfront payment at 0.00, or choose Cash/Card/Cheque/MMG for an upfront payment.");
+            JOptionPane.showMessageDialog(this, "Account charges use the unpaid balance. Leave upfront payment at 0, or choose Cash/Card/Cheque/MMG for an upfront payment.");
             return;
         }
         String paymentReference = paymentReferenceField.getText().trim();
@@ -1174,7 +1175,8 @@ public class CustomOrders extends JFrame {
                     buildOrderLineRequests()
             ));
                 String printMessage = printCustomOrderSlipIfEnabled(orderNumber);
-                JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved." + printMessage);
+                String emailMessage = queueCustomOrderConfirmationIfEnabled(orderNumber);
+                JOptionPane.showMessageDialog(this, "Custom order " + orderNumber + " saved." + printMessage + emailMessage);
                 clearOrderEntry();
                 loadOrders();
         } catch (SQLException ex) {
@@ -1192,6 +1194,18 @@ public class CustomOrders extends JFrame {
             return "\n\nOrder slip sent to printer.";
         } catch (Exception ex) {
             return "\n\nOrder slip could not be printed: " + ex.getMessage();
+        }
+    }
+
+    private String queueCustomOrderConfirmationIfEnabled(String orderNumber) {
+        try {
+            EmailOutboxService.QueueResult result = EmailOutboxService.queueCustomOrderConfirmation(orderNumber, true);
+            if (result.queued()) {
+                return "\n\nOrder confirmation email queued. Outbox #" + result.outboxId() + ".";
+            }
+            return result.skipped() ? "" : "\n\nOrder confirmation email was not queued: " + result.message();
+        } catch (Exception ex) {
+            return "\n\nOrder confirmation email could not be queued: " + ex.getMessage();
         }
     }
 
@@ -2877,7 +2891,7 @@ public class CustomOrders extends JFrame {
         if (printSizePresetBox != null) {
             printSizePresetBox.setSelectedIndex(0);
         }
-        printChargeField.setText("0.00");
+        printChargeField.setText("0");
         printLineCountField.setText("1");
         printLineCountField.setEnabled(false);
         printDescriptionField.setText("");
@@ -2986,7 +3000,7 @@ public class CustomOrders extends JFrame {
         if (printSizePresetBox != null) {
             printSizePresetBox.setSelectedIndex(0);
         }
-        printChargeField.setText("0.00");
+        printChargeField.setText("0");
         printLineCountField.setText("1");
         printDescriptionField.setText("");
     }
@@ -3815,7 +3829,7 @@ public class CustomOrders extends JFrame {
         }
         BigDecimal areaInSquareMeters = toMeters(width, item.dimensionUnit()).multiply(toMeters(length, item.dimensionUnit()));
         BigDecimal area = fromSquareMeters(areaInSquareMeters, item.areaPriceUnit());
-        BigDecimal total = area.multiply(areaPrice).setScale(2, java.math.RoundingMode.HALF_UP);
+        BigDecimal total = utils.CurrencyFormatter.normalize(area.multiply(areaPrice));
         return new AreaCalculation(width, length, item.dimensionUnit(), area, item.areaPriceUnit(), areaPrice, total);
     }
 
@@ -3917,13 +3931,13 @@ public class CustomOrders extends JFrame {
         if (printAddonModel != null) {
             printAddonModel.setRowCount(0);
         }
-        printChargeField.setText("0.00");
+        printChargeField.setText("0");
         printLineCountField.setText("1");
         printLineCountField.setEnabled(false);
         printDescriptionField.setText("");
         widthField.setText("");
         lengthField.setText("");
-        upfrontPaymentField.setText("0.00");
+        upfrontPaymentField.setText("0");
         paymentReferenceField.setText("");
         if (depositOverrideReasonField != null) {
             depositOverrideReasonField.setText("");
@@ -4059,7 +4073,7 @@ public class CustomOrders extends JFrame {
     }
 
     private BigDecimal parseMoneyValue(String value) {
-        return new BigDecimal(value.replace("$", "").replace(",", "").trim());
+        return utils.CurrencyFormatter.normalize(new BigDecimal(value.replace("$", "").replace(",", "").trim()));
     }
 
     private BigDecimal parseNullableMoneyValue(Object value) {
@@ -4080,7 +4094,7 @@ public class CustomOrders extends JFrame {
         if (amount == null) {
             return "";
         }
-        return "$" + amount.setScale(2, java.math.RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.format(amount);
     }
 
     private String formatPayment(String method, String status) {

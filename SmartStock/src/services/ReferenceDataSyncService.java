@@ -31,7 +31,9 @@ public final class ReferenceDataSyncService {
             "company_customization",
             "users",
             "user_locations",
+            "employee_schedule_assignments",
             "devices",
+            "device_sessions",
             "categories",
             "vendors",
             "products",
@@ -39,7 +41,10 @@ public final class ReferenceDataSyncService {
             "inventory",
             "customer_accounts",
             "cash_drawers",
-            "cash_drawer_device_assignments"
+            "cash_drawer_device_assignments",
+            "change_basket_updates",
+            "email_outbox",
+            "email_outbox_events"
     );
     private static final List<String> CLOUD_PULL_ORDER = List.of(
             "roles",
@@ -53,6 +58,7 @@ public final class ReferenceDataSyncService {
             "customer_types",
             "users",
             "user_locations",
+            "employee_schedule_assignments",
             "devices",
             "device_sessions",
             "categories",
@@ -65,6 +71,7 @@ public final class ReferenceDataSyncService {
             "cash_drawer_device_assignments",
             "cash_drawer_sessions",
             "cash_drawer_handovers",
+            "change_basket_updates",
             "receiving_batches",
             "sales",
             "sale_items",
@@ -103,9 +110,13 @@ public final class ReferenceDataSyncService {
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
+            "cheque_bank_deposits",
             "expense_categories",
             "expenses",
             "employee_time_clock",
+            "employee_payroll_bonuses",
+            "payroll_payments",
+            "bank_transactions",
             "held_carts",
             "held_cart_items",
             "store_transfers",
@@ -114,7 +125,9 @@ public final class ReferenceDataSyncService {
             "maintenance_parts",
             "maintenance_machine_parts",
             "maintenance_tickets",
-            "wifi_sessions"
+            "wifi_sessions",
+            "email_outbox",
+            "email_outbox_events"
     );
     private static final List<String> LOCAL_PUSH_ORDER = List.of(
             "roles",
@@ -127,11 +140,14 @@ public final class ReferenceDataSyncService {
             "company_customization",
             "users",
             "user_locations",
+            "employee_schedule_assignments",
+            "device_sessions",
             "cash_drawers",
             "cash_drawer_device_assignments",
             "customer_accounts",
             "cash_drawer_sessions",
             "cash_drawer_handovers",
+            "change_basket_updates",
             "products",
             "product_barcodes",
             "receiving_batches",
@@ -173,9 +189,13 @@ public final class ReferenceDataSyncService {
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "balance_sheet_submissions",
+            "cheque_bank_deposits",
             "expense_categories",
             "expenses",
             "employee_time_clock",
+            "employee_payroll_bonuses",
+            "payroll_payments",
+            "bank_transactions",
             "held_carts",
             "held_cart_items",
             "store_transfers",
@@ -183,7 +203,9 @@ public final class ReferenceDataSyncService {
             "maintenance_machines",
             "maintenance_parts",
             "maintenance_machine_parts",
-            "maintenance_tickets"
+            "maintenance_tickets",
+            "email_outbox",
+            "email_outbox_events"
     );
     private static final Set<String> UPDATED_AT_SCHEMA_READY = ConcurrentHashMap.newKeySet();
     private static final Set<String> TOMBSTONE_SCHEMA_READY = ConcurrentHashMap.newKeySet();
@@ -193,6 +215,7 @@ public final class ReferenceDataSyncService {
     }
 
     public static int refreshFromCloud(Connection local, Connection cloud) throws SQLException {
+        ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
         ensureWorkflowSyncIdentitySchema(local, cloud);
         int copied = 0;
@@ -209,6 +232,7 @@ public final class ReferenceDataSyncService {
 
     public static int pullReferenceData(Connection local, Connection cloud) throws SQLException {
         ensureMissingCloudTables(local, cloud);
+        ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
         ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
@@ -229,6 +253,7 @@ public final class ReferenceDataSyncService {
 
     public static int pullExistingLocationHistory(Connection local, Connection cloud, Integer locationId) throws SQLException {
         ensureMissingCloudTables(local, cloud);
+        ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
         ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
@@ -242,6 +267,7 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pushLocalOperationalChanges(Connection local, Connection cloud) throws SQLException {
+        ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
         ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
@@ -308,6 +334,11 @@ public final class ReferenceDataSyncService {
     private static void ensureQuotationInvoiceSyncSchema(Connection local, Connection cloud) throws SQLException {
         QuotationInvoiceSchemaInstaller.ensureSchema(local);
         QuotationInvoiceSchemaInstaller.ensureSchema(cloud);
+    }
+
+    private static void ensureEmailSyncSchema(Connection local, Connection cloud) throws SQLException {
+        EmailSchemaInstaller.ensureSchema(local);
+        EmailSchemaInstaller.ensureSchema(cloud);
     }
 
     public static void recordTombstone(Connection conn, String tableName, Map<String, ?> keyData) throws SQLException {
@@ -1160,8 +1191,17 @@ public final class ReferenceDataSyncService {
                         cloudId = localId;
                         syncUuid = cloudSyncUuid;
                     } else {
-                        cloudId = insertUuidKeyedRow(cloud, table, idColumn, columns, rs, true);
-                        changed++;
+                        cloudId = findSuppressedDuplicateSaleAuditId(cloud, table, idColumn, columns, rs);
+                        if (cloudId == null) {
+                            cloudId = insertUuidKeyedRow(cloud, table, idColumn, columns, rs, true);
+                            changed++;
+                        } else {
+                            String cloudSyncUuid = cloudUuidById.get(cloudId);
+                            if (cloudSyncUuid != null && !cloudSyncUuid.isBlank() && !cloudSyncUuid.equals(syncUuid)) {
+                                updateSingleUuidById(local, table, idColumn, localId, cloudSyncUuid);
+                                syncUuid = cloudSyncUuid;
+                            }
+                        }
                     }
                     cloudExistingIds.add(cloudId);
                     cloudIdsByUuid.put(syncUuid, cloudId);
@@ -1450,6 +1490,41 @@ public final class ReferenceDataSyncService {
             }
         }
         throw new SQLException("Insert did not return " + idColumn + " for " + table + ".");
+    }
+
+    private static Long findSuppressedDuplicateSaleAuditId(Connection target, String table, String idColumn,
+                                                           List<String> columns, ResultSet rs) throws SQLException {
+        if (!"sale_audit_log".equals(table)
+                || !columns.contains("action_type")
+                || !columns.contains("action_scope")
+                || !columns.contains("sale_id")
+                || !columns.contains("sale_item_id")) {
+            return null;
+        }
+        String actionType = rs.getString(columns.indexOf("action_type") + 1);
+        String actionScope = rs.getString(columns.indexOf("action_scope") + 1);
+        if (!"DB_UPDATE".equals(actionType) || !("sales".equals(actionScope) || "sale_items".equals(actionScope))) {
+            return null;
+        }
+        Object saleId = rs.getObject(columns.indexOf("sale_id") + 1);
+        Object saleItemId = rs.getObject(columns.indexOf("sale_item_id") + 1);
+        try (PreparedStatement ps = target.prepareStatement("""
+                SELECT sale_audit_id
+                FROM sale_audit_log
+                WHERE action_type = 'DB_UPDATE'
+                  AND action_scope = ?
+                  AND sale_id IS NOT DISTINCT FROM ?
+                  AND sale_item_id IS NOT DISTINCT FROM ?
+                ORDER BY sale_audit_id
+                LIMIT 1
+                """)) {
+            ps.setString(1, actionScope);
+            ps.setObject(2, saleId);
+            ps.setObject(3, saleItemId);
+            try (ResultSet existing = ps.executeQuery()) {
+                return existing.next() ? existing.getLong(idColumn) : null;
+            }
+        }
     }
 
     private static boolean rowLooksLikeSameSalesDocumentChild(Connection target, String table, String idColumn,
@@ -2721,6 +2796,15 @@ public final class ReferenceDataSyncService {
                       AND r.location_id = (tombstone.key_data->>'location_id')::integer
                       AND r.updated_at <= tombstone.deleted_at
                     """;
+            case "employee_schedule_assignments" -> """
+                    WITH tombstone AS (SELECT ?::jsonb AS key_data, ?::timestamptz AS deleted_at)
+                    DELETE FROM employee_schedule_assignments r
+                    USING tombstone
+                    WHERE r.location_id = (tombstone.key_data->>'location_id')::integer
+                      AND r.user_id = (tombstone.key_data->>'user_id')::integer
+                      AND r.work_date = (tombstone.key_data->>'work_date')::date
+                      AND r.updated_at <= tombstone.deleted_at
+                    """;
             case "product_barcodes" -> """
                     WITH tombstone AS (SELECT ?::jsonb AS key_data, ?::timestamptz AS deleted_at)
                     DELETE FROM product_barcodes r
@@ -2760,8 +2844,18 @@ public final class ReferenceDataSyncService {
         String sql = "ON CONFLICT (" + joinIdentifiers(conflictKeys) + ") DO UPDATE SET " + updates;
         if (syncByUpdatedAt(table, columns)) {
             sql += " WHERE EXCLUDED.updated_at > " + quote(table) + ".updated_at";
+        } else {
+            sql += " WHERE " + valuesChangedPredicate(table, updateColumns);
         }
         return sql;
+    }
+
+    private static String valuesChangedPredicate(String table, List<String> columns) {
+        StringJoiner predicate = new StringJoiner(" OR ");
+        for (String column : columns) {
+            predicate.add(quote(table) + "." + quote(column) + " IS DISTINCT FROM EXCLUDED." + quote(column));
+        }
+        return predicate.toString();
     }
 
     private static boolean syncByUpdatedAt(String table, List<String> columns) {
@@ -2800,6 +2894,12 @@ public final class ReferenceDataSyncService {
         }
         if ("user_locations".equals(table) && columns.contains("user_id") && columns.contains("location_id")) {
             return List.of("user_id", "location_id");
+        }
+        if ("employee_schedule_assignments".equals(table)
+                && columns.contains("location_id")
+                && columns.contains("user_id")
+                && columns.contains("work_date")) {
+            return List.of("location_id", "user_id", "work_date");
         }
         if ("inventory".equals(table) && columns.contains("product_id") && columns.contains("location_id")) {
             return List.of("product_id", "location_id");
@@ -2863,7 +2963,10 @@ public final class ReferenceDataSyncService {
                 || "custom_order_line_production_history".equals(table)
                 || "custom_order_line_returns".equals(table)
                 || "custom_order_item_movements".equals(table)
-                || "custom_order_audit_log".equals(table);
+                || "custom_order_audit_log".equals(table)
+                || "employee_payroll_bonuses".equals(table)
+                || "email_outbox".equals(table)
+                || "email_outbox_events".equals(table);
     }
 
     private static boolean isWorkflowAppendOnlyTable(String table) {
@@ -2886,7 +2989,9 @@ public final class ReferenceDataSyncService {
                 || "custom_order_line_production_history".equals(table)
                 || "custom_order_line_returns".equals(table)
                 || "custom_order_item_movements".equals(table)
-                || "custom_order_audit_log".equals(table);
+                || "custom_order_audit_log".equals(table)
+                || "employee_payroll_bonuses".equals(table)
+                || "email_outbox_events".equals(table);
     }
 
     private static boolean hasUniqueConflictTarget(Connection conn, String table, List<String> conflictColumns) throws SQLException {
@@ -2979,26 +3084,29 @@ public final class ReferenceDataSyncService {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
             stmt.executeUpdate("ALTER TABLE devices ADD COLUMN IF NOT EXISTS session_count BIGINT NOT NULL DEFAULT 0");
-            stmt.executeUpdate("""
-                    CREATE OR REPLACE FUNCTION set_devices_updated_at()
-                    RETURNS TRIGGER AS $$
-                    BEGIN
-                        IF TG_OP = 'INSERT' THEN
-                            NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
-                        ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
-                            NEW.updated_at = CURRENT_TIMESTAMP;
-                        END IF;
-                        RETURN NEW;
-                    END;
-                    $$ LANGUAGE plpgsql
-                    """);
-            stmt.executeUpdate("DROP TRIGGER IF EXISTS devices_set_updated_at ON devices");
-            stmt.executeUpdate("""
-                    CREATE OR REPLACE TRIGGER devices_set_updated_at
-                    BEFORE INSERT OR UPDATE ON devices
-                    FOR EACH ROW
-                    EXECUTE FUNCTION set_devices_updated_at()
-                    """);
+            if (!functionExists(conn, "set_devices_updated_at")) {
+                stmt.executeUpdate("""
+                        CREATE FUNCTION set_devices_updated_at()
+                        RETURNS TRIGGER AS $$
+                        BEGIN
+                            IF TG_OP = 'INSERT' THEN
+                                NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+                            ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+                                NEW.updated_at = CURRENT_TIMESTAMP;
+                            END IF;
+                            RETURN NEW;
+                        END;
+                        $$ LANGUAGE plpgsql
+                        """);
+            }
+            if (!triggerExists(conn, "devices", "devices_set_updated_at")) {
+                stmt.executeUpdate("""
+                        CREATE TRIGGER devices_set_updated_at
+                        BEFORE INSERT OR UPDATE ON devices
+                        FOR EACH ROW
+                        EXECUTE FUNCTION set_devices_updated_at()
+                        """);
+            }
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS devices_updated_at_idx ON devices(updated_at DESC)");
             if (tableExists(conn, "device_sessions")) {
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS device_sessions_login_time_idx ON device_sessions(login_time DESC)");
@@ -3013,42 +3121,45 @@ public final class ReferenceDataSyncService {
                         ) session_totals
                         WHERE session_totals.device_id = d.device_id
                         """);
-                stmt.executeUpdate("""
-                        CREATE OR REPLACE FUNCTION refresh_device_session_count()
-                        RETURNS TRIGGER AS $$
-                        BEGIN
-                            IF TG_OP IN ('INSERT', 'UPDATE') THEN
-                                UPDATE devices
-                                SET session_count = (
-                                    SELECT COUNT(*)::BIGINT
-                                    FROM device_sessions
-                                    WHERE device_id = NEW.device_id
-                                )
-                                WHERE device_id = NEW.device_id;
-                            END IF;
+                if (!functionExists(conn, "refresh_device_session_count")) {
+                    stmt.executeUpdate("""
+                            CREATE FUNCTION refresh_device_session_count()
+                            RETURNS TRIGGER AS $$
+                            BEGIN
+                                IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                                    UPDATE devices
+                                    SET session_count = (
+                                        SELECT COUNT(*)::BIGINT
+                                        FROM device_sessions
+                                        WHERE device_id = NEW.device_id
+                                    )
+                                    WHERE device_id = NEW.device_id;
+                                END IF;
 
-                            IF TG_OP IN ('DELETE', 'UPDATE')
-                               AND (TG_OP = 'DELETE' OR OLD.device_id IS DISTINCT FROM NEW.device_id) THEN
-                                UPDATE devices
-                                SET session_count = (
-                                    SELECT COUNT(*)::BIGINT
-                                    FROM device_sessions
-                                    WHERE device_id = OLD.device_id
-                                )
-                                WHERE device_id = OLD.device_id;
-                            END IF;
+                                IF TG_OP IN ('DELETE', 'UPDATE')
+                                   AND (TG_OP = 'DELETE' OR OLD.device_id IS DISTINCT FROM NEW.device_id) THEN
+                                    UPDATE devices
+                                    SET session_count = (
+                                        SELECT COUNT(*)::BIGINT
+                                        FROM device_sessions
+                                        WHERE device_id = OLD.device_id
+                                    )
+                                    WHERE device_id = OLD.device_id;
+                                END IF;
 
-                            RETURN COALESCE(NEW, OLD);
-                        END;
-                        $$ LANGUAGE plpgsql
-                        """);
-                stmt.executeUpdate("DROP TRIGGER IF EXISTS device_sessions_refresh_count ON device_sessions");
-                stmt.executeUpdate("""
-                        CREATE OR REPLACE TRIGGER device_sessions_refresh_count
-                        AFTER INSERT OR UPDATE OR DELETE ON device_sessions
-                        FOR EACH ROW
-                        EXECUTE FUNCTION refresh_device_session_count()
-                        """);
+                                RETURN COALESCE(NEW, OLD);
+                            END;
+                            $$ LANGUAGE plpgsql
+                            """);
+                }
+                if (!triggerExists(conn, "device_sessions", "device_sessions_refresh_count")) {
+                    stmt.executeUpdate("""
+                            CREATE TRIGGER device_sessions_refresh_count
+                            AFTER INSERT OR UPDATE OR DELETE ON device_sessions
+                            FOR EACH ROW
+                            EXECUTE FUNCTION refresh_device_session_count()
+                            """);
+                }
             }
         }
     }
@@ -3116,12 +3227,38 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track3 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_width_inches NUMERIC(5, 2) NOT NULL DEFAULT 2.25");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
             ensureUpdatedAtTableSchema(conn, stmt, "user_locations");
+            EmployeeScheduleService.ensureSchema(conn);
             ensureUpdatedAtTableSchema(conn, stmt, "inventory");
             ensureUpdatedAtTableSchema(conn, stmt, "customer_accounts");
             CustomerAccountLedgerService.ensureSchema(conn);
             ensureUpdatedAtTableSchema(conn, stmt, "cash_drawers");
             ensureUpdatedAtTableSchema(conn, stmt, "cash_drawer_device_assignments");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS change_basket_updates (
+                        change_basket_update_id BIGSERIAL PRIMARY KEY,
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                        store_name TEXT,
+                        target_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        counted_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        variance NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        denomination_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_by_user_id INTEGER REFERENCES users(user_id),
+                        updated_by_name TEXT,
+                        device_id UUID REFERENCES devices(device_id),
+                        device_name TEXT,
+                        notes TEXT
+                    )
+                    """);
+            ensureUpdatedAtTableSchema(conn, stmt, "change_basket_updates");
             if (tableExists(conn, "products")) {
                 stmt.executeUpdate("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
                 stmt.executeUpdate("""
@@ -3763,6 +3900,46 @@ public final class ReferenceDataSyncService {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setQueryTimeout(10);
             ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean functionExists(Connection conn, String functionName) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.proname = ?
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(10);
+            ps.setString(1, functionName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean triggerExists(Connection conn, String tableName, String triggerName) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = ?
+                  AND t.tgname = ?
+                  AND NOT t.tgisinternal
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(10);
+            ps.setString(1, tableName);
+            ps.setString(2, triggerName);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }

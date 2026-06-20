@@ -15,7 +15,8 @@ import java.time.Duration;
 import java.util.Locale;
 
 public final class EmployeePhotoService {
-    private static final String EMPLOYEE_PHOTO_BUCKET = getConfig("EMPLOYEE_PHOTO_BUCKET", "Product Images");
+    private static final String EMPLOYEE_PHOTO_BUCKET = getConfig("EMPLOYEE_PHOTO_BUCKET", "employee files");
+    private static final String EMPLOYEE_PHOTO_FOLDER = getConfig("EMPLOYEE_PHOTO_FOLDER", "employee photos");
     private static final long MAX_ORIGINAL_PHOTO_BYTES = 12L * 1024L * 1024L;
     private static final long MAX_EMPLOYEE_PHOTO_UPLOAD_BYTES = 180L * 1024L;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -47,7 +48,8 @@ public final class EmployeePhotoService {
                 false
         )) {
             String accessToken = SupabaseSessionManager.getValidAccessToken();
-            String objectPath = "employees/"
+            String objectPath = EMPLOYEE_PHOTO_FOLDER
+                    + "/"
                     + sanitizePathPart(employeeLabel)
                     + "/"
                     + System.currentTimeMillis()
@@ -84,13 +86,13 @@ public final class EmployeePhotoService {
                         + response.body());
             }
 
-            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
-                    + "/storage/v1/object/public/"
+            String authenticatedUrl = SupabaseSessionManager.getSupabaseUrl()
+                    + "/storage/v1/object/authenticated/"
                     + encodedBucket
                     + "/"
                     + encodedObjectPath;
-            ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());
-            return publicUrl;
+            ImageCacheManager.cacheUploadedImage(authenticatedUrl, optimizedImage.file().toPath());
+            return authenticatedUrl;
         }
     }
 

@@ -93,6 +93,7 @@ public final class ServerProvisioningService {
         return SqlScriptRunner.runScripts(local, List.of(
                 "database/permission_descriptions_setup.sql",
                 "database/permission_descriptions_and_sections_backfill.sql",
+                "database/employee_schedule_setup.sql",
                 "database/location_management_setup.sql",
                 "database/store_timezone_setup.sql",
                 "database/department_setup.sql",

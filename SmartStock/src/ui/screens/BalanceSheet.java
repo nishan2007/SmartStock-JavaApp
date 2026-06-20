@@ -1,17 +1,24 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import services.BalanceSheetService;
+import services.BalanceSheetService.ChequeDepositOption;
+import services.BalanceSheetService.BankTransactionLine;
 import services.BalanceSheetService.DrawSessionRange;
 import services.BalanceSheetService.ExpenseEntry;
+import services.BalanceSheetService.ExpenseOption;
 import services.BalanceSheetService.SheetLine;
 import services.BalanceSheetService.SubmissionOption;
 import ui.components.AppMenuBar;
+import ui.components.VendorSelector;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.TableModelEvent;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
@@ -20,13 +27,16 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class BalanceSheet extends JFrame {
+    private static final int[] CF_DENOMINATIONS = {5000, 2000, 1000, 500, 100, 50, 20};
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy h:mm a");
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
     private static final Color LIGHT_BACKGROUND = new Color(245, 247, 250);
     private static final Color LIGHT_SURFACE = Color.WHITE;
     private static final Color LIGHT_TEXT = new Color(17, 24, 39);
@@ -40,25 +50,32 @@ public class BalanceSheet extends JFrame {
     private final JTextField toField = new JTextField(10);
     private final JComboBox<SubmissionOption> savedSheetBox = new JComboBox<>();
     private final JLabel statusLabel = new JLabel("Current draft");
-    private final JLabel balanceBfLabel = metricLabel("Balance BF: $0.00");
-    private final JLabel cashInHandLabel = metricLabel("Cash In Hand: $0.00");
-    private final JLabel balanceCfLabel = metricLabel("Balance CF: $0.00");
-    private final JLabel netLabel = metricLabel("Surplus: $0.00");
-    private final DefaultTableModel incomeModel = tableModel();
+    private final JLabel balanceBfLabel = metricLabel("Balance BF: $0");
+    private final JLabel cashInHandLabel = metricLabel("Cash In Hand: $0");
+    private final JLabel balanceCfLabel = metricLabel("Balance CF: $0");
+    private final JLabel netLabel = metricLabel("Surplus: $0");
+    private final DefaultTableModel incomeModel = incomeTableModel();
     private final DefaultTableModel receivableModel = tableModel();
     private final DefaultTableModel expenseModel = tableModel();
     private final DefaultTableModel payableModel = tableModel();
     private final DefaultTableModel drawerCashModel = tableModel();
-    private final DefaultTableModel deviceSalesModel = tableModel();
-    private final DefaultTableModel deviceOrdersModel = tableModel();
-    private final DefaultTableModel accountPaymentsModel = tableModel();
+    private final DefaultTableModel deviceActivityModel = deviceActivityTableModel();
+    private final DefaultTableModel pendingChequeModel = pendingChequeTableModel();
+    private final DefaultTableModel bankTransactionModel = bankTransactionTableModel();
     private final DefaultTableModel drawerChecksModel = tableModel();
+    private final DefaultTableModel cfCheckerModel = cfCheckerTableModel();
+    private final JTable cfCheckerTable = new JTable(cfCheckerModel);
+    private final JLabel cfExpectedLabel = metricLabel("Expected CF: $0");
+    private final JLabel cfCountedLabel = metricLabel("Counted Cash: $0");
+    private final JLabel cfVarianceLabel = metricLabel("Missing: $0");
     private services.BalanceSheetService.BalanceSheet currentSheet;
     private SwingWorker<services.BalanceSheetService.BalanceSheet, Void> sheetWorker;
     private SwingWorker<List<SubmissionOption>, Void> historyWorker;
     private SwingWorker<services.BalanceSheetService.BalanceSheet, Void> savedSheetWorker;
     private SwingWorker<List<DrawSessionRange>, Void> drawRangeWorker;
     private List<Long> matchedDrawerSessionIds = List.of();
+    private BigDecimal cfExpectedTotal = BigDecimal.ZERO;
+    private boolean updatingCfChecker;
 
     public BalanceSheet() {
         setTitle("Balance Sheet");
@@ -84,6 +101,12 @@ public class BalanceSheet extends JFrame {
         JButton submitButton = new JButton("Submit Balance Sheet");
         JButton matchDrawButton = new JButton("Match Draw Session");
         JButton openSavedButton = new JButton("Open Saved");
+        JButton addPayableHeaderButton = headerAddButton("Log account payable");
+        JButton payPayableHeaderButton = headerActionButton("$", "Pay account payable");
+        JButton deletePayableHeaderButton = headerActionButton("x", "Delete account payable row");
+        JButton addExpenseHeaderButton = headerAddButton("Log expense");
+        JButton deleteExpenseHeaderButton = headerActionButton("x", "Delete expense row");
+        JButton depositChequeHeaderButton = headerActionButton("$", "Mark cheque deposited in bank");
         JPanel filters = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         filters.setOpaque(false);
         filters.add(label("From:"));
@@ -128,17 +151,26 @@ public class BalanceSheet extends JFrame {
         top.add(headerStack, BorderLayout.NORTH);
         top.add(metrics, BorderLayout.SOUTH);
 
-        JPanel grid = new JPanel(new GridLayout(5, 2, 12, 12));
+        JPanel grid = new JPanel(new GridLayout(1, 4, 12, 0));
         grid.setOpaque(false);
-        grid.add(section("Income", new JTable(incomeModel), new Color(219, 234, 254)));
-        grid.add(section("Accounts Receivable", new JTable(receivableModel), new Color(220, 252, 231)));
-        grid.add(section("Drawer Cash In Hand", new JTable(drawerCashModel), new Color(226, 232, 240)));
-        grid.add(section("Account Payments", new JTable(accountPaymentsModel), new Color(204, 251, 241)));
-        grid.add(section("Sales By Device", new JTable(deviceSalesModel), new Color(224, 231, 255)));
-        grid.add(section("Orders By Device", new JTable(deviceOrdersModel), new Color(240, 253, 244)));
-        grid.add(section("Accounts Payable", new JTable(payableModel), new Color(255, 237, 213)));
-        grid.add(section("Expenses", new JTable(expenseModel), new Color(254, 226, 226)));
-        grid.add(section("Drawer Match Checks", new JTable(drawerChecksModel), new Color(254, 249, 195)));
+        grid.add(column(
+                section("Income", incomeTable(), new Color(219, 234, 254)),
+                section("Drawer Cash In Hand", new JTable(drawerCashModel), new Color(226, 232, 240)),
+                section("Device Sales", new JTable(deviceActivityModel), new Color(224, 231, 255))
+        ));
+        grid.add(column(
+                section("Accounts Receivable", new JTable(receivableModel), new Color(220, 252, 231)),
+                section("Accounts Payable", new JTable(payableModel), new Color(255, 237, 213), addPayableHeaderButton, payPayableHeaderButton, deletePayableHeaderButton),
+                section("Expenses", new JTable(expenseModel), new Color(254, 226, 226), addExpenseHeaderButton, deleteExpenseHeaderButton)
+        ));
+        grid.add(reconciliationColumn(
+                section("Drawer Match Checks", new JTable(drawerChecksModel), new Color(254, 249, 195)),
+                buildCfCheckerSection()
+        ));
+        grid.add(column(
+                section("Bank Transactions", new JTable(bankTransactionModel), new Color(224, 242, 254)),
+                section("Cheques To Deposit", new JTable(pendingChequeModel), new Color(219, 234, 254), depositChequeHeaderButton)
+        ));
 
         mainPanel.add(top, BorderLayout.NORTH);
         mainPanel.add(grid, BorderLayout.CENTER);
@@ -149,6 +181,17 @@ public class BalanceSheet extends JFrame {
         matchDrawButton.addActionListener(e -> matchDrawSessionRange(true));
         openSavedButton.addActionListener(e -> loadSelectedSubmission());
         addExpenseButton.addActionListener(e -> showExpenseDialog());
+        addPayableHeaderButton.addActionListener(e -> showPayableDialog());
+        payPayableHeaderButton.addActionListener(e -> showPayablePaymentDialog());
+        deletePayableHeaderButton.addActionListener(e -> showDeleteExpenseDialog("UNPAID", "Delete Account Payable"));
+        addExpenseHeaderButton.addActionListener(e -> showExpenseDialog());
+        deleteExpenseHeaderButton.addActionListener(e -> showDeleteExpenseDialog("PAID", "Delete Expense"));
+        depositChequeHeaderButton.addActionListener(e -> showDepositChequeDialog());
+        cfCheckerModel.addTableModelListener(e -> {
+            if (!updatingCfChecker && e.getType() == TableModelEvent.UPDATE && e.getColumn() == 1) {
+                recalculateCfChecker();
+            }
+        });
 
         WindowHelper.configurePosWindow(this);
         ThemeManager.applyToWindow(this);
@@ -161,10 +204,21 @@ public class BalanceSheet extends JFrame {
     }
 
     private JPanel section(String title, JTable table, Color headerColor) {
+        return section(title, table, headerColor, new JButton[0]);
+    }
+
+    private JPanel section(String title, JTable table, Color headerColor, JButton... actionButtons) {
         table.setRowHeight(26);
         table.setFillsViewportHeight(true);
-        table.getColumnModel().getColumn(0).setPreferredWidth(240);
-        table.getColumnModel().getColumn(1).setPreferredWidth(90);
+        if (table.getColumnModel().getColumnCount() == 2) {
+            table.getColumnModel().getColumn(0).setPreferredWidth(240);
+            table.getColumnModel().getColumn(1).setPreferredWidth(90);
+        } else {
+            table.getColumnModel().getColumn(0).setPreferredWidth(80);
+            for (int column = 1; column < table.getColumnModel().getColumnCount(); column++) {
+                table.getColumnModel().getColumn(column).setPreferredWidth(95);
+            }
+        }
         configureTable(table);
 
         JLabel titleLabel = new JLabel(title);
@@ -175,13 +229,121 @@ public class BalanceSheet extends JFrame {
         titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         titleLabel.setBorder(new EmptyBorder(8, 10, 8, 10));
 
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(true);
+        header.setBackground(headerColor);
+        header.add(titleLabel, BorderLayout.WEST);
+        if (actionButtons != null && actionButtons.length > 0) {
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 4));
+            actions.setOpaque(false);
+            for (JButton button : actionButtons) {
+                if (button != null) {
+                    actions.add(button);
+                }
+            }
+            header.add(actions, BorderLayout.EAST);
+        }
+
         JPanel panel = new JPanel(new BorderLayout());
         panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         panel.setBackground(surfaceColor());
         panel.setBorder(BorderFactory.createLineBorder(borderColor()));
-        panel.add(titleLabel, BorderLayout.NORTH);
+        panel.add(header, BorderLayout.NORTH);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
         return panel;
+    }
+
+    private JButton headerAddButton(String tooltip) {
+        return headerActionButton("+", tooltip);
+    }
+
+    private JButton headerActionButton(String text, String tooltip) {
+        JButton button = new JButton(text);
+        button.setMargin(new Insets(0, 8, 0, 8));
+        button.setFocusable(false);
+        button.setToolTipText(tooltip);
+        return button;
+    }
+
+    private JPanel column(Component... sections) {
+        JPanel panel = new JPanel(new GridLayout(sections.length, 1, 0, 12));
+        panel.setOpaque(false);
+        for (Component section : sections) {
+            panel.add(section);
+        }
+        return panel;
+    }
+
+    private JPanel reconciliationColumn(Component drawerChecks, Component cfChecker) {
+        JPanel panel = new JPanel(new BorderLayout(0, 12));
+        panel.setOpaque(false);
+        panel.add(drawerChecks, BorderLayout.CENTER);
+        panel.add(cfChecker, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel buildCfCheckerSection() {
+        resetCfChecker();
+        cfCheckerTable.setRowHeight(28);
+        cfCheckerTable.setFillsViewportHeight(false);
+        cfCheckerTable.getTableHeader().setReorderingAllowed(false);
+        cfCheckerTable.getColumnModel().getColumn(0).setPreferredWidth(90);
+        cfCheckerTable.getColumnModel().getColumn(1).setPreferredWidth(70);
+        cfCheckerTable.getColumnModel().getColumn(2).setPreferredWidth(95);
+        cfCheckerTable.setDefaultRenderer(Object.class, new CfCheckerRenderer());
+        cfCheckerTable.setDefaultRenderer(Integer.class, new CfCheckerRenderer());
+        configureTable(cfCheckerTable);
+        int tableHeight = cfCheckerTable.getTableHeader().getPreferredSize().height
+                + cfCheckerTable.getRowHeight() * cfCheckerModel.getRowCount();
+        cfCheckerTable.setPreferredSize(new Dimension(1, cfCheckerTable.getRowHeight() * cfCheckerModel.getRowCount()));
+
+        JPanel tablePanel = new JPanel(new BorderLayout());
+        tablePanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        tablePanel.setBackground(surfaceColor());
+        tablePanel.add(cfCheckerTable.getTableHeader(), BorderLayout.NORTH);
+        tablePanel.add(cfCheckerTable, BorderLayout.CENTER);
+
+        JPanel summary = new JPanel(new GridLayout(3, 1, 0, 8));
+        summary.setOpaque(false);
+        summary.setBorder(new EmptyBorder(10, 10, 10, 10));
+        summary.add(cfExpectedLabel);
+        summary.add(cfCountedLabel);
+        summary.add(cfVarianceLabel);
+
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        panel.setBackground(surfaceColor());
+        panel.setBorder(BorderFactory.createLineBorder(borderColor()));
+
+        JLabel titleLabel = new JLabel("CF Checker");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+        titleLabel.setOpaque(true);
+        titleLabel.setBackground(new Color(187, 247, 208));
+        titleLabel.setForeground(new Color(17, 24, 39));
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        titleLabel.setBorder(new EmptyBorder(8, 10, 8, 10));
+
+        panel.add(titleLabel, BorderLayout.NORTH);
+        panel.add(tablePanel, BorderLayout.CENTER);
+        panel.add(summary, BorderLayout.SOUTH);
+        int fixedHeight = titleLabel.getPreferredSize().height
+                + tableHeight
+                + summary.getPreferredSize().height
+                + 22;
+        Dimension fixedSize = new Dimension(280, fixedHeight);
+        panel.setPreferredSize(fixedSize);
+        panel.setMinimumSize(fixedSize);
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, fixedHeight));
+        return panel;
+    }
+
+    private JTable incomeTable() {
+        JTable table = new JTable(incomeModel);
+        table.getColumnModel().getColumn(0).setPreferredWidth(80);
+        for (int column = 1; column < table.getColumnModel().getColumnCount(); column++) {
+            table.getColumnModel().getColumn(column).setPreferredWidth(95);
+        }
+        return table;
     }
 
     private void loadSheet() {
@@ -226,20 +388,22 @@ public class BalanceSheet extends JFrame {
     }
 
     private void renderSheet(services.BalanceSheetService.BalanceSheet sheet) {
-        fill(incomeModel, sheet.income(), sheet.totalIncome());
+        fillIncome(sheet.income(), sheet.totalIncome());
         fill(receivableModel, sheet.receivables(), sheet.totalReceivables());
         fill(expenseModel, sheet.expenses(), sheet.totalExpenses());
         fill(payableModel, sheet.payables(), sheet.totalPayables());
         fill(drawerCashModel, sheet.drawerCash(), sheet.cashInHand());
-        fill(deviceSalesModel, sheet.deviceSales(), totalLines(sheet.deviceSales()));
-        fill(deviceOrdersModel, sheet.deviceOrders(), totalLines(sheet.deviceOrders()));
-        fill(accountPaymentsModel, sheet.accountPayments(), totalLines(sheet.accountPayments()));
+        fillDeviceActivity(sheet.deviceSales(), sheet.deviceOrders(), sheet.devicePayments());
+        fillBankTransactions(sheet.bankTransactions());
+        fillPendingCheques(sheet.pendingCheques());
         fill(drawerChecksModel, sheet.drawerChecks(), totalLines(sheet.drawerChecks()));
         balanceBfLabel.setText("Balance BF: " + money(sheet.balanceBf()));
         cashInHandLabel.setText("Cash In Hand: " + money(sheet.cashInHand()));
         balanceCfLabel.setText("Balance CF: " + money(sheet.balanceCf()));
         BigDecimal net = sheet.totalIncome().subtract(sheet.totalExpenses()).subtract(sheet.totalPayables());
         netLabel.setText((net.compareTo(BigDecimal.ZERO) < 0 ? "Deficit: " : "Surplus: ") + money(net.abs()));
+        cfExpectedTotal = defaultZero(sheet.balanceCf());
+        recalculateCfChecker();
     }
 
     private void submitSheet() {
@@ -505,6 +669,232 @@ public class BalanceSheet extends JFrame {
         }
     }
 
+    private void showPayableDialog() {
+        JTextField dateField = new JTextField(StoreTimeZoneHelper.today().toString(), 12);
+        VendorSelector vendorSelector = new VendorSelector();
+        JTextField amountField = new JTextField(12);
+        JTextArea descriptionArea = new JTextArea(3, 24);
+
+        JPanel panel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 4, 4, 4);
+        gbc.anchor = GridBagConstraints.WEST;
+        addRow(panel, gbc, 0, "Date:", dateField);
+        addRow(panel, gbc, 1, "Account/Vendor:", vendorSelector);
+        addRow(panel, gbc, 2, "Amount:", amountField);
+        addRow(panel, gbc, 3, "Description:", new JScrollPane(descriptionArea));
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Log Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        LocalDate date = parseDate(dateField.getText().trim(), "Payable date");
+        BigDecimal amount = parseMoney(amountField.getText().trim());
+        String accountName = vendorSelector.getSelectedVendorName();
+        if (date == null || amount == null || accountName.isBlank()) {
+            if (accountName.isBlank()) {
+                JOptionPane.showMessageDialog(this, "Account or vendor name is required.", "Log Account Payable", JOptionPane.WARNING_MESSAGE);
+            }
+            return;
+        }
+
+        try {
+            BalanceSheetService.addManualExpense(new ExpenseEntry(
+                    date,
+                    "Accounts Payable",
+                    accountName,
+                    blankToNull(descriptionArea.getText()),
+                    amount,
+                    "OTHER",
+                    null,
+                    "UNPAID"
+            ));
+            loadSheet();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to log account payable: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showPayablePaymentDialog() {
+        LocalDate from = parseDate(fromField.getText().trim(), "From");
+        LocalDate to = parseDate(toField.getText().trim(), "To");
+        if (from == null || to == null || to.isBefore(from)) {
+            return;
+        }
+        try {
+            List<BalanceSheetService.PayableOption> payables = BalanceSheetService.listUnpaidPayables(from, to);
+            if (payables.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No unpaid account payables were found for this date range.", "Pay Account Payable", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            JComboBox<BalanceSheetService.PayableOption> payableBox = new JComboBox<>(payables.toArray(new BalanceSheetService.PayableOption[0]));
+            JTextField dateField = new JTextField(StoreTimeZoneHelper.today().toString(), 12);
+            JTextField amountField = new JTextField(12);
+            JComboBox<String> methodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG", "BANK", "OTHER"});
+            JTextField referenceField = new JTextField(18);
+            payableBox.addActionListener(e -> populatePayablePaymentAmount(payableBox, amountField));
+            populatePayablePaymentAmount(payableBox, amountField);
+
+            JPanel panel = new JPanel(new GridBagLayout());
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(4, 4, 4, 4);
+            gbc.anchor = GridBagConstraints.WEST;
+            addRow(panel, gbc, 0, "Account payable:", payableBox);
+            addRow(panel, gbc, 1, "Payment date:", dateField);
+            addRow(panel, gbc, 2, "Amount:", amountField);
+            addRow(panel, gbc, 3, "Method:", methodBox);
+            addRow(panel, gbc, 4, "Reference:", referenceField);
+
+            int result = JOptionPane.showConfirmDialog(this, panel, "Pay Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                return;
+            }
+
+            BalanceSheetService.PayableOption selected = (BalanceSheetService.PayableOption) payableBox.getSelectedItem();
+            LocalDate paymentDate = parseDate(dateField.getText().trim(), "Payment date");
+            BigDecimal amount = parseMoney(amountField.getText().trim());
+            if (selected == null || paymentDate == null || amount == null) {
+                return;
+            }
+            if (amount.compareTo(selected.amount()) > 0) {
+                JOptionPane.showMessageDialog(this, "Payment cannot exceed the payable balance of " + money(selected.amount()) + ".", "Pay Account Payable", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            BalanceSheetService.recordPayablePayment(
+                    selected.expenseId(),
+                    paymentDate,
+                    amount,
+                    String.valueOf(methodBox.getSelectedItem()),
+                    blankToNull(referenceField.getText())
+            );
+            loadSheet();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to pay account payable: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void populatePayablePaymentAmount(JComboBox<BalanceSheetService.PayableOption> payableBox, JTextField amountField) {
+        BalanceSheetService.PayableOption selected = (BalanceSheetService.PayableOption) payableBox.getSelectedItem();
+        if (selected != null) {
+            amountField.setText(selected.amount().toPlainString());
+        }
+    }
+
+    private void showDeleteExpenseDialog(String status, String title) {
+        if (currentSheet != null && currentSheet.submissionId() != null) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Submitted balance sheets cannot be edited. Refresh the screen to work on the current draft.",
+                    title,
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+            return;
+        }
+
+        LocalDate from = parseDate(fromField.getText().trim(), "From");
+        LocalDate to = parseDate(toField.getText().trim(), "To");
+        if (from == null || to == null || to.isBefore(from)) {
+            return;
+        }
+
+        try {
+            List<ExpenseOption> rows = BalanceSheetService.listDeletableExpenses(from, to, status);
+            if (rows.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No manually entered rows were found for this balance sheet.", title, JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            JComboBox<ExpenseOption> rowBox = new JComboBox<>(rows.toArray(new ExpenseOption[0]));
+            JPanel panel = new JPanel(new GridBagLayout());
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(4, 4, 4, 4);
+            gbc.anchor = GridBagConstraints.WEST;
+            addRow(panel, gbc, 0, "Row:", rowBox);
+
+            int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                return;
+            }
+
+            ExpenseOption selected = (ExpenseOption) rowBox.getSelectedItem();
+            if (selected == null) {
+                return;
+            }
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "Delete this row from the current balance sheet?\n\n" + selected,
+                    title,
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+
+            BalanceSheetService.deleteManualExpense(selected.expenseId(), from, to, status);
+            loadSheet();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to delete row: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showDepositChequeDialog() {
+        if (currentSheet != null && currentSheet.submissionId() != null) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Saved balance sheets are read-only. Refresh the screen to work on the current draft.",
+                    "Deposit Cheque",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+            return;
+        }
+
+        try {
+            List<ChequeDepositOption> cheques = BalanceSheetService.listPendingChequeDeposits();
+            if (cheques.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No pending cheques are available to deposit.", "Deposit Cheque", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            JComboBox<ChequeDepositOption> chequeBox = new JComboBox<>(cheques.toArray(new ChequeDepositOption[0]));
+            JTextArea notesArea = new JTextArea(3, 24);
+            JPanel panel = new JPanel(new GridBagLayout());
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(4, 4, 4, 4);
+            gbc.anchor = GridBagConstraints.WEST;
+            addRow(panel, gbc, 0, "Cheque:", chequeBox);
+            addRow(panel, gbc, 1, "Notes:", new JScrollPane(notesArea));
+
+            int result = JOptionPane.showConfirmDialog(this, panel, "Deposit Cheque", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                return;
+            }
+
+            ChequeDepositOption selected = (ChequeDepositOption) chequeBox.getSelectedItem();
+            if (selected == null) {
+                return;
+            }
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "Mark this cheque as deposited in bank?\n\n" + selected,
+                    "Deposit Cheque",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.QUESTION_MESSAGE
+            );
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+
+            BalanceSheetService.markChequeDeposited(selected, notesArea.getText());
+            loadSheet();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to mark cheque deposited: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private static void addRow(JPanel panel, GridBagConstraints gbc, int row, String label, Component field) {
         gbc.gridx = 0;
         gbc.gridy = row;
@@ -526,21 +916,214 @@ public class BalanceSheet extends JFrame {
     }
 
     private void showLoadingState(String message) {
-        fillLoading(incomeModel);
+        fillIncomeLoading();
         fillLoading(receivableModel);
         fillLoading(expenseModel);
         fillLoading(payableModel);
         fillLoading(drawerCashModel);
-        fillLoading(deviceSalesModel);
-        fillLoading(deviceOrdersModel);
-        fillLoading(accountPaymentsModel);
+        fillDeviceActivityLoading();
+        fillBankTransactionsLoading();
+        fillPendingChequesLoading();
         fillLoading(drawerChecksModel);
         statusLabel.setText(message);
+    }
+
+    private void resetCfChecker() {
+        updatingCfChecker = true;
+        cfCheckerModel.setRowCount(0);
+        for (int denomination : CF_DENOMINATIONS) {
+            cfCheckerModel.addRow(new Object[]{CURRENCY.format(denomination), 0, money(BigDecimal.ZERO)});
+        }
+        cfCheckerModel.addRow(new Object[]{"TOTAL", "", money(BigDecimal.ZERO)});
+        updatingCfChecker = false;
+        recalculateCfChecker();
+    }
+
+    private void recalculateCfChecker() {
+        updatingCfChecker = true;
+        BigDecimal countedTotal = BigDecimal.ZERO;
+        for (int row = 0; row < CF_DENOMINATIONS.length; row++) {
+            int quantity = quantityAt(cfCheckerModel, row, 1);
+            BigDecimal lineTotal = BigDecimal.valueOf((long) CF_DENOMINATIONS[row] * quantity);
+            countedTotal = countedTotal.add(lineTotal);
+            cfCheckerModel.setValueAt(money(lineTotal), row, 2);
+        }
+        int totalRow = CF_DENOMINATIONS.length;
+        if (cfCheckerModel.getRowCount() > totalRow) {
+            cfCheckerModel.setValueAt("TOTAL", totalRow, 0);
+            cfCheckerModel.setValueAt("", totalRow, 1);
+            cfCheckerModel.setValueAt(money(countedTotal), totalRow, 2);
+        }
+        BigDecimal variance = countedTotal.subtract(defaultZero(cfExpectedTotal));
+        cfExpectedLabel.setText("Expected CF: " + money(cfExpectedTotal));
+        cfCountedLabel.setText("Counted Cash: " + money(countedTotal));
+        cfVarianceLabel.setText((variance.compareTo(BigDecimal.ZERO) < 0 ? "Missing: " : "Over: ") + money(variance.abs()));
+        updatingCfChecker = false;
     }
 
     private static void fillLoading(DefaultTableModel model) {
         model.setRowCount(0);
         model.addRow(new Object[]{"Loading...", ""});
+    }
+
+    private void fillIncomeLoading() {
+        incomeModel.setRowCount(0);
+        incomeModel.addRow(new Object[]{"Loading...", "", "", "", "", "", ""});
+    }
+
+    private void fillIncome(List<SheetLine> income, BigDecimal totalIncome) {
+        incomeModel.setRowCount(0);
+        IncomeBreakdown sales = new IncomeBreakdown(
+                incomeAmount(income, "ACCOUNT CHARGES"),
+                incomeAmount(income, "POS CASH", "CASH"),
+                incomeAmount(income, "MMG"),
+                incomeAmount(income, "POS CARD", "CARD", "CREDIT"),
+                incomeAmount(income, "CHEQUES", "CHEQUE"));
+        IncomeBreakdown orders = new IncomeBreakdown(
+                incomeAmount(income, "ORDER ACCOUNT"),
+                incomeAmount(income, "ORDER CASH"),
+                incomeAmount(income, "ORDER MMG"),
+                incomeAmount(income, "ORDER CARD", "ORDER CREDIT"),
+                incomeAmount(income, "ORDER CHEQUE"));
+        IncomeBreakdown invoices = new IncomeBreakdown(
+                incomeAmount(income, "INVOICE ACCOUNT"),
+                incomeAmount(income, "INVOICE CASH"),
+                incomeAmount(income, "INVOICE MMG"),
+                incomeAmount(income, "INVOICE CARD", "INVOICE CREDIT"),
+                incomeAmount(income, "INVOICE CHEQUE"));
+        addIncomeRow("Sales", sales);
+        addIncomeRow("Orders", orders);
+        addIncomeRow("Invoices", invoices);
+        addIncomeRow("TOTAL", sales.add(orders).add(invoices));
+    }
+
+    private void addIncomeRow(String type, IncomeBreakdown breakdown) {
+        incomeModel.addRow(new Object[]{
+                type,
+                money(breakdown.charge()),
+                money(breakdown.cash()),
+                money(breakdown.mmg()),
+                money(breakdown.credit()),
+                money(breakdown.cheque()),
+                money(breakdown.total())
+        });
+    }
+
+    private static BigDecimal incomeAmount(List<SheetLine> lines, String... labels) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (SheetLine line : lines) {
+            for (String label : labels) {
+                if (label.equalsIgnoreCase(line.label())) {
+                    total = total.add(defaultZero(line.amount()));
+                    break;
+                }
+            }
+        }
+        return total;
+    }
+
+    private void fillDeviceActivityLoading() {
+        deviceActivityModel.setRowCount(0);
+        deviceActivityModel.addRow(new Object[]{"Loading...", "", "", ""});
+    }
+
+    private void fillDeviceActivity(List<SheetLine> sales, List<SheetLine> orders, List<SheetLine> payments) {
+        deviceActivityModel.setRowCount(0);
+        Set<String> devices = new LinkedHashSet<>();
+        collectDeviceLabels(devices, sales);
+        collectDeviceLabels(devices, orders);
+        collectDeviceLabels(devices, payments);
+        if (devices.isEmpty()) {
+            deviceActivityModel.addRow(new Object[]{"No device activity logged", money(BigDecimal.ZERO), money(BigDecimal.ZERO), money(BigDecimal.ZERO)});
+        } else {
+            for (String device : devices) {
+                deviceActivityModel.addRow(new Object[]{
+                        device,
+                        money(amountForDevice(sales, device)),
+                        money(amountForDevice(orders, device)),
+                        money(amountForDevice(payments, device))
+                });
+            }
+        }
+        deviceActivityModel.addRow(new Object[]{
+                "TOTAL",
+                money(totalDeviceLines(sales)),
+                money(totalDeviceLines(orders)),
+                money(totalDeviceLines(payments))
+        });
+    }
+
+    private static void collectDeviceLabels(Set<String> devices, List<SheetLine> lines) {
+        for (SheetLine line : lines) {
+            String label = line.label();
+            if (label != null && !label.startsWith("No device ")) {
+                devices.add(label);
+            }
+        }
+    }
+
+    private static BigDecimal amountForDevice(List<SheetLine> lines, String device) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (SheetLine line : lines) {
+            if (device.equals(line.label())) {
+                total = total.add(defaultZero(line.amount()));
+            }
+        }
+        return total;
+    }
+
+    private static BigDecimal totalDeviceLines(List<SheetLine> lines) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (SheetLine line : lines) {
+            if (line.label() != null && !line.label().startsWith("No device ")) {
+                total = total.add(defaultZero(line.amount()));
+            }
+        }
+        return total;
+    }
+
+    private void fillPendingChequesLoading() {
+        pendingChequeModel.setRowCount(0);
+        pendingChequeModel.addRow(new Object[]{"Loading...", "", "", ""});
+    }
+
+    private void fillBankTransactionsLoading() {
+        bankTransactionModel.setRowCount(0);
+        bankTransactionModel.addRow(new Object[]{"Loading...", "", ""});
+    }
+
+    private void fillBankTransactions(List<BankTransactionLine> transactions) {
+        bankTransactionModel.setRowCount(0);
+        if (transactions == null || transactions.isEmpty()) {
+            bankTransactionModel.addRow(new Object[]{"No bank transactions", money(BigDecimal.ZERO), ""});
+            return;
+        }
+        for (BankTransactionLine transaction : transactions) {
+            bankTransactionModel.addRow(new Object[]{
+                    transaction.transaction(),
+                    money(transaction.amount()),
+                    transaction.direction()
+            });
+        }
+    }
+
+    private void fillPendingCheques(List<ChequeDepositOption> cheques) {
+        pendingChequeModel.setRowCount(0);
+        if (cheques == null || cheques.isEmpty()) {
+            pendingChequeModel.addRow(new Object[]{"No pending cheques", "", "", money(BigDecimal.ZERO)});
+            return;
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        for (ChequeDepositOption cheque : cheques) {
+            total = total.add(defaultZero(cheque.amount()));
+            pendingChequeModel.addRow(new Object[]{
+                    cheque.sourceLabel(),
+                    cheque.chequeAt() == null ? "" : cheque.chequeAt().toLocalDate().toString(),
+                    cheque.reference() == null || cheque.reference().isBlank() ? safeText(cheque.payer()) : safeText(cheque.payer()) + " / " + cheque.reference(),
+                    money(cheque.amount())
+            });
+        }
+        pendingChequeModel.addRow(new Object[]{"TOTAL", "", "", money(total)});
     }
 
     private static BigDecimal totalLines(List<SheetLine> lines) {
@@ -556,6 +1139,56 @@ public class BalanceSheet extends JFrame {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
+            }
+        };
+    }
+
+    private static DefaultTableModel incomeTableModel() {
+        return new DefaultTableModel(new Object[]{"Type", "Charge Amount", "Cash", "MMG", "Credit", "Cheque", "Total"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+    }
+
+    private static DefaultTableModel deviceActivityTableModel() {
+        return new DefaultTableModel(new Object[]{"Device", "Sales", "Orders", "Payments"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+    }
+
+    private static DefaultTableModel pendingChequeTableModel() {
+        return new DefaultTableModel(new Object[]{"Source", "Date", "Payer / Ref", "Amount"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+    }
+
+    private static DefaultTableModel bankTransactionTableModel() {
+        return new DefaultTableModel(new Object[]{"Transaction", "Amount", "Direction"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+    }
+
+    private static DefaultTableModel cfCheckerTableModel() {
+        return new DefaultTableModel(new Object[]{"Bill", "Qty", "Total"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return column == 1 && row < CF_DENOMINATIONS.length;
+            }
+
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                return columnIndex == 1 ? Integer.class : String.class;
             }
         };
     }
@@ -635,6 +1268,22 @@ public class BalanceSheet extends JFrame {
         }
     }
 
+    private static int quantityAt(DefaultTableModel model, int row, int column) {
+        Object value = model.getValueAt(row, column);
+        if (value instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+        try {
+            return Math.max(Integer.parseInt(String.valueOf(value == null ? "" : value).trim()), 0);
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
+    private static BigDecimal defaultZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
     private static String money(BigDecimal value) {
         return CURRENCY.format(value == null ? BigDecimal.ZERO : value);
     }
@@ -651,5 +1300,45 @@ public class BalanceSheet extends JFrame {
     }
 
     private record DrawSessionSelection(LocalDate from, LocalDate to, List<Long> sessionIds, String label) {
+    }
+
+    private record IncomeBreakdown(BigDecimal charge, BigDecimal cash, BigDecimal mmg, BigDecimal credit, BigDecimal cheque) {
+        private IncomeBreakdown add(IncomeBreakdown other) {
+            return new IncomeBreakdown(
+                    defaultZero(charge).add(defaultZero(other.charge())),
+                    defaultZero(cash).add(defaultZero(other.cash())),
+                    defaultZero(mmg).add(defaultZero(other.mmg())),
+                    defaultZero(credit).add(defaultZero(other.credit())),
+                    defaultZero(cheque).add(defaultZero(other.cheque()))
+            );
+        }
+
+        private BigDecimal total() {
+            return defaultZero(charge)
+                    .add(defaultZero(cash))
+                    .add(defaultZero(mmg))
+                    .add(defaultZero(credit))
+                    .add(defaultZero(cheque));
+        }
+    }
+
+    private class CfCheckerRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            int modelRow = table.convertRowIndexToModel(row);
+            setHorizontalAlignment(column == 0 ? SwingConstants.LEFT : SwingConstants.RIGHT);
+            if (modelRow == CF_DENOMINATIONS.length) {
+                component.setFont(component.getFont().deriveFont(Font.BOLD));
+                if (!isSelected) {
+                    component.setBackground(new Color(22, 101, 52));
+                    component.setForeground(Color.WHITE);
+                }
+            } else if (!isSelected) {
+                component.setBackground(surfaceColor());
+                component.setForeground(textColor());
+            }
+            return component;
+        }
     }
 }

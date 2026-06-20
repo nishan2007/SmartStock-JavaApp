@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import utils.SecureFilePermissions;
 
 public record DatabaseConfig(
         DatabaseMode mode,
@@ -150,9 +151,11 @@ public record DatabaseConfig(
         }
         props.setProperty("sync.interval.seconds", String.valueOf(syncIntervalSeconds));
         Files.createDirectories(CONFIG_PATH.getParent());
+        SecureFilePermissions.restrictDirectoryToOwner(CONFIG_PATH.getParent());
         try (OutputStream output = Files.newOutputStream(CONFIG_PATH)) {
             props.store(output, "SmartStock database mode and sync configuration");
         }
+        SecureFilePermissions.restrictFileToOwner(CONFIG_PATH);
     }
 
     public DatabaseConfig withMode(DatabaseMode newMode) {

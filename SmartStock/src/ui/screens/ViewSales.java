@@ -1,6 +1,7 @@
 
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import managers.SessionManager;
 import managers.PermissionManager;
 import ui.components.AppMenuBar;
@@ -29,7 +30,7 @@ public class ViewSales extends JFrame {
     private JLabel summaryLabel;
 
     private final DateTimeFormatter dbDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private final NumberFormat currencyFormat = NumberFormat.getCurrencyInstance();
+    private final NumberFormat currencyFormat = CurrencyFormatter.create();
 
     public ViewSales() {
         setTitle("View Sales");

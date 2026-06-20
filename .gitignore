@@ -1,0 +1,13 @@
+.DS_Store
+
+# Java/Maven build output
+target/
+out/
+*.class
+
+# IDE-generated build metadata
+*.log
+
+# Local scratch/tooling folders that should not ship with SmartStock
+Project 1/
+SmartStock/.ai/

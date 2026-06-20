@@ -1,6 +1,7 @@
 package services;
 
 import managers.SupabaseSessionManager;
+import utils.SecureFilePermissions;
 import utils.ImageCacheManager;
 
 import java.io.File;
@@ -121,8 +122,10 @@ public final class EmployeeDocumentService {
 
         Path targetDirectory = Path.of(System.getProperty("user.home"), ".smartstock", "employee-id-card-cache");
         Files.createDirectories(targetDirectory);
+        SecureFilePermissions.restrictDirectoryToOwner(targetDirectory);
         Path target = targetDirectory.resolve(sanitizeFilename(extractFilename(uri)));
         Files.write(target, response.body());
+        SecureFilePermissions.restrictFileToOwner(target);
         return target.toFile();
     }
 

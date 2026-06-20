@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.PermissionManager;
 import services.CustomerAccountLedgerService;
@@ -25,7 +26,7 @@ public class CustomerAccountDetails extends JFrame {
     private final Runnable afterSave;
     private final boolean canSetCreditLimit;
     private final boolean canEditAccountNumber;
-    private final NumberFormat currencyFormat = NumberFormat.getCurrencyInstance();
+    private final NumberFormat currencyFormat = CurrencyFormatter.create();
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private JLabel titleLabel;
@@ -499,7 +500,7 @@ public class CustomerAccountDetails extends JFrame {
 
     private String money(BigDecimal value) {
         value = defaultZero(value);
-        return String.format("$%.2f", value);
+        return utils.CurrencyFormatter.format(value);
     }
 
     private BigDecimal defaultZero(BigDecimal value) {

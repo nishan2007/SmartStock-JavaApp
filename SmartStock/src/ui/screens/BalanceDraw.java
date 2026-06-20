@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.NavigationManager;
 import managers.PermissionManager;
@@ -23,6 +24,7 @@ import java.sql.Connection;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -30,7 +32,7 @@ public class BalanceDraw extends JFrame {
     private static final int[] DENOMINATIONS = {5000, 2000, 1000, 500, 100, 50, 20};
     private static final int[] PREFERRED_FLOAT_DENOMINATIONS = {20, 100, 500, 1000};
     private static final int[] FLOAT_FILL_DENOMINATIONS = {1000, 500, 100, 20};
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
     private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
 
     private final JLabel statusLabel = new JLabel("Loading draw status...");
@@ -50,6 +52,7 @@ public class BalanceDraw extends JFrame {
     private final JButton clearQtyButton = new JButton("Clear Qty");
     private final JButton handoverButton = new JButton("Confirm Handover");
     private final JButton closeButton = new JButton("Close Draw");
+    private final JButton editClosedButton = new JButton("Edit Closed Draw");
     private final JButton refreshButton = new JButton("Refresh");
     private final JButton backButton = new JButton("Main Menu");
 
@@ -111,6 +114,7 @@ public class BalanceDraw extends JFrame {
         clearQtyButton.addActionListener(e -> clearQuantities());
         handoverButton.addActionListener(e -> confirmHandover());
         closeButton.addActionListener(e -> closeDraw());
+        editClosedButton.addActionListener(e -> editClosedDraw());
         refreshButton.addActionListener(e -> loadState());
         backButton.addActionListener(e -> NavigationManager.showMainMenu(this));
 
@@ -194,6 +198,7 @@ public class BalanceDraw extends JFrame {
         panel.add(clearQtyButton);
         panel.add(handoverButton);
         panel.add(closeButton);
+        panel.add(editClosedButton);
         return panel;
     }
 
@@ -205,6 +210,7 @@ public class BalanceDraw extends JFrame {
             clearQtyButton.setEnabled(false);
             handoverButton.setEnabled(false);
             closeButton.setEnabled(false);
+            editClosedButton.setEnabled(false);
             return;
         }
 
@@ -221,6 +227,7 @@ public class BalanceDraw extends JFrame {
                 clearQtyButton.setEnabled(false);
                 handoverButton.setEnabled(false);
                 closeButton.setEnabled(false);
+                editClosedButton.setEnabled(true);
                 resetTable(BigDecimal.ZERO);
                 return;
             }
@@ -237,6 +244,7 @@ public class BalanceDraw extends JFrame {
                 clearQtyButton.setEnabled(false);
                 handoverButton.setEnabled(false);
                 closeButton.setEnabled(false);
+                editClosedButton.setEnabled(true);
                 resetTable(BigDecimal.ZERO);
                 return;
             }
@@ -253,6 +261,7 @@ public class BalanceDraw extends JFrame {
             clearQtyButton.setEnabled(true);
             handoverButton.setEnabled(true);
             closeButton.setEnabled(true);
+            editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
         } catch (Exception ex) {
             statusLabel.setText("Unable to load draw status.");
@@ -382,6 +391,92 @@ public class BalanceDraw extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to close draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void editClosedDraw() {
+        if (!PermissionManager.hasPermission("BALANCE_DRAWER")) {
+            JOptionPane.showMessageDialog(this, "You do not have permission to correct closed draws.", "Balance Draw", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try (Connection conn = DB.getConnection()) {
+            List<ClosedDrawOption> options = CashDrawerService.listRecentSessions(conn, SessionManager.getCurrentLocationId(), null, false)
+                    .stream()
+                    .filter(session -> !session.isOpen())
+                    .map(ClosedDrawOption::new)
+                    .toList();
+            if (options.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No closed draw sessions were found for this store.", "Edit Closed Draw", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            JComboBox<ClosedDrawOption> sessionBox = new JComboBox<>(options.toArray(new ClosedDrawOption[0]));
+            JTextField countedField = new JTextField(12);
+            JTextArea notesArea = new JTextArea(3, 28);
+            sessionBox.addActionListener(e -> populateClosedDrawCount(sessionBox, countedField));
+            populateClosedDrawCount(sessionBox, countedField);
+
+            JPanel form = new JPanel(new GridBagLayout());
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(4, 4, 4, 4);
+            gbc.anchor = GridBagConstraints.WEST;
+            addDialogRow(form, gbc, 0, "Closed draw:", sessionBox);
+            addDialogRow(form, gbc, 1, "Corrected count:", countedField);
+            addDialogRow(form, gbc, 2, "Reason:", new JScrollPane(notesArea));
+
+            int result = JOptionPane.showConfirmDialog(this, form, "Edit Closed Draw", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                return;
+            }
+            ClosedDrawOption selected = (ClosedDrawOption) sessionBox.getSelectedItem();
+            BigDecimal correctedCount = parseMoney(countedField.getText().trim());
+            if (selected == null || correctedCount == null) {
+                return;
+            }
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "Correct " + selected + " to counted cash of " + CURRENCY.format(correctedCount) + "?",
+                    "Confirm Closed Draw Correction",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (confirm != JOptionPane.OK_OPTION) {
+                return;
+            }
+
+            CashDrawerSession revised = CashDrawerService.reviseClosedSessionCount(conn, selected.session().sessionId(), correctedCount, notesArea.getText());
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Closed draw corrected.\nExpected: " + CURRENCY.format(revised.expectedCash())
+                            + "\nCounted: " + CURRENCY.format(revised.countedCash())
+                            + "\nCash to remove: " + CURRENCY.format(revised.cashToRemove())
+                            + "\nVariance: " + CURRENCY.format(revised.variance())
+                            + "\nBalanced By: " + displayName(revised.balancedByName()),
+                    "Edit Closed Draw",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+            loadState();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to correct closed draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void populateClosedDrawCount(JComboBox<ClosedDrawOption> sessionBox, JTextField countedField) {
+        ClosedDrawOption selected = (ClosedDrawOption) sessionBox.getSelectedItem();
+        if (selected != null) {
+            countedField.setText(selected.session().countedCash().toPlainString());
+        }
+    }
+
+    private static void addDialogRow(JPanel panel, GridBagConstraints gbc, int row, String label, Component field) {
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        panel.add(new JLabel(label), gbc);
+        gbc.gridx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1;
+        panel.add(field, gbc);
     }
 
     private void resetTable(BigDecimal openingCash) {
@@ -768,8 +863,39 @@ public class BalanceDraw extends JFrame {
         }
     }
 
+    private BigDecimal parseMoney(String value) {
+        if (value == null || value.isBlank()) {
+            JOptionPane.showMessageDialog(this, "Corrected count is required.", "Edit Closed Draw", JOptionPane.WARNING_MESSAGE);
+            return null;
+        }
+        try {
+            BigDecimal amount = utils.CurrencyFormatter.normalize(new BigDecimal(value.replace(",", "").replace("$", "").trim()));
+            if (amount.compareTo(BigDecimal.ZERO) < 0) {
+                JOptionPane.showMessageDialog(this, "Corrected count cannot be negative.", "Edit Closed Draw", JOptionPane.WARNING_MESSAGE);
+                return null;
+            }
+            return amount;
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Corrected count must be a valid number.", "Edit Closed Draw", JOptionPane.WARNING_MESSAGE);
+            return null;
+        }
+    }
+
     private String displayName(String value) {
         return value == null || value.isBlank() ? "Unknown" : value.trim();
+    }
+
+    private record ClosedDrawOption(CashDrawerSession session) {
+        @Override
+        public String toString() {
+            String opened = session.openedAt() == null ? "Unknown time" : DISPLAY_FORMAT.format(session.openedAt().toLocalDateTime());
+            String closed = session.closedAt() == null ? "not closed" : DISPLAY_FORMAT.format(session.closedAt().toLocalDateTime());
+            return "#" + session.sessionId()
+                    + " / " + (session.drawerName() == null || session.drawerName().isBlank() ? "Drawer" : session.drawerName())
+                    + " / " + opened + " - " + closed
+                    + " / counted " + CURRENCY.format(session.countedCash())
+                    + " / variance " + CURRENCY.format(session.variance());
+        }
     }
 
     private record FloatSearchBest(Map<Integer, Integer> counts, long score) {

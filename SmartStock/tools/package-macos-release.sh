@@ -76,7 +76,9 @@ PY
 }
 
 build_macos_icons() {
-  generate_source_icons
+  if [[ "${FORCE_GENERATE_APP_ICONS:-0}" == "1" || ! -f "$ROOT_DIR/src/Images/AppIconLight.png" || ! -f "$ROOT_DIR/src/Images/AppIconDark.png" ]]; then
+    generate_source_icons
+  fi
   build_icns_from_png "$ROOT_DIR/src/Images/AppIconLight.png" "$MAC_ICON_PATH"
   build_icns_from_png "$ROOT_DIR/src/Images/AppIconDark.png" "$MAC_DARK_ICON_PATH"
 }
@@ -207,7 +209,10 @@ notarized yet. For internal testing, right-click SmartStock.app and choose Open.
 For customer distribution, run tools/notarize-macos-release.sh with an Apple
 Developer ID Application certificate.
 EOF
-  hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
+  if ! hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null; then
+    printf 'Warning: DMG creation failed; continuing with the zipped app release artifact.\n' >&2
+    rm -f "$DMG_PATH"
+  fi
 fi
 
 SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"

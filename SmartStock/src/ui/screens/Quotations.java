@@ -1,5 +1,7 @@
 package ui.screens;
 
+import Receipt.AccountPaymentReceiptBuilder;
+import Receipt.AccountPaymentReceiptData;
 import Receipt.QuotationInvoiceDocumentBuilder;
 import managers.PermissionManager;
 import services.ManagerApprovalService;
@@ -182,15 +184,18 @@ public class Quotations extends JFrame {
             PaymentPrompt prompt = new PaymentPrompt(this, financials);
             prompt.setVisible(true);
             PaymentInput payment = prompt.paymentInput();
+            boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
-                    QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                    QuotationInvoiceService.PaymentReceiptRef receiptRef = QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                    paymentRecorded = true;
+                    openPaymentReceipt(receiptRef);
                 } catch (SQLException ex) {
                     showError("Payment was not recorded; remaining balance will be placed on account if possible", ex);
                 }
             }
             QuotationInvoiceViewService.InvoiceFinancials updated = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
-            if (updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+            if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
                 QuotationInvoiceService.chargeInvoiceToAccount(invoiceId, "Remaining balance from accepted quotation.");
             }
         } catch (SQLException ex) {
@@ -220,7 +225,7 @@ public class Quotations extends JFrame {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId)), this);
+            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId), false, "QUOTATION", quotationId), this);
         } catch (SQLException ex) {
             showError("Failed to preview quotation", ex);
         }
@@ -230,7 +235,9 @@ public class Quotations extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Quotation Print",
                 QuotationInvoiceDocumentBuilder.buildQuotation(quotationId),
-                true
+                true,
+                "QUOTATION",
+                quotationId
         ), this);
     }
 
@@ -238,7 +245,9 @@ public class Quotations extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Invoice Print",
                 QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId),
-                true
+                true,
+                "INVOICE",
+                invoiceId
         ), this);
     }
 
@@ -246,8 +255,27 @@ public class Quotations extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Delivery Bill Print",
                 QuotationInvoiceDocumentBuilder.buildDelivery(deliveryEventId),
-                true
+                true,
+                "DELIVERY_BILL",
+                deliveryEventId
         ), this);
+    }
+
+    private void openPaymentReceipt(QuotationInvoiceService.PaymentReceiptRef receiptRef) {
+        if (receiptRef == null) {
+            return;
+        }
+        try {
+            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(receiptRef.customerId(), receiptRef.transactionId());
+            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
+                    "Payment Receipt",
+                    JOptionPane.WARNING_MESSAGE
+            );
+        }
     }
 
     Long selectedId(JTable table) {
@@ -361,7 +389,9 @@ public class Quotations extends JFrame {
 
     static BigDecimal parseMoney(String value) {
         String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();
-        return clean.isBlank() || "null".equalsIgnoreCase(clean) ? BigDecimal.ZERO : new BigDecimal(clean);
+        return clean.isBlank() || "null".equalsIgnoreCase(clean)
+                ? BigDecimal.ZERO
+                : utils.CurrencyFormatter.normalize(new BigDecimal(clean));
     }
 
     private static boolean canChangeSaleItemPrice() {
@@ -401,7 +431,7 @@ public class Quotations extends JFrame {
     }
 
     static class PaymentPrompt extends JDialog {
-        private final JTextField amountField = new JTextField("0.00");
+        private final JTextField amountField = new JTextField("0");
         private final JComboBox<String> methodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG"});
         private final JTextField referenceField = new JTextField();
         private PaymentInput paymentInput = new PaymentInput(BigDecimal.ZERO, "CASH", "");
@@ -458,8 +488,10 @@ public class Quotations extends JFrame {
         private final JLabel statusLabel = new JLabel(" ");
         private final Long editQuotationId;
         private final String editQuotationNumber;
+        private final Timer customerSearchTimer;
         private JButton createButton;
         private JButton cancelButton;
+        private boolean updatingCustomerResults;
         boolean created;
 
         QuotationEditor(JFrame owner) {
@@ -470,13 +502,18 @@ public class Quotations extends JFrame {
             super(owner, editData == null ? "New Quotation" : "Edit Draft Quotation " + editData.quotationNumber(), true);
             this.editQuotationId = editData == null ? null : editData.quotationId();
             this.editQuotationNumber = editData == null ? null : editData.quotationNumber();
+            this.customerSearchTimer = new Timer(250, e -> refreshCustomerResults(editorText(customerBox)));
+            customerSearchTimer.setRepeats(false);
             setSize(860, 620);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             JPanel main = new JPanel(new BorderLayout(8, 8));
             main.setBorder(new EmptyBorder(12, 12, 12, 12));
             add(main, BorderLayout.CENTER);
+            customerBox.setEditable(true);
+            customerBox.setMaximumRowCount(12);
             loadCustomers();
+            installCustomerSearch();
             if (editData != null) {
                 loadExistingQuotation(editData);
             }
@@ -575,7 +612,7 @@ public class Quotations extends JFrame {
             BigDecimal originalUnitPrice = parseMoney(String.valueOf(lineModel.getValueAt(row, 8)));
             QuotationInvoiceViewService.ProductOption product = productId == null
                     ? null
-                    : new QuotationInvoiceViewService.ProductOption(productId, item, sku, "", originalUnitPrice);
+                    : new QuotationInvoiceViewService.ProductOption(productId, item, sku, "", "", originalUnitPrice);
             return new LineInput(
                     product,
                     item,
@@ -618,16 +655,18 @@ public class Quotations extends JFrame {
             for (int i = 0; i < customerBox.getItemCount(); i++) {
                 QuotationInvoiceViewService.CustomerOption option = customerBox.getItemAt(i);
                 if (option.customerId() == customerId) {
+                    updatingCustomerResults = true;
                     customerBox.setSelectedIndex(i);
+                    updatingCustomerResults = false;
                     return;
                 }
             }
         }
 
         private void createQuotation() {
-            QuotationInvoiceViewService.CustomerOption customer = (QuotationInvoiceViewService.CustomerOption) customerBox.getSelectedItem();
+            QuotationInvoiceViewService.CustomerOption customer = selectedCustomer();
             if (customer == null) {
-                JOptionPane.showMessageDialog(this, "Select a customer.");
+                JOptionPane.showMessageDialog(this, "Select a customer from the list.");
                 return;
             }
             List<QuotationInvoiceService.QuotationLineInput> lines = new ArrayList<>();
@@ -715,6 +754,135 @@ public class Quotations extends JFrame {
                 JOptionPane.showMessageDialog(this, "Failed to load customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
             }
         }
+
+        private void installCustomerSearch() {
+            Component editor = customerBox.getEditor().getEditorComponent();
+            if (editor instanceof JTextComponent textComponent) {
+                styleReadableControl(textComponent);
+                textComponent.getDocument().addDocumentListener(new DocumentListener() {
+                    @Override
+                    public void insertUpdate(DocumentEvent e) {
+                        scheduleCustomerSearch();
+                    }
+
+                    @Override
+                    public void removeUpdate(DocumentEvent e) {
+                        scheduleCustomerSearch();
+                    }
+
+                    @Override
+                    public void changedUpdate(DocumentEvent e) {
+                        scheduleCustomerSearch();
+                    }
+                });
+                if (textComponent instanceof JTextField textField) {
+                    textField.addActionListener(e -> selectBestCustomerMatch(editorText(customerBox)));
+                    textField.addFocusListener(new java.awt.event.FocusAdapter() {
+                        @Override
+                        public void focusGained(java.awt.event.FocusEvent e) {
+                            showCustomerPopupIfUseful();
+                        }
+                    });
+                }
+            }
+        }
+
+        private void scheduleCustomerSearch() {
+            if (!updatingCustomerResults) {
+                customerSearchTimer.restart();
+            }
+        }
+
+        private void refreshCustomerResults(String searchText) {
+            try {
+                List<QuotationInvoiceViewService.CustomerOption> customers = QuotationInvoiceViewService.searchCustomers(searchText);
+                updatingCustomerResults = true;
+                customerBox.removeAllItems();
+                for (QuotationInvoiceViewService.CustomerOption customer : customers) {
+                    customerBox.addItem(customer);
+                }
+                customerBox.getEditor().setItem(searchText);
+                updatingCustomerResults = false;
+                selectExactCustomerMatch(searchText, customers);
+                showCustomerPopupIfUseful();
+            } catch (SQLException ex) {
+                updatingCustomerResults = false;
+                JOptionPane.showMessageDialog(this, "Failed to search customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+
+        private QuotationInvoiceViewService.CustomerOption selectedCustomer() {
+            Object selected = customerBox.getSelectedItem();
+            if (selected instanceof QuotationInvoiceViewService.CustomerOption customer) {
+                return customer;
+            }
+            return selectBestCustomerMatch(editorText(customerBox));
+        }
+
+        private QuotationInvoiceViewService.CustomerOption selectBestCustomerMatch(String searchText) {
+            try {
+                return selectBestCustomerMatch(searchText, QuotationInvoiceViewService.searchCustomers(searchText), true);
+            } catch (SQLException ex) {
+                JOptionPane.showMessageDialog(this, "Failed to search customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
+                return null;
+            }
+        }
+
+        private void selectExactCustomerMatch(String searchText, List<QuotationInvoiceViewService.CustomerOption> customers) {
+            selectBestCustomerMatch(searchText, customers, false);
+        }
+
+        private QuotationInvoiceViewService.CustomerOption selectBestCustomerMatch(String searchText,
+                                                                                  List<QuotationInvoiceViewService.CustomerOption> customers,
+                                                                                  boolean allowSingleMatch) {
+            String search = searchText == null ? "" : searchText.trim();
+            if (search.isBlank()) {
+                return null;
+            }
+            QuotationInvoiceViewService.CustomerOption match = null;
+            for (QuotationInvoiceViewService.CustomerOption customer : customers) {
+                if (exactCustomerMatch(customer, search)) {
+                    match = customer;
+                    break;
+                }
+            }
+            if (match == null && allowSingleMatch && customers.size() == 1) {
+                match = customers.get(0);
+            }
+            if (match != null) {
+                updatingCustomerResults = true;
+                customerBox.setSelectedItem(match);
+                updatingCustomerResults = false;
+            }
+            return match;
+        }
+
+        private boolean exactCustomerMatch(QuotationInvoiceViewService.CustomerOption customer, String searchText) {
+            return searchText.equalsIgnoreCase(customer.name())
+                    || searchText.equalsIgnoreCase(customer.accountNumber())
+                    || searchText.equalsIgnoreCase(customer.toString());
+        }
+
+        private void showCustomerPopupIfUseful() {
+            if (!customerBox.isShowing() || customerBox.getItemCount() <= 0) {
+                return;
+            }
+            Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            Component editor = customerBox.getEditor().getEditorComponent();
+            if (focusOwner != customerBox && focusOwner != editor) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (customerBox.isShowing() && customerBox.getItemCount() > 0) {
+                    customerBox.showPopup();
+                }
+            });
+        }
+
+        private String editorText(JComboBox<?> comboBox) {
+            Object item = comboBox.getEditor().getItem();
+            return item == null ? "" : String.valueOf(item);
+        }
     }
 
     private static class LineEditor extends JDialog {
@@ -722,7 +890,7 @@ public class Quotations extends JFrame {
         private final JTextField itemField = new JTextField();
         private final JTextField skuField = new JTextField();
         private final JTextField qtyField = new JTextField("1");
-        private final JTextField unitField = new JTextField("0.00");
+        private final JTextField unitField = new JTextField("0");
         private final JTextField discountField = new JTextField("0");
         private final JComboBox<String> deliveryBox = new JComboBox<>(new String[]{"PICKUP", "LOCAL_DELIVERY", "SHIP", "INSTALLATION"});
         private final JTextField notesField = new JTextField();
@@ -742,6 +910,7 @@ public class Quotations extends JFrame {
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             productBox.setEditable(true);
+            productBox.setMaximumRowCount(12);
             loadProducts("");
             installProductSearch();
             if (existingLine != null) {
@@ -901,6 +1070,12 @@ public class Quotations extends JFrame {
                 });
                 if (textComponent instanceof JTextField textField) {
                     textField.addActionListener(e -> selectBestProductMatch(editorText(productBox)));
+                    textField.addFocusListener(new java.awt.event.FocusAdapter() {
+                        @Override
+                        public void focusGained(java.awt.event.FocusEvent e) {
+                            showProductPopupIfUseful();
+                        }
+                    });
                 }
             }
         }
@@ -921,10 +1096,8 @@ public class Quotations extends JFrame {
                 }
                 productBox.getEditor().setItem(searchText);
                 updatingProductResults = false;
-                selectBestProductMatch(searchText, products);
-                if (productBox.isShowing() && productBox.hasFocus()) {
-                    productBox.showPopup();
-                }
+                selectExactProductMatch(searchText, products);
+                showProductPopupIfUseful();
             } catch (SQLException ex) {
                 updatingProductResults = false;
                 JOptionPane.showMessageDialog(this, "Failed to search products.\n\n" + ex.getMessage(), "Products", JOptionPane.ERROR_MESSAGE);
@@ -940,6 +1113,14 @@ public class Quotations extends JFrame {
         }
 
         private void selectBestProductMatch(String searchText, List<QuotationInvoiceViewService.ProductOption> products) {
+            selectBestProductMatch(searchText, products, true);
+        }
+
+        private void selectExactProductMatch(String searchText, List<QuotationInvoiceViewService.ProductOption> products) {
+            selectBestProductMatch(searchText, products, false);
+        }
+
+        private void selectBestProductMatch(String searchText, List<QuotationInvoiceViewService.ProductOption> products, boolean allowSingleNumericMatch) {
             String search = searchText == null ? "" : searchText.trim();
             if (search.isBlank()) {
                 return;
@@ -951,7 +1132,7 @@ public class Quotations extends JFrame {
                     break;
                 }
             }
-            if (match == null && search.matches("\\d{4,}") && products.size() == 2) {
+            if (match == null && allowSingleNumericMatch && search.matches("\\d{4,}") && products.size() == 2) {
                 match = products.get(1);
             }
             if (match != null) {
@@ -965,7 +1146,24 @@ public class Quotations extends JFrame {
         private boolean exactProductMatch(QuotationInvoiceViewService.ProductOption product, String searchText) {
             return searchText.equalsIgnoreCase(product.name())
                     || searchText.equalsIgnoreCase(product.sku())
-                    || searchText.equalsIgnoreCase(product.barcode());
+                    || searchText.equalsIgnoreCase(product.barcode())
+                    || searchText.equalsIgnoreCase(product.description());
+        }
+
+        private void showProductPopupIfUseful() {
+            if (!productBox.isShowing() || productBox.getItemCount() <= 0) {
+                return;
+            }
+            Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            Component editor = productBox.getEditor().getEditorComponent();
+            if (focusOwner != productBox && focusOwner != editor) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (productBox.isShowing() && productBox.getItemCount() > 0) {
+                    productBox.showPopup();
+                }
+            });
         }
 
         private String editorText(JComboBox<?> comboBox) {

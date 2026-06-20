@@ -40,6 +40,7 @@ import ui.screens.Invoices;
 import ui.screens.StoreTransfer;
 import ui.screens.SyncStatus;
 import ui.screens.TimeClock;
+import ui.screens.WeeklySchedule;
 import ui.screens.VendorList;
 import ui.screens.ViewInventory;
 import ui.screens.ViewSales;
@@ -100,6 +101,7 @@ public class AppMenuBar {
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem sessionTimeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
+        JMenuItem weeklyScheduleItem = new JMenuItem("Weekly Schedule");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem deviceManagementItem = new JMenuItem("Device Management");
         JMenuItem machineManagementItem = new JMenuItem("Machines");
@@ -149,6 +151,7 @@ public class AppMenuBar {
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
+        boolean canViewEmployeeSchedule = PermissionManager.hasPermission("VIEW_EMPLOYEE_SCHEDULE");
         boolean canRoleManagement = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
         boolean canMachineManagement = PermissionManager.hasPermission("MACHINE_MANAGEMENT");
@@ -156,7 +159,7 @@ public class AppMenuBar {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canViewEmployeeSchedule || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -242,6 +245,9 @@ public class AppMenuBar {
         }
         if (!canPayrollDashboard || "PayrollDashboard".equalsIgnoreCase(screenKey)) {
             payrollDashboardItem.setEnabled(false);
+        }
+        if (!canViewEmployeeSchedule || "WeeklySchedule".equalsIgnoreCase(screenKey)) {
+            weeklyScheduleItem.setEnabled(false);
         }
         if (!canRoleManagement || "Roles_Permission".equalsIgnoreCase(screenKey)) {
             rolesPermissionItem.setEnabled(false);
@@ -547,6 +553,18 @@ public class AppMenuBar {
             }
         });
 
+        weeklyScheduleItem.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", parent, "Weekly Schedule")) {
+                    return;
+                }
+                if (WindowHelper.focusIfAlreadyOpen(WeeklySchedule.class)) {
+                    return;
+                }
+                NavigationManager.openWeeklySchedule(parent);
+            }
+        });
+
         balanceSheetItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!canBalanceSheet) {
@@ -662,6 +680,7 @@ public class AppMenuBar {
         employeeMenu.add(employeeMgmtItem);
         employeeMenu.add(timeClockItem);
         employeeMenu.add(payrollDashboardItem);
+        employeeMenu.add(weeklyScheduleItem);
 
         adminMenu.add(departmentListItem);
         adminMenu.add(vendorListItem);

@@ -14,6 +14,7 @@ import java.util.Base64;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import utils.SecureFilePermissions;
 
 public final class SupabaseSessionManager {
 
@@ -84,9 +85,11 @@ public final class SupabaseSessionManager {
 
         try {
             Files.createDirectories(SESSION_PATH.getParent());
+            SecureFilePermissions.restrictDirectoryToOwner(SESSION_PATH.getParent());
             try (var output = Files.newOutputStream(SESSION_PATH)) {
                 properties.store(output, "SmartStock stay signed in session");
             }
+            SecureFilePermissions.restrictFileToOwner(SESSION_PATH);
         } catch (IOException ex) {
             ex.printStackTrace();
         }

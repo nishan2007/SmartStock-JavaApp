@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import services.CustomerAccountLedgerService;
 import ui.helpers.StoreTimeZoneHelper;
@@ -21,7 +22,7 @@ import java.time.format.DateTimeFormatter;
 public class CustomerTransactionHistory extends JFrame {
     private final int customerId;
     private final String customerLabel;
-    private final NumberFormat currencyFormat = NumberFormat.getCurrencyInstance();
+    private final NumberFormat currencyFormat = CurrencyFormatter.create();
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private DefaultTableModel transactionModel;

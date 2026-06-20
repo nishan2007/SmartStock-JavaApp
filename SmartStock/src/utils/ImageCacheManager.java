@@ -1,5 +1,7 @@
 package utils;
 
+import managers.SupabaseSessionManager;
+
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -58,7 +60,10 @@ public final class ImageCacheManager {
 
         try {
             Files.createDirectories(CACHE_DIRECTORY);
-            Files.copy(sourcePath, cachePath(remoteUrl), StandardCopyOption.REPLACE_EXISTING);
+            SecureFilePermissions.restrictDirectoryToOwner(CACHE_DIRECTORY);
+            Path target = cachePath(remoteUrl);
+            Files.copy(sourcePath, target, StandardCopyOption.REPLACE_EXISTING);
+            SecureFilePermissions.restrictFileToOwner(target);
         } catch (IOException ex) {
             // Cache failure should not block the actual image upload/save path.
         }
@@ -72,11 +77,19 @@ public final class ImageCacheManager {
         }
 
         Files.createDirectories(CACHE_DIRECTORY);
-        HttpRequest request = HttpRequest.newBuilder()
+        SecureFilePermissions.restrictDirectoryToOwner(CACHE_DIRECTORY);
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(imageUrl))
                 .timeout(Duration.ofSeconds(20))
-                .GET()
-                .build();
+                .GET();
+        if (isSupabaseStorageUrl(imageUrl)) {
+            builder.header("apikey", SupabaseSessionManager.getSupabasePublishableKey());
+        }
+        String authHeader = authHeaderFor(imageUrl);
+        if (!authHeader.isBlank()) {
+            builder.header("Authorization", authHeader);
+        }
+        HttpRequest request = builder.build();
         HttpResponse<byte[]> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
         if (response.statusCode() < 200 || response.statusCode() >= 300 || response.body() == null || response.body().length == 0) {
             return null;
@@ -90,6 +103,7 @@ public final class ImageCacheManager {
                 return null;
             }
             Files.move(tempPath, cachePath, StandardCopyOption.REPLACE_EXISTING);
+            SecureFilePermissions.restrictFileToOwner(cachePath);
             return downloaded;
         } finally {
             Files.deleteIfExists(tempPath);
@@ -137,5 +151,21 @@ public final class ImageCacheManager {
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 is not available.", ex);
         }
+    }
+
+    private static String authHeaderFor(String imageUrl) {
+        if (!isSupabaseStorageUrl(imageUrl) || !imageUrl.contains("/storage/v1/object/authenticated/")) {
+            return "";
+        }
+        try {
+            return "Bearer " + SupabaseSessionManager.getValidAccessToken();
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private static boolean isSupabaseStorageUrl(String imageUrl) {
+        return imageUrl != null
+                && imageUrl.startsWith(SupabaseSessionManager.getSupabaseUrl() + "/storage/v1/object/");
     }
 }

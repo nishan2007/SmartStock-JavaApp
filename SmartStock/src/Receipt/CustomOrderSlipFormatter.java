@@ -1,5 +1,6 @@
 package Receipt;
 
+import utils.CurrencyFormatter;
 import managers.CompanyCustomizationManager;
 
 import java.io.ByteArrayOutputStream;
@@ -14,7 +15,7 @@ import java.util.Locale;
 public class CustomOrderSlipFormatter {
     private static final int RECEIPT_WIDTH = 40;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
-    private static final NumberFormat MONEY_FORMAT = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat MONEY_FORMAT = CurrencyFormatter.create(Locale.US);
 
     private CustomOrderSlipFormatter() {
     }

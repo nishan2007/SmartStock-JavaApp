@@ -6,6 +6,7 @@ import data.DatabaseMode;
 import services.BalanceSheetService;
 import services.ManagerApprovalService;
 import services.SyncOutboxService;
+import services.SupabaseSecurityHardening;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -342,7 +343,9 @@ public final class TimeClockManager {
         try (Connection conn = DB.getConnection()) {
             List<TimeClockRow> rows = buildRows(loadRecords(conn, true));
             ensurePayrollPaymentsSchema(conn);
+            reconcileBankPayrollTransactions(conn);
             Map<String, PayrollPaymentStatus> paidStatuses = loadPayrollPaymentStatuses(conn);
+            Map<String, BigDecimal> bonusesByPeriod = loadPayrollBonuses(conn);
             Map<String, PayrollSummary> summariesByKey = new HashMap<>();
             Map<String, Set<LocalDate>> workedDatesByKey = new HashMap<>();
 
@@ -363,6 +366,7 @@ public final class TimeClockManager {
                             row.payDate(),
                             workedDates.size(),
                             row.dailyHours(),
+                            BigDecimal.ZERO,
                             payrollPay,
                             1,
                             row.compensationType(),
@@ -386,6 +390,7 @@ public final class TimeClockManager {
                             existing.payDate(),
                             workedDates.size(),
                             existing.totalHours().add(row.dailyHours()),
+                            BigDecimal.ZERO,
                             totalPay,
                             existing.recordCount() + 1,
                             existing.compensationType(),
@@ -398,6 +403,27 @@ public final class TimeClockManager {
                             amountDue(totalPay, paidStatus)
                     ));
                 }
+            }
+
+            for (Map.Entry<String, PayrollSummary> entry : summariesByKey.entrySet()) {
+                PayrollSummary summary = entry.getValue();
+                BigDecimal bonusAmount = bonusesByPeriod.getOrDefault(entry.getKey(), BigDecimal.ZERO);
+                if (bonusAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                BigDecimal totalPayWithBonus = summary.totalPay().add(bonusAmount);
+                PayrollPaymentStatus paidStatus = paidStatuses.get(entry.getKey());
+                entry.setValue(new PayrollSummary(
+                        summary.userId(), summary.employeeName(), summary.employeeRole(),
+                        summary.payPeriodStart(), summary.payPeriodEnd(), summary.payDate(),
+                        summary.daysWorked(), summary.totalHours(), bonusAmount, totalPayWithBonus,
+                        summary.recordCount(), summary.compensationType(), summary.locationId(), summary.locationName(),
+                        isFullyPaid(totalPayWithBonus, paidStatus),
+                        paidStatus == null ? null : paidStatus.paidAt(),
+                        paidStatus == null ? "" : paidStatus.paidByName(),
+                        paidStatus == null ? BigDecimal.ZERO : paidStatus.paidAmount(),
+                        amountDue(totalPayWithBonus, paidStatus)
+                ));
             }
 
             List<PayrollSummary> summaries = new ArrayList<>(summariesByKey.values());
@@ -414,9 +440,76 @@ public final class TimeClockManager {
     }
 
     public static void markPayrollPaid(PayrollSummary summary) throws SQLException {
-        BigDecimal paymentAmount = defaultZero(summary.amountDue()).setScale(2, RoundingMode.HALF_UP);
+        markPayrollPaid(summary, "CASH", null);
+    }
+
+    public static void addPayrollBonus(PayrollSummary summary, BigDecimal amount, String reason) throws SQLException {
+        addPayrollBonuses(List.of(summary), amount, reason);
+    }
+
+    public static void addPayrollBonuses(List<PayrollSummary> summaries, BigDecimal amount, String reason) throws SQLException {
+        BigDecimal normalizedAmount = utils.CurrencyFormatter.normalize(amount);
+        if (normalizedAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new SQLException("Bonus amount must be greater than zero.");
+        }
+        if (summaries == null || summaries.isEmpty()) {
+            throw new SQLException("No employees were found for this pay period.");
+        }
+        String sql = """
+                INSERT INTO employee_payroll_bonuses (
+                    user_id, location_id, employee_name, pay_period_start, pay_period_end,
+                    amount, reason, created_by_user_id, created_by_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (Connection conn = DB.getConnection()) {
+            ensurePayrollPaymentsSchema(conn);
+            boolean oldAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                for (PayrollSummary summary : summaries) {
+                    ps.setInt(1, summary.userId());
+                    setNullableInteger(ps, 2, summary.locationId() == null
+                            ? SessionManager.getCurrentLocationId() : summary.locationId());
+                    ps.setString(3, summary.employeeName());
+                    ps.setDate(4, java.sql.Date.valueOf(summary.payPeriodStart()));
+                    ps.setDate(5, java.sql.Date.valueOf(summary.payPeriodEnd()));
+                    ps.setBigDecimal(6, normalizedAmount);
+                    ps.setString(7, reason == null || reason.isBlank() ? null : reason.trim());
+                    setNullableInteger(ps, 8, SessionManager.getCurrentUserId());
+                    ps.setString(9, SessionManager.getCurrentUserDisplayName());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                SyncOutboxService.recordEvent(conn, "PAYROLL_BONUS_CREATED", Map.of(
+                        "employee_count", summaries.size(),
+                        "amount_each", normalizedAmount,
+                        "pay_period_start", summaries.get(0).payPeriodStart(),
+                        "pay_period_end", summaries.get(0).payPeriodEnd(),
+                        "created_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                ));
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(oldAutoCommit);
+            }
+        }
+    }
+
+    public static void markPayrollPaid(PayrollSummary summary, String paymentMethod, String paymentReference) throws SQLException {
+        BigDecimal paymentAmount = utils.CurrencyFormatter.normalize(summary.amountDue());
         if (paymentAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new SQLException("This payroll period is already fully paid.");
+        }
+        String normalizedMethod = paymentMethod == null ? "CASH" : paymentMethod.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!"CASH".equals(normalizedMethod) && !"BANK".equals(normalizedMethod)) {
+            throw new SQLException("Payroll payment method must be Cash in Hand or Bank Account.");
+        }
+        String normalizedReference = paymentReference == null ? null : paymentReference.trim();
+        if ("BANK".equals(normalizedMethod) && (normalizedReference == null || normalizedReference.isBlank())) {
+            throw new SQLException("A bank reference is required for a bank payroll payment.");
         }
         String sql = """
                 INSERT INTO payroll_payments (
@@ -434,13 +527,15 @@ public final class TimeClockManager {
                     record_count,
                     compensation_type,
                     location_name,
+                    payment_method,
+                    payment_reference,
                     paid_at,
                     paid_by_user_id,
                     paid_by_name
                 )
                 SELECT ?, ?, ?, ?, ?, ?,
                        COALESCE(MAX(payment_number), 0) + 1,
-                       ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?
                 FROM payroll_payments
                 WHERE user_id = ?
                   AND pay_period_start = ?
@@ -467,23 +562,30 @@ public final class TimeClockManager {
                 ps.setInt(11, summary.recordCount());
                 ps.setString(12, summary.compensationType());
                 ps.setString(13, summary.locationName());
-                setNullableInteger(ps, 14, SessionManager.getCurrentUserId());
-                ps.setString(15, SessionManager.getCurrentUserDisplayName());
-                ps.setInt(16, summary.userId());
-                ps.setDate(17, java.sql.Date.valueOf(summary.payPeriodStart()));
-                ps.setDate(18, java.sql.Date.valueOf(summary.payPeriodEnd()));
+                ps.setString(14, normalizedMethod);
+                ps.setString(15, normalizedReference);
+                setNullableInteger(ps, 16, SessionManager.getCurrentUserId());
+                ps.setString(17, SessionManager.getCurrentUserDisplayName());
+                ps.setInt(18, summary.userId());
+                ps.setDate(19, java.sql.Date.valueOf(summary.payPeriodStart()));
+                ps.setDate(20, java.sql.Date.valueOf(summary.payPeriodEnd()));
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         LocalDate paidDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
-                        BalanceSheetService.recordPayrollExpense(
-                                rs.getLong("payroll_payment_id"),
-                                paymentAmount,
-                                summary.employeeName(),
-                                paidDate,
-                                "Pay period " + summary.payPeriodStart() + " - " + summary.payPeriodEnd()
-                                        + "; scheduled pay date " + summary.payDate(),
-                                payrollLocationId
-                        );
+                        long payrollPaymentId = rs.getLong("payroll_payment_id");
+                        String payrollDescription = "Pay period " + summary.payPeriodStart() + " - " + summary.payPeriodEnd()
+                                + "; scheduled pay date " + summary.payDate();
+                        if ("BANK".equals(normalizedMethod)) {
+                            BalanceSheetService.recordPayrollBankTransaction(
+                                    payrollPaymentId, paymentAmount, summary.employeeName(), paidDate,
+                                    normalizedReference, payrollLocationId
+                            );
+                        } else {
+                            BalanceSheetService.recordPayrollExpense(
+                                    payrollPaymentId, paymentAmount, summary.employeeName(), paidDate,
+                                    payrollDescription, payrollLocationId
+                            );
+                        }
                     }
                 }
             }
@@ -537,6 +639,69 @@ public final class TimeClockManager {
         }
 
         return statuses;
+    }
+
+    private static void reconcileBankPayrollTransactions(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT to_regclass('public.bank_transactions') IS NOT NULL");
+             ResultSet rs = ps.executeQuery()) {
+            if (!rs.next() || !rs.getBoolean(1)) {
+                return;
+            }
+        }
+        String sql = """
+                SELECT pp.payroll_payment_id,
+                       COALESCE(pp.total_pay, 0) AS total_pay,
+                       pp.employee_name,
+                       (pp.paid_at AT TIME ZONE ?)::date AS paid_date,
+                       pp.payment_reference,
+                       pp.location_id
+                FROM payroll_payments pp
+                WHERE UPPER(COALESCE(pp.payment_method, 'CASH')) = 'BANK'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM bank_transactions bt
+                      WHERE bt.source_type = 'PAYROLL'
+                        AND bt.source_id = pp.payroll_payment_id::text
+                  )
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, currentStoreZoneId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    BalanceSheetService.recordPayrollBankTransaction(
+                            rs.getLong("payroll_payment_id"),
+                            defaultZero(rs.getBigDecimal("total_pay")),
+                            rs.getString("employee_name"),
+                            rs.getDate("paid_date").toLocalDate(),
+                            rs.getString("payment_reference"),
+                            rs.getObject("location_id", Integer.class)
+                    );
+                }
+            }
+        }
+    }
+
+    private static Map<String, BigDecimal> loadPayrollBonuses(Connection conn) throws SQLException {
+        Map<String, BigDecimal> bonuses = new HashMap<>();
+        String sql = """
+                SELECT user_id, pay_period_start, pay_period_end, SUM(amount) AS bonus_amount
+                FROM employee_payroll_bonuses
+                GROUP BY user_id, pay_period_start, pay_period_end
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                bonuses.put(
+                        payrollKey(
+                                rs.getInt("user_id"),
+                                rs.getDate("pay_period_start").toLocalDate(),
+                                rs.getDate("pay_period_end").toLocalDate()
+                        ),
+                        defaultZero(rs.getBigDecimal("bonus_amount"))
+                );
+            }
+        }
+        return bonuses;
     }
 
     private static ClockStatus getCurrentStatus(Connection conn) throws SQLException {
@@ -784,26 +949,26 @@ public final class TimeClockManager {
         if (record.isDaily()) {
             Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, segment.workDate));
             return paidClockId != null && paidClockId == record.clockId
-                    ? record.salary.setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                    ? utils.CurrencyFormatter.normalize(record.salary)
+                    : BigDecimal.ZERO;
         }
         if (record.isSalary()) {
-            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+            return BigDecimal.ZERO;
         }
         if (record.clockOut != null && record.totalEarned != null && record.totalHoursWorked != null) {
             BigDecimal totalHours = record.totalHoursWorked.setScale(2, RoundingMode.HALF_UP);
             if (totalHours.compareTo(BigDecimal.ZERO) > 0) {
-                return record.totalEarned
+                return utils.CurrencyFormatter.normalize(record.totalEarned
                         .multiply(segment.hours)
-                        .divide(totalHours, 2, RoundingMode.HALF_UP);
+                        .divide(totalHours, 2, RoundingMode.HALF_UP));
             }
         }
-        return record.salary.multiply(segment.hours).setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(record.salary.multiply(segment.hours));
     }
 
     private static BigDecimal payrollPay(TimeClockRow row, boolean firstRowForPeriod) {
         if ("SALARY".equalsIgnoreCase(row.compensationType())) {
-            return firstRowForPeriod ? row.salary().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            return firstRowForPeriod ? utils.CurrencyFormatter.normalize(row.salary()) : BigDecimal.ZERO;
         }
         return row.totalPay();
     }
@@ -881,13 +1046,36 @@ public final class TimeClockManager {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
             stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_number INTEGER NOT NULL DEFAULT 1");
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'CASH'");
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_reference TEXT");
             stmt.executeUpdate("DROP INDEX IF EXISTS payroll_payments_employee_period_idx");
             stmt.executeUpdate("""
                     CREATE UNIQUE INDEX IF NOT EXISTS payroll_payments_employee_period_payment_idx
                     ON payroll_payments(user_id, pay_period_start, pay_period_end, payment_number)
                     """);
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS payroll_payments_location_paid_idx ON payroll_payments(location_id, paid_at DESC)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS employee_payroll_bonuses (
+                        employee_payroll_bonus_id BIGSERIAL PRIMARY KEY,
+                        sync_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+                        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        employee_name TEXT,
+                        pay_period_start DATE NOT NULL,
+                        pay_period_end DATE NOT NULL,
+                        amount NUMERIC(12, 2) NOT NULL,
+                        reason TEXT,
+                        created_by_user_id INTEGER REFERENCES users(user_id),
+                        created_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT employee_payroll_bonuses_amount_chk CHECK (amount > 0),
+                        CONSTRAINT employee_payroll_bonuses_sync_uuid_key UNIQUE (sync_uuid)
+                    )
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_period_idx ON employee_payroll_bonuses(pay_period_start, pay_period_end, user_id)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_location_period_idx ON employee_payroll_bonuses(location_id, pay_period_start, pay_period_end)");
         }
+        SupabaseSecurityHardening.protectInternalTable(conn, "employee_payroll_bonuses");
     }
 
     private static void ensureTimeClockOverrideSchema(Connection conn) throws SQLException {
@@ -926,7 +1114,7 @@ public final class TimeClockManager {
 
     private static BigDecimal amountDue(BigDecimal totalPay, PayrollPaymentStatus status) {
         BigDecimal due = defaultZero(totalPay).subtract(paidAmount(status));
-        return due.compareTo(BigDecimal.ZERO) <= 0 ? BigDecimal.ZERO : due.setScale(2, RoundingMode.HALF_UP);
+        return due.compareTo(BigDecimal.ZERO) <= 0 ? BigDecimal.ZERO : utils.CurrencyFormatter.normalize(due);
     }
 
     private static boolean isFullyPaid(BigDecimal totalPay, PayrollPaymentStatus status) {
@@ -961,6 +1149,7 @@ public final class TimeClockManager {
             LocalDate payDate,
             int daysWorked,
             BigDecimal totalHours,
+            BigDecimal bonusAmount,
             BigDecimal totalPay,
             int recordCount,
             String compensationType,
@@ -976,8 +1165,9 @@ public final class TimeClockManager {
             if (paidByName == null) {
                 paidByName = "";
             }
-            paidAmount = defaultZero(paidAmount).setScale(2, RoundingMode.HALF_UP);
-            amountDue = defaultZero(amountDue).setScale(2, RoundingMode.HALF_UP);
+            paidAmount = utils.CurrencyFormatter.normalize(paidAmount);
+            bonusAmount = utils.CurrencyFormatter.normalize(bonusAmount);
+            amountDue = utils.CurrencyFormatter.normalize(amountDue);
         }
     }
 

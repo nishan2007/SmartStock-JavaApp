@@ -129,6 +129,7 @@ public class PermissionManager {
                     || hasPermission("EDIT_ITEM")
                     || hasPermission("TIME_CLOCK")
                     || hasPermission("PAYROLL_DASHBOARD")
+                    || hasPermission("VIEW_EMPLOYEE_SCHEDULE")
                     || hasPermission("EMPLOYEE_MANAGEMENT")
                     || hasPermission("ROLE_MANAGEMENT")
                     || hasPermission("DEVICE_MANAGEMENT")
@@ -165,6 +166,7 @@ public class PermissionManager {
                     || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
             case "TimeClock" -> hasPermission("TIME_CLOCK");
             case "PayrollDashboard" -> hasPermission("PAYROLL_DASHBOARD");
+            case "WeeklySchedule" -> hasPermission("VIEW_EMPLOYEE_SCHEDULE");
             case "NewItem" -> hasPermission("NEW_ITEM");
             case "EditItem" -> hasPermission("EDIT_ITEM");
             case "EmployeeManagement" -> hasPermission("EMPLOYEE_MANAGEMENT");

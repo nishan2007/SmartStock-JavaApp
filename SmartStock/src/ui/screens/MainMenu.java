@@ -20,10 +20,12 @@ import data.DB;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.basic.BasicButtonUI;
+import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.io.IOException;
 import java.awt.image.BufferedImage;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -38,7 +40,9 @@ public class MainMenu extends JFrame {
     private static boolean drawStartPromptShownThisAppSession;
     private static final int MENU_ICON_SIZE = 74;
     private static final int MENU_TILE_WIDTH = 315;
-    private static final int OPERATION_MENU_TILE_WIDTH = 255;
+    private static final int MENU_TILE_MIN_WIDTH = 248;
+    private static final int MENU_TILE_MAX_WIDTH = 345;
+    private static final int OPERATION_MENU_TILE_WIDTH = 240;
     private static final int MENU_TILE_HEIGHT = 126;
     private static final int VERTICAL_MENU_TILE_HEIGHT = 182;
     private static final int MENU_TILE_GAP = 14;
@@ -49,6 +53,7 @@ public class MainMenu extends JFrame {
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
     private final JButton balanceDrawButton;
+    private final JButton changeBasketButton;
     private final JButton balanceSheetButton;
     private final JButton ordersManagerDashboardButton;
     private final JButton reportsButton;
@@ -65,10 +70,12 @@ public class MainMenu extends JFrame {
     private final JButton customOrdersButton;
     private final JButton ordersButton;
     private final JButton viewInventoryButton;
+    private final JButton priceTagPrintingButton;
     private final JButton addItemButton;
     private final JButton editItemsButton;
     private final JButton timeClockButton;
     private final JButton payrollDashboardButton;
+    private final JButton weeklyScheduleButton;
     private final JButton employeeManagementButton;
     private final JButton rolesPermissionsButton;
     private final JButton deviceManagementButton;
@@ -97,9 +104,9 @@ public class MainMenu extends JFrame {
         Color textColor = textColor();
         Color mutedColor = mutedColor();
 
-        JPanel mainPanel = new JPanel(new BorderLayout(20, 20));
+        JPanel mainPanel = new JPanel(new BorderLayout(0, 0));
         mainPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
-        mainPanel.setBorder(new EmptyBorder(24, 28, 24, 28));
+        mainPanel.setBorder(new EmptyBorder(0, 0, 24, 0));
         mainPanel.setBackground(backgroundColor);
 
         JLabel titleLabel = new JLabel(WelcomeGreetingHelper.currentGreeting().title());
@@ -119,6 +126,7 @@ public class MainMenu extends JFrame {
         makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MainMenuMakeSale.png"));
         returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/MainMenuReturns.png"));
         balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
+        changeBasketButton = createMenuButton("Change Basket", "Count the store change basket against its target", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
         balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/MainMenuBalanceSheet.png"));
         ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/MainMenuOrdersDashboard.png"));
         reportsButton = createMenuButton("Reports", "Review sales, orders, and invoice totals", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
@@ -135,10 +143,12 @@ public class MainMenu extends JFrame {
         customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
+        priceTagPrintingButton = createMenuButton("Price Tag Printing", "Select normal or custom items and print sticker tags", loadIcon("src/ICONS/MainMenuViewInventory.png"));
         addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/MainMenuAddItem.png"));
         editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/MainMenuEditItems.png"));
         timeClockButton = createMenuButton("Time Clock", "Clock employees in and out", loadIcon("src/ICONS/MainMenuTimeClock.png"));
         payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/MainMenuPayroll.png"));
+        weeklyScheduleButton = createMenuButton("Weekly Schedule", "See who is working each day", loadIcon("src/ICONS/MainMenuEmployees.png"));
         employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/MainMenuEmployees.png"));
         rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/MainMenuRolesPermissions.png"));
         deviceManagementButton = createMenuButton("Device Management", "Review devices and approve or block sign-ins", loadIcon("src/ICONS/MainMenuDeviceManagement.png"));
@@ -182,6 +192,7 @@ public class MainMenu extends JFrame {
                 storeTransferButton,
                 customOrderItemsButton,
                 viewInventoryButton,
+                priceTagPrintingButton,
                 addItemButton,
                 editItemsButton
         ));
@@ -191,6 +202,7 @@ public class MainMenu extends JFrame {
                 DeckersPalette.YELLOW,
                 timeClockButton,
                 payrollDashboardButton,
+                weeklyScheduleButton,
                 employeeManagementButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
@@ -215,6 +227,7 @@ public class MainMenu extends JFrame {
                 DeckersPalette.CORAL,
                 RIGHT_SECTION_COLUMNS,
                 balanceDrawButton,
+                changeBasketButton,
                 balanceSheetButton,
                 reportsButton,
                 customerAccountsButton,
@@ -254,14 +267,30 @@ public class MainMenu extends JFrame {
         logoutButton.setBackground(dark ? new Color(45, 45, 45) : surfaceColor);
         logoutButton.setForeground(textColor);
 
-        JPanel footerPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JLabel footerSmartStockLogoLabel = createLogoLabel("SmartStock");
+        JPanel footerSmartStockLogoPanel = createLogoPanel(footerSmartStockLogoLabel, "SmartStock Logo", 220, 74);
+        setSmartStockLogo(footerSmartStockLogoLabel);
+
+        JPanel footerPanel = new JPanel(new BorderLayout());
         footerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         footerPanel.setBackground(backgroundColor);
-        footerPanel.add(logoutButton);
+        footerPanel.add(footerSmartStockLogoPanel, BorderLayout.WEST);
+
+        JPanel footerActionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 16));
+        footerActionPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        footerActionPanel.setBackground(backgroundColor);
+        footerActionPanel.add(logoutButton);
+        footerPanel.add(footerActionPanel, BorderLayout.EAST);
+
+        JPanel contentPanel = new JPanel(new BorderLayout(20, 20));
+        contentPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        contentPanel.setBackground(backgroundColor);
+        contentPanel.setBorder(new EmptyBorder(0, 28, 0, 28));
+        contentPanel.add(sectionScrollPane, BorderLayout.CENTER);
+        contentPanel.add(footerPanel, BorderLayout.SOUTH);
 
         mainPanel.add(headerPanel, BorderLayout.NORTH);
-        mainPanel.add(sectionScrollPane, BorderLayout.CENTER);
-        mainPanel.add(footerPanel, BorderLayout.SOUTH);
+        mainPanel.add(contentPanel, BorderLayout.CENTER);
 
         applyPermissions();
         add(mainPanel, BorderLayout.CENTER);
@@ -312,24 +341,19 @@ public class MainMenu extends JFrame {
     }
 
     private JPanel createHeaderPanel(JLabel titleLabel, JLabel subtitleLabel) {
-        JPanel headerPanel = new JPanel(new BorderLayout(24, 0));
+        JPanel headerPanel = new RibbonHeaderPanel();
+        headerPanel.setLayout(new BorderLayout(24, 0));
         headerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         headerPanel.setBackground(backgroundColor());
 
         JLabel companyLogoLabel = createLogoLabel("Company");
-        JLabel smartStockLogoLabel = createLogoLabel("SmartStock");
 
         JPanel companyLogoPanel = createLogoPanel(companyLogoLabel, "Company Logo");
-        JPanel smartStockLogoPanel = createLogoPanel(smartStockLogoLabel, "SmartStock Logo");
-        JPanel rightPanel = new JPanel(new BorderLayout(0, 8));
-        rightPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
-        rightPanel.setBackground(backgroundColor());
-        rightPanel.add(smartStockLogoPanel, BorderLayout.CENTER);
 
         JPanel titlePanel = new JPanel();
         titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
         titlePanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
-        titlePanel.setBackground(backgroundColor());
+        titlePanel.setOpaque(false);
         titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         subtitleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         titlePanel.add(Box.createVerticalGlue());
@@ -338,13 +362,15 @@ public class MainMenu extends JFrame {
         titlePanel.add(subtitleLabel);
         titlePanel.add(Box.createVerticalGlue());
 
-        headerPanel.add(companyLogoPanel, BorderLayout.WEST);
-        headerPanel.add(titlePanel, BorderLayout.CENTER);
-        headerPanel.add(rightPanel, BorderLayout.EAST);
+        JPanel centerGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 24, 0));
+        centerGroup.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        centerGroup.setOpaque(false);
+        centerGroup.add(companyLogoPanel);
+        centerGroup.add(titlePanel);
+        headerPanel.add(centerGroup, BorderLayout.CENTER);
 
         setDeckersLogo(companyLogoLabel);
         loadCompanyLogo(companyLogoLabel);
-        setSmartStockLogo(smartStockLogoLabel);
         return headerPanel;
     }
 
@@ -357,13 +383,18 @@ public class MainMenu extends JFrame {
     }
 
     private JPanel createLogoPanel(JLabel logoLabel, String accessibleName) {
+        return createLogoPanel(logoLabel, accessibleName, 300, 112);
+    }
+
+    private JPanel createLogoPanel(JLabel logoLabel, String accessibleName, int width, int height) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
-        panel.setBackground(backgroundColor());
+        panel.setOpaque(false);
         panel.setBorder(new EmptyBorder(4, 4, 4, 4));
-        panel.setPreferredSize(new Dimension(300, 112));
-        panel.setMinimumSize(new Dimension(300, 112));
-        panel.setMaximumSize(new Dimension(300, 112));
+        Dimension size = new Dimension(width, height);
+        panel.setPreferredSize(size);
+        panel.setMinimumSize(size);
+        panel.setMaximumSize(size);
         panel.getAccessibleContext().setAccessibleName(accessibleName);
         panel.add(logoLabel, BorderLayout.CENTER);
         return panel;
@@ -528,7 +559,7 @@ public class MainMenu extends JFrame {
                 label.setAlignmentX(Component.CENTER_ALIGNMENT);
             }
         }
-        descriptionLabel.setText("<html><div style='width:210px; text-align:center;'>" + getMenuDescription(button) + "</div></html>");
+        descriptionLabel.setText("<html><div style='width:198px; text-align:center;'>" + getMenuDescription(button) + "</div></html>");
 
         JPanel iconWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
         iconWrap.setName("menuButtonIconWrap");
@@ -650,9 +681,96 @@ public class MainMenu extends JFrame {
     }
 
     private static int tileColumnsForWidth(int width, int maxColumns) {
-        int available = Math.max(MENU_TILE_WIDTH, width);
-        int fit = (available + MENU_TILE_GAP) / (MENU_TILE_WIDTH + MENU_TILE_GAP);
+        int available = Math.max(MENU_TILE_MIN_WIDTH, width);
+        int fit = (available + MENU_TILE_GAP) / (MENU_TILE_MIN_WIDTH + MENU_TILE_GAP);
         return Math.max(1, Math.min(Math.max(1, maxColumns), fit));
+    }
+
+    private static class RibbonHeaderPanel extends JPanel {
+        private final BufferedImage ribbonImage;
+        private BufferedImage scaledRibbonImage;
+        private int scaledRibbonWidth;
+        private int scaledRibbonHeight;
+
+        private RibbonHeaderPanel() {
+            ribbonImage = loadRibbonImage();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setColor(new Color(12, 12, 12));
+            g.fillRect(0, 0, getWidth(), getHeight());
+            if (ribbonImage == null) {
+                g.dispose();
+                return;
+            }
+            int width = getWidth();
+            int height = getHeight();
+            BufferedImage scaled = scaledRibbon(width, height);
+            if (scaled != null) {
+                g.drawImage(scaled, 0, 0, this);
+            }
+            g.dispose();
+        }
+
+        private BufferedImage scaledRibbon(int width, int height) {
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+            if (scaledRibbonImage != null && scaledRibbonWidth == width && scaledRibbonHeight == height) {
+                return scaledRibbonImage;
+            }
+
+            double scale = Math.max(
+                    width / (double) ribbonImage.getWidth(),
+                    height / (double) ribbonImage.getHeight()
+            );
+            int drawWidth = Math.max(width, (int) Math.ceil(ribbonImage.getWidth() * scale));
+            int drawHeight = Math.max(height, (int) Math.ceil(ribbonImage.getHeight() * scale));
+            int drawX = (width - drawWidth) / 2;
+            int drawY = (height - drawHeight) / 2;
+
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = image.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(ribbonImage, drawX, drawY, drawWidth, drawHeight, null);
+            g.dispose();
+
+            scaledRibbonImage = image;
+            scaledRibbonWidth = width;
+            scaledRibbonHeight = height;
+            return scaledRibbonImage;
+        }
+
+        private BufferedImage loadRibbonImage() {
+            java.net.URL resource = getClass().getResource("/Images/MainMenuRibbonFlow.png");
+            if (resource != null) {
+                try {
+                    return ImageIO.read(resource);
+                } catch (IOException ignored) {
+                }
+            }
+            BufferedImage localImage = readRibbonImage(new File("src/Images/MainMenuRibbonFlow.png"));
+            if (localImage != null) {
+                return localImage;
+            }
+            return readRibbonImage(new File("SmartStock/src/Images/MainMenuRibbonFlow.png"));
+        }
+
+        private BufferedImage readRibbonImage(File imageFile) {
+            if (!imageFile.isFile()) {
+                return null;
+            }
+            try {
+                return ImageIO.read(imageFile);
+            } catch (IOException ignored) {
+                return null;
+            }
+        }
     }
 
     private static class MenuTileButton extends JButton {
@@ -773,6 +891,20 @@ public class MainMenu extends JFrame {
         @Override
         public void doLayout() {
             int width = layoutWidth();
+            if (columns > 0) {
+                List<Component> visibleComponents = visibleComponents();
+                int layoutColumns = fixedColumns ? Math.max(1, columns) : tileColumnsForWidth(width, columns);
+                int tileWidth = tileWidthFor(width, layoutColumns);
+                int rowHeight = preferredRowHeight(visibleComponents);
+                for (int i = 0; i < visibleComponents.size(); i++) {
+                    Component component = visibleComponents.get(i);
+                    int column = i % layoutColumns;
+                    int row = i / layoutColumns;
+                    component.setBounds(column * (tileWidth + hGap), row * (rowHeight + vGap), tileWidth, rowHeight);
+                }
+                return;
+            }
+
             int x = 0;
             int y = 0;
             int rowHeight = 0;
@@ -796,18 +928,14 @@ public class MainMenu extends JFrame {
         @Override
         public Dimension getPreferredSize() {
             if (columns > 0) {
-                int visibleCount = 0;
-                int rowHeight = 0;
-                for (Component component : getComponents()) {
-                    if (!component.isVisible()) {
-                        continue;
-                    }
-                    visibleCount++;
-                    rowHeight = Math.max(rowHeight, component.getPreferredSize().height);
-                }
+                List<Component> visibleComponents = visibleComponents();
+                int visibleCount = visibleComponents.size();
+                int rowHeight = preferredRowHeight(visibleComponents);
                 int layoutColumns = fixedColumns ? columns : tileColumnsForWidth(layoutWidth(), columns);
                 int rows = visibleCount == 0 ? 0 : (int) Math.ceil((double) visibleCount / layoutColumns);
-                int width = layoutColumns * MENU_TILE_WIDTH + (layoutColumns - 1) * hGap;
+                int width = fixedColumns
+                        ? fixedColumnsWidth(layoutColumns)
+                        : layoutWidth();
                 int height = rows == 0 ? 0 : rows * rowHeight + (rows - 1) * vGap;
                 return new Dimension(width, height);
             }
@@ -846,7 +974,7 @@ public class MainMenu extends JFrame {
 
         private int layoutWidth() {
             if (columns > 0 && fixedColumns) {
-                return columns * MENU_TILE_WIDTH + (columns - 1) * hGap;
+                return fixedColumnsWidth(columns);
             }
             int width = getWidth();
             if (width <= 0 && getParent() != null) {
@@ -854,14 +982,55 @@ public class MainMenu extends JFrame {
             }
             if (width <= 0) {
                 width = columns > 0
-                        ? columns * MENU_TILE_WIDTH + (columns - 1) * hGap
-                        : MENU_TILE_WIDTH;
+                        ? columns * MENU_TILE_MIN_WIDTH + (columns - 1) * hGap
+                        : MENU_TILE_MIN_WIDTH;
             }
             if (columns > 0) {
                 int layoutColumns = tileColumnsForWidth(width, columns);
-                return layoutColumns * MENU_TILE_WIDTH + (layoutColumns - 1) * hGap;
+                return Math.max(width, layoutColumns * MENU_TILE_MIN_WIDTH + (layoutColumns - 1) * hGap);
             }
-            return Math.max(width, MENU_TILE_WIDTH);
+            return Math.max(width, MENU_TILE_MIN_WIDTH);
+        }
+
+        private List<Component> visibleComponents() {
+            List<Component> visibleComponents = new java.util.ArrayList<>();
+            for (Component component : getComponents()) {
+                if (component.isVisible()) {
+                    visibleComponents.add(component);
+                }
+            }
+            return visibleComponents;
+        }
+
+        private int preferredRowHeight(List<Component> components) {
+            int rowHeight = 0;
+            for (Component component : components) {
+                rowHeight = Math.max(rowHeight, component.getPreferredSize().height);
+            }
+            return rowHeight;
+        }
+
+        private int tileWidthFor(int width, int layoutColumns) {
+            if (fixedColumns) {
+                return fixedTileWidth();
+            }
+            int availableForTiles = width - ((layoutColumns - 1) * hGap);
+            int flexibleWidth = availableForTiles / Math.max(1, layoutColumns);
+            return Math.max(MENU_TILE_MIN_WIDTH, Math.min(MENU_TILE_MAX_WIDTH, flexibleWidth));
+        }
+
+        private int fixedColumnsWidth(int layoutColumns) {
+            return layoutColumns * fixedTileWidth() + (layoutColumns - 1) * hGap;
+        }
+
+        private int fixedTileWidth() {
+            int fixedTileWidth = 0;
+            for (Component component : getComponents()) {
+                if (component.isVisible()) {
+                    fixedTileWidth = Math.max(fixedTileWidth, component.getPreferredSize().width);
+                }
+            }
+            return fixedTileWidth > 0 ? fixedTileWidth : OPERATION_MENU_TILE_WIDTH;
         }
     }
 
@@ -927,6 +1096,7 @@ public class MainMenu extends JFrame {
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
         boolean canPayrollDashboard = PermissionManager.hasPermission("PAYROLL_DASHBOARD");
+        boolean canViewEmployeeSchedule = PermissionManager.hasPermission("VIEW_EMPLOYEE_SCHEDULE");
         boolean canEmployeeManagement = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canRolesPermissions = PermissionManager.hasPermission("ROLE_MANAGEMENT");
         boolean canDeviceManagement = PermissionManager.hasPermission("DEVICE_MANAGEMENT");
@@ -940,6 +1110,7 @@ public class MainMenu extends JFrame {
         makeSaleButton.setEnabled(canMakeSale);
         returnSaleButton.setEnabled(canProcessReturns);
         balanceDrawButton.setEnabled(canBalanceDrawer);
+        changeBasketButton.setEnabled(canBalanceDrawer);
         balanceSheetButton.setEnabled(canBalanceSheet);
         ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
         reportsButton.setEnabled(canReports);
@@ -956,10 +1127,12 @@ public class MainMenu extends JFrame {
         customOrdersButton.setEnabled(canCustomOrders);
         ordersButton.setEnabled(canOrders);
         viewInventoryButton.setEnabled(canViewInventory);
+        priceTagPrintingButton.setEnabled(canViewInventory);
         addItemButton.setEnabled(canAddItem);
         editItemsButton.setEnabled(canEditItem);
         timeClockButton.setEnabled(canTimeClock);
         payrollDashboardButton.setEnabled(canPayrollDashboard);
+        weeklyScheduleButton.setEnabled(canViewEmployeeSchedule);
         employeeManagementButton.setEnabled(canEmployeeManagement);
         rolesPermissionsButton.setEnabled(canRolesPermissions);
         deviceManagementButton.setEnabled(canDeviceManagement);
@@ -977,6 +1150,7 @@ public class MainMenu extends JFrame {
                 makeSaleButton,
                 returnSaleButton,
                 balanceDrawButton,
+                changeBasketButton,
                 balanceSheetButton,
                 ordersManagerDashboardButton,
                 reportsButton,
@@ -993,10 +1167,12 @@ public class MainMenu extends JFrame {
                 customOrdersButton,
                 ordersButton,
                 viewInventoryButton,
+                priceTagPrintingButton,
                 addItemButton,
                 editItemsButton,
                 timeClockButton,
                 payrollDashboardButton,
+                weeklyScheduleButton,
                 employeeManagementButton,
                 rolesPermissionsButton,
                 deviceManagementButton,
@@ -1032,6 +1208,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openBalanceDraw(this);
+        });
+        changeBasketButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("BALANCE_DRAWER", this, "Change Basket")) {
+                return;
+            }
+            NavigationManager.openChangeBasket(this);
         });
         balanceSheetButton.addActionListener(e -> {
             boolean canBalanceSheet = PermissionManager.hasPermission("BALANCE_SHEET")
@@ -1145,6 +1327,10 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openViewInventory(this);
         });
+        priceTagPrintingButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("VIEW_INVENTORY", this, "Price Tag Printing")) return;
+            NavigationManager.openPriceTagPrinting(this);
+        });
         addItemButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("NEW_ITEM", this, "Add Item")) {
                 return;
@@ -1168,6 +1354,12 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openPayrollDashboard(this);
+        });
+        weeklyScheduleButton.addActionListener(e -> {
+            if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", this, "Weekly Schedule")) {
+                return;
+            }
+            NavigationManager.openWeeklySchedule(this);
         });
         employeeManagementButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("EMPLOYEE_MANAGEMENT", this, "Employee Management")) {

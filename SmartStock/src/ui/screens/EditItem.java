@@ -697,7 +697,7 @@ public class EditItem extends JFrame {
 
         double costPrice;
         try {
-            costPrice = Double.parseDouble(costPriceText);
+            costPrice = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(costPriceText)).doubleValue();
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(this, "Cost price must be a valid number.");
             return;
@@ -705,7 +705,7 @@ public class EditItem extends JFrame {
 
         double price;
         try {
-            price = Double.parseDouble(priceText);
+            price = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(priceText)).doubleValue();
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(this, "Price must be a valid number.");
             return;

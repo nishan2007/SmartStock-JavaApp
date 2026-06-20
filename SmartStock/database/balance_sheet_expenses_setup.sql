@@ -44,6 +44,60 @@ ON expenses(location_id, expense_date DESC);
 CREATE INDEX IF NOT EXISTS expenses_created_by_user_idx
 ON expenses(created_by_user_id);
 
+CREATE TABLE IF NOT EXISTS cheque_bank_deposits (
+    cheque_bank_deposit_id BIGSERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES locations(location_id),
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    payment_reference TEXT,
+    deposited_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deposited_by_user_id INTEGER REFERENCES users(user_id),
+    deposited_by_name TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT cheque_bank_deposits_amount_chk CHECK (amount >= 0),
+    CONSTRAINT cheque_bank_deposits_source_unique UNIQUE (source_type, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS cheque_bank_deposits_location_deposited_idx
+ON cheque_bank_deposits(location_id, deposited_at DESC);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+    bank_transaction_id BIGSERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES locations(location_id),
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    transaction_name TEXT NOT NULL,
+    transaction_direction TEXT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    payment_reference TEXT,
+    source_type TEXT,
+    source_id TEXT,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT bank_transactions_amount_chk CHECK (amount >= 0),
+    CONSTRAINT bank_transactions_direction_chk CHECK (transaction_direction IN ('PAID', 'RECEIVED'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_source_unique_idx
+ON bank_transactions(source_type, source_id)
+WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS bank_transactions_location_date_idx
+ON bank_transactions(location_id, transaction_date DESC);
+
+CREATE SEQUENCE IF NOT EXISTS bank_transactions_bank_transaction_id_seq;
+ALTER SEQUENCE bank_transactions_bank_transaction_id_seq
+OWNED BY bank_transactions.bank_transaction_id;
+ALTER TABLE bank_transactions
+ALTER COLUMN bank_transaction_id SET DEFAULT nextval('bank_transactions_bank_transaction_id_seq');
+SELECT setval(
+    'bank_transactions_bank_transaction_id_seq',
+    GREATEST(COALESCE((SELECT MAX(bank_transaction_id) FROM bank_transactions), 0), 1),
+    COALESCE((SELECT MAX(bank_transaction_id) FROM bank_transactions), 0) > 0
+);
+
 CREATE TABLE IF NOT EXISTS balance_sheet_submissions (
     balance_sheet_submission_id BIGSERIAL PRIMARY KEY,
     location_id INTEGER REFERENCES locations(location_id),
@@ -65,7 +119,10 @@ CREATE TABLE IF NOT EXISTS balance_sheet_submissions (
     drawer_cash_lines TEXT,
     device_sales_lines TEXT,
     device_order_lines TEXT,
+    device_payment_lines TEXT,
     account_payment_lines TEXT,
+    bank_transaction_lines TEXT,
+    pending_cheque_lines TEXT,
     drawer_check_lines TEXT,
     submitted_by_user_id INTEGER REFERENCES users(user_id),
     submitted_by_name TEXT,
@@ -83,10 +140,25 @@ ALTER TABLE balance_sheet_submissions
 ADD COLUMN IF NOT EXISTS device_order_lines TEXT;
 
 ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS device_payment_lines TEXT;
+
+ALTER TABLE balance_sheet_submissions
 ADD COLUMN IF NOT EXISTS account_payment_lines TEXT;
 
 ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS bank_transaction_lines TEXT;
+
+ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS pending_cheque_lines TEXT;
+
+ALTER TABLE balance_sheet_submissions
 ADD COLUMN IF NOT EXISTS drawer_check_lines TEXT;
+
+ALTER TABLE IF EXISTS customer_account_transactions
+ADD COLUMN IF NOT EXISTS device_id TEXT;
+
+ALTER TABLE IF EXISTS customer_account_transactions
+ADD COLUMN IF NOT EXISTS device_name TEXT;
 
 CREATE INDEX IF NOT EXISTS balance_sheet_submissions_location_period_idx
 ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC);
@@ -102,7 +174,7 @@ DECLARE
     has_authenticated BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
     has_service_role BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role');
 BEGIN
-    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'expenses']
+    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'expenses', 'cheque_bank_deposits', 'bank_transactions']
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
         EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC', target_table);
@@ -155,7 +227,8 @@ WHERE NOT EXISTS (
 
 UPDATE permissions
 SET description = 'Allows viewing balance sheet totals and logging business expenses.',
-    permission_group = 'Sales'
+    permission_group = 'Operations',
+    permission_subgroup = 'Cash Drawer'
 WHERE UPPER(permission_key) = 'BALANCE_SHEET';
 
 INSERT INTO role_permissions (role_id, permission_id)

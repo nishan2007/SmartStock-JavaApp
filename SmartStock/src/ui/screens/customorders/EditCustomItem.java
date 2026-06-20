@@ -1019,7 +1019,7 @@ public class EditCustomItem extends JPanel {
         if (amount == null) {
             return "";
         }
-        return "$" + amount.setScale(2, java.math.RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.format(amount);
     }
 
     private String valueAt(DefaultTableModel model, int row, int column) {

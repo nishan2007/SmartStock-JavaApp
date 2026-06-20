@@ -425,9 +425,9 @@ public class ViewInventory extends JFrame {
                         row.add(vendor);
                     }
                     if (canViewCostPrice) {
-                        row.add(String.format("$%.2f", costPrice));
+                        row.add(utils.CurrencyFormatter.format(costPrice));
                     }
-                    row.add(String.format("$%.2f", price));
+                    row.add(utils.CurrencyFormatter.format(price));
                     row.add(quantity);
                     row.add(reorderLevel);
                     row.add(status);

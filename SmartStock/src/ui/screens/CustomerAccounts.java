@@ -1,5 +1,7 @@
 package ui.screens;
 
+import Receipt.AccountPaymentReceiptBuilder;
+import Receipt.AccountPaymentReceiptData;
 import data.DB;
 import managers.PermissionManager;
 import models.CashDrawerContext;
@@ -148,8 +150,8 @@ public class CustomerAccounts extends JFrame {
         phoneField = new JTextField();
         emailField = new JTextField();
         customerTypeSelector = new CustomerTypeSelector();
-        creditLimitField = new JTextField("0.00");
-        balanceField = new JTextField("0.00");
+        creditLimitField = new JTextField("0");
+        balanceField = new JTextField("0");
         balanceField.setEditable(false);
         accountNotesArea = new JTextArea(4, 20);
         accountNotesArea.setLineWrap(true);
@@ -332,6 +334,20 @@ public class CustomerAccounts extends JFrame {
         }
         CustomerPaymentHistory history = new CustomerPaymentHistory(selection.customerId(), selection.accountLabel());
         WindowHelper.showPosWindow(history, this);
+    }
+
+    private void openPaymentReceipt(int customerId, int transactionId) {
+        try {
+            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(customerId, transactionId);
+            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
+                    "Payment Receipt",
+                    JOptionPane.WARNING_MESSAGE
+            );
+        }
     }
 
     private void openCustomerTypes() {
@@ -536,7 +552,7 @@ public class CustomerAccounts extends JFrame {
                     conn.rollback();
                     return;
                 }
-                if (newBalance.compareTo(account.creditLimit) > 0) {
+                if (addCharge && newBalance.compareTo(account.creditLimit) > 0) {
                     JOptionPane.showMessageDialog(this, "Charge exceeds the customer's credit limit.");
                     conn.rollback();
                     return;
@@ -563,6 +579,7 @@ public class CustomerAccounts extends JFrame {
                     JOptionPane.showMessageDialog(this, "Charge added.");
                 } else {
                     JOptionPane.showMessageDialog(this, "Payment recorded. Payment ID: " + transaction.paymentId());
+                    openPaymentReceipt(selectedCustomerId, transaction.transactionId());
                 }
                 loadCustomers();
             } catch (Exception ex) {
@@ -1106,8 +1123,8 @@ public class CustomerAccounts extends JFrame {
         phoneField.setText("");
         emailField.setText("");
         customerTypeSelector.clearSelection();
-        creditLimitField.setText("0.00");
-        balanceField.setText("0.00");
+        creditLimitField.setText("0");
+        balanceField.setText("0");
         accountNotesArea.setText("");
         businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
@@ -1193,7 +1210,7 @@ public class CustomerAccounts extends JFrame {
 
     private String money(BigDecimal value) {
         value = defaultZero(value);
-        return String.format("$%.2f", value);
+        return utils.CurrencyFormatter.format(value);
     }
 
     private BigDecimal defaultZero(BigDecimal value) {
@@ -1202,7 +1219,7 @@ public class CustomerAccounts extends JFrame {
 
     private BigDecimal parseMoney(String value, String fieldName) {
         try {
-            return new BigDecimal(value.replace("$", "").replace(",", "").trim());
+            return utils.CurrencyFormatter.normalize(new BigDecimal(value.replace("$", "").replace(",", "").trim()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid amount.");
             return null;

@@ -100,6 +100,18 @@ public final class ReceiptCounterSyncService {
                         vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE,
                         vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
                         next_receipt_counter INTEGER NOT NULL DEFAULT 1,
+                        change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000,
+                        account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT',
+                        account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE,
+                        account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE,
                         badge_template_company_name TEXT NOT NULL DEFAULT 'SmartStock',
                         badge_template_logo_url TEXT NOT NULL DEFAULT '',
                         badge_template_quote TEXT NOT NULL DEFAULT '"Sales goes up and down, Service is Forever"',
@@ -125,6 +137,18 @@ public final class ReceiptCounterSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_enabled BOOLEAN NOT NULL DEFAULT FALSE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_use_department_rates BOOLEAN NOT NULL DEFAULT FALSE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_company_name TEXT NOT NULL DEFAULT 'SmartStock'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_logo_url TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_quote TEXT NOT NULL DEFAULT '\"Sales goes up and down, Service is Forever\"'");

@@ -1,6 +1,7 @@
 package ui.screens;
 
 import data.DB;
+import managers.CompanyCustomizationManager;
 import managers.SessionManager;
 import models.CashDrawer;
 import models.CashDrawerAssignment;
@@ -46,9 +47,11 @@ public class CashDrawerManagementPanel extends JPanel {
     private final JTable drawerTable = new JTable(drawerTableModel);
     private final JTable assignmentTable = new JTable(assignmentTableModel);
     private final JTextField drawerNameField = new JTextField();
-    private final JTextField startingCashField = new JTextField("20000.00");
+    private final JTextField startingCashField = new JTextField("20000");
+    private final JTextField changeBasketTargetField = new JTextField("60000");
+    private final JLabel changeBasketStatusLabel = new JLabel("Separate from drawer starting cash and float mix.");
     private final Map<Integer, JTextField> floatMixFields = new HashMap<>();
-    private final JLabel floatMixTotalLabel = new JLabel("$0.00");
+    private final JLabel floatMixTotalLabel = new JLabel("$0");
     private final JTextArea descriptionArea = new JTextArea(4, 24);
     private final JCheckBox activeBox = new JCheckBox("Active");
     private final JComboBox<DeviceOption> deviceBox = new JComboBox<>();
@@ -243,8 +246,65 @@ public class CashDrawerManagementPanel extends JPanel {
         assignButton.addActionListener(e -> assignDevice());
         unassignButton.addActionListener(e -> unassignSelectedAssignment());
 
-        panel.add(drawerEditor, BorderLayout.NORTH);
-        panel.add(assignmentEditor, BorderLayout.CENTER);
+        JPanel editorStack = new JPanel();
+        editorStack.setOpaque(false);
+        editorStack.setLayout(new BoxLayout(editorStack, BoxLayout.Y_AXIS));
+        drawerEditor.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JComponent changeBasketPanel = buildChangeBasketPanel();
+        changeBasketPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        assignmentEditor.setAlignmentX(Component.LEFT_ALIGNMENT);
+        editorStack.add(drawerEditor);
+        editorStack.add(Box.createVerticalStrut(12));
+        editorStack.add(changeBasketPanel);
+        editorStack.add(Box.createVerticalStrut(12));
+        editorStack.add(assignmentEditor);
+
+        panel.add(editorStack, BorderLayout.NORTH);
+        return panel;
+    }
+
+    private JComponent buildChangeBasketPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        JButton saveButton = new JButton("Save Target");
+        changeBasketStatusLabel.setForeground(new Color(75, 85, 99));
+        changeBasketStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.gridwidth = 2;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1;
+        gbc.insets = new Insets(0, 0, 6, 0);
+        JLabel title = new JLabel("Change Basket");
+        title.setFont(new Font("SansSerif", Font.BOLD, 18));
+        panel.add(title, gbc);
+
+        gbc.gridy = 1;
+        JLabel note = new JLabel("<html>This is the store change basket target. It is separate from each drawer's starting cash and float mix.</html>");
+        note.setForeground(new Color(75, 85, 99));
+        note.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        panel.add(note, gbc);
+
+        addFormRow(panel, gbc, 2, "Basket Target:", changeBasketTargetField);
+
+        JPanel actions = new JPanel(new BorderLayout(8, 0));
+        actions.setOpaque(false);
+        actions.add(changeBasketStatusLabel, BorderLayout.CENTER);
+        actions.add(saveButton, BorderLayout.EAST);
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        panel.add(actions, gbc);
+
+        saveButton.addActionListener(e -> saveChangeBasketTarget());
         return panel;
     }
 
@@ -363,6 +423,7 @@ public class CashDrawerManagementPanel extends JPanel {
         StoreOption store = (StoreOption) storeBox.getSelectedItem();
         Integer locationId = store == null ? null : store.id();
         Long preserveDrawerId = selectedDrawerId;
+        loadChangeBasketTarget(locationId);
 
         drawers.clear();
         drawers.addAll(CashDrawerService.listDrawers(conn, locationId, includeInactiveBox.isSelected()));
@@ -436,7 +497,7 @@ public class CashDrawerManagementPanel extends JPanel {
         selectedDrawerId = null;
         drawerTable.clearSelection();
         drawerNameField.setText("");
-        startingCashField.setText("20000.00");
+        startingCashField.setText("20000");
         setFloatMixFields(CashDrawerService.DEFAULT_FLOAT_MIX);
         descriptionArea.setText("");
         activeBox.setSelected(true);
@@ -524,14 +585,62 @@ public class CashDrawerManagementPanel extends JPanel {
         }
     }
 
+    private void loadChangeBasketTarget(Integer locationId) {
+        if (locationId == null) {
+            changeBasketTargetField.setEnabled(false);
+            changeBasketTargetField.setText("");
+            changeBasketStatusLabel.setText("Select a store to edit its change basket target.");
+            return;
+        }
+        try {
+            BigDecimal target = CompanyCustomizationManager.loadChangeBasketTargetAmount(locationId);
+            changeBasketTargetField.setEnabled(true);
+            changeBasketTargetField.setText(utils.CurrencyFormatter.normalize(target).toPlainString());
+            changeBasketStatusLabel.setText("Separate from drawer starting cash and float mix.");
+        } catch (Exception ex) {
+            changeBasketTargetField.setEnabled(false);
+            changeBasketStatusLabel.setText("Unable to load change basket target.");
+        }
+    }
+
+    private void saveChangeBasketTarget() {
+        StoreOption store = (StoreOption) storeBox.getSelectedItem();
+        if (store == null) {
+            JOptionPane.showMessageDialog(this, "Select a store before saving the change basket target.");
+            return;
+        }
+        try {
+            BigDecimal target = parseNonNegativeMoney(changeBasketTargetField.getText(), "Change basket target");
+            CompanyCustomizationManager.saveChangeBasketTargetAmount(store.id(), target);
+            changeBasketTargetField.setText(utils.CurrencyFormatter.normalize(target).toPlainString());
+            changeBasketStatusLabel.setText("Saved for " + store.name() + ". Separate from drawer starting cash.");
+            JOptionPane.showMessageDialog(this, "Change basket target saved.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save change basket target: " + ex.getMessage(),
+                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private BigDecimal parseMoney(String value) {
         String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();
         if (clean.isBlank()) {
-            return new BigDecimal("20000.00");
+            return new BigDecimal("20000");
         }
-        BigDecimal amount = new BigDecimal(clean);
+        BigDecimal amount = utils.CurrencyFormatter.normalize(new BigDecimal(clean));
         if (amount.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("Starting cash cannot be negative.");
+        }
+        return amount;
+    }
+
+    private BigDecimal parseNonNegativeMoney(String value, String label) {
+        String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();
+        if (clean.isBlank()) {
+            throw new IllegalArgumentException(label + " is required.");
+        }
+        BigDecimal amount = utils.CurrencyFormatter.normalize(new BigDecimal(clean));
+        if (amount.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException(label + " cannot be negative.");
         }
         return amount;
     }

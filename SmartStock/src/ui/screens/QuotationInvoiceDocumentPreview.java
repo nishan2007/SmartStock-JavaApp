@@ -2,6 +2,7 @@ package ui.screens;
 
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import services.EmailOutboxService;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -22,12 +23,21 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     private final JTextArea documentArea = new JTextArea();
     private final JEditorPane documentPane = new JEditorPane();
     private final String documentText;
+    private final String emailDocumentType;
+    private final Long emailDocumentId;
 
     public QuotationInvoiceDocumentPreview(String title, String documentText) {
-        this(title, documentText, false);
+        this(title, documentText, false, null, null);
     }
 
     public QuotationInvoiceDocumentPreview(String title, String documentText, boolean showPrintDialogOnOpen) {
+        this(title, documentText, showPrintDialogOnOpen, null, null);
+    }
+
+    public QuotationInvoiceDocumentPreview(String title, String documentText, boolean showPrintDialogOnOpen,
+                                           String emailDocumentType, Long emailDocumentId) {
+        this.emailDocumentType = emailDocumentType;
+        this.emailDocumentId = emailDocumentId;
         setTitle(title);
         setSize(980, 780);
         setLocationRelativeTo(null);
@@ -59,12 +69,17 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         mainPanel.add(previewScrollPane, BorderLayout.CENTER);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        JButton emailButton = new JButton("Email");
         JButton printButton = new JButton("Print");
         JButton closeButton = new JButton("Close");
+        if (emailDocumentType != null && emailDocumentId != null) {
+            buttons.add(emailButton);
+        }
         buttons.add(printButton);
         buttons.add(closeButton);
         mainPanel.add(buttons, BorderLayout.SOUTH);
 
+        emailButton.addActionListener(e -> emailDocument());
         printButton.addActionListener(e -> printDocument());
         closeButton.addActionListener(e -> dispose());
         WindowHelper.configurePosWindow(this);
@@ -74,6 +89,38 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                 requestFocus();
                 printDocument();
             });
+        }
+    }
+
+    private void emailDocument() {
+        String recipient = JOptionPane.showInputDialog(
+                this,
+                "Customer email (leave blank to use document email):",
+                "Email " + getTitle(),
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (recipient == null) {
+            return;
+        }
+        try {
+            EmailOutboxService.QueueResult result = switch (emailDocumentType) {
+                case "QUOTATION" -> EmailOutboxService.queueQuotation(emailDocumentId, recipient.trim(), false);
+                case "INVOICE" -> EmailOutboxService.queueInvoice(emailDocumentId, recipient.trim(), false);
+                case "DELIVERY_BILL" -> EmailOutboxService.queueDeliveryBill(emailDocumentId, recipient.trim(), false);
+                default -> EmailOutboxService.QueueResult.skipped("This document cannot be emailed.");
+            };
+            if (result.queued()) {
+                JOptionPane.showMessageDialog(this, "Email queued. Outbox #" + result.outboxId() + ".");
+            } else {
+                JOptionPane.showMessageDialog(this, result.message(), "Email Document", JOptionPane.WARNING_MESSAGE);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to queue email.\n\n" + ex.getMessage(),
+                    "Email Document",
+                    JOptionPane.ERROR_MESSAGE
+            );
         }
     }
 

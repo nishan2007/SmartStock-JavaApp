@@ -155,6 +155,44 @@ public final class QuotationInvoiceViewService {
         }
     }
 
+    public static List<CustomerOption> searchCustomers(String searchText) throws SQLException {
+        String search = searchText == null ? "" : searchText.trim();
+        String pattern = "%" + search + "%";
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT customer_id, account_number, name, is_business
+                     FROM customer_accounts
+                     WHERE is_active = TRUE
+                       AND (
+                            ? = ''
+                            OR name ILIKE ?
+                            OR COALESCE(account_number, '') ILIKE ?
+                            OR COALESCE(phone, '') ILIKE ?
+                            OR COALESCE(email, '') ILIKE ?
+                       )
+                     ORDER BY is_business DESC, name
+                     LIMIT 75
+                     """)) {
+            ps.setString(1, search);
+            ps.setString(2, pattern);
+            ps.setString(3, pattern);
+            ps.setString(4, pattern);
+            ps.setString(5, pattern);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<CustomerOption> rows = new ArrayList<>();
+                while (rs.next()) {
+                    rows.add(new CustomerOption(
+                            rs.getInt("customer_id"),
+                            rs.getString("account_number"),
+                            rs.getString("name"),
+                            rs.getBoolean("is_business")
+                    ));
+                }
+                return rows;
+            }
+        }
+    }
+
     public static QuotationEditData loadQuotationForEdit(long quotationId) throws SQLException {
         try (Connection conn = DB.getConnection()) {
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
@@ -230,6 +268,7 @@ public final class QuotationInvoiceViewService {
                             p.name,
                             COALESCE(p.sku, '') AS sku,
                             COALESCE(p.barcode, '') AS barcode,
+                            COALESCE(p.description, '') AS description,
                             p.price
                      FROM products p
                      WHERE p.is_active = TRUE
@@ -238,6 +277,7 @@ public final class QuotationInvoiceViewService {
                             OR p.name ILIKE ?
                             OR COALESCE(p.sku, '') ILIKE ?
                             OR COALESCE(p.barcode, '') ILIKE ?
+                            OR COALESCE(p.description, '') ILIKE ?
                             OR EXISTS (
                                 SELECT 1
                                 FROM product_barcodes pb
@@ -253,15 +293,17 @@ public final class QuotationInvoiceViewService {
             ps.setString(3, pattern);
             ps.setString(4, pattern);
             ps.setString(5, pattern);
+            ps.setString(6, pattern);
             try (ResultSet rs = ps.executeQuery()) {
                 List<ProductOption> rows = new ArrayList<>();
-                rows.add(new ProductOption(null, "Manual line", "", "", BigDecimal.ZERO));
+                rows.add(new ProductOption(null, "Manual line", "", "", "", BigDecimal.ZERO));
                 while (rs.next()) {
                     rows.add(new ProductOption(
                             rs.getInt("product_id"),
                             rs.getString("name"),
                             rs.getString("sku"),
                             rs.getString("barcode"),
+                            rs.getString("description"),
                             rs.getBigDecimal("price")
                     ));
                 }
@@ -370,7 +412,7 @@ public final class QuotationInvoiceViewService {
         }
     }
 
-    public record ProductOption(Integer productId, String name, String sku, String barcode, BigDecimal price) {
+    public record ProductOption(Integer productId, String name, String sku, String barcode, String description, BigDecimal price) {
         @Override
         public String toString() {
             if (productId == null) {

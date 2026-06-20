@@ -76,7 +76,7 @@ public class QuickCustomerAccount extends JFrame {
         emailField = new JTextField();
         customerTypeSelector = new CustomerTypeSelector();
         businessAccountCheckBox = new JCheckBox("Business Account");
-        creditLimitField = new JTextField("0.00");
+        creditLimitField = new JTextField("0");
         accountNotesArea = new JTextArea(4, 20);
         accountNotesArea.setLineWrap(true);
         accountNotesArea.setWrapStyleWord(true);

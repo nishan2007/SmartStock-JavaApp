@@ -107,7 +107,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         priceRateUnitLabel = new JLabel(" ");
         printMaterialBox = new JComboBox<>();
         printSizePresetBox = new JComboBox<>();
-        printChargeField = new JTextField("0.00");
+        printChargeField = new JTextField("0");
         printLineCountField = new JTextField("1");
         printDescriptionField = new JTextField();
         lineQuantityField = new JTextField("1", 6);
@@ -125,8 +125,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addLineButton = new JButton("Add Line");
 
         lineCountLabel = summaryTile("Lines", "0", TEAL);
-        orderTotalLabel = summaryTile("Order Total", "$0.00", ACCENT);
-        minimumDepositLabel = summaryTile("Minimum Deposit", "$0.00", AMBER);
+        orderTotalLabel = summaryTile("Order Total", "$0", ACCENT);
+        minimumDepositLabel = summaryTile("Minimum Deposit", "$0", AMBER);
 
         orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Total", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason"}, 0) {
             @Override public boolean isCellEditable(int row, int column) { return false; }
@@ -154,12 +154,12 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         styleTable(orderLineTable);
 
         reviewLineCountLabel = new JLabel("Lines: 0");
-        reviewOrderTotalLabel = new JLabel("Order Total: $0.00");
-        reviewMinimumDepositLabel = new JLabel("Minimum Deposit Required: $0.00");
+        reviewOrderTotalLabel = new JLabel("Order Total: $0");
+        reviewMinimumDepositLabel = new JLabel("Minimum Deposit Required: $0");
         reviewLineModel = new DefaultListModel<>();
         customerInfoPanel = new CustomerInfoPanel();
         customerSummaryLabel = new JLabel("Customer details will appear here before payment.");
-        paymentMinimumDepositLabel = new JLabel("Minimum Deposit Required: $0.00");
+        paymentMinimumDepositLabel = new JLabel("Minimum Deposit Required: $0");
         depositOverrideNoticeLabel = new JLabel(" ");
         depositOverrideReasonField = new JTextField();
         paymentMethodGroup = new ButtonGroup();
@@ -169,8 +169,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         mmgPaymentButton = createPaymentMethodButton("MMG", "MMG", handler);
         accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT", handler);
         paymentReferenceField = new JTextField();
-        upfrontPaymentField = new JTextField("0.00", 10);
-        balanceDueLabel = new JLabel("Balance Due: $0.00");
+        upfrontPaymentField = new JTextField("0", 10);
+        balanceDueLabel = new JLabel("Balance Due: $0");
         styleFormControls();
 
         stepCards.add(buildLinesStep(handler, itemLookupButton), "Lines");

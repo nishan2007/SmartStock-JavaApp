@@ -1,5 +1,8 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
+import Receipt.AccountPaymentReceiptBuilder;
+import Receipt.AccountPaymentReceiptData;
 import data.DB;
 import services.CustomerAccountLedgerService;
 import ui.helpers.StoreTimeZoneHelper;
@@ -8,6 +11,7 @@ import ui.helpers.WindowHelper;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableColumn;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -21,10 +25,11 @@ import java.time.format.DateTimeFormatter;
 public class CustomerPaymentHistory extends JFrame {
     private final int customerId;
     private final String customerLabel;
-    private final NumberFormat currencyFormat = NumberFormat.getCurrencyInstance();
+    private final NumberFormat currencyFormat = CurrencyFormatter.create();
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private DefaultTableModel paymentModel;
+    private JTable paymentTable;
     private JLabel summaryLabel;
 
     public CustomerPaymentHistory(int customerId, String customerLabel) {
@@ -63,17 +68,22 @@ public class CustomerPaymentHistory extends JFrame {
         titlePanel.add(Box.createVerticalStrut(4));
         titlePanel.add(customerLabelText);
 
+        JButton printReceiptButton = new JButton("Print Receipt");
         JButton refreshButton = new JButton("Refresh");
+        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actionsPanel.add(printReceiptButton);
+        actionsPanel.add(refreshButton);
+        printReceiptButton.addActionListener(e -> openSelectedPaymentReceipt());
         refreshButton.addActionListener(e -> loadPayments());
 
         headerPanel.add(titlePanel, BorderLayout.WEST);
-        headerPanel.add(refreshButton, BorderLayout.EAST);
+        headerPanel.add(actionsPanel, BorderLayout.EAST);
         return headerPanel;
     }
 
     private JScrollPane buildTablePanel() {
         paymentModel = new DefaultTableModel(
-                new Object[]{"Payment ID", "Payment Date", "User", "Method", "Reference", "Device", "Drawer", "Payment Amount", "Applied To", "Applied", "Charge Total", "Paid", "Status", "Charge Date"},
+                new Object[]{"Payment ID", "Payment Date", "User", "Method", "Reference", "Device", "Drawer", "Payment Amount", "Applied To", "Applied", "Charge Total", "Paid", "Status", "Charge Date", "Transaction ID"},
                 0
         ) {
             @Override
@@ -82,7 +92,7 @@ public class CustomerPaymentHistory extends JFrame {
             }
         };
 
-        JTable paymentTable = new JTable(paymentModel);
+        paymentTable = new JTable(paymentModel);
         paymentTable.setRowHeight(26);
         paymentTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         paymentTable.getTableHeader().setReorderingAllowed(false);
@@ -100,6 +110,8 @@ public class CustomerPaymentHistory extends JFrame {
         paymentTable.getColumnModel().getColumn(11).setPreferredWidth(110);
         paymentTable.getColumnModel().getColumn(12).setPreferredWidth(100);
         paymentTable.getColumnModel().getColumn(13).setPreferredWidth(160);
+        TableColumn transactionIdColumn = paymentTable.getColumnModel().getColumn(14);
+        paymentTable.getColumnModel().removeColumn(transactionIdColumn);
 
         return new JScrollPane(paymentTable);
     }
@@ -183,21 +195,22 @@ public class CustomerPaymentHistory extends JFrame {
                     }
 
                     paymentModel.addRow(new Object[]{
-		                            displayPaymentId,
-		                            formatTimestamp(rs.getTimestamp("payment_date")),
-		                            rs.getString("user_name"),
+                            displayPaymentId,
+                            formatTimestamp(rs.getTimestamp("payment_date")),
+                            rs.getString("user_name"),
                             rs.getString("payment_method"),
                             rs.getString("payment_reference"),
                             rs.getString("device_name"),
                             rs.getString("cash_drawer_name"),
-		                            currencyFormat.format(paymentAmount),
+                            currencyFormat.format(paymentAmount),
                             appliedTarget(rs),
-	                            appliedAmount == null ? "" : currencyFormat.format(appliedAmount),
+                            appliedAmount == null ? "" : currencyFormat.format(appliedAmount),
                             currencyFormat.format(chargeTotal(rs)),
                             currencyFormat.format(chargePaid(rs)),
-	                            formatStatus(chargeStatus(rs)),
-	                            formatTimestamp(rs.getTimestamp("charge_date"))
-	                    });
+                            formatStatus(chargeStatus(rs)),
+                            formatTimestamp(rs.getTimestamp("charge_date")),
+                            transactionId
+                    });
                     rowCount++;
                 }
                 }
@@ -215,6 +228,32 @@ public class CustomerPaymentHistory extends JFrame {
     private Object nullableInt(ResultSet rs, String column) throws SQLException {
         int value = rs.getInt(column);
         return rs.wasNull() ? "" : value;
+    }
+
+    private void openSelectedPaymentReceipt() {
+        if (paymentTable == null || paymentTable.getSelectedRow() < 0) {
+            JOptionPane.showMessageDialog(this, "Select a payment first.");
+            return;
+        }
+
+        int modelRow = paymentTable.convertRowIndexToModel(paymentTable.getSelectedRow());
+        Object transactionValue = paymentModel.getValueAt(modelRow, 14);
+        if (!(transactionValue instanceof Number number)) {
+            JOptionPane.showMessageDialog(this, "Selected payment is missing its transaction ID.");
+            return;
+        }
+
+        try {
+            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(customerId, number.longValue());
+            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to load payment receipt: " + ex.getMessage(),
+                    "Payment Receipt",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
     }
 
     private String appliedTarget(ResultSet rs) throws SQLException {

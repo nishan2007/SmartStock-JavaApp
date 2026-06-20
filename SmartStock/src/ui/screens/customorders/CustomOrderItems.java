@@ -2165,7 +2165,7 @@ public class CustomOrderItems extends JFrame {
         if (amount == null) {
             return "";
         }
-        return "$" + amount.setScale(2, java.math.RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.format(amount);
     }
 
     private String displayPricingMode(String pricingMode) {

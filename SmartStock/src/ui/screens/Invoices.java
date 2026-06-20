@@ -1,5 +1,7 @@
 package ui.screens;
 
+import Receipt.AccountPaymentReceiptBuilder;
+import Receipt.AccountPaymentReceiptData;
 import Receipt.QuotationInvoiceDocumentBuilder;
 import services.QuotationInvoiceService;
 import services.QuotationInvoiceViewService;
@@ -253,7 +255,8 @@ public class Invoices extends JFrame {
                 JOptionPane.showMessageDialog(this, "Payment amount must be greater than zero.", "Invoices", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            QuotationInvoiceService.recordPayment(invoiceId, paymentAmount, (String) method.getSelectedItem(), reference.getText());
+            QuotationInvoiceService.PaymentReceiptRef receiptRef = QuotationInvoiceService.recordPayment(invoiceId, paymentAmount, (String) method.getSelectedItem(), reference.getText());
+            openPaymentReceipt(receiptRef);
             refreshAll();
         } catch (Exception ex) {
             showError("Failed to process payment", ex);
@@ -267,6 +270,28 @@ public class Invoices extends JFrame {
         dialog.setVisible(true);
         if (dialog.created) {
             refreshAll();
+            try {
+                openDeliveryPrintDialog(dialog.deliveryEventId());
+            } catch (SQLException ex) {
+                showError("Failed to open delivery bill printout", ex);
+            }
+        }
+    }
+
+    private void openPaymentReceipt(QuotationInvoiceService.PaymentReceiptRef receiptRef) {
+        if (receiptRef == null) {
+            return;
+        }
+        try {
+            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(receiptRef.customerId(), receiptRef.transactionId());
+            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
+                    "Payment Receipt",
+                    JOptionPane.WARNING_MESSAGE
+            );
         }
     }
 
@@ -274,7 +299,7 @@ public class Invoices extends JFrame {
         Long invoiceId = selectedId(invoiceTable);
         if (invoiceId == null) return;
         try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Invoice Preview", QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId)), this);
+            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Invoice Preview", QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId), false, "INVOICE", invoiceId), this);
         } catch (SQLException ex) {
             showError("Failed to preview invoice", ex);
         }
@@ -284,7 +309,7 @@ public class Invoices extends JFrame {
         Long deliveryId = selectedId(deliveryTable);
         if (deliveryId == null) return;
         try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Delivery Bill Preview", QuotationInvoiceDocumentBuilder.buildDelivery(deliveryId)), this);
+            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Delivery Bill Preview", QuotationInvoiceDocumentBuilder.buildDelivery(deliveryId), false, "DELIVERY_BILL", deliveryId), this);
         } catch (SQLException ex) {
             showError("Failed to preview delivery bill", ex);
         }
@@ -352,15 +377,18 @@ public class Invoices extends JFrame {
             Quotations.PaymentPrompt prompt = new Quotations.PaymentPrompt(this, financials);
             prompt.setVisible(true);
             Quotations.PaymentInput payment = prompt.paymentInput();
+            boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
-                    QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                    QuotationInvoiceService.PaymentReceiptRef receiptRef = QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                    paymentRecorded = true;
+                    openPaymentReceipt(receiptRef);
                 } catch (SQLException ex) {
                     showError("Payment was not recorded; remaining balance will be placed on account if possible", ex);
                 }
             }
             QuotationInvoiceViewService.InvoiceFinancials updated = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
-            if (updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+            if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
                 QuotationInvoiceService.chargeInvoiceToAccount(invoiceId, "Remaining balance from accepted quotation.");
             }
         } catch (SQLException ex) {
@@ -390,7 +418,7 @@ public class Invoices extends JFrame {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId)), this);
+            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId), false, "QUOTATION", quotationId), this);
         } catch (SQLException ex) {
             showError("Failed to preview quotation", ex);
         }
@@ -400,7 +428,9 @@ public class Invoices extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Quotation Print",
                 QuotationInvoiceDocumentBuilder.buildQuotation(quotationId),
-                true
+                true,
+                "QUOTATION",
+                quotationId
         ), this);
     }
 
@@ -408,7 +438,9 @@ public class Invoices extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Invoice Print",
                 QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId),
-                true
+                true,
+                "INVOICE",
+                invoiceId
         ), this);
     }
 
@@ -416,7 +448,9 @@ public class Invoices extends JFrame {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Delivery Bill Print",
                 QuotationInvoiceDocumentBuilder.buildDelivery(deliveryEventId),
-                true
+                true,
+                "DELIVERY_BILL",
+                deliveryEventId
         ), this);
     }
 

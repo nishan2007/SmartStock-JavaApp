@@ -846,7 +846,7 @@ public class ViewInventoryDetails extends JDialog {
             return "";
         }
         try {
-            return String.format("$%.2f", Double.parseDouble(value));
+            return utils.CurrencyFormatter.format(Double.parseDouble(value));
         } catch (NumberFormatException ex) {
             return value;
         }

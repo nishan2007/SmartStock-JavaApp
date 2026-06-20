@@ -1,5 +1,6 @@
 package Receipt;
 
+import utils.CurrencyFormatter;
 import managers.CompanyCustomizationManager;
 
 import java.awt.*;
@@ -13,7 +14,7 @@ import java.time.format.DateTimeFormatter;
 public class ReceiptFormatter {
     private static final int RECEIPT_WIDTH = 40;
     private static final int LETTER_WIDTH = 86;
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance();
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create();
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private ReceiptFormatter() {
@@ -116,6 +117,7 @@ public class ReceiptFormatter {
         appendEscPosLogo(out, settings);
         write(out, 0x1B, 0x61, 0x00);
         writeAscii(out, formatText(receipt, settings));
+        appendEscPosBarcode(out, receipt);
         write(out, 0x1B, 0x61, 0x01);
         writeAscii(out, "\n\n\n");
         write(out, 0x1D, 0x56, 0x42, 0x00);
@@ -205,6 +207,40 @@ public class ReceiptFormatter {
             }
         }
         writeAscii(out, "\n");
+    }
+
+    private static void appendEscPosBarcode(ByteArrayOutputStream out, ReceiptData receipt) {
+        if (!ReceiptBarcodeRenderer.hasScannableReceiptNumber(receipt)) {
+            return;
+        }
+        BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(receipt.getReceiptNumber(), 384, 88);
+        write(out, 0x1B, 0x61, 0x01);
+        appendEscPosRasterImage(out, barcode);
+        writeAscii(out, "\n");
+        writeAscii(out, receipt.getReceiptNumber() + "\n");
+        write(out, 0x1B, 0x61, 0x00);
+    }
+
+    private static void appendEscPosRasterImage(ByteArrayOutputStream out, BufferedImage image) {
+        BufferedImage prepared = prepareMonochromeLogo(image, 384, 120);
+        int width = prepared.getWidth();
+        int height = prepared.getHeight();
+        int bytesPerRow = (width + 7) / 8;
+
+        write(out, 0x1D, 0x76, 0x30, 0x00, bytesPerRow & 0xFF, (bytesPerRow >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF);
+
+        for (int y = 0; y < height; y++) {
+            for (int xByte = 0; xByte < bytesPerRow; xByte++) {
+                int value = 0;
+                for (int bit = 0; bit < 8; bit++) {
+                    int x = (xByte * 8) + bit;
+                    if (x < width && isDark(prepared.getRGB(x, y))) {
+                        value |= 0x80 >> bit;
+                    }
+                }
+                out.write(value);
+            }
+        }
     }
 
     private static BufferedImage prepareMonochromeLogo(BufferedImage logo, int maxWidth, int maxHeight) {

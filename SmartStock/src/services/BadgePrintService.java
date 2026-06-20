@@ -6,6 +6,12 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.oned.Code128Writer;
 import data.DB;
 import managers.CompanyCustomizationManager;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import utils.ImageCacheManager;
 
 import javax.print.attribute.HashPrintRequestAttributeSet;
@@ -20,11 +26,14 @@ import java.awt.font.TextAttribute;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.awt.print.PageFormat;
+import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
+import java.io.IOException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -45,6 +54,7 @@ public final class BadgePrintService {
     private static final int PRINT_RENDER_SCALE = 4;
     private static final double CARD_WIDTH_INCHES = 2.125;
     private static final double CARD_HEIGHT_INCHES = 3.375;
+    private static final Rectangle DEFAULT_BARCODE_RECT = new Rectangle(315, 10, 300, 990);
     private static double actualSizePreviewCalibration = 1.0;
     private static final Color DECKERS_ORANGE = new Color(255, 112, 0);
     private static final Color DECKERS_GREEN = new Color(32, 92, 0);
@@ -75,7 +85,7 @@ public final class BadgePrintService {
         DEFAULT_ELEMENTS.put("back.watermark", new BadgeElement("back.watermark", "Back Watermark", "back", new Rectangle(50, 365, 330, 100)));
         DEFAULT_ELEMENTS.put("back.poweredBy", new BadgeElement("back.poweredBy", "Powered By", "back", new Rectangle(48, 940, 270, 28)));
         DEFAULT_ELEMENTS.put("back.printCount", new BadgeElement("back.printCount", "Print Count", "back", new Rectangle(48, 970, 270, 18)));
-        DEFAULT_ELEMENTS.put("back.barcode", new BadgeElement("back.barcode", "Barcode", "back", new Rectangle(370, 120, 170, 760)));
+        DEFAULT_ELEMENTS.put("back.barcode", new BadgeElement("back.barcode", "Barcode", "back", new Rectangle(DEFAULT_BARCODE_RECT)));
         DEFAULT_ELEMENTS.put("back.signature", new BadgeElement("back.signature", "Signature", "back", new Rectangle(75, 790, 205, 80)));
         DEFAULT_ELEMENTS.put("back.badgeText", new BadgeElement("back.badgeText", "Badge ID Text", "back", new Rectangle(48, 884, 270, 26)));
     }
@@ -621,15 +631,58 @@ public final class BadgePrintService {
         LocalDate badgeExpiryDate = expiryDate == null ? defaultExpiryDate() : expiryDate;
         PrinterJob job = PrinterJob.getPrinterJob();
         job.setJobName("Employee Badge " + printSide.label() + " - " + employee.displayName());
-        job.setPrintable(new BadgePrintable(employee, settings, printSide, badgeExpiryDate));
+        job.setPrintable(new BadgePrintable(employee, settings, printSide, badgeExpiryDate), createBadgePageFormat(job));
 
         PrintRequestAttributeSet attributes = new HashPrintRequestAttributeSet();
         attributes.add(OrientationRequested.PORTRAIT);
-        attributes.add(new MediaPrintableArea(0, 0, 2.125f, 3.375f, MediaPrintableArea.INCH));
+        attributes.add(new MediaPrintableArea(0, 0, (float) CARD_WIDTH_INCHES, (float) CARD_HEIGHT_INCHES, MediaPrintableArea.INCH));
         if (job.printDialog(attributes)) {
             job.print(attributes);
             incrementBadgePrintCount(employee.userId());
         }
+    }
+
+    public static void saveBadgePdf(Path outputPath, EmployeeBadgeData employee, CompanyCustomizationManager.BadgeTemplateSettings settings, BadgePrintSide side, LocalDate expiryDate) throws IOException {
+        if (outputPath == null) {
+            throw new IllegalArgumentException("Choose where to save the badge PDF.");
+        }
+        BadgePrintSide printSide = side == null ? BadgePrintSide.BOTH : side;
+        LocalDate badgeExpiryDate = expiryDate == null ? defaultExpiryDate() : expiryDate;
+        float widthPoints = (float) (CARD_WIDTH_INCHES * 72.0);
+        float heightPoints = (float) (CARD_HEIGHT_INCHES * 72.0);
+        PDRectangle badgePageSize = new PDRectangle(widthPoints, heightPoints);
+
+        try (PDDocument document = new PDDocument()) {
+            if (printSide == BadgePrintSide.FRONT || printSide == BadgePrintSide.BOTH) {
+                addBadgePdfPage(document, badgePageSize, renderFront(employee, settings, PRINT_RENDER_SCALE));
+            }
+            if (printSide == BadgePrintSide.BACK || printSide == BadgePrintSide.BOTH) {
+                addBadgePdfPage(document, badgePageSize, renderBack(employee, settings, badgeExpiryDate, PRINT_RENDER_SCALE));
+            }
+            document.save(outputPath.toFile());
+        }
+    }
+
+    private static void addBadgePdfPage(PDDocument document, PDRectangle badgePageSize, BufferedImage badgeImage) throws IOException {
+        PDPage page = new PDPage(badgePageSize);
+        document.addPage(page);
+        PDImageXObject image = LosslessFactory.createFromImage(document, badgeImage);
+        try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+            contentStream.drawImage(image, 0, 0, badgePageSize.getWidth(), badgePageSize.getHeight());
+        }
+    }
+
+    private static PageFormat createBadgePageFormat(PrinterJob job) {
+        double widthPoints = CARD_WIDTH_INCHES * 72.0;
+        double heightPoints = CARD_HEIGHT_INCHES * 72.0;
+        Paper paper = new Paper();
+        paper.setSize(widthPoints, heightPoints);
+        paper.setImageableArea(0, 0, widthPoints, heightPoints);
+
+        PageFormat pageFormat = job.defaultPage();
+        pageFormat.setOrientation(PageFormat.PORTRAIT);
+        pageFormat.setPaper(paper);
+        return pageFormat;
     }
 
     public static LocalDate defaultExpiryDate() {
@@ -891,7 +944,7 @@ public final class BadgePrintService {
         Rectangle rect = layoutRect(settings, elementId);
         int rotation = normalizeRotation(90 + elementRotation(settings, elementId));
         Rectangle drawRect = rotatedContentRect(rect, rotation);
-        BufferedImage barcode = renderCode128(employee.badgeId(), Math.max(240, drawRect.width), Math.max(90, drawRect.height));
+        BufferedImage barcode = renderCode128(employee.badgeId(), Math.max(1120, drawRect.width), Math.max(270, drawRect.height));
         withRotation(g, rect, rotation, copy ->
                 drawBarcodeFit(copy, barcode, drawRect.x, drawRect.y, drawRect.width, drawRect.height)
         );
@@ -1726,8 +1779,8 @@ public final class BadgePrintService {
     }
 
     private static Rectangle sanitizeBarcodeRect(Rectangle rect) {
-        int width = Math.max(170, Math.min(CARD_WIDTH, rect.width));
-        int height = Math.max(720, Math.min(CARD_HEIGHT, rect.height));
+        int width = Math.max(270, Math.min(330, rect.width));
+        int height = Math.max(960, Math.min(CARD_HEIGHT, rect.height));
         int centerX = rect.x + rect.width / 2;
         int centerY = rect.y + rect.height / 2;
         int x = Math.max(0, Math.min(CARD_WIDTH - width, centerX - width / 2));
@@ -1752,7 +1805,10 @@ public final class BadgePrintService {
     }
 
     private static BufferedImage renderCode128(String text, int width, int height) {
-        String value = Objects.requireNonNullElse(text, "").isBlank() ? "BADGE" : text.trim();
+        String value = BadgeCredentialService.normalizeBadge(text);
+        if (value.isBlank()) {
+            value = "BADGE";
+        }
         int safeWidth = Math.max(180, width);
         int safeHeight = Math.max(70, height);
         BitMatrix matrix = new Code128Writer().encode(
@@ -1760,7 +1816,7 @@ public final class BadgePrintService {
                 BarcodeFormat.CODE_128,
                 safeWidth,
                 safeHeight,
-                Map.of(EncodeHintType.MARGIN, 24)
+                Map.of(EncodeHintType.MARGIN, 10)
         );
         BufferedImage image = new BufferedImage(matrix.getWidth(), matrix.getHeight(), BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < matrix.getHeight(); y++) {

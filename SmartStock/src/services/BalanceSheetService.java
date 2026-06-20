@@ -88,6 +88,45 @@ public final class BalanceSheetService {
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS expenses_location_date_idx ON expenses(location_id, expense_date DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS expenses_created_by_user_idx ON expenses(created_by_user_id)");
             stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS cheque_bank_deposits (
+                        cheque_bank_deposit_id BIGSERIAL PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        source_type TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                        payment_reference TEXT,
+                        deposited_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        deposited_by_user_id INTEGER REFERENCES users(user_id),
+                        deposited_by_name TEXT,
+                        notes TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT cheque_bank_deposits_amount_chk CHECK (amount >= 0),
+                        CONSTRAINT cheque_bank_deposits_source_unique UNIQUE (source_type, source_id)
+                    )
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cheque_bank_deposits_location_deposited_idx ON cheque_bank_deposits(location_id, deposited_at DESC)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_transactions (
+                        bank_transaction_id BIGSERIAL PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        transaction_name TEXT NOT NULL,
+                        transaction_direction TEXT NOT NULL,
+                        amount NUMERIC(12, 2) NOT NULL,
+                        payment_reference TEXT,
+                        source_type TEXT,
+                        source_id TEXT,
+                        created_by_user_id INTEGER REFERENCES users(user_id),
+                        created_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT bank_transactions_amount_chk CHECK (amount >= 0),
+                        CONSTRAINT bank_transactions_direction_chk CHECK (transaction_direction IN ('PAID', 'RECEIVED'))
+                    )
+                    """);
+            stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_source_unique_idx ON bank_transactions(source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS bank_transactions_location_date_idx ON bank_transactions(location_id, transaction_date DESC)");
+            ensureBankTransactionIdDefault(stmt);
+            stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS balance_sheet_submissions (
                         balance_sheet_submission_id BIGSERIAL PRIMARY KEY,
                         location_id INTEGER REFERENCES locations(location_id),
@@ -109,7 +148,10 @@ public final class BalanceSheetService {
                         drawer_cash_lines TEXT,
                         device_sales_lines TEXT,
                         device_order_lines TEXT,
+                        device_payment_lines TEXT,
                         account_payment_lines TEXT,
+                        bank_transaction_lines TEXT,
+                        pending_cheque_lines TEXT,
                         drawer_check_lines TEXT,
                         submitted_by_user_id INTEGER REFERENCES users(user_id),
                         submitted_by_name TEXT,
@@ -120,13 +162,22 @@ public final class BalanceSheetService {
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_cash_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS device_sales_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS device_order_lines TEXT");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS device_payment_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS account_payment_lines TEXT");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS bank_transaction_lines TEXT");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS pending_cheque_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_check_lines TEXT");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_location_period_idx ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx ON balance_sheet_submissions(submitted_by_user_id)");
+            if (tableExists(conn, "customer_account_transactions")) {
+                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS device_id TEXT");
+                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS device_name TEXT");
+            }
         }
         SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_submissions");
         SupabaseSecurityHardening.protectInternalTable(conn, "expenses");
+        SupabaseSecurityHardening.protectInternalTable(conn, "cheque_bank_deposits");
+        SupabaseSecurityHardening.protectInternalTable(conn, "bank_transactions");
     }
 
     private static String databaseCacheKey(Connection conn) {
@@ -138,10 +189,84 @@ public final class BalanceSheetService {
         }
     }
 
+    private static void ensureBankTransactionIdDefault(Connection conn) throws SQLException {
+        if (!tableExists(conn, "bank_transactions")) {
+            return;
+        }
+        String sql = """
+                SELECT column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'bank_transactions'
+                  AND column_name = 'bank_transaction_id'
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            if (rs.next()) {
+                String columnDefault = rs.getString("column_default");
+                if (columnDefault != null && columnDefault.contains("bank_transactions_bank_transaction_id_seq")) {
+                    return;
+                }
+            }
+        }
+        try (Statement stmt = conn.createStatement()) {
+            ensureBankTransactionIdDefault(stmt);
+        }
+    }
+
+    private static void ensureBankTransactionIdDefault(Statement stmt) throws SQLException {
+        stmt.executeUpdate("CREATE SEQUENCE IF NOT EXISTS bank_transactions_bank_transaction_id_seq");
+        stmt.executeUpdate("ALTER SEQUENCE bank_transactions_bank_transaction_id_seq OWNED BY bank_transactions.bank_transaction_id");
+        stmt.executeUpdate("ALTER TABLE bank_transactions ALTER COLUMN bank_transaction_id SET DEFAULT nextval('bank_transactions_bank_transaction_id_seq')");
+        stmt.execute("""
+                SELECT setval(
+                    'bank_transactions_bank_transaction_id_seq',
+                    GREATEST(COALESCE((SELECT MAX(bank_transaction_id) FROM bank_transactions), 0), 1),
+                    COALESCE((SELECT MAX(bank_transaction_id) FROM bank_transactions), 0) > 0
+                )
+                """);
+    }
+
     public static void recordPayrollExpense(long payrollPaymentId, BigDecimal amount, String employeeName,
                                             LocalDate expenseDate, String reference) throws SQLException {
         recordPayrollExpense(payrollPaymentId, amount, employeeName, expenseDate, reference,
                 SessionManager.getCurrentLocationId());
+    }
+
+    public static void recordPayrollBankTransaction(long payrollPaymentId, BigDecimal amount, String employeeName,
+                                                    LocalDate transactionDate, String paymentReference,
+                                                    Integer locationId) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            ensureBankTransactionIdDefault(conn);
+            String sql = """
+                    INSERT INTO bank_transactions (
+                        location_id, transaction_date, transaction_name, transaction_direction,
+                        amount, payment_reference, source_type, source_id,
+                        created_by_user_id, created_by_name
+                    )
+                    VALUES (?, ?, ?, 'PAID', ?, ?, 'PAYROLL', ?, ?, ?)
+                    ON CONFLICT (source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL
+                    DO UPDATE SET
+                        location_id = EXCLUDED.location_id,
+                        transaction_date = EXCLUDED.transaction_date,
+                        transaction_name = EXCLUDED.transaction_name,
+                        transaction_direction = EXCLUDED.transaction_direction,
+                        amount = EXCLUDED.amount,
+                        payment_reference = EXCLUDED.payment_reference
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                setNullableInteger(ps, 1, locationId);
+                ps.setDate(2, Date.valueOf(transactionDate));
+                ps.setString(3, "Payroll payment - " + defaultText(employeeName));
+                ps.setBigDecimal(4, defaultZero(amount));
+                ps.setString(5, blankToNull(paymentReference));
+                ps.setString(6, String.valueOf(payrollPaymentId));
+                setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
+                ps.setString(8, SessionManager.getCurrentUserDisplayName());
+                ps.executeUpdate();
+            }
+        }
     }
 
     public static void recordPayrollExpense(long payrollPaymentId, BigDecimal amount, String employeeName,
@@ -220,6 +345,293 @@ public final class BalanceSheetService {
         }
     }
 
+    public static List<ExpenseOption> listDeletableExpenses(LocalDate from, LocalDate to, String status) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            String sql = """
+                    SELECT expense_id,
+                           expense_date,
+                           category,
+                           COALESCE(payee, '') AS payee,
+                           COALESCE(description, '') AS description,
+                           COALESCE(amount, 0) AS amount,
+                           status
+                    FROM expenses
+                    WHERE status = ?
+                      AND (? IS NULL OR location_id = ?)
+                      AND expense_date BETWEEN ? AND ?
+                      AND source_type IS NULL
+                    ORDER BY expense_date DESC, category ASC, payee ASC, expense_id DESC
+                    """;
+            List<ExpenseOption> expenses = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, status);
+                setNullableInteger(ps, 2, SessionManager.getCurrentLocationId());
+                setNullableInteger(ps, 3, SessionManager.getCurrentLocationId());
+                ps.setDate(4, Date.valueOf(from));
+                ps.setDate(5, Date.valueOf(to));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        expenses.add(new ExpenseOption(
+                                rs.getLong("expense_id"),
+                                rs.getDate("expense_date").toLocalDate(),
+                                rs.getString("category"),
+                                rs.getString("payee"),
+                                rs.getString("description"),
+                                defaultZero(rs.getBigDecimal("amount")),
+                                rs.getString("status")
+                        ));
+                    }
+                }
+            }
+            return expenses;
+        }
+    }
+
+    public static void deleteManualExpense(long expenseId, LocalDate from, LocalDate to, String status) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            String sql = """
+                    DELETE FROM expenses
+                    WHERE expense_id = ?
+                      AND (? IS NULL OR location_id = ?)
+                      AND expense_date BETWEEN ? AND ?
+                      AND status = ?
+                      AND source_type IS NULL
+                    RETURNING expense_id,
+                              expense_date,
+                              category,
+                              COALESCE(payee, '') AS payee,
+                              COALESCE(amount, 0) AS amount,
+                              status
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, expenseId);
+                setNullableInteger(ps, 2, SessionManager.getCurrentLocationId());
+                setNullableInteger(ps, 3, SessionManager.getCurrentLocationId());
+                ps.setDate(4, Date.valueOf(from));
+                ps.setDate(5, Date.valueOf(to));
+                ps.setString(6, status);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        SyncOutboxService.recordEvent(conn, "EXPENSE_DELETED", Map.of(
+                                "expense_id", rs.getLong("expense_id"),
+                                "location_id", SessionManager.getCurrentLocationId() == null ? "" : SessionManager.getCurrentLocationId(),
+                                "expense_date", rs.getDate("expense_date").toLocalDate(),
+                                "category", rs.getString("category"),
+                                "payee", rs.getString("payee"),
+                                "amount", defaultZero(rs.getBigDecimal("amount")),
+                                "status", rs.getString("status")
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
+        throw new SQLException("Only manually entered rows from the current balance sheet can be deleted.");
+    }
+
+    public static List<ChequeDepositOption> listPendingChequeDeposits() throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            return loadPendingChequeDeposits(conn, SessionManager.getCurrentLocationId());
+        }
+    }
+
+    public static void markChequeDeposited(ChequeDepositOption cheque, String notes) throws SQLException {
+        if (cheque == null) {
+            throw new SQLException("No cheque was selected.");
+        }
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            ensureBankTransactionIdDefault(conn);
+            boolean oldAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            String depositSql = """
+                    INSERT INTO cheque_bank_deposits (
+                        location_id, source_type, source_id, amount, payment_reference,
+                        deposited_by_user_id, deposited_by_name, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (source_type, source_id) DO NOTHING
+                    RETURNING cheque_bank_deposit_id
+                    """;
+            String bankTransactionSql = """
+                    INSERT INTO bank_transactions (
+                        location_id, transaction_date, transaction_name, transaction_direction,
+                        amount, payment_reference, source_type, source_id,
+                        created_by_user_id, created_by_name
+                    )
+                    VALUES (?, ?, ?, 'RECEIVED', ?, ?, 'CHEQUE_DEPOSIT', ?, ?, ?)
+                    ON CONFLICT (source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL
+                    DO UPDATE SET
+                        location_id = EXCLUDED.location_id,
+                        transaction_date = EXCLUDED.transaction_date,
+                        transaction_name = EXCLUDED.transaction_name,
+                        transaction_direction = EXCLUDED.transaction_direction,
+                        amount = EXCLUDED.amount,
+                        payment_reference = EXCLUDED.payment_reference
+                    """;
+            try (PreparedStatement deposit = conn.prepareStatement(depositSql);
+                 PreparedStatement bankTransaction = conn.prepareStatement(bankTransactionSql)) {
+                setNullableInteger(deposit, 1, SessionManager.getCurrentLocationId());
+                deposit.setString(2, cheque.sourceType());
+                deposit.setString(3, cheque.sourceId());
+                deposit.setBigDecimal(4, defaultZero(cheque.amount()));
+                deposit.setString(5, blankToNull(cheque.reference()));
+                setNullableInteger(deposit, 6, SessionManager.getCurrentUserId());
+                deposit.setString(7, SessionManager.getCurrentUserDisplayName());
+                deposit.setString(8, blankToNull(notes));
+                try (ResultSet rs = deposit.executeQuery()) {
+                    if (rs.next()) {
+                        SyncOutboxService.recordEvent(conn, "CHEQUE_DEPOSITED", Map.of(
+                                "cheque_bank_deposit_id", rs.getLong("cheque_bank_deposit_id"),
+                                "location_id", SessionManager.getCurrentLocationId() == null ? "" : SessionManager.getCurrentLocationId(),
+                                "source_type", cheque.sourceType(),
+                                "source_id", cheque.sourceId(),
+                                "amount", defaultZero(cheque.amount())
+                        ));
+                    }
+                }
+                setNullableInteger(bankTransaction, 1, SessionManager.getCurrentLocationId());
+                bankTransaction.setDate(2, Date.valueOf(LocalDate.now()));
+                bankTransaction.setString(3, chequeDepositTransactionName(cheque));
+                bankTransaction.setBigDecimal(4, defaultZero(cheque.amount()));
+                bankTransaction.setString(5, blankToNull(cheque.reference()));
+                bankTransaction.setString(6, cheque.sourceType() + ":" + cheque.sourceId());
+                setNullableInteger(bankTransaction, 7, SessionManager.getCurrentUserId());
+                bankTransaction.setString(8, SessionManager.getCurrentUserDisplayName());
+                bankTransaction.executeUpdate();
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(oldAutoCommit);
+            }
+        }
+    }
+
+    private static String chequeDepositTransactionName(ChequeDepositOption cheque) {
+        String label = blankToNull(cheque.sourceLabel());
+        String payer = blankToNull(cheque.payer());
+        if (label == null) {
+            return payer == null ? "Cheque deposit" : "Cheque deposit - " + payer;
+        }
+        return payer == null ? "Cheque deposit - " + label : "Cheque deposit - " + label + " - " + payer;
+    }
+
+    public static List<PayableOption> listUnpaidPayables(LocalDate from, LocalDate to) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            String sql = """
+                    SELECT expense_id, expense_date, category,
+                           COALESCE(payee, '') AS payee,
+                           COALESCE(description, '') AS description,
+                           COALESCE(amount, 0) AS amount
+                    FROM expenses
+                    WHERE status = 'UNPAID'
+                      AND (? IS NULL OR location_id = ?)
+                      AND expense_date BETWEEN ? AND ?
+                      AND COALESCE(amount, 0) > 0
+                    ORDER BY expense_date DESC, category ASC, payee ASC, expense_id DESC
+                    """;
+            List<PayableOption> payables = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                setNullableInteger(ps, 1, SessionManager.getCurrentLocationId());
+                setNullableInteger(ps, 2, SessionManager.getCurrentLocationId());
+                ps.setDate(3, Date.valueOf(from));
+                ps.setDate(4, Date.valueOf(to));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        payables.add(new PayableOption(
+                                rs.getLong("expense_id"),
+                                rs.getDate("expense_date").toLocalDate(),
+                                rs.getString("category"),
+                                rs.getString("payee"),
+                                rs.getString("description"),
+                                defaultZero(rs.getBigDecimal("amount"))
+                        ));
+                    }
+                }
+            }
+            return payables;
+        }
+    }
+
+    public static void recordPayablePayment(long expenseId, LocalDate paymentDate, BigDecimal paymentAmount,
+                                            String paymentMethod, String paymentReference) throws SQLException {
+        if (paymentDate == null) {
+            throw new SQLException("Payment date is required.");
+        }
+        BigDecimal cleanPayment = defaultZero(paymentAmount);
+        if (cleanPayment.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new SQLException("Payment amount must be greater than zero.");
+        }
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            conn.setAutoCommit(false);
+            try {
+                PayableOption payable = lockPayable(conn, expenseId);
+                if (payable == null) {
+                    throw new SQLException("Account payable was not found.");
+                }
+                if (cleanPayment.compareTo(payable.amount()) > 0) {
+                    throw new SQLException("Payment amount cannot exceed the payable balance of " + payable.amount() + ".");
+                }
+
+                BigDecimal remaining = payable.amount().subtract(cleanPayment);
+                if (remaining.compareTo(BigDecimal.ZERO) == 0) {
+                    String updateSql = """
+                            UPDATE expenses
+                            SET expense_date = ?,
+                                amount = ?,
+                                payment_method = ?,
+                                payment_reference = ?,
+                                status = 'PAID',
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE expense_id = ?
+                            """;
+                    try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
+                        ps.setDate(1, Date.valueOf(paymentDate));
+                        ps.setBigDecimal(2, cleanPayment);
+                        ps.setString(3, paymentMethod);
+                        ps.setString(4, paymentReference);
+                        ps.setLong(5, expenseId);
+                        ps.executeUpdate();
+                    }
+                } else {
+                    String reduceSql = """
+                            UPDATE expenses
+                            SET amount = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE expense_id = ?
+                            """;
+                    try (PreparedStatement ps = conn.prepareStatement(reduceSql)) {
+                        ps.setBigDecimal(1, remaining);
+                        ps.setLong(2, expenseId);
+                        ps.executeUpdate();
+                    }
+                    insertPaidPayableExpense(conn, payable, paymentDate, cleanPayment, paymentMethod, paymentReference);
+                }
+
+                SyncOutboxService.recordEvent(conn, "ACCOUNT_PAYABLE_PAID", Map.of(
+                        "expense_id", expenseId,
+                        "payment_date", paymentDate,
+                        "payment_amount", cleanPayment,
+                        "remaining_amount", remaining,
+                        "payment_method", paymentMethod == null ? "" : paymentMethod
+                ));
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     public static BalanceSheet loadBalanceSheet(LocalDate from, LocalDate to, String storeZoneId) throws SQLException {
         return loadBalanceSheet(from, to, storeZoneId, List.of());
     }
@@ -236,7 +648,10 @@ public final class BalanceSheetService {
             List<SheetLine> drawerCash = loadDrawerCash(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceSales = loadDeviceSales(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceOrders = loadDeviceOrders(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
+            List<SheetLine> devicePayments = loadDevicePayments(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> accountPayments = loadAccountPayments(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
+            List<BankTransactionLine> bankTransactions = loadBankTransactions(conn, from, to, locationId);
+            List<ChequeDepositOption> pendingCheques = loadPendingChequeDeposits(conn, locationId);
             List<SheetLine> drawerChecks = loadDrawerMatchChecks(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             BigDecimal cashInHand = total(drawerCash);
             BigDecimal totalIncome = total(income);
@@ -249,7 +664,7 @@ public final class BalanceSheetService {
             }
             BigDecimal balanceCf = balanceBf.add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
             return new BalanceSheet(null, null, null, null, null, null,
-                    income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, accountPayments, drawerChecks, cashInHand,
+                    income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, devicePayments, accountPayments, bankTransactions, pendingCheques, drawerChecks, cashInHand,
                     balanceBf, totalIncome, totalReceivables, totalExpenses, totalPayables, balanceCf);
         }
     }
@@ -267,10 +682,10 @@ public final class BalanceSheetService {
                         location_id, location_name, period_start, period_end, store_timezone,
                         balance_bf, cash_in_hand, total_income, total_receivables, total_expenses,
                         total_payables, balance_cf, income_lines, receivable_lines, expense_lines,
-                        payable_lines, drawer_cash_lines, device_sales_lines, device_order_lines, account_payment_lines, drawer_check_lines, submitted_by_user_id,
+                        payable_lines, drawer_cash_lines, device_sales_lines, device_order_lines, device_payment_lines, account_payment_lines, bank_transaction_lines, pending_cheque_lines, drawer_check_lines, submitted_by_user_id,
                         submitted_by_name, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING balance_sheet_submission_id
                     """;
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -293,11 +708,14 @@ public final class BalanceSheetService {
                 ps.setString(17, encodeLines(sheet.drawerCash()));
                 ps.setString(18, encodeLines(sheet.deviceSales()));
                 ps.setString(19, encodeLines(sheet.deviceOrders()));
-                ps.setString(20, encodeLines(sheet.accountPayments()));
-                ps.setString(21, encodeLines(sheet.drawerChecks()));
-                setNullableInteger(ps, 22, SessionManager.getCurrentUserId());
-                ps.setString(23, SessionManager.getCurrentUserDisplayName());
-                ps.setString(24, blankToNull(notes));
+                ps.setString(20, encodeLines(sheet.devicePayments()));
+                ps.setString(21, encodeLines(sheet.accountPayments()));
+                ps.setString(22, encodeBankTransactions(sheet.bankTransactions()));
+                ps.setString(23, encodeCheques(sheet.pendingCheques()));
+                ps.setString(24, encodeLines(sheet.drawerChecks()));
+                setNullableInteger(ps, 25, SessionManager.getCurrentUserId());
+                ps.setString(26, SessionManager.getCurrentUserDisplayName());
+                ps.setString(27, blankToNull(notes));
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         long submissionId = rs.getLong("balance_sheet_submission_id");
@@ -381,7 +799,10 @@ public final class BalanceSheetService {
                                 decodeLines(rs.getString("drawer_cash_lines")),
                                 decodeLines(rs.getString("device_sales_lines")),
                                 decodeLines(rs.getString("device_order_lines")),
+                                decodeLines(rs.getString("device_payment_lines")),
                                 decodeLines(rs.getString("account_payment_lines")),
+                                decodeBankTransactions(rs.getString("bank_transaction_lines")),
+                                decodeCheques(rs.getString("pending_cheque_lines")),
                                 decodeLines(rs.getString("drawer_check_lines")),
                                 defaultZero(rs.getBigDecimal("cash_in_hand")),
                                 defaultZero(rs.getBigDecimal("balance_bf")),
@@ -404,7 +825,16 @@ public final class BalanceSheetService {
         }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'CASH'");
+            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_reference TEXT");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS payroll_payments_location_paid_idx ON payroll_payments(location_id, paid_at DESC)");
+            stmt.executeUpdate("""
+                    DELETE FROM expenses e
+                    USING payroll_payments pp
+                    WHERE e.source_type = 'PAYROLL'
+                      AND e.source_id = pp.payroll_payment_id::text
+                      AND UPPER(COALESCE(pp.payment_method, 'CASH')) = 'BANK'
+                    """);
         }
 
         String updateSql = """
@@ -422,6 +852,7 @@ public final class BalanceSheetService {
                 FROM payroll_payments pp
                 WHERE e.source_type = 'PAYROLL'
                   AND e.source_id = pp.payroll_payment_id::text
+                  AND UPPER(COALESCE(pp.payment_method, 'CASH')) <> 'BANK'
                 """;
         try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
             setNullableInteger(ps, 1, fallbackLocationId);
@@ -450,7 +881,8 @@ public final class BalanceSheetService {
                        pp.paid_by_user_id,
                        pp.paid_by_name
                 FROM payroll_payments pp
-                WHERE NOT EXISTS (
+                WHERE UPPER(COALESCE(pp.payment_method, 'CASH')) <> 'BANK'
+                  AND NOT EXISTS (
                     SELECT 1
                     FROM expenses e
                     WHERE e.source_type = 'PAYROLL'
@@ -458,6 +890,35 @@ public final class BalanceSheetService {
                 )
                 """;
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
+            setNullableInteger(ps, 1, fallbackLocationId);
+            ps.setString(2, storeZoneId);
+            ps.executeUpdate();
+        }
+
+        String bankInsertSql = """
+                INSERT INTO bank_transactions (
+                    location_id, transaction_date, transaction_name, transaction_direction,
+                    amount, payment_reference, source_type, source_id,
+                    created_by_user_id, created_by_name
+                )
+                SELECT COALESCE(pp.location_id, ?),
+                       (pp.paid_at AT TIME ZONE ?)::date,
+                       'Payroll payment - ' || COALESCE(NULLIF(TRIM(pp.employee_name), ''), 'employee'),
+                       'PAID', COALESCE(pp.total_pay, 0), pp.payment_reference,
+                       'PAYROLL', pp.payroll_payment_id::text,
+                       pp.paid_by_user_id, pp.paid_by_name
+                FROM payroll_payments pp
+                WHERE UPPER(COALESCE(pp.payment_method, 'CASH')) = 'BANK'
+                ON CONFLICT (source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL
+                DO UPDATE SET
+                    location_id = EXCLUDED.location_id,
+                    transaction_date = EXCLUDED.transaction_date,
+                    transaction_name = EXCLUDED.transaction_name,
+                    transaction_direction = EXCLUDED.transaction_direction,
+                    amount = EXCLUDED.amount,
+                    payment_reference = EXCLUDED.payment_reference
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(bankInsertSql)) {
             setNullableInteger(ps, 1, fallbackLocationId);
             ps.setString(2, storeZoneId);
             ps.executeUpdate();
@@ -471,6 +932,179 @@ public final class BalanceSheetService {
                 return rs.next() && rs.getBoolean(1);
             }
         }
+    }
+
+    private static PayableOption lockPayable(Connection conn, long expenseId) throws SQLException {
+        String sql = """
+                SELECT expense_id, expense_date, category,
+                       COALESCE(payee, '') AS payee,
+                       COALESCE(description, '') AS description,
+                       COALESCE(amount, 0) AS amount
+                FROM expenses
+                WHERE expense_id = ?
+                  AND status = 'UNPAID'
+                  AND (? IS NULL OR location_id = ?)
+                FOR UPDATE
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, expenseId);
+            setNullableInteger(ps, 2, SessionManager.getCurrentLocationId());
+            setNullableInteger(ps, 3, SessionManager.getCurrentLocationId());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new PayableOption(
+                            rs.getLong("expense_id"),
+                            rs.getDate("expense_date").toLocalDate(),
+                            rs.getString("category"),
+                            rs.getString("payee"),
+                            rs.getString("description"),
+                            defaultZero(rs.getBigDecimal("amount"))
+                    );
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void insertPaidPayableExpense(Connection conn, PayableOption payable, LocalDate paymentDate,
+                                                BigDecimal amount, String paymentMethod, String paymentReference) throws SQLException {
+        String sql = """
+                INSERT INTO expenses (
+                    location_id, expense_date, category, payee, description, amount,
+                    payment_method, payment_reference, status, source_type, source_id,
+                    created_by_user_id, created_by_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PAID', 'PAYABLE_PAYMENT', ?, ?, ?)
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            setNullableInteger(ps, 1, SessionManager.getCurrentLocationId());
+            ps.setDate(2, Date.valueOf(paymentDate));
+            ps.setString(3, payable.category());
+            ps.setString(4, blankToNull(payable.payee()));
+            ps.setString(5, blankToNull(payable.description()));
+            ps.setBigDecimal(6, amount);
+            ps.setString(7, paymentMethod);
+            ps.setString(8, paymentReference);
+            ps.setString(9, payable.expenseId() + "-" + System.currentTimeMillis());
+            setNullableInteger(ps, 10, SessionManager.getCurrentUserId());
+            ps.setString(11, SessionManager.getCurrentUserDisplayName());
+            ps.executeUpdate();
+        }
+    }
+
+    private static List<ChequeDepositOption> loadPendingChequeDeposits(Connection conn, Integer locationId) throws SQLException {
+        List<String> sources = new ArrayList<>();
+        if (tableExists(conn, "sales")) {
+            sources.add("""
+                    SELECT 'SALE' AS source_type,
+                           s.sale_id::text AS source_id,
+                           s.created_at AS cheque_at,
+                           'Sale ' || COALESCE(NULLIF(s.receipt_number, ''), s.sale_id::text) AS source_label,
+                           COALESCE(NULLIF(ca.name, ''), '') AS payer,
+                           COALESCE(s.payment_reference, '') AS reference,
+                           COALESCE(s.amount_paid, 0) AS amount,
+                           s.location_id AS location_id
+                    FROM sales s
+                    LEFT JOIN customer_accounts ca ON ca.customer_id = s.customer_id
+                    WHERE UPPER(COALESCE(s.payment_method, '')) = 'CHEQUE'
+                      AND COALESCE(s.amount_paid, 0) > 0
+                    """);
+        }
+        if (tableExists(conn, "custom_order_payments")) {
+            sources.add("""
+                    SELECT 'CUSTOM_ORDER_PAYMENT' AS source_type,
+                           p.custom_order_payment_id::text AS source_id,
+                           p.created_at AS cheque_at,
+                           'Order ' || COALESCE(NULLIF(co.order_number, ''), p.custom_order_id::text) AS source_label,
+                           COALESCE(NULLIF(co.customer_name, ''), '') AS payer,
+                           COALESCE(p.payment_reference, '') AS reference,
+                           COALESCE(p.payment_amount, 0) AS amount,
+                           co.location_id AS location_id
+                    FROM custom_order_payments p
+                    JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
+                    WHERE UPPER(COALESCE(p.payment_method, '')) = 'CHEQUE'
+                      AND COALESCE(p.payment_action, 'PAYMENT') = 'PAYMENT'
+                      AND COALESCE(p.payment_amount, 0) > 0
+                      AND COALESCE(p.payment_reference, '') NOT ILIKE 'Account payment transaction #%'
+                    """);
+        }
+        if (tableExists(conn, "invoice_payments")) {
+            sources.add("""
+                    SELECT 'INVOICE_PAYMENT' AS source_type,
+                           p.invoice_payment_id::text AS source_id,
+                           p.created_at AS cheque_at,
+                           'Invoice ' || COALESCE(NULLIF(i.invoice_number, ''), p.invoice_id::text) AS source_label,
+                           COALESCE(NULLIF(i.customer_name, ''), '') AS payer,
+                           COALESCE(p.payment_reference, '') AS reference,
+                           COALESCE(p.payment_amount, 0) AS amount,
+                           COALESCE(p.location_id, i.location_id) AS location_id
+                    FROM invoice_payments p
+                    JOIN invoices i ON i.invoice_id = p.invoice_id
+                    WHERE UPPER(COALESCE(p.payment_method, '')) = 'CHEQUE'
+                      AND COALESCE(p.payment_action, 'PAYMENT') = 'PAYMENT'
+                      AND COALESCE(p.payment_amount, 0) > 0
+                      AND COALESCE(p.payment_reference, '') NOT ILIKE 'Account payment transaction #%'
+                    """);
+        }
+        if (tableExists(conn, "customer_account_transactions")) {
+            sources.add("""
+                    SELECT 'ACCOUNT_PAYMENT' AS source_type,
+                           t.transaction_id::text AS source_id,
+                           t.created_at AS cheque_at,
+                           'Account Payment' AS source_label,
+                           COALESCE(NULLIF(ca.name, ''), '') AS payer,
+                           COALESCE(t.payment_reference, '') AS reference,
+                           COALESCE(t.amount, 0) AS amount,
+                           t.location_id AS location_id
+                    FROM customer_account_transactions t
+                    LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
+                    WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                      AND UPPER(COALESCE(t.payment_method, '')) = 'CHEQUE'
+                      AND COALESCE(t.amount, 0) > 0
+                    """);
+        }
+        if (sources.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT src.source_type,
+                       src.source_id,
+                       src.cheque_at,
+                       src.source_label,
+                       src.payer,
+                       src.reference,
+                       src.amount
+                FROM (
+                """ + String.join("\nUNION ALL\n", sources) + """
+                ) src
+                LEFT JOIN cheque_bank_deposits d
+                  ON d.source_type = src.source_type
+                 AND d.source_id = src.source_id
+                WHERE d.cheque_bank_deposit_id IS NULL
+                  AND (? IS NULL OR src.location_id = ?)
+                ORDER BY src.cheque_at ASC, src.source_label ASC
+                """;
+        List<ChequeDepositOption> cheques = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            setNullableInteger(ps, 1, locationId);
+            setNullableInteger(ps, 2, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Timestamp chequeAt = rs.getTimestamp("cheque_at");
+                    cheques.add(new ChequeDepositOption(
+                            rs.getString("source_type"),
+                            rs.getString("source_id"),
+                            chequeAt == null ? null : chequeAt.toLocalDateTime(),
+                            rs.getString("source_label"),
+                            rs.getString("payer"),
+                            rs.getString("reference"),
+                            defaultZero(rs.getBigDecimal("amount"))
+                    ));
+                }
+            }
+        }
+        return cheques;
     }
 
     private static List<SheetLine> loadIncome(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
@@ -502,7 +1136,7 @@ public final class BalanceSheetService {
         }
 
         String customOrderSql = """
-                SELECT 'ORDER BOOK' AS label,
+                SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
                        SUM(CASE
                             WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
                             WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
@@ -516,6 +1150,7 @@ public final class BalanceSheetService {
                 ))
                   AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + sessionFilter + """
+                GROUP BY COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN')
                 """;
         try (PreparedStatement ps = conn.prepareStatement(customOrderSql)) {
             int index = 1;
@@ -526,10 +1161,67 @@ public final class BalanceSheetService {
             ps.setDate(index++, Date.valueOf(to));
             index = bindSessionIds(ps, index, cashDrawerSessionIds);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
+                while (rs.next()) {
                     BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
                     if (amount.compareTo(BigDecimal.ZERO) != 0) {
-                        lines.add(new SheetLine(rs.getString("label"), amount));
+                        lines.add(new SheetLine(formatOrderIncomeLabel(rs.getString("label")), amount));
+                    }
+                }
+            }
+        }
+        if (tableExists(conn, "invoice_payments")) {
+            String invoicePaymentSql = """
+                    SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
+                           SUM(CASE
+                                WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
+                                WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
+                                ELSE 0
+                           END) AS amount
+                    FROM invoice_payments
+                    WHERE (? IS NULL OR location_id = ?)
+                      AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "payment_method") + """
+                    GROUP BY COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN')
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(invoicePaymentSql)) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                index = bindSessionIds(ps, index, cashDrawerSessionIds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
+                        if (amount.compareTo(BigDecimal.ZERO) != 0) {
+                            lines.add(new SheetLine(formatInvoiceIncomeLabel(rs.getString("label")), amount));
+                        }
+                    }
+                }
+            }
+        }
+        if (tableExists(conn, "customer_account_transactions")) {
+            String invoiceAccountSql = """
+                    SELECT SUM(COALESCE(amount, 0)) AS amount
+                    FROM customer_account_transactions
+                    WHERE COALESCE(transaction_type, '') = 'INVOICE_CREDIT'
+                      AND (? IS NULL OR location_id = ?)
+                      AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                      AND COALESCE(note, '') <> 'Placed on customer account before direct invoice payment.'
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(invoiceAccountSql)) {
+                setNullableInteger(ps, 1, locationId);
+                setNullableInteger(ps, 2, locationId);
+                ps.setString(3, storeZoneId);
+                ps.setDate(4, Date.valueOf(from));
+                ps.setDate(5, Date.valueOf(to));
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
+                        if (amount.compareTo(BigDecimal.ZERO) != 0) {
+                            lines.add(new SheetLine("INVOICE ACCOUNT", amount));
+                        }
                     }
                 }
             }
@@ -591,6 +1283,34 @@ public final class BalanceSheetService {
         }
         if (lines.isEmpty()) {
             lines.add(new SheetLine("PAID".equals(status) ? "No expenses" : "No payables", BigDecimal.ZERO));
+        }
+        return lines;
+    }
+
+    private static List<BankTransactionLine> loadBankTransactions(Connection conn, LocalDate from, LocalDate to,
+                                                                  Integer locationId) throws SQLException {
+        List<BankTransactionLine> lines = new ArrayList<>();
+        String sql = """
+                SELECT transaction_name, transaction_direction, amount
+                FROM bank_transactions
+                WHERE (? IS NULL OR location_id = ?)
+                  AND transaction_date BETWEEN ? AND ?
+                ORDER BY transaction_date ASC, bank_transaction_id ASC
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            setNullableInteger(ps, 1, locationId);
+            setNullableInteger(ps, 2, locationId);
+            ps.setDate(3, Date.valueOf(from));
+            ps.setDate(4, Date.valueOf(to));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    lines.add(new BankTransactionLine(
+                            rs.getString("transaction_name"),
+                            rs.getString("transaction_direction"),
+                            defaultZero(rs.getBigDecimal("amount"))
+                    ));
+                }
+            }
         }
         return lines;
     }
@@ -686,14 +1406,19 @@ public final class BalanceSheetService {
     private static List<SheetLine> loadDeviceSales(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
                                                    Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
+        String deviceLabel = "COALESCE(NULLIF(TRIM(d.device_name), ''), NULLIF(TRIM(s.device_name), ''), NULLIF(TRIM(s.device_id), ''), NULLIF(TRIM(s.receipt_device_id), ''), 'Unassigned Device')";
         String normalSalesSql = """
-                SELECT COALESCE(NULLIF(TRIM(receipt_device_id), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
-                       SUM(COALESCE(amount_paid, 0)) AS amount
-                FROM sales
-                WHERE (? IS NULL OR location_id = ?)
-                  AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
-                """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "payment_method") + """
-                GROUP BY COALESCE(NULLIF(TRIM(receipt_device_id), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device')
+                SELECT
+                """ + deviceLabel + """
+                       AS device_label,
+                       SUM(COALESCE(s.amount_paid, 0)) AS amount
+                FROM sales s
+                LEFT JOIN devices d ON d.device_id::text = s.device_id
+                WHERE (? IS NULL OR s.location_id = ?)
+                  AND (s.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                """ + cashDrawerFilterSql(cashDrawerSessionIds, "s.cash_drawer_session_id", "s.payment_method") + """
+                GROUP BY
+                """ + deviceLabel + """
                 ORDER BY device_label
                 """;
         try (PreparedStatement ps = conn.prepareStatement(normalSalesSql)) {
@@ -720,22 +1445,27 @@ public final class BalanceSheetService {
     private static List<SheetLine> loadDeviceOrders(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
                                                     Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
+        String deviceLabel = "COALESCE(NULLIF(TRIM(d.device_name), ''), NULLIF(TRIM(p.device_name), ''), NULLIF(TRIM(p.device_id), ''), 'Unassigned Device')";
         String orderSql = """
-                SELECT COALESCE(NULLIF(TRIM(device_name), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
+                SELECT
+                """ + deviceLabel + """
+                       AS device_label,
                        SUM(CASE
-                            WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
-                            WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
+                            WHEN p.payment_action = 'PAYMENT' THEN COALESCE(p.payment_amount, 0)
+                            WHEN p.payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(p.payment_amount, 0)
                             ELSE 0
                        END) AS amount
                 FROM custom_order_payments p
+                LEFT JOIN devices d ON d.device_id::text = p.device_id
                 WHERE (? IS NULL OR EXISTS (
                     SELECT 1 FROM custom_orders co
                     WHERE co.custom_order_id = p.custom_order_id
                       AND co.location_id = ?
                 ))
-                  AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
-                """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "payment_method") + """
-                GROUP BY COALESCE(NULLIF(TRIM(device_name), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device')
+                  AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                """ + cashDrawerFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id", "p.payment_method") + """
+                GROUP BY
+                """ + deviceLabel + """
                 ORDER BY device_label
                 """;
         try (PreparedStatement ps = conn.prepareStatement(orderSql)) {
@@ -755,6 +1485,46 @@ public final class BalanceSheetService {
 
         if (lines.isEmpty()) {
             lines.add(new SheetLine("No device orders logged", BigDecimal.ZERO));
+        }
+        return lines;
+    }
+
+    private static List<SheetLine> loadDevicePayments(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
+                                                      Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
+        List<SheetLine> lines = new ArrayList<>();
+        String deviceLabel = "COALESCE(NULLIF(TRIM(d.device_name), ''), NULLIF(TRIM(t.device_name), ''), NULLIF(TRIM(t.device_id), ''), 'Unassigned Device')";
+        String sql = """
+                SELECT
+                """ + deviceLabel + """
+                       AS device_label,
+                       SUM(ABS(COALESCE(t.amount, 0))) AS amount
+                FROM customer_account_transactions t
+                LEFT JOIN devices d ON d.device_id::text = t.device_id
+                WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                  AND (? IS NULL OR t.location_id = ?)
+                  AND (t.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                """ + sessionFilterSql(cashDrawerSessionIds, "t.cash_drawer_session_id") + """
+                GROUP BY
+                """ + deviceLabel + """
+                ORDER BY device_label
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int index = 1;
+            setNullableInteger(ps, index++, locationId);
+            setNullableInteger(ps, index++, locationId);
+            ps.setString(index++, storeZoneId);
+            ps.setDate(index++, Date.valueOf(from));
+            ps.setDate(index++, Date.valueOf(to));
+            bindSessionIds(ps, index, cashDrawerSessionIds);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    lines.add(new SheetLine(rs.getString("device_label"), defaultZero(rs.getBigDecimal("amount"))));
+                }
+            }
+        }
+
+        if (lines.isEmpty()) {
+            lines.add(new SheetLine("No device payments logged", BigDecimal.ZERO));
         }
         return lines;
     }
@@ -926,6 +1696,34 @@ public final class BalanceSheetService {
         };
     }
 
+    private static String formatOrderIncomeLabel(String paymentMethod) {
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            return "ORDER UNKNOWN";
+        }
+        return switch (paymentMethod.trim().toUpperCase()) {
+            case "CASH" -> "ORDER CASH";
+            case "CARD" -> "ORDER CARD";
+            case "MMG" -> "ORDER MMG";
+            case "CHEQUE" -> "ORDER CHEQUE";
+            case "ACCOUNT" -> "ORDER ACCOUNT";
+            default -> "ORDER " + paymentMethod.trim().toUpperCase();
+        };
+    }
+
+    private static String formatInvoiceIncomeLabel(String paymentMethod) {
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            return "INVOICE UNKNOWN";
+        }
+        return switch (paymentMethod.trim().toUpperCase()) {
+            case "CASH" -> "INVOICE CASH";
+            case "CARD" -> "INVOICE CARD";
+            case "MMG" -> "INVOICE MMG";
+            case "CHEQUE" -> "INVOICE CHEQUE";
+            case "ACCOUNT" -> "INVOICE ACCOUNT";
+            default -> "INVOICE " + paymentMethod.trim().toUpperCase();
+        };
+    }
+
     private static String accountPaymentLabel(ResultSet rs, String storeZoneId) throws SQLException {
         long sessionId = rs.getLong("cash_drawer_session_id");
         boolean hasSession = !rs.wasNull();
@@ -1033,6 +1831,98 @@ public final class BalanceSheetService {
         return lines;
     }
 
+    private static String encodeBankTransactions(List<BankTransactionLine> lines) {
+        StringBuilder encoded = new StringBuilder();
+        for (BankTransactionLine line : lines) {
+            if (!encoded.isEmpty()) {
+                encoded.append('\n');
+            }
+            encoded.append(escapeLine(line.transaction()))
+                    .append('\t')
+                    .append(escapeLine(line.direction()))
+                    .append('\t')
+                    .append(defaultZero(line.amount()).toPlainString());
+        }
+        return encoded.toString();
+    }
+
+    private static List<BankTransactionLine> decodeBankTransactions(String encoded) {
+        List<BankTransactionLine> lines = new ArrayList<>();
+        if (encoded == null || encoded.isBlank()) {
+            return lines;
+        }
+        for (String row : encoded.split("\\n")) {
+            String[] parts = row.split("\\t", 3);
+            if (parts.length != 3) {
+                continue;
+            }
+            try {
+                lines.add(new BankTransactionLine(unescapeLine(parts[0]), unescapeLine(parts[1]), new BigDecimal(parts[2])));
+            } catch (NumberFormatException ignored) {
+                lines.add(new BankTransactionLine(unescapeLine(parts[0]), unescapeLine(parts[1]), BigDecimal.ZERO));
+            }
+        }
+        return lines;
+    }
+
+    private static String encodeCheques(List<ChequeDepositOption> cheques) {
+        StringBuilder encoded = new StringBuilder();
+        for (ChequeDepositOption cheque : cheques) {
+            if (!encoded.isEmpty()) {
+                encoded.append('\n');
+            }
+            encoded.append(escapeLine(cheque.sourceType()))
+                    .append('\t')
+                    .append(escapeLine(cheque.sourceId()))
+                    .append('\t')
+                    .append(cheque.chequeAt() == null ? "" : cheque.chequeAt())
+                    .append('\t')
+                    .append(escapeLine(cheque.sourceLabel()))
+                    .append('\t')
+                    .append(escapeLine(cheque.payer()))
+                    .append('\t')
+                    .append(escapeLine(cheque.reference()))
+                    .append('\t')
+                    .append(defaultZero(cheque.amount()).toPlainString());
+        }
+        return encoded.toString();
+    }
+
+    private static List<ChequeDepositOption> decodeCheques(String encoded) {
+        List<ChequeDepositOption> cheques = new ArrayList<>();
+        if (encoded == null || encoded.isBlank()) {
+            return cheques;
+        }
+        for (String row : encoded.split("\\n")) {
+            String[] parts = row.split("\\t", -1);
+            if (parts.length != 7) {
+                continue;
+            }
+            try {
+                cheques.add(new ChequeDepositOption(
+                        unescapeLine(parts[0]),
+                        unescapeLine(parts[1]),
+                        parts[2].isBlank() ? null : LocalDateTime.parse(parts[2]),
+                        unescapeLine(parts[3]),
+                        unescapeLine(parts[4]),
+                        unescapeLine(parts[5]),
+                        new BigDecimal(parts[6])
+                ));
+            } catch (Exception ignored) {
+                cheques.add(new ChequeDepositOption(
+                        unescapeLine(parts[0]),
+                        unescapeLine(parts[1]),
+                        null,
+                        unescapeLine(parts[3]),
+                        unescapeLine(parts[4]),
+                        unescapeLine(parts[5]),
+                        BigDecimal.ZERO
+                ));
+            }
+        }
+        return cheques;
+    }
+
     private static String escapeLine(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n");
     }
@@ -1069,7 +1959,46 @@ public final class BalanceSheetService {
                                BigDecimal amount, String paymentMethod, String paymentReference, String status) {
     }
 
+    public record ExpenseOption(long expenseId, LocalDate expenseDate, String category, String payee,
+                                String description, BigDecimal amount, String status) {
+        @Override
+        public String toString() {
+            String name = payee == null || payee.isBlank()
+                    ? (description == null || description.isBlank() ? category : description)
+                    : payee;
+            return expenseDate + " - " + name + " - " + defaultZero(amount).toPlainString();
+        }
+    }
+
+    public record PayableOption(long expenseId, LocalDate expenseDate, String category, String payee,
+                                String description, BigDecimal amount) {
+        @Override
+        public String toString() {
+            String name = payee == null || payee.isBlank()
+                    ? (description == null || description.isBlank() ? category : description)
+                    : payee;
+            return expenseDate + " - " + name + " - " + defaultZero(amount).toPlainString();
+        }
+    }
+
+    public record ChequeDepositOption(String sourceType, String sourceId, LocalDateTime chequeAt,
+                                      String sourceLabel, String payer, String reference, BigDecimal amount) {
+        @Override
+        public String toString() {
+            String name = payer == null || payer.isBlank() ? sourceLabel : sourceLabel + " - " + payer;
+            String ref = reference == null || reference.isBlank() ? "" : " / " + reference;
+            return (chequeAt == null ? "" : chequeAt.toLocalDate() + " - ")
+                    + name
+                    + ref
+                    + " - "
+                    + defaultZero(amount).toPlainString();
+        }
+    }
+
     public record SheetLine(String label, BigDecimal amount) {
+    }
+
+    public record BankTransactionLine(String transaction, String direction, BigDecimal amount) {
     }
 
     public record DrawSessionRange(long sessionId, LocalDate openedDate, LocalDate closedDate, String label, String status) {
@@ -1099,7 +2028,10 @@ public final class BalanceSheetService {
                                List<SheetLine> drawerCash,
                                List<SheetLine> deviceSales,
                                List<SheetLine> deviceOrders,
+                               List<SheetLine> devicePayments,
                                List<SheetLine> accountPayments,
+                               List<BankTransactionLine> bankTransactions,
+                               List<ChequeDepositOption> pendingCheques,
                                List<SheetLine> drawerChecks,
                                BigDecimal cashInHand,
                                BigDecimal balanceBf,

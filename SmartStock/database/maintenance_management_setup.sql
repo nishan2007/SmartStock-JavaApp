@@ -251,7 +251,8 @@ CREATE TABLE IF NOT EXISTS maintenance_ticket_parts (
 CREATE INDEX IF NOT EXISTS maintenance_ticket_parts_ticket_idx
 ON maintenance_ticket_parts(ticket_id);
 
-CREATE OR REPLACE VIEW maintenance_parts_to_reorder AS
+CREATE OR REPLACE VIEW maintenance_parts_to_reorder
+WITH (security_invoker = true) AS
 SELECT part_id,
        part_name,
        part_number,
@@ -264,7 +265,8 @@ FROM maintenance_parts
 WHERE is_active = TRUE
   AND quantity_on_hand <= reorder_point;
 
-CREATE OR REPLACE VIEW maintenance_machine_part_list AS
+CREATE OR REPLACE VIEW maintenance_machine_part_list
+WITH (security_invoker = true) AS
 SELECT m.machine_id,
        m.machine_name,
        m.asset_tag,
@@ -278,7 +280,8 @@ JOIN maintenance_machines m ON m.machine_id = mp.machine_id
 LEFT JOIN locations l ON l.location_id = m.location_id
 JOIN maintenance_parts p ON p.part_id = mp.part_id;
 
-CREATE OR REPLACE VIEW maintenance_open_ticket_summary AS
+CREATE OR REPLACE VIEW maintenance_open_ticket_summary
+WITH (security_invoker = true) AS
 SELECT t.ticket_id,
        t.opened_at,
        t.priority,
@@ -294,32 +297,35 @@ LEFT JOIN maintenance_machines m ON m.machine_id = t.machine_id
 LEFT JOIN locations l ON l.location_id = m.location_id
 WHERE t.status IN ('OPEN', 'IN_PROGRESS', 'WAITING_PARTS');
 
-INSERT INTO permissions (permission_key, permission_name)
-SELECT 'MAINTENANCE_MANAGEMENT', 'Maintenance Management'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'MAINTENANCE_MANAGEMENT'
-);
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_group TEXT;
 
-INSERT INTO permissions (permission_key, permission_name)
-SELECT 'MACHINE_MANAGEMENT', 'Machine List'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'MACHINE_MANAGEMENT'
-);
+ALTER TABLE permissions
+    ADD COLUMN IF NOT EXISTS permission_subgroup TEXT;
 
-INSERT INTO permissions (permission_key, permission_name)
-SELECT 'PARTS_MANAGEMENT', 'Parts List'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'PARTS_MANAGEMENT'
-);
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
+VALUES
+    ('MAINTENANCE_MANAGEMENT', 'Maintenance Management', 'Inventory', 'Maintenance'),
+    ('MACHINE_MANAGEMENT', 'Machine List', 'Inventory', 'Maintenance'),
+    ('PARTS_MANAGEMENT', 'Parts List', 'Inventory', 'Maintenance')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
 
-INSERT INTO permissions (permission_key, permission_name, description, permission_group)
-SELECT 'MAINTENANCE_TECHNICIAN',
-       'Maintenance Technician',
-       'Allows receiving open maintenance ticket notifications and working maintenance tickets.',
-       'Inventory'
-WHERE NOT EXISTS (
-    SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'MAINTENANCE_TECHNICIAN'
-);
+INSERT INTO permissions (permission_key, permission_name, description, permission_group, permission_subgroup)
+VALUES (
+    'MAINTENANCE_TECHNICIAN',
+    'Maintenance Technician',
+    'Allows receiving open maintenance ticket notifications and working maintenance tickets.',
+    'Inventory',
+    'Maintenance'
+)
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    description = EXCLUDED.description,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
 
 UPDATE permissions
 SET permission_name = COALESCE(NULLIF(permission_name, ''), 'Maintenance Technician'),

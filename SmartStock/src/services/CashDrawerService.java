@@ -557,6 +557,138 @@ public final class CashDrawerService {
         throw new SQLException("Failed to close draw session.");
     }
 
+    public static CashDrawerSession reviseClosedSessionCount(Connection conn, long sessionId, BigDecimal countedCash, String notes) throws SQLException {
+        ensureSchema(conn);
+        CashDrawerSession session = getSessionForUpdate(conn, sessionId);
+        if (session == null) {
+            throw new SQLException("Draw session was not found.");
+        }
+        if (session.isOpen()) {
+            throw new SQLException("Open draw sessions must be closed before they can be corrected.");
+        }
+        if (isCoveredBySubmittedBalanceSheet(conn, session)) {
+            throw new SQLException("This draw is already included in a submitted balance sheet and cannot be edited.");
+        }
+
+        BigDecimal expectedCash = calculateExpectedCash(conn, sessionId);
+        BigDecimal cleanCountedCash = defaultZero(countedCash);
+        BigDecimal openingCash = defaultZero(session.openingCash());
+        if (cleanCountedCash.compareTo(openingCash) < 0) {
+            throw new SQLException("Corrected counted cash is below the required float of " + openingCash + ".");
+        }
+        BigDecimal cashToRemove = cleanCountedCash.subtract(openingCash);
+        BigDecimal variance = cleanCountedCash.subtract(expectedCash);
+        String closingReport = buildClosingReport(conn, session, expectedCash, cleanCountedCash, cashToRemove, variance);
+        String correctionNotes = mergeCorrectionNotes(session.closingNotes(), notes);
+
+        String sql = """
+                UPDATE cash_drawer_sessions
+                SET expected_cash = ?,
+                    counted_cash = ?,
+                    cash_to_remove = ?,
+                    variance = ?,
+                    balanced_by_user_id = ?,
+                    balanced_by_name = ?,
+                    closing_report = ?,
+                    closing_notes = ?
+                WHERE cash_drawer_session_id = ?
+                RETURNING *
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setBigDecimal(1, expectedCash);
+            ps.setBigDecimal(2, cleanCountedCash);
+            ps.setBigDecimal(3, cashToRemove);
+            ps.setBigDecimal(4, variance);
+            setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
+            ps.setString(6, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            ps.setString(7, closingReport);
+            ps.setString(8, blankToNull(correctionNotes));
+            ps.setLong(9, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    CashDrawerSession revised = mapSession(rs);
+                    SyncOutboxService.recordEvent(conn, "CASH_DRAWER_SESSION_CORRECTED", Map.of(
+                            "cash_drawer_session_id", revised.sessionId(),
+                            "cash_drawer_id", revised.cashDrawerId(),
+                            "location_id", revised.locationId(),
+                            "device_id", String.valueOf(revised.deviceId()),
+                            "expected_cash", expectedCash,
+                            "counted_cash", cleanCountedCash,
+                            "cash_to_remove", cashToRemove,
+                            "variance", variance,
+                            "balanced_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                    ));
+                            return revised;
+                        }
+                    }
+            }
+        throw new SQLException("Failed to correct draw session.");
+    }
+
+    public static long recordChangeBasketUpdate(Connection conn,
+                                                int locationId,
+                                                String storeName,
+                                                BigDecimal targetAmount,
+                                                Map<Integer, Integer> denominationCounts,
+                                                String notes) throws SQLException {
+        ensureSchema(conn);
+        Map<Integer, Integer> cleanCounts = cleanDenominationCounts(denominationCounts);
+        BigDecimal cleanTarget = defaultZero(targetAmount);
+        BigDecimal countedAmount = floatMixTotal(cleanCounts);
+        BigDecimal variance = countedAmount.subtract(cleanTarget);
+        String sql = """
+                INSERT INTO change_basket_updates (
+                    location_id,
+                    store_name,
+                    target_amount,
+                    counted_amount,
+                    variance,
+                    denomination_counts,
+                    updated_by_user_id,
+                    updated_by_name,
+                    device_id,
+                    device_name,
+                    notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?::uuid, ?, ?)
+                RETURNING change_basket_update_id
+                """;
+        long updateId;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setString(2, blankToNull(storeName));
+            ps.setBigDecimal(3, cleanTarget);
+            ps.setBigDecimal(4, countedAmount);
+            ps.setBigDecimal(5, variance);
+            ps.setString(6, denominationCountsToJson(cleanCounts));
+            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
+            ps.setString(8, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            String deviceId = DeviceContextService.currentDeviceId();
+            if (deviceId == null || deviceId.isBlank()) {
+                ps.setNull(9, Types.OTHER);
+            } else {
+                ps.setString(9, deviceId);
+            }
+            ps.setString(10, blankToNull(DeviceContextService.currentDeviceName()));
+            ps.setString(11, blankToNull(notes));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("Failed to save change basket update.");
+                }
+                updateId = rs.getLong("change_basket_update_id");
+            }
+        }
+        SyncOutboxService.recordEvent(conn, "CHANGE_BASKET_UPDATED", Map.of(
+                "change_basket_update_id", updateId,
+                "location_id", locationId,
+                "target_amount", cleanTarget,
+                "counted_amount", countedAmount,
+                "variance", variance,
+                "denomination_counts", denominationCountsToJson(cleanCounts)
+        ));
+        return updateId;
+    }
+
     public static BigDecimal calculateExpectedCash(Connection conn, long sessionId) throws SQLException {
         ensureSchema(conn);
         CashDrawerSession session = getSession(conn, sessionId);
@@ -991,6 +1123,45 @@ public final class CashDrawerService {
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_device_fk_idx ON cash_drawer_handovers(device_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_from_user_fk_idx ON cash_drawer_handovers(from_user_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_to_user_fk_idx ON cash_drawer_handovers(to_user_id)");
+                stmt.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS change_basket_updates (
+                            change_basket_update_id BIGSERIAL PRIMARY KEY,
+                            location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                            store_name TEXT,
+                            target_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                            counted_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                            variance NUMERIC(12,2) NOT NULL DEFAULT 0,
+                            denomination_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_by_user_id INTEGER REFERENCES users(user_id),
+                            updated_by_name TEXT,
+                            device_id UUID REFERENCES devices(device_id),
+                            device_name TEXT,
+                            notes TEXT
+                        )
+                        """);
+                stmt.executeUpdate("ALTER TABLE change_basket_updates ENABLE ROW LEVEL SECURITY");
+                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_service_role_all ON change_basket_updates");
+                stmt.executeUpdate("""
+                        CREATE POLICY change_basket_updates_service_role_all
+                        ON change_basket_updates
+                        FOR ALL
+                        TO service_role
+                        USING (TRUE)
+                        WITH CHECK (TRUE)
+                        """);
+                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_authenticated_all ON change_basket_updates");
+                stmt.executeUpdate("""
+                        CREATE POLICY change_basket_updates_authenticated_all
+                        ON change_basket_updates
+                        FOR ALL
+                        TO authenticated
+                        USING (TRUE)
+                        WITH CHECK (TRUE)
+                        """);
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_location_updated_idx ON change_basket_updates(location_id, updated_at DESC)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_updated_by_user_idx ON change_basket_updates(updated_by_user_id) WHERE updated_by_user_id IS NOT NULL");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_device_idx ON change_basket_updates(device_id) WHERE device_id IS NOT NULL");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT REFERENCES cash_drawers(cash_drawer_id)");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
                 stmt.executeUpdate("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT REFERENCES cash_drawer_sessions(cash_drawer_session_id)");
@@ -1100,6 +1271,41 @@ public final class CashDrawerService {
     private static void addName(Set<String> names, String name) {
         if (name != null && !name.isBlank()) {
             names.add(name.trim());
+        }
+    }
+
+    private static String mergeCorrectionNotes(String existingNotes, String correctionNotes) {
+        String userName = defaultText(SessionManager.getCurrentUserDisplayName());
+        String entry = "Correction by " + userName;
+        if (correctionNotes != null && !correctionNotes.isBlank()) {
+            entry += ": " + correctionNotes.trim();
+        }
+        if (existingNotes == null || existingNotes.isBlank()) {
+            return entry;
+        }
+        return existingNotes.trim() + "\n" + entry;
+    }
+
+    private static boolean isCoveredBySubmittedBalanceSheet(Connection conn, CashDrawerSession session) throws SQLException {
+        if (!tableExists(conn, "balance_sheet_submissions")) {
+            return false;
+        }
+        String sql = """
+                SELECT 1
+                FROM balance_sheet_submissions
+                WHERE (? IS NULL OR location_id = ?)
+                  AND (COALESCE(?, ?) AT TIME ZONE COALESCE(NULLIF(store_timezone, ''), 'UTC'))::date
+                      BETWEEN period_start AND period_end
+                LIMIT 1
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, session.locationId());
+            ps.setInt(2, session.locationId());
+            ps.setTimestamp(3, session.closedAt());
+            ps.setTimestamp(4, session.openedAt());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -1231,6 +1437,15 @@ public final class CashDrawerService {
         return clean;
     }
 
+    private static Map<Integer, Integer> cleanDenominationCounts(Map<Integer, Integer> counts) {
+        Map<Integer, Integer> clean = new HashMap<>();
+        Map<Integer, Integer> source = counts == null ? Map.of() : counts;
+        for (int denomination : FLOAT_DENOMINATIONS) {
+            clean.put(denomination, Math.max(source.getOrDefault(denomination, 0), 0));
+        }
+        return clean;
+    }
+
     private static String floatMixToJson(Map<Integer, Integer> floatMix) {
         Map<Integer, Integer> clean = cleanFloatMix(floatMix);
         StringBuilder json = new StringBuilder("{");
@@ -1244,6 +1459,21 @@ public final class CashDrawerService {
                 json.append(',');
             }
             json.append('"').append(denomination).append('"').append(':').append(quantity);
+            first = false;
+        }
+        json.append('}');
+        return json.toString();
+    }
+
+    private static String denominationCountsToJson(Map<Integer, Integer> counts) {
+        Map<Integer, Integer> clean = cleanDenominationCounts(counts);
+        StringBuilder json = new StringBuilder("{");
+        boolean first = true;
+        for (int denomination : FLOAT_DENOMINATIONS) {
+            if (!first) {
+                json.append(',');
+            }
+            json.append('"').append(denomination).append('"').append(':').append(clean.getOrDefault(denomination, 0));
             first = false;
         }
         json.append('}');

@@ -111,7 +111,7 @@ public class MakeASale extends JFrame {
     private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
     private record VatCalculation(BigDecimal amount, BigDecimal ratePercent, String mode) {
         private VatCalculation {
-            amount = amount == null ? BigDecimal.ZERO : amount.setScale(2, RoundingMode.HALF_UP);
+            amount = utils.CurrencyFormatter.normalize(amount);
             ratePercent = ratePercent == null ? BigDecimal.ZERO : ratePercent.setScale(2, RoundingMode.HALF_UP);
             mode = mode == null ? "" : mode;
         }
@@ -330,13 +330,13 @@ public class MakeASale extends JFrame {
        transactionPanel.add(accountPaymentButton);
        transactionPanel.add(buildLabeledControl("Reference", paymentReferenceField));
        totalsPanel.add(buildLabeledControl("Discount %", discountPercentField));
-	       subtotalLabel = createTotalLabel("Subtotal: $0.00", false);
+	       subtotalLabel = createTotalLabel("Subtotal: $0", false);
 	       totalsPanel.add(subtotalLabel);
-	       discountAmountLabel = createTotalLabel("Discount: $0.00", false);
+	       discountAmountLabel = createTotalLabel("Discount: $0", false);
 	       totalsPanel.add(discountAmountLabel);
-	       vatAmountLabel = createTotalLabel("VAT: $0.00", false);
+	       vatAmountLabel = createTotalLabel("VAT: $0", false);
 	       totalsPanel.add(vatAmountLabel);
-	       totalLabel = createTotalLabel("Overall Total: $0.00", true);
+	       totalLabel = createTotalLabel("Overall Total: $0", true);
 	       totalsPanel.add(totalLabel);
 
        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 4));
@@ -1480,7 +1480,7 @@ public class MakeASale extends JFrame {
                 qty,
                 BigDecimal.ZERO,
                 price * qty,
-                BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
+                utils.CurrencyFormatter.normalize(BigDecimal.valueOf(price)),
                 normalizeProductType(productType),
                 departmentId
         });
@@ -1637,7 +1637,7 @@ public class MakeASale extends JFrame {
                 }
 
                 try {
-                    price = new BigDecimal(priceValue.toString()).setScale(2, RoundingMode.HALF_UP);
+                    price = utils.CurrencyFormatter.normalize(new BigDecimal(priceValue.toString()));
                 } catch (NumberFormatException ex) {
                     price = BigDecimal.ZERO;
                 }
@@ -1652,10 +1652,10 @@ public class MakeASale extends JFrame {
                     itemDiscountPercent = BigDecimal.ZERO;
                 }
 
-                BigDecimal lineGross = price.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal lineDiscount = lineGross.multiply(itemDiscountPercent)
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                BigDecimal lineTotal = lineGross.subtract(lineDiscount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal lineGross = utils.CurrencyFormatter.normalize(price.multiply(BigDecimal.valueOf(qty)));
+                BigDecimal lineDiscount = utils.CurrencyFormatter.normalize(lineGross.multiply(itemDiscountPercent)
+                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
+                BigDecimal lineTotal = utils.CurrencyFormatter.normalize(lineGross.subtract(lineDiscount).max(BigDecimal.ZERO));
 
                 cartModel.setValueAt(price, i, CART_COL_PRICE);
                 cartModel.setValueAt(qty, i, CART_COL_QTY);
@@ -1692,13 +1692,13 @@ public class MakeASale extends JFrame {
             int qty = parseIntOrDefault(cartModel.getValueAt(i, CART_COL_QTY), 0);
             total = total.add(price.multiply(BigDecimal.valueOf(qty)));
         }
-        return total.setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(total);
     }
 
     private BigDecimal getItemDiscountTotal() {
-        return getCartGrossSubtotal().subtract(BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP))
-                .max(BigDecimal.ZERO)
-                .setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(getCartGrossSubtotal()
+                .subtract(BigDecimal.valueOf(getCartSubtotal()))
+                .max(BigDecimal.ZERO));
     }
 
     private double getOverallTotal() {
@@ -1709,14 +1709,14 @@ public class MakeASale extends JFrame {
         try (Connection conn = DB.getConnection()) {
             return getFinalTotalAmount(conn);
         } catch (SQLException ex) {
-            return getPreVatSaleTotal(getDiscountPercent()).setScale(2, RoundingMode.HALF_UP);
+            return utils.CurrencyFormatter.normalize(getPreVatSaleTotal(getDiscountPercent()));
         }
     }
 
     private BigDecimal getFinalTotalAmount(Connection conn) throws SQLException {
         BigDecimal discountPercent = getDiscountPercent();
         BigDecimal preVatTotal = getPreVatSaleTotal(discountPercent);
-        return preVatTotal.add(calculateVat(conn, discountPercent).amount()).setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(preVatTotal.add(calculateVat(conn, discountPercent).amount()));
     }
 
     private BigDecimal getPreVatSaleTotal(BigDecimal discountPercent) {
@@ -1724,7 +1724,7 @@ public class MakeASale extends JFrame {
         BigDecimal cleanDiscountPercent = discountPercent == null ? BigDecimal.ZERO : discountPercent;
         BigDecimal discountAmount = subtotal.multiply(cleanDiscountPercent)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        return subtotal.subtract(discountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(subtotal.subtract(discountAmount).max(BigDecimal.ZERO));
     }
 
     private VatCalculation calculateVat(Connection conn, BigDecimal saleDiscountPercent) throws SQLException {
@@ -1755,13 +1755,13 @@ public class MakeASale extends JFrame {
                 continue;
             }
             BigDecimal lineAfterItemDiscount = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_LINE_TOTAL));
-            BigDecimal taxableLine = lineAfterItemDiscount.multiply(saleDiscountMultiplier).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal taxableLine = utils.CurrencyFormatter.normalize(lineAfterItemDiscount.multiply(saleDiscountMultiplier).max(BigDecimal.ZERO));
             vatAmount = vatAmount.add(taxableLine.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
         }
         BigDecimal effectiveRate = preVatTotal.compareTo(BigDecimal.ZERO) == 0
                 ? BigDecimal.ZERO
                 : vatAmount.multiply(BigDecimal.valueOf(100)).divide(preVatTotal, 2, RoundingMode.HALF_UP);
-        return new VatCalculation(vatAmount, effectiveRate, "DEPARTMENT");
+        return new VatCalculation(utils.CurrencyFormatter.normalize(vatAmount), effectiveRate, "DEPARTMENT");
     }
 
     private Map<Integer, BigDecimal> loadDepartmentVatRates(Connection conn) throws SQLException {
@@ -1884,7 +1884,7 @@ public class MakeASale extends JFrame {
             return BigDecimal.ZERO;
         }
         try {
-            return new BigDecimal(String.valueOf(value).trim()).setScale(2, RoundingMode.HALF_UP);
+            return utils.CurrencyFormatter.normalize(new BigDecimal(String.valueOf(value).trim()));
         } catch (NumberFormatException ex) {
             return BigDecimal.ZERO;
         }
@@ -2239,7 +2239,7 @@ public class MakeASale extends JFrame {
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                 BigDecimal preVatSaleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
                 VatCalculation vat = calculateVat(conn, discountPercent);
-                BigDecimal saleTotal = preVatSaleTotal.add(vat.amount()).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal saleTotal = utils.CurrencyFormatter.normalize(preVatSaleTotal.add(vat.amount()));
                 BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
                 if (saleTotal.compareTo(BigDecimal.ZERO) <= 0) {
                     JOptionPane.showMessageDialog(this, "Sale total must be greater than zero.");
@@ -2600,9 +2600,9 @@ public class MakeASale extends JFrame {
                     }
 	                BigDecimal changeDue = BigDecimal.ZERO;
 	                if (cashPayment) {
-	                    changeDue = cashCollected.subtract(saleTotal).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
-	                    successMessage += "\nCash Collected: $" + cashCollected.setScale(2, RoundingMode.HALF_UP)
-	                            + "\nChange Due: $" + changeDue;
+                    changeDue = utils.CurrencyFormatter.normalize(cashCollected.subtract(saleTotal).max(BigDecimal.ZERO));
+	                    successMessage += "\nCash Collected: " + utils.CurrencyFormatter.format(cashCollected)
+	                            + "\nChange Due: " + utils.CurrencyFormatter.format(changeDue);
 	                }
 	                if (showReceiptPreview) {
 	                    try {
@@ -3162,34 +3162,34 @@ public class MakeASale extends JFrame {
 
     private void updateOverallTotal() {
         BigDecimal subtotal = getCartGrossSubtotal();
-        BigDecimal afterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal afterItemDiscounts = utils.CurrencyFormatter.normalize(BigDecimal.valueOf(getCartSubtotal()));
         BigDecimal itemDiscountAmount = getItemDiscountTotal();
         BigDecimal saleDiscountAmount = getDiscountAmount(afterItemDiscounts);
-        BigDecimal discountAmount = itemDiscountAmount.add(saleDiscountAmount).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal discountAmount = utils.CurrencyFormatter.normalize(itemDiscountAmount.add(saleDiscountAmount));
         BigDecimal vatAmount = BigDecimal.ZERO;
         BigDecimal total = subtotal.subtract(discountAmount).max(BigDecimal.ZERO);
         try (Connection conn = DB.getConnection()) {
             VatCalculation vat = calculateVat(conn, getDiscountPercent());
             vatAmount = vat.amount();
-            total = total.add(vatAmount).setScale(2, RoundingMode.HALF_UP);
+            total = utils.CurrencyFormatter.normalize(total.add(vatAmount));
         } catch (SQLException ex) {
-            total = total.setScale(2, RoundingMode.HALF_UP);
+            total = utils.CurrencyFormatter.normalize(total);
         }
 
         if (subtotalLabel != null) {
-            subtotalLabel.setText(String.format("Subtotal: $%.2f", subtotal.doubleValue()));
+            subtotalLabel.setText("Subtotal: " + utils.CurrencyFormatter.format(subtotal));
         }
         if (discountAmountLabel != null) {
-            discountAmountLabel.setText(String.format("Discount: $%.2f", discountAmount.doubleValue()));
+            discountAmountLabel.setText("Discount: " + utils.CurrencyFormatter.format(discountAmount));
         }
         if (vatAmountLabel != null) {
-            vatAmountLabel.setText(String.format("VAT: $%.2f", vatAmount.doubleValue()));
+            vatAmountLabel.setText("VAT: " + utils.CurrencyFormatter.format(vatAmount));
         }
-        totalLabel.setText(String.format("Overall Total: $%.2f", total.doubleValue()));
+        totalLabel.setText("Overall Total: " + utils.CurrencyFormatter.format(total));
     }
 
     private BigDecimal promptForCashCollected(BigDecimal amountDue) {
-        BigDecimal due = amountDue == null ? BigDecimal.ZERO : amountDue.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal due = utils.CurrencyFormatter.normalize(amountDue);
 
         JDialog dialog = new JDialog(this, "Cash Checkout", true);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -3206,7 +3206,7 @@ public class MakeASale extends JFrame {
         JLabel amountDueValue = new JLabel("$" + due.toPlainString());
         amountDueValue.setFont(amountDueValue.getFont().deriveFont(Font.BOLD, 18f));
         JTextField collectedField = new JTextField(due.toPlainString(), 12);
-        JLabel changeLabel = new JLabel("Change: $0.00");
+        JLabel changeLabel = new JLabel("Change: $0");
         changeLabel.setFont(changeLabel.getFont().deriveFont(Font.BOLD, 16f));
 
         gbc.gridx = 0;
@@ -3244,7 +3244,7 @@ public class MakeASale extends JFrame {
                 String text = collectedField.getText().trim();
                 BigDecimal collected = text.isEmpty()
                         ? BigDecimal.ZERO
-                        : new BigDecimal(text).setScale(2, RoundingMode.HALF_UP);
+                        : utils.CurrencyFormatter.normalize(new BigDecimal(text));
                 if (collected.compareTo(BigDecimal.ZERO) < 0) {
                     changeLabel.setText("Cash collected cannot be negative.");
                     doneButton.setEnabled(false);
@@ -3284,7 +3284,7 @@ public class MakeASale extends JFrame {
 
         doneButton.addActionListener(e -> {
             try {
-                result[0] = new BigDecimal(collectedField.getText().trim()).setScale(2, RoundingMode.HALF_UP);
+                result[0] = utils.CurrencyFormatter.normalize(new BigDecimal(collectedField.getText().trim()));
                 dialog.dispose();
             } catch (NumberFormatException ex) {
                 changeLabel.setText("Enter a valid cash amount.");

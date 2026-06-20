@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import managers.PermissionManager;
 import managers.SessionManager;
 import managers.TimeClockManager;
@@ -84,7 +85,7 @@ public class TimeClock extends JFrame {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
     private static final DateTimeFormatter MONTH_YEAR_FORMAT = DateTimeFormatter.ofPattern("MMMM yyyy");
-    private static final NumberFormat CURRENCY_FORMAT = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY_FORMAT = CurrencyFormatter.create(Locale.US);
 
     public TimeClock() {
         setTitle("Time Clock");
@@ -240,7 +241,7 @@ public class TimeClock extends JFrame {
 
         monthDaysLabel = createStatCard("Days Worked", "0", DeckersPalette.ORANGE);
         monthHoursLabel = createStatCard("Total Hours", "0.00", DeckersPalette.LIME);
-        monthPayLabel = createStatCard("Total Pay", "$0.00", DeckersPalette.MAGENTA);
+        monthPayLabel = createStatCard("Total Pay", "$0", DeckersPalette.MAGENTA);
 
         monthStatsPanel.add(monthDaysLabel);
         monthStatsPanel.add(monthHoursLabel);

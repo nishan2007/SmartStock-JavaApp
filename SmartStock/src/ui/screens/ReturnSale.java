@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.CompanyCustomizationManager;
 import managers.PermissionManager;
@@ -47,7 +48,7 @@ public class ReturnSale extends JFrame {
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
     private final JComboBox<String> refundMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
     private final JTextArea reasonArea = new JTextArea(3, 30);
-    private final JLabel totalReturnLabel = new JLabel("Return Total: $0.00");
+    private final JLabel totalReturnLabel = new JLabel("Return Total: $0");
     private final JLabel overrideStatusLabel = new JLabel("No active override approvals");
     private final DefaultTableModel itemModel;
     private final DefaultTableModel saleSearchModel;
@@ -61,7 +62,7 @@ public class ReturnSale extends JFrame {
     private String overrideApprovedByName;
     private BigDecimal overrideApprovedUpToAmount = BigDecimal.ZERO;
 
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     public ReturnSale() {
@@ -469,7 +470,7 @@ public class ReturnSale extends JFrame {
                             soldQty,
                             returnedQty,
                             availableQty,
-                            defaultZero(rs.getBigDecimal("unit_price")).setScale(2, RoundingMode.HALF_UP),
+                            utils.CurrencyFormatter.normalize(rs.getBigDecimal("unit_price")),
                             normalizeProductType(rs.getString("product_type")),
                             0
                     });
@@ -721,7 +722,7 @@ public class ReturnSale extends JFrame {
                     returnItemId = itemKeys.getLong(1);
                 }
 
-                BigDecimal lineReturnAmount = line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal lineReturnAmount = utils.CurrencyFormatter.normalize(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
                 SaleAuditService.record(
                         conn, loadedSale.saleId(), line.saleItemId(), returnId, returnItemId,
                         loadedSale.customerId(), line.productId(), loadedSale.locationId(),
@@ -978,7 +979,7 @@ public class ReturnSale extends JFrame {
         for (ReturnLine line : lines) {
             total = total.add(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
         }
-        return total.setScale(2, RoundingMode.HALF_UP);
+        return utils.CurrencyFormatter.normalize(total);
     }
 
     private void returnAllAvailable() {

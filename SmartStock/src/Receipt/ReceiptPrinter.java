@@ -13,6 +13,7 @@ import javax.print.SimpleDoc;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.print.PageFormat;
 import java.awt.print.Paper;
 import java.awt.print.Printable;
@@ -81,7 +82,7 @@ public class ReceiptPrinter {
         Font font = new Font(Font.MONOSPACED, Font.PLAIN, 10);
         BufferedImage logo = CompanyCustomizationManager.loadReceiptLogo(settings);
         job.setPrintable(
-                (graphics, pageFormat, pageIndex) -> printLetterPage(graphics, pageFormat, pageIndex, lines, font, logo),
+                (graphics, pageFormat, pageIndex) -> printLetterPage(graphics, pageFormat, pageIndex, lines, font, logo, receipt),
                 createLetterPageFormat(job)
         );
 
@@ -92,28 +93,46 @@ public class ReceiptPrinter {
         }
     }
 
-    private static int printLetterPage(Graphics graphics, PageFormat pageFormat, int pageIndex, String[] lines, Font font, BufferedImage logo) {
+    private static int printLetterPage(Graphics graphics, PageFormat pageFormat, int pageIndex, String[] lines, Font font, BufferedImage logo, ReceiptData receipt) {
         Graphics2D g2 = (Graphics2D) graphics;
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g2.setFont(font);
 
         int lineHeight = g2.getFontMetrics().getHeight();
         int x = (int) pageFormat.getImageableX();
         int y = (int) pageFormat.getImageableY() + lineHeight;
         int logoSpace = pageIndex == 0 ? drawLetterLogo(g2, pageFormat, logo) : 0;
+        int barcodeSpace = ReceiptBarcodeRenderer.hasScannableReceiptNumber(receipt) ? 96 : 0;
         y += logoSpace;
         int standardLinesPerPage = Math.max((int) pageFormat.getImageableHeight() / lineHeight, 1);
+        int lastPageLines = Math.max(((int) pageFormat.getImageableHeight() - barcodeSpace) / lineHeight, 1);
         int firstPageLines = Math.max(((int) pageFormat.getImageableHeight() - logoSpace) / lineHeight, 1);
-        int linesPerPage = pageIndex == 0 ? firstPageLines : standardLinesPerPage;
-        int startLine = pageIndex == 0 ? 0 : firstPageLines + ((pageIndex - 1) * standardLinesPerPage);
+        int firstPageCapacity = lines.length <= firstPageLines ? Math.max(((int) pageFormat.getImageableHeight() - logoSpace - barcodeSpace) / lineHeight, 1) : firstPageLines;
+        int firstPageCount = Math.min(lines.length, firstPageCapacity);
+        int remainingLines = Math.max(lines.length - firstPageCount, 0);
+        int pagesAfterFirst = remainingLines == 0 ? 0 : (int) Math.ceil(remainingLines / (double) lastPageLines);
+        int totalPages = 1 + pagesAfterFirst;
 
-        if (startLine >= lines.length) {
+        if (pageIndex >= totalPages) {
             return Printable.NO_SUCH_PAGE;
         }
 
+        int linesPerPage;
+        int startLine;
+        if (pageIndex == 0) {
+            linesPerPage = totalPages == 1 ? firstPageCapacity : firstPageCount;
+            startLine = 0;
+        } else {
+            linesPerPage = lastPageLines;
+            startLine = firstPageCount + ((pageIndex - 1) * lastPageLines);
+        }
         int endLine = Math.min(startLine + linesPerPage, lines.length);
         for (int i = startLine; i < endLine; i++) {
             g2.drawString(lines[i], x, y);
             y += lineHeight;
+        }
+        if (pageIndex == totalPages - 1) {
+            drawLetterBarcode(g2, pageFormat, receipt, y + 10);
         }
 
         return Printable.PAGE_EXISTS;
@@ -134,6 +153,21 @@ public class ReceiptPrinter {
         int y = (int) pageFormat.getImageableY();
         graphics.drawImage(logo, x, y, width, height, null);
         return height + 16;
+    }
+
+    private static void drawLetterBarcode(Graphics2D graphics, PageFormat pageFormat, ReceiptData receipt, int y) {
+        if (!ReceiptBarcodeRenderer.hasScannableReceiptNumber(receipt)) {
+            return;
+        }
+        int width = 260;
+        int height = 58;
+        BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(receipt.getReceiptNumber(), width, height);
+        int x = (int) (pageFormat.getImageableX() + ((pageFormat.getImageableWidth() - width) / 2));
+        ReceiptBarcodeRenderer.drawBarcodeFit(graphics, barcode, x, y, width, height);
+        graphics.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
+        int textWidth = graphics.getFontMetrics().stringWidth(receipt.getReceiptNumber());
+        int textX = (int) (pageFormat.getImageableX() + ((pageFormat.getImageableWidth() - textWidth) / 2));
+        graphics.drawString(receipt.getReceiptNumber(), textX, y + height + graphics.getFontMetrics().getAscent() + 4);
     }
 
     private static PageFormat createLetterPageFormat(PrinterJob job) {

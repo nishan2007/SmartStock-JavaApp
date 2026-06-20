@@ -152,6 +152,8 @@ CREATE TABLE IF NOT EXISTS payroll_payments (
     record_count INTEGER NOT NULL DEFAULT 0,
     compensation_type TEXT,
     location_name TEXT,
+    payment_method TEXT NOT NULL DEFAULT 'CASH',
+    payment_reference TEXT,
     paid_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     paid_by_user_id INTEGER REFERENCES users(user_id),
     paid_by_name TEXT,
@@ -167,6 +169,12 @@ ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id);
 ALTER TABLE payroll_payments
 ADD COLUMN IF NOT EXISTS payment_number INTEGER NOT NULL DEFAULT 1;
 
+ALTER TABLE payroll_payments
+ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'CASH';
+
+ALTER TABLE payroll_payments
+ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+
 DROP INDEX IF EXISTS payroll_payments_employee_period_idx;
 
 CREATE UNIQUE INDEX IF NOT EXISTS payroll_payments_employee_period_payment_idx
@@ -174,6 +182,51 @@ ON payroll_payments(user_id, pay_period_start, pay_period_end, payment_number);
 
 CREATE INDEX IF NOT EXISTS payroll_payments_location_paid_idx
 ON payroll_payments(location_id, paid_at DESC);
+
+CREATE TABLE IF NOT EXISTS employee_payroll_bonuses (
+    employee_payroll_bonus_id BIGSERIAL PRIMARY KEY,
+    sync_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    location_id INTEGER REFERENCES locations(location_id),
+    employee_name TEXT,
+    pay_period_start DATE NOT NULL,
+    pay_period_end DATE NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    reason TEXT,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT employee_payroll_bonuses_amount_chk CHECK (amount > 0),
+    CONSTRAINT employee_payroll_bonuses_sync_uuid_key UNIQUE (sync_uuid)
+);
+
+CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_period_idx
+ON employee_payroll_bonuses(pay_period_start, pay_period_end, user_id);
+
+CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_location_period_idx
+ON employee_payroll_bonuses(location_id, pay_period_start, pay_period_end);
+
+DO $$
+BEGIN
+    ALTER TABLE public.employee_payroll_bonuses ENABLE ROW LEVEL SECURITY;
+    REVOKE ALL ON TABLE public.employee_payroll_bonuses FROM PUBLIC;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON TABLE public.employee_payroll_bonuses FROM anon;
+        REVOKE ALL ON SEQUENCE public.employee_payroll_bonuses_employee_payroll_bonus_id_seq FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON TABLE public.employee_payroll_bonuses FROM authenticated;
+        REVOKE ALL ON SEQUENCE public.employee_payroll_bonuses_employee_payroll_bonus_id_seq FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT ALL ON TABLE public.employee_payroll_bonuses TO service_role;
+        GRANT ALL ON SEQUENCE public.employee_payroll_bonuses_employee_payroll_bonus_id_seq TO service_role;
+        DROP POLICY IF EXISTS employee_payroll_bonuses_service_role_all ON public.employee_payroll_bonuses;
+        CREATE POLICY employee_payroll_bonuses_service_role_all
+            ON public.employee_payroll_bonuses FOR ALL TO service_role
+            USING (true) WITH CHECK (true);
+    END IF;
+END $$;
 
 INSERT INTO permissions (permission_key, permission_name)
 SELECT 'TIME_CLOCK', 'Time Clock'

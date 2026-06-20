@@ -1,5 +1,6 @@
 package ui.screens;
 
+import utils.CurrencyFormatter;
 import data.DB;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -30,7 +31,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
 public class OrdersManagerDashboard extends JFrame {
-    private static final NumberFormat CURRENCY = NumberFormat.getCurrencyInstance(Locale.US);
+    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private final JLabel overdueLabel = metricLabel();
