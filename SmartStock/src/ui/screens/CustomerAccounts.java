@@ -1,11 +1,12 @@
 package ui.screens;
 
-import Receipt.AccountPaymentReceiptBuilder;
-import Receipt.AccountPaymentReceiptData;
 import managers.PermissionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.components.CustomerTypeSelector;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -17,6 +18,7 @@ import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.util.regex.Pattern;
 import java.util.UUID;
+import java.util.List;
 
 public class CustomerAccounts extends JFrame {
     private JTable customerTable;
@@ -46,6 +48,7 @@ public class CustomerAccounts extends JFrame {
     private String pendingSaveFingerprint;
     private String pendingAdjustmentKey;
     private String pendingAdjustmentFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public CustomerAccounts() {
         setTitle("Customer Accounts");
@@ -60,11 +63,12 @@ public class CustomerAccounts extends JFrame {
 
         mainPanel.add(buildTablePanel(), BorderLayout.CENTER);
         mainPanel.add(buildFormPanel(), BorderLayout.EAST);
+        mainPanel.add(loadingState, BorderLayout.SOUTH);
 
         add(mainPanel, BorderLayout.CENTER);
 
         loadCustomers();
-        WindowHelper.showPosWindow(this);
+        WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildTablePanel() {
@@ -240,19 +244,24 @@ public class CustomerAccounts extends JFrame {
     }
 
     private void loadCustomers() {
+        CachedUiLoader.load(this, "customer-accounts:list", CustomerAccountsSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new CustomerAccountsSnapshot(LanApiClient.loadCustomerAccountRecords()),
+                this::applyCustomers);
+    }
+
+    private void applyCustomers(CustomerAccountsSnapshot snapshot) {
         customerModel.setRowCount(0);
-        try {
-            for (LanApiClient.CustomerAccountRecord row : LanApiClient.loadCustomerAccountRecords()) {
+        for (LanApiClient.CustomerAccountRecord row : snapshot.rows()) {
                     customerModel.addRow(new Object[]{
                             row.customerId(),row.accountNumber(),row.name(),row.customerTypeId()==null?"":row.customerTypeId(),
                             row.customerTypeName(),row.phone(),row.email(),money(row.creditLimit()),money(row.currentBalance()),
                             money(row.availableCredit()),row.business()?"Business":"Personal",row.active(),row.accountNotes()
                     });
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
         }
     }
+
+    private record CustomerAccountsSnapshot(List<LanApiClient.CustomerAccountRecord> rows) { }
 
     private void loadSelectedCustomer() {
         int row = customerTable.getSelectedRow();
@@ -300,17 +309,7 @@ public class CustomerAccounts extends JFrame {
     }
 
     private void openPaymentReceipt(int customerId, int transactionId) {
-        try {
-            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(customerId, transactionId);
-            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
-                    "Payment Receipt",
-                    JOptionPane.WARNING_MESSAGE
-            );
-        }
+        WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(customerId, transactionId), this);
     }
 
     private void openCustomerTypes() {
@@ -358,6 +357,7 @@ public class CustomerAccounts extends JFrame {
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
             LanApiClient.SavedCustomerAccount saved=LanApiClient.saveCustomerAccount(request,pendingSaveKey);
+            SessionDataCache.invalidate("customer-accounts:");
             pendingSaveKey=null;pendingSaveFingerprint=null;accountNumberField.setText(saved.accountNumber());
             JOptionPane.showMessageDialog(this, "Customer account added.");
             clearFields();
@@ -405,7 +405,7 @@ public class CustomerAccounts extends JFrame {
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
-            LanApiClient.saveCustomerAccount(request,pendingSaveKey);pendingSaveKey=null;pendingSaveFingerprint=null;
+            LanApiClient.saveCustomerAccount(request,pendingSaveKey);SessionDataCache.invalidate("customer-accounts:");pendingSaveKey=null;pendingSaveFingerprint=null;
             JOptionPane.showMessageDialog(this, "Customer account updated.");
             loadCustomers();
         } catch (Exception ex) {
@@ -459,6 +459,7 @@ public class CustomerAccounts extends JFrame {
         try {
             if(pendingAdjustmentKey==null||!fingerprint.equals(pendingAdjustmentFingerprint)){pendingAdjustmentKey=UUID.randomUUID().toString();pendingAdjustmentFingerprint=fingerprint;}
             LanApiClient.CustomerAccountAdjustmentResult result=LanApiClient.adjustCustomerAccount(request,pendingAdjustmentKey);
+            SessionDataCache.invalidate("customer-accounts:");
             pendingAdjustmentKey=null;pendingAdjustmentFingerprint=null;
             if(addCharge)JOptionPane.showMessageDialog(this,"Charge added.");else{
                 JOptionPane.showMessageDialog(this,"Payment recorded. Payment ID: "+result.paymentId());

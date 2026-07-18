@@ -8,6 +8,10 @@ import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
 import services.EmailOutboxService;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.print.PrintException;
@@ -20,14 +24,14 @@ import java.util.List;
 
 public class ReceiptPreview extends JFrame {
     private final ReceiptData receiptData;
-    private final CompanyCustomizationManager.ReceiptSettings receiptSettings;
+    private CompanyCustomizationManager.ReceiptSettings receiptSettings;
     private final ReceiptPaperPanel receiptPaperPanel = new ReceiptPaperPanel();
     private final JComboBox<PrinterOption> printerBox = new JComboBox<>();
     private final JComboBox<HardwareSettingsManager.PrintFormat> formatBox = new JComboBox<>(HardwareSettingsManager.PrintFormat.values());
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ReceiptPreview(ReceiptData receiptData) {
         this.receiptData = receiptData;
-        this.receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
 
         setTitle("Receipt Preview");
         setSize(520, 760);
@@ -65,10 +69,15 @@ public class ReceiptPreview extends JFrame {
         JButton emailButton = new JButton("Email Receipt");
         JButton printButton = new JButton("Print Receipt");
         JButton closeButton = new JButton("Close");
+        emailButton.setEnabled(false);
+        printButton.setEnabled(false);
         buttonPanel.add(emailButton);
         buttonPanel.add(printButton);
         buttonPanel.add(closeButton);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel footerPanel = new JPanel(new BorderLayout());
+        footerPanel.add(loadingState, BorderLayout.CENTER);
+        footerPanel.add(buttonPanel, BorderLayout.SOUTH);
+        mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         emailButton.addActionListener(e -> emailReceipt());
         printButton.addActionListener(e -> printReceipt());
@@ -77,9 +86,17 @@ public class ReceiptPreview extends JFrame {
         formatBox.addActionListener(e -> updateReceiptPreview());
 
         loadPrinterOptions();
-        updateReceiptPreview();
-        loadLogoPreviewAsync();
+        receiptPaperPanel.setReceiptText("Loading receipt preview...", false, receiptData.getReceiptNumber());
         WindowHelper.configurePosWindow(this);
+        CachedUiLoader.load(this, "receipt-preview.settings", "company:receipt-settings",
+                CompanyCustomizationManager.ReceiptSettings.class, SessionDataCache.REFERENCE_TTL,
+                loadingState, CompanyCustomizationManager::loadReceiptSettings, settings -> {
+                    receiptSettings = settings;
+                    emailButton.setEnabled(true);
+                    printButton.setEnabled(true);
+                    updateReceiptPreview();
+                    loadLogoPreviewAsync();
+                });
     }
 
     private void loadPrinterOptions() {
@@ -115,6 +132,7 @@ public class ReceiptPreview extends JFrame {
     }
 
     private void updateReceiptPreview() {
+        if (receiptSettings == null) return;
         HardwareSettingsManager.PrintFormat format = getSelectedPrintFormat();
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
             receiptPaperPanel.setReceiptText(ReceiptFormatter.formatLetterText(receiptData, receiptSettings), true, receiptData.getReceiptNumber());
@@ -130,21 +148,10 @@ public class ReceiptPreview extends JFrame {
         }
 
         receiptPaperPanel.setLogoLoading(true);
-        new SwingWorker<BufferedImage, Void>() {
-            @Override
-            protected BufferedImage doInBackground() {
-                return CompanyCustomizationManager.loadReceiptLogo(receiptSettings);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    receiptPaperPanel.setLogo(get(), false);
-                } catch (Exception ex) {
-                    receiptPaperPanel.setLogo(null, false);
-                }
-            }
-        }.execute();
+        UiTaskRunner.submit(this, "receipt-preview.logo",
+                () -> CompanyCustomizationManager.loadReceiptLogo(receiptSettings),
+                logo -> receiptPaperPanel.setLogo(logo, false),
+                failure -> receiptPaperPanel.setLogo(null, false));
     }
 
     private void printReceipt() {

@@ -46,6 +46,10 @@ import java.util.List;
 import java.util.UUID;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
+import ui.helpers.BlockingCallGuard;
+import ui.helpers.PerformanceDiagnostics;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 /** Register-side client for the named SmartStock LAN operations. */
 public final class LanApiClient {
@@ -55,18 +59,30 @@ public final class LanApiClient {
     private static final String API_HOST_SECRET = "lan-api-server-host";
     private static final String API_PORT_SECRET = "lan-api-server-port";
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
+    private static final Object TRANSPORT_LOCK = new Object();
+    private static volatile URI cachedBaseUri;
+    private static volatile String cachedFingerprint;
+    private static volatile String cachedDeviceToken;
+    private static volatile String cachedEmployeeSession;
+    private static volatile HttpClient cachedPinnedClient;
+    private static volatile HttpClient cachedBootstrapClient;
 
     private LanApiClient() {
     }
 
     public static URI baseUri() {
+        URI existing = cachedBaseUri;
+        if (existing != null) return existing;
         DatabaseConfig config = DatabaseConfig.load();
         String savedHost = SecureCredentialStore.read(API_HOST_SECRET);
         String host = System.getProperty("smartstock.lan.api.host",
                 savedHost == null ? config.serverHost() : savedHost);
         int savedPort = parsePort(SecureCredentialStore.read(API_PORT_SECRET), LanApiServer.DEFAULT_PORT);
         int port = Integer.getInteger("smartstock.lan.api.port", savedPort);
-        return URI.create("https://" + host + ":" + port);
+        URI resolved = URI.create("https://" + host + ":" + port);
+        cachedBaseUri = resolved;
+        SessionDataCache.setEndpoint(resolved.toString());
+        return resolved;
     }
 
     /** Saves the administrator-selected LAN service endpoint without storing any database credential. */
@@ -80,6 +96,7 @@ public final class LanApiClient {
         }
         SecureCredentialStore.write(API_HOST_SECRET, cleanHost);
         SecureCredentialStore.write(API_PORT_SECRET, String.valueOf(port));
+        resetTransport(true, false);
     }
 
     public static List<DiscoveredServer> discoverServers() throws Exception {
@@ -150,12 +167,14 @@ public final class LanApiClient {
             probe = probeUntrusted(endpoint);
             SecureCredentialStore.write(API_HOST_SECRET, match.host());
             SecureCredentialStore.write(API_PORT_SECRET, String.valueOf(match.port()));
+            resetTransport(true, false);
         }
         if (!matchesPairingProof(expected, probe.certificateFingerprint(), probe.pairingProof(), probe.previousPairingProof())) {
             throw new IllegalStateException("The pairing phrase does not match the SmartStock server.");
         }
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET,
                 probe.certificateFingerprint());
+        resetTransport(false, false);
 
         DeviceInfo device = DeviceUtils.collectDeviceInfo();
         String publicKey = DeviceCredentialService.pairingPublicKey();
@@ -184,9 +203,11 @@ public final class LanApiClient {
         if (DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) return false;
         if (isPaired()) return true;
         SecureCredentialStore.write(API_HOST_SECRET, "127.0.0.1");
+        resetTransport(true, false);
         Probe probe=probeUntrusted(baseUri());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET,
                 probe.certificateFingerprint());
+        resetTransport(false, false);
         DeviceInfo device=DeviceUtils.collectDeviceInfo();
         JsonObject request=new JsonObject();
         request.addProperty("installationId",device.getInstallationId());
@@ -198,7 +219,9 @@ public final class LanApiClient {
         JsonObject data=post("/v1/devices/local-claim",request,false,false);
         String token=DeviceCredentialService.decryptLanEnvelope(data.get("credentialEnvelope").getAsString());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_TOKEN_SECRET,token);
+        cachedDeviceToken = token;
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET,data.get("expiresAt").getAsString());
+        resetTransport(false, false);
         return true;
     }
 
@@ -222,8 +245,10 @@ public final class LanApiClient {
         String token = DeviceCredentialService.decryptLanEnvelope(
                 data.get("credentialEnvelope").getAsString());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_TOKEN_SECRET, token);
+        cachedDeviceToken = token;
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET, data.get("expiresAt").getAsString());
         SecureCredentialStore.delete(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET);
+        resetTransport(false, false);
         return true;
     }
 
@@ -258,7 +283,7 @@ public final class LanApiClient {
     public static JsonObject refreshSession() throws Exception {
         JsonObject data = post("/v1/sessions/refresh", new JsonObject(), true, true);
         if (data.has("sessionToken")) {
-            SecureCredentialStore.write(API_SESSION_SECRET, data.get("sessionToken").getAsString());
+            saveEmployeeSession(data.get("sessionToken").getAsString());
         }
         return data;
     }
@@ -266,17 +291,19 @@ public final class LanApiClient {
     public static LoginResult refreshLoginSession() throws Exception {
         JsonObject data = post("/v1/sessions/refresh", new JsonObject(), true, true);
         if (data.has("sessionToken")) {
-            SecureCredentialStore.write(API_SESSION_SECRET, data.get("sessionToken").getAsString());
+            saveEmployeeSession(data.get("sessionToken").getAsString());
         }
         return GSON.fromJson(data, LoginResult.class);
     }
 
     public static boolean hasEmployeeSession() {
-        return SecureCredentialStore.read(API_SESSION_SECRET) != null;
+        return employeeSession() != null;
     }
 
     public static void clearEmployeeSession() {
         SecureCredentialStore.delete(API_SESSION_SECRET);
+        cachedEmployeeSession = null;
+        resetTransport(false, false);
     }
 
     public static ApprovalResult requestManagerApproval(String managerIdentifier, char[] password,
@@ -656,6 +683,27 @@ public final class LanApiClient {
     public static List<EmployeeScheduleService.Shift> loadScheduleShifts(int locationId,boolean inactive)throws Exception{JsonObject r=location(locationId);r.addProperty("includeInactive",inactive);JsonObject d=post("/v1/schedule/shifts",r,true,true);EmployeeScheduleService.Shift[]a=GSON.fromJson(d.getAsJsonArray("shifts"),EmployeeScheduleService.Shift[].class);return a==null?List.of():List.of(a);}
     public static Map<java.time.LocalDate,List<EmployeeScheduleService.Assignment>> loadScheduleRange(int locationId,java.time.LocalDate start,java.time.LocalDate end)throws Exception{JsonObject r=range(locationId,start,end),d=post("/v1/schedule/range",r,true,true);ScheduleDay[]days=GSON.fromJson(d.getAsJsonArray("days"),ScheduleDay[].class);Map<java.time.LocalDate,List<EmployeeScheduleService.Assignment>>m=new java.util.LinkedHashMap<>();if(days!=null)for(ScheduleDay day:days)m.put(day.date(),day.assignments()==null?List.of():day.assignments());return m;}
     public static Map<java.time.LocalDate,EmployeeScheduleService.Holiday> loadScheduleHolidays(java.time.LocalDate start,java.time.LocalDate end,boolean timeClock)throws Exception{JsonObject r=new JsonObject();r.addProperty("start",start.toString());r.addProperty("end",end.toString());r.addProperty("timeClock",timeClock);JsonObject d=post("/v1/schedule/holidays",r,true,true);EmployeeScheduleService.Holiday[]a=GSON.fromJson(d.getAsJsonArray("holidays"),EmployeeScheduleService.Holiday[].class);Map<java.time.LocalDate,EmployeeScheduleService.Holiday>m=new java.util.LinkedHashMap<>();if(a!=null)for(var h:a)m.put(h.holidayDate(),h);return m;}
+    public static EmployeeScheduleService.PeriodSnapshot loadScheduleSnapshot(
+            int locationId, java.time.LocalDate start, java.time.LocalDate end) throws Exception {
+        JsonObject data;
+        try {
+            data = post("/v1/schedule/snapshot", range(locationId, start, end), true, true);
+        } catch (LanApiException ex) {
+            if (!"INVALID_SERVER_RESPONSE".equals(ex.code()) && !"NOT_FOUND".equals(ex.code())) throw ex;
+            return new EmployeeScheduleService.PeriodSnapshot(
+                    loadScheduleRange(locationId, start, end),
+                    loadScheduleHolidays(start, end, false));
+        }
+        ScheduleDay[] days = GSON.fromJson(data.getAsJsonArray("days"), ScheduleDay[].class);
+        Map<java.time.LocalDate, List<EmployeeScheduleService.Assignment>> assignments = new java.util.LinkedHashMap<>();
+        if (days != null) for (ScheduleDay day : days) assignments.put(day.date(),
+                day.assignments() == null ? List.of() : day.assignments());
+        EmployeeScheduleService.Holiday[] rows = GSON.fromJson(
+                data.getAsJsonArray("holidays"), EmployeeScheduleService.Holiday[].class);
+        Map<java.time.LocalDate, EmployeeScheduleService.Holiday> holidays = new java.util.LinkedHashMap<>();
+        if (rows != null) for (var holiday : rows) holidays.put(holiday.holidayDate(), holiday);
+        return new EmployeeScheduleService.PeriodSnapshot(assignments, holidays);
+    }
     public static void updateSchedule(String action,ScheduleMutation mutation,String key)throws Exception{JsonObject r=GSON.toJsonTree(mutation).getAsJsonObject();r.addProperty("action",action);post("/v1/schedule/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static void addScheduleEmployees(int locationId,java.time.LocalDate date,List<EmployeeScheduleService.Employee>employees,UUID shiftId,java.time.LocalTime lunch,String key)throws Exception{JsonObject r=range(locationId,date,date);r.add("employees",GSON.toJsonTree(employees));r.addProperty("shiftId",shiftId.toString());r.addProperty("lunchStart",lunch.toString());r.addProperty("action","ADD_EMPLOYEES");post("/v1/schedule/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static EmployeeScheduleService.Shift saveScheduleShift(int locationId,UUID id,String name,java.time.LocalTime start,java.time.LocalTime end,boolean active,int displayOrder,boolean propagate,String key)throws Exception{JsonObject r=location(locationId);if(id!=null)r.addProperty("shiftId",id.toString());r.addProperty("name",name);r.addProperty("startTime",start.toString());r.addProperty("endTime",end.toString());r.addProperty("active",active);r.addProperty("displayOrder",displayOrder);r.addProperty("propagate",propagate);r.addProperty("action","SAVE_SHIFT");return GSON.fromJson(post("/v1/schedule/update",r,true,true,Map.of("Idempotency-Key",key)).get("shift"),EmployeeScheduleService.Shift.class);}
@@ -731,12 +779,55 @@ public final class LanApiClient {
             // Local logout still clears the employee session during a LAN outage.
         } finally {
             SecureCredentialStore.delete(API_SESSION_SECRET);
+            cachedEmployeeSession = null;
+            resetTransport(false, false);
+        }
+    }
+
+    /** Clears local credentials immediately and invalidates the captured server session without delaying Swing. */
+    public static void logoutWithoutWaiting() {
+        HttpClient client = null;
+        HttpRequest request = null;
+        try {
+            String device = cachedDeviceToken;
+            String session = cachedEmployeeSession;
+            URI endpoint = cachedBaseUri;
+            client = cachedPinnedClient;
+            if (device != null && session != null && endpoint != null && client != null) {
+                request = HttpRequest.newBuilder(endpoint.resolve("/v1/sessions/logout"))
+                        .timeout(TIMEOUT)
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json")
+                        .header("X-SmartStock-Device", device)
+                        .header("Authorization", "Bearer " + session)
+                        .POST(HttpRequest.BodyPublishers.ofString("{}", StandardCharsets.UTF_8))
+                        .build();
+            }
+        } catch (Exception ignored) {
+            // Local logout remains authoritative for this workstation.
+        } finally {
+            SecureCredentialStore.delete(API_SESSION_SECRET);
+            cachedEmployeeSession = null;
+            resetTransport(false, false);
+        }
+        HttpClient capturedClient = client;
+        HttpRequest capturedRequest = request;
+        if (capturedClient != null && capturedRequest != null) {
+            UiTaskRunner.supplyAsync(() -> {
+                long started = System.nanoTime();
+                try {
+                    capturedClient.send(capturedRequest, HttpResponse.BodyHandlers.discarding());
+                    PerformanceDiagnostics.record("lan", "/v1/sessions/logout", started, true, 0);
+                } catch (Exception ex) {
+                    PerformanceDiagnostics.record("lan", "/v1/sessions/logout", started, false, -1);
+                }
+                return null;
+            });
         }
     }
 
     public static boolean isPaired() {
-        return SecureCredentialStore.read(DeviceCredentialService.LAN_API_TOKEN_SECRET) != null
-                && SecureCredentialStore.read(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET) != null;
+        return deviceToken() != null && fingerprint() != null;
     }
 
     private static void requireIdempotencyKey(String value, String message) {
@@ -765,21 +856,32 @@ public final class LanApiClient {
         String replacement = DeviceCredentialService.decryptLanEnvelope(
                 data.get("credentialEnvelope").getAsString());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_TOKEN_SECRET, replacement);
+        cachedDeviceToken = replacement;
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET, data.get("expiresAt").getAsString());
+        resetTransport(false, false);
         return true;
     }
 
     private static LoginResult saveSession(JsonObject data) throws Exception {
         String session = data.get("sessionToken").getAsString();
-        SecureCredentialStore.write(API_SESSION_SECRET, session);
+        saveEmployeeSession(session);
         return GSON.fromJson(data, LoginResult.class);
     }
 
     private static Probe probeUntrusted(URI endpoint) throws Exception {
+        BlockingCallGuard.check("LAN health probe");
+        long started = System.nanoTime();
         HttpRequest request = HttpRequest.newBuilder(endpoint.resolve("/v1/health"))
                 .timeout(TIMEOUT).GET().build();
-        HttpResponse<String> response = untrustedBootstrapClient().send(request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response;
+        try {
+            response = untrustedBootstrapClient().send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            PerformanceDiagnostics.record("lan", "/v1/health", started, true, -1);
+        } catch (Exception ex) {
+            PerformanceDiagnostics.record("lan", "/v1/health", started, false, -1);
+            throw ex;
+        }
         JsonObject data = responseData(response);
         String presented = peerFingerprint(response.sslSession().orElseThrow()
                 .getPeerCertificates()[0].getEncoded());
@@ -797,6 +899,8 @@ public final class LanApiClient {
 
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth,
                                    Map<String, String> extraHeaders) throws Exception {
+        BlockingCallGuard.check("LAN " + path);
+        long started = System.nanoTime();
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
                 .timeout(TIMEOUT)
                 .header("Content-Type", "application/json")
@@ -804,18 +908,55 @@ public final class LanApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8));
         extraHeaders.forEach(builder::header);
         if (deviceAuth) {
-            String token = SecureCredentialStore.read(DeviceCredentialService.LAN_API_TOKEN_SECRET);
+            String token = deviceToken();
             if (token == null) throw new LanApiException("DEVICE_CREDENTIAL_REQUIRED", "This register is not paired.", false);
             builder.header("X-SmartStock-Device", token);
         }
         if (employeeAuth) {
-            String session = SecureCredentialStore.read(API_SESSION_SECRET);
+            String session = employeeSession();
             if (session == null) throw new LanApiException("SESSION_REQUIRED", "Employee login is required.", false);
             builder.header("Authorization", "Bearer " + session);
         }
-        HttpResponse<String> response = pinnedClient().send(builder.build(),
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        return responseData(response);
+        try {
+            HttpResponse<String> response = pinnedClient().send(builder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonObject data = responseData(response);
+            invalidateCachesAfterMutation(path);
+            PerformanceDiagnostics.record("lan", path, started, true,
+                    PerformanceDiagnostics.resultCount(data));
+            return data;
+        } catch (Exception ex) {
+            PerformanceDiagnostics.record("lan", path, started, false, -1);
+            throw ex;
+        }
+    }
+
+    static void invalidateCachesAfterMutation(String path) {
+        if (path == null) return;
+        boolean mutation = path.endsWith("/update") || path.endsWith("/save")
+                || path.endsWith("/create") || path.endsWith("/receive")
+                || path.endsWith("/assign") || path.endsWith("/unassign")
+                || path.endsWith("/open") || path.endsWith("/close")
+                || path.endsWith("/handover") || path.endsWith("/revise")
+                || path.endsWith("/adjust") || path.endsWith("/checkout")
+                || path.endsWith("/refund") || path.endsWith("/pay")
+                || path.endsWith("/bonus") || path.endsWith("/punch")
+                || path.endsWith("/confirm") || path.endsWith("/correct")
+                || path.endsWith("/auto-apply") || path.endsWith("/resolve")
+                || path.endsWith("/device-code") || path.endsWith("/timezone")
+                || path.endsWith("/badge-printed") || path.endsWith("/change-pin")
+                || path.endsWith("/process-email") || path.endsWith("/add");
+        mutation = mutation || path.endsWith("/resume") || path.endsWith("/change-target")
+                || path.endsWith("/save-settings") || path.endsWith("/complete")
+                || path.endsWith("/delete") || path.endsWith("/deactivate")
+                || path.endsWith("/return") || path.endsWith("/void")
+                || path.endsWith("/approve") || path.endsWith("/deny")
+                || path.endsWith("/deliver") || path.endsWith("/production")
+                || path.endsWith("/clock-in") || path.endsWith("/clock-out")
+                || path.endsWith("/start") || path.endsWith("/end")
+                || path.endsWith("/deposit") || path.endsWith("/withdrawal")
+                || path.contains("/mutation");
+        if (mutation) SessionDataCache.clear();
     }
 
     private static JsonObject responseData(HttpResponse<String> response) throws LanApiException {
@@ -835,30 +976,99 @@ public final class LanApiClient {
     }
 
     private static HttpClient pinnedClient() throws Exception {
-        String expected = SecureCredentialStore.read(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET);
+        HttpClient existing = cachedPinnedClient;
+        if (existing != null) return existing;
+        String expected = fingerprint();
         if (expected == null) throw new LanApiException("SERVER_NOT_VERIFIED", "An administrator must pair this register once.", false);
-        return clientForTrustManager(new X509TrustManager() {
-            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
-            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) throws java.security.cert.CertificateException {
-                if (chain == null || chain.length == 0) throw new java.security.cert.CertificateException("Missing server certificate.");
-                try {
-                    String actual = peerFingerprint(chain[0].getEncoded());
-                    if (!LanSecurity.constantTimeEquals(expected, actual)) {
-                        throw new java.security.cert.CertificateException("SmartStock server certificate changed.");
+        synchronized (TRANSPORT_LOCK) {
+            if (cachedPinnedClient == null) {
+                cachedPinnedClient = clientForTrustManager(new X509TrustManager() {
+                    @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+                    @Override public void checkServerTrusted(X509Certificate[] chain, String authType) throws java.security.cert.CertificateException {
+                        if (chain == null || chain.length == 0) throw new java.security.cert.CertificateException("Missing server certificate.");
+                        try {
+                            String actual = peerFingerprint(chain[0].getEncoded());
+                            if (!LanSecurity.constantTimeEquals(expected, actual)) {
+                                throw new java.security.cert.CertificateException("SmartStock server certificate changed.");
+                            }
+                        } catch (java.security.cert.CertificateException ex) { throw ex; }
+                        catch (Exception ex) { throw new java.security.cert.CertificateException(ex); }
                     }
-                } catch (java.security.cert.CertificateException ex) { throw ex; }
-                catch (Exception ex) { throw new java.security.cert.CertificateException(ex); }
+                    @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                });
             }
-            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-        });
+            return cachedPinnedClient;
+        }
     }
 
     private static HttpClient untrustedBootstrapClient() throws Exception {
-        return clientForTrustManager(new X509TrustManager() {
-            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
-            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) { }
-            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-        });
+        HttpClient existing = cachedBootstrapClient;
+        if (existing != null) return existing;
+        synchronized (TRANSPORT_LOCK) {
+            if (cachedBootstrapClient == null) {
+                cachedBootstrapClient = clientForTrustManager(new X509TrustManager() {
+                    @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+                    @Override public void checkServerTrusted(X509Certificate[] chain, String authType) { }
+                    @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                });
+            }
+            return cachedBootstrapClient;
+        }
+    }
+
+    static void resetTransportForTests() {
+        resetTransport(true, true);
+    }
+
+    static HttpClient bootstrapClientForTests() throws Exception {
+        return untrustedBootstrapClient();
+    }
+
+    private static void resetTransport(boolean endpoint, boolean tokens) {
+        synchronized (TRANSPORT_LOCK) {
+            if (endpoint) cachedBaseUri = null;
+            cachedPinnedClient = null;
+            cachedBootstrapClient = null;
+            cachedFingerprint = null;
+            if (tokens) {
+                cachedDeviceToken = null;
+                cachedEmployeeSession = null;
+            }
+        }
+        SessionDataCache.clear();
+    }
+
+    private static String fingerprint() {
+        String value = cachedFingerprint;
+        if (value == null) {
+            value = SecureCredentialStore.read(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET);
+            cachedFingerprint = value;
+        }
+        return value;
+    }
+
+    private static String deviceToken() {
+        String value = cachedDeviceToken;
+        if (value == null) {
+            value = SecureCredentialStore.read(DeviceCredentialService.LAN_API_TOKEN_SECRET);
+            cachedDeviceToken = value;
+        }
+        return value;
+    }
+
+    private static String employeeSession() {
+        String value = cachedEmployeeSession;
+        if (value == null) {
+            value = SecureCredentialStore.read(API_SESSION_SECRET);
+            cachedEmployeeSession = value;
+        }
+        return value;
+    }
+
+    private static void saveEmployeeSession(String session) throws Exception {
+        SecureCredentialStore.write(API_SESSION_SECRET, session);
+        cachedEmployeeSession = session;
+        resetTransport(false, false);
     }
 
     private static HttpClient clientForTrustManager(X509TrustManager trustManager) throws Exception {

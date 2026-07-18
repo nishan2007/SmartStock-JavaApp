@@ -19,6 +19,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import ui.helpers.BlockingCallGuard;
+import ui.helpers.PerformanceDiagnostics;
 
 public class DB {
     private static final Object SCHEMA_LOCK = new Object();
@@ -30,6 +32,8 @@ public class DB {
     });
 
     public static Connection getConnection() throws SQLException {
+        BlockingCallGuard.check("primary database connection");
+        long started = System.nanoTime();
         DatabaseConfig config = DatabaseConfig.load();
         if (config.mode() == DatabaseMode.CLIENT) {
             throw new SQLException("Direct database access is disabled on this register. SmartStock must use the authenticated LAN service.", "28000");
@@ -50,6 +54,7 @@ public class DB {
                 if (config.mode() == DatabaseMode.SERVER) {
                     ensureSchemaOnce(conn, config);
                 }
+                PerformanceDiagnostics.record("database", "primary-connect", started, true, -1);
                 return conn;
             } catch (SQLException ex) {
                 last = ex;
@@ -62,17 +67,21 @@ public class DB {
                 }
             }
         }
+        PerformanceDiagnostics.record("database", "primary-connect", started, false, -1);
         if (last != null) last.printStackTrace();
         throw last == null ? new SQLException("Database connection failed.") : last;
     }
 
     public static Connection getCloudConnection() throws SQLException {
+        BlockingCallGuard.check("cloud database connection");
+        long started = System.nanoTime();
         DatabaseConfig config = DatabaseConfig.load();
         if (!config.hasCloudConnection()) {
             throw new SQLException("Cloud database connection is not configured on this machine.");
         }
         Connection conn = DriverManager.getConnection(withCloudTimeouts(config.cloudJdbcUrl()), config.cloudDbUser(), config.cloudDbPassword());
         configureCloudSession(conn);
+        PerformanceDiagnostics.record("database", "cloud-connect", started, true, -1);
         return conn;
     }
 

@@ -6,6 +6,9 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -42,6 +45,7 @@ public class ChangeBasket extends JFrame {
     private boolean updatingTable;
     private String pendingUpdateKey;
     private String pendingUpdateFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ChangeBasket() {
         setTitle("Change Basket");
@@ -156,6 +160,7 @@ public class ChangeBasket extends JFrame {
         panel.setOpaque(false);
         panel.add(updateButton);
         panel.add(clearButton);
+        panel.add(loadingState);
         return panel;
     }
 
@@ -168,11 +173,15 @@ public class ChangeBasket extends JFrame {
             return;
         }
 
-        try{LanApiClient.ChangeBasketState state=LanApiClient.loadChangeBasketState();targetAmount=state.targetAmount()==null?BigDecimal.ZERO:state.targetAmount();
+        CachedUiLoader.load(this, "change-basket:state", LanApiClient.ChangeBasketState.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                LanApiClient::loadChangeBasketState, this::applyState);
+    }
+
+    private void applyState(LanApiClient.ChangeBasketState state) {
+        targetAmount=state.targetAmount()==null?BigDecimal.ZERO:state.targetAmount();
             storeLabel.setText(state.storeName());targetLabel.setText(CURRENCY.format(targetAmount));statusLabel.setText("Count every bill in the change basket. The total should match the configured target.");
-            updateButton.setEnabled(true);clearButton.setEnabled(true);resetTable();}
-        catch(Exception ex){statusLabel.setText("SmartStock server unavailable");updateButton.setEnabled(false);clearButton.setEnabled(false);resetTable();
-            JOptionPane.showMessageDialog(this,"Failed to load change basket: "+ex.getMessage(),"Change Basket",JOptionPane.ERROR_MESSAGE);}
+        updateButton.setEnabled(true);clearButton.setEnabled(true);resetTable();
     }
 
     private void resetTable() {
@@ -255,6 +264,7 @@ public class ChangeBasket extends JFrame {
             Map<Integer,Integer>counts=denominationCounts();String fingerprint=counts.toString()+"|"+targetAmount;
             if(pendingUpdateKey==null||!fingerprint.equals(pendingUpdateFingerprint)){pendingUpdateFingerprint=fingerprint;pendingUpdateKey=UUID.randomUUID().toString();}
             long updateId=LanApiClient.updateChangeBasket(counts,pendingUpdateKey);pendingUpdateKey=null;pendingUpdateFingerprint=null;
+            SessionDataCache.invalidate("change-basket:state");
             JOptionPane.showMessageDialog(
                     this,
                     "Change basket update saved.\nUpdate ID: " + updateId

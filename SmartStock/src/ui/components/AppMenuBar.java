@@ -108,7 +108,7 @@ public class AppMenuBar {
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
-        JMenuItem notificationsItem = new JMenuItem(NotificationService.loadSummary().label());
+        JMenuItem notificationsItem = new JMenuItem(NotificationService.cachedSummary().label());
         notificationsItem.putClientProperty(NOTIFICATIONS_MENU_PROPERTY, Boolean.TRUE);
 
         boolean canMakeSale = PermissionManager.hasPermission("MAKE_SALE");
@@ -749,7 +749,7 @@ public class AppMenuBar {
 
         logoutItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                services.LanApiClient.logout();
+                services.LanApiClient.logoutWithoutWaiting();
                 SessionManager.clearSessionState();
                 SupabaseSessionManager.clearSession();
                 SupabaseSessionManager.clearPersistedSession();

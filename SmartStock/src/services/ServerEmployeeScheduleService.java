@@ -23,6 +23,8 @@ import java.util.Set;
 public final class ServerEmployeeScheduleService {
     public static final int LUNCH_DURATION_MINUTES = 45;
     private static final ThreadLocal<RequestContext> REQUEST_CONTEXT = new ThreadLocal<>();
+    private static final Object SCHEMA_LOCK = new Object();
+    private static volatile boolean schemaReady;
 
     public record StoreLocation(int locationId, String name, String timezone) {
         @Override
@@ -69,6 +71,15 @@ public final class ServerEmployeeScheduleService {
     private static RequestContext request() { RequestContext c=REQUEST_CONTEXT.get();if(c==null)throw new IllegalStateException("Server schedule request context is missing.");return c; }
 
     public static void ensureSchema(Connection conn) throws SQLException {
+        if (schemaReady) return;
+        synchronized (SCHEMA_LOCK) {
+            if (schemaReady) return;
+            ensureSchemaInternal(conn);
+            schemaReady = true;
+        }
+    }
+
+    private static void ensureSchemaInternal(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS employee_schedule_shifts (

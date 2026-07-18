@@ -7,6 +7,7 @@ import services.ManagerApprovalService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -136,7 +137,7 @@ public class EnterInventory extends JFrame {
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             private void restartSearchDebounce() {
                 if (searchDebounceTimer == null) {
-                    searchDebounceTimer = new javax.swing.Timer(250, e -> searchProducts(false));
+                    searchDebounceTimer = new javax.swing.Timer(300, e -> searchProducts(false));
                     searchDebounceTimer.setRepeats(false);
                 }
                 searchDebounceTimer.restart();
@@ -201,7 +202,7 @@ public class EnterInventory extends JFrame {
 
         updateSelectedStoreLabel();
         updateCurrentUserLabel();
-        WindowHelper.showPosWindow(this);
+        WindowHelper.configurePosWindow(this);
     }
 
     private ImageIcon loadCenterLogoIcon() {
@@ -333,14 +334,15 @@ public class EnterInventory extends JFrame {
             return;
         }
 
-        try {
+        UiTaskRunner.submit(this,"receiving.search",()->{
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
             for (LanApiClient.LookupItem item : LanApiClient.searchReceivingItems(searchText)) {
                 rows.add(new Object[]{
                         item.itemType(), item.itemId(), item.name(), item.description(), item.code(), item.quantityOnHand()
                 });
             }
-
+            return rows;
+        },rows->{
             if (rows.isEmpty()) {
                 closeSearchPopup();
                 if (showMessages) {
@@ -348,12 +350,8 @@ public class EnterInventory extends JFrame {
                 }
                 return;
             }
-
             showSearchResultsPopup(rows);
-
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "SmartStock server error: " + e.getMessage());
-        }
+        },failure->{if(showMessages)JOptionPane.showMessageDialog(this,"SmartStock server error: "+failure.getMessage());});
     }
 
     private void showSearchResultsPopup(java.util.List<Object[]> rows) {

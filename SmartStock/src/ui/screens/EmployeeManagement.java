@@ -12,6 +12,9 @@ import services.LanApiClient;
 import services.LanEmployeeAdminService;
 import services.EmployeePayrollSettingsService.PeriodType;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.WindowHelper;
 
@@ -40,6 +43,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 public class EmployeeManagement extends JFrame {
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private static final Color PAGE_BG = new Color(17, 17, 17);
     private static final Color CARD_BG = new Color(28, 28, 28);
     private static final Color FIELD_BG = new Color(21, 21, 21);
@@ -599,6 +603,7 @@ public class EmployeeManagement extends JFrame {
         contentSplitPane.setDividerLocation(430);
         contentSplitPane.setDividerSize(8);
         mainPanel.add(contentSplitPane, BorderLayout.CENTER);
+        mainPanel.add(loadingState, BorderLayout.SOUTH);
 
         add(mainPanel);
 
@@ -720,7 +725,7 @@ public class EmployeeManagement extends JFrame {
         loadStoresForUser(null);
         loadEmployees();
         refreshPayrollSettingsControls();
-        WindowHelper.showPosWindow(this);
+        WindowHelper.configurePosWindow(this);
     }
 
     private void hideEmployeeColumn(int modelColumn) {
@@ -1241,44 +1246,49 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void loadRoles() {
+        loadEmployeeState(selectedUserId);
+    }
+
+    private void loadEmployeeState(Integer userId) {
+        String key = "employee-admin:" + (userId == null ? "all" : userId);
+        CachedUiLoader.load(this, key, LanEmployeeAdminService.State.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadEmployeeAdminState(userId), this::applyEmployeeState);
+    }
+
+    private void applyEmployeeState(LanEmployeeAdminService.State state) {
+        Object selectedRole = roleBox.getSelectedItem();
         roleBox.removeAllItems();
-        try {for(String roleName:LanApiClient.loadEmployeeAdminState(null).roles()) {
+        for(String roleName:state.roles()) {
                 if (roleName != null && !roleName.isBlank()) {
                     roleBox.addItem(new RoleOption(roleName));
                 }
-            }} catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load roles: " + ex.getMessage());
         }
-
         if (roleBox.getItemCount() == 0) {
             roleBox.addItem(new RoleOption("USER"));
         }
-    }
-
-    private void loadEmployees() {
         employeeModel.setRowCount(0);
-
-        try {for(var row:LanApiClient.loadEmployeeAdminState(null).employees()) {
+        for(var row:state.employees()) {
                 employeeModel.addRow(new Object[]{
                         row.userId(),row.username(),row.fullName(),row.firstName(),row.middleName(),row.lastName(),row.email(),row.phone(),row.photoUrl(),dateText(row.dateOfBirth()),row.badgeId(),row.badgePrintCount(),row.compensationType(),row.salary(),row.role(),row.active(),row.idCardUrl(),dateText(row.hireDate()),dateText(row.deactivationDate())
                 });
-            }} catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load employees: " + ex.getMessage());
         }
-    }
-
-    private void loadStoresForUser(Integer userId) {
         storeModel.setRowCount(0);
-
-        try {for(var row:LanApiClient.loadEmployeeAdminState(userId).stores()) {
+        for(var row:state.stores()) {
                     storeModel.addRow(new Object[]{
                             row.assigned(),String.valueOf(row.locationId()),row.name(),row.address()
                     });
-                }} catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage());
         }
-
         applyStoreFilter();
+        if (selectedRole != null) selectRole(selectedRole.toString());
+    }
+
+    private void loadEmployees() {
+        loadEmployeeState(selectedUserId);
+    }
+
+    private void loadStoresForUser(Integer userId) {
+        loadEmployeeState(userId);
     }
 
     private void loadSelectedEmployee() {

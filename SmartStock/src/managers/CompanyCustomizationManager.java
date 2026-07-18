@@ -88,6 +88,30 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
         }
     }
 
+    public static AllSettings loadAllSettings() {
+        try {
+            JsonObject settings = LanApiClient.companyCustomizationRead("ALL_SETTINGS", null)
+                    .getAsJsonObject("settings");
+            return new AllSettings(
+                    GSON.fromJson(settings.get("receipt"), ReceiptSettings.class),
+                    GSON.fromJson(settings.get("saleSafety"), SaleSafetySettings.class),
+                    GSON.fromJson(settings.get("customOrder"), CustomOrderSettings.class),
+                    GSON.fromJson(settings.get("customOrderSlip"), CustomOrderSlipSettings.class),
+                    GSON.fromJson(settings.get("quotationInvoice"), QuotationInvoicePrintSettings.class),
+                    GSON.fromJson(settings.get("badgeTemplate"), BadgeTemplateSettings.class),
+                    GSON.fromJson(settings.get("priceTags"), new TypeToken<List<PriceTagTemplateSettings>>() { }.getType())
+            );
+        } catch (Exception ex) {
+            throw unavailable(ex);
+        }
+    }
+
+    public record AllSettings(ReceiptSettings receipt, SaleSafetySettings saleSafety,
+                              CustomOrderSettings customOrder, CustomOrderSlipSettings customOrderSlip,
+                              QuotationInvoicePrintSettings quotationInvoice,
+                              BadgeTemplateSettings badgeTemplate,
+                              List<PriceTagTemplateSettings> priceTags) { }
+
     public static PriceTagTemplateSettings loadPriceTagTemplateSettings(int slot) {
         List<PriceTagTemplateSettings> settings = loadPriceTagTemplateSettings();
         if (settings.isEmpty()) {

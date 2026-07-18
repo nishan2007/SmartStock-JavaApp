@@ -1,6 +1,8 @@
 package ui.components;
 
 import services.LanApiClient;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import java.awt.*;
@@ -12,16 +14,19 @@ public class ItemDetailsSelector extends JPanel {
     private final SearchableComboBox shelfBox = new SearchableComboBox();
     private final SearchableComboBox storageShelfBox = new SearchableComboBox();
     private final int locationId;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ItemDetailsSelector(DepartmentSelector departmentSelector, int locationId) {
         this.locationId = locationId;
-        setLayout(new GridLayout(4, 1, 0, 5));
-        add(itemTypeBox);
-        add(brandBox);
-        add(shelfBox);
-        add(storageShelfBox);
-        loadBrands();
-        loadShelves();
+        setLayout(new BorderLayout());
+        JPanel fields = new JPanel(new GridLayout(4, 1, 0, 5));
+        fields.add(itemTypeBox);
+        fields.add(brandBox);
+        fields.add(shelfBox);
+        fields.add(storageShelfBox);
+        add(fields, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
+        loadCommonLookups();
         departmentSelector.addSelectionListener(e -> loadItemTypes(departmentSelector.getSelectedDepartmentId()));
         loadItemTypes(departmentSelector.getSelectedDepartmentId());
     }
@@ -58,36 +63,37 @@ public class ItemDetailsSelector extends JPanel {
     }
 
     private void loadItemTypes(Integer categoryId) {
-        String previous = selectedText(itemTypeBox);
         if (categoryId == null) {
             itemTypeBox.setOptions(List.of());
             return;
         }
         load(itemTypeBox, categoryId, "ITEM_TYPES");
-        selectExistingOrClear(itemTypeBox, previous);
     }
 
-    private void loadBrands() {
-        load(brandBox, null, "BRANDS");
-    }
-
-    private void loadShelves() {
-        load(shelfBox, null, "SHELVES");
-        load(storageShelfBox, null, "SHELVES");
+    private void loadCommonLookups() {
+        CachedUiLoader.loadAfterDisplay(this,"reference:inventory-lookups:all",LanApiClient.InventoryLookups.class,
+                SessionDataCache.REFERENCE_TTL,loadingState,()->LanApiClient.loadInventoryLookups(null),lookups->{
+                    String brand=selectedText(brandBox),shelf=selectedText(shelfBox),storage=selectedText(storageShelfBox);
+                    brandBox.setOptions(lookups.brands());
+                    shelfBox.setOptions(lookups.shelves());
+                    storageShelfBox.setOptions(lookups.shelves());
+                    selectExistingOrClear(brandBox,brand);selectExistingOrClear(shelfBox,shelf);selectExistingOrClear(storageShelfBox,storage);
+                });
     }
 
     private void load(SearchableComboBox box, Integer categoryId, String kind) {
-        try {
-            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(categoryId);
+        String key="reference:inventory-lookups:"+(categoryId==null?"all":"category:"+categoryId);
+        CachedUiLoader.loadAfterDisplay(this,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
+                loadingState,()->LanApiClient.loadInventoryLookups(categoryId),lookups->{
+            String desired=selectedText(box);
             List<String> options = switch (kind) {
                 case "ITEM_TYPES" -> lookups.itemTypes();
                 case "BRANDS" -> lookups.brands();
                 default -> lookups.shelves();
             };
             box.setOptions(options);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load item details: " + ex.getMessage(), "LAN Service", JOptionPane.ERROR_MESSAGE);
-        }
+            selectExistingOrClear(box,desired);
+        });
     }
 
     private static void selectExistingOrClear(JComboBox<String> box, String value) {

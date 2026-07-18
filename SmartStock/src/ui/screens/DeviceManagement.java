@@ -8,6 +8,10 @@ import models.DeviceSessionRecord;
 import models.ManagedDevice;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -73,6 +77,7 @@ public class DeviceManagement extends JFrame {
     private final List<ManagedDevice> allDevices = new ArrayList<>();
     private final List<ManagedDevice> filteredDevices = new ArrayList<>();
     private ManagedDevice selectedDevice;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public DeviceManagement() {
         setTitle("Device Management");
@@ -205,6 +210,7 @@ public class DeviceManagement extends JFrame {
         actionPanel.add(closeButton);
 
         footerPanel.add(summaryLabel, BorderLayout.WEST);
+        footerPanel.add(loadingState, BorderLayout.CENTER);
         footerPanel.add(actionPanel, BorderLayout.EAST);
 
         rootPanel.add(headerPanel, BorderLayout.NORTH);
@@ -232,24 +238,20 @@ public class DeviceManagement extends JFrame {
 
     private void loadDevices() {
         String preserveDeviceId = selectedDevice == null ? null : selectedDevice.getDeviceId();
-
-        allDevices.clear();
-
-        try {
-            allDevices.addAll(LanApiClient.loadManagedDevices());
-            applyFilter();
-            restoreSelection(preserveDeviceId);
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not load devices.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            summaryLabel.setText("Unable to load device records.");
-        }
+        CachedUiLoader.load(this, "devices:list", DeviceSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new DeviceSnapshot(LanApiClient.loadManagedDevices()),
+                snapshot -> applyDevices(snapshot, preserveDeviceId));
     }
+
+    private void applyDevices(DeviceSnapshot snapshot, String preserveDeviceId) {
+        allDevices.clear();
+        allDevices.addAll(snapshot.devices());
+        applyFilter();
+        restoreSelection(preserveDeviceId);
+    }
+
+    private record DeviceSnapshot(List<ManagedDevice> devices) { }
 
     private void applyFilter() {
         String selectedFilter = (String) filterCombo.getSelectedItem();
@@ -388,9 +390,7 @@ public class DeviceManagement extends JFrame {
 
     private void loadSessionHistory(String deviceId) {
         sessionTableModel.setRowCount(0);
-
-        try {
-            List<DeviceSessionRecord> sessions = LanApiClient.loadDeviceSessions(deviceId);
+        UiTaskRunner.submit(this, "devices.session-history", () -> LanApiClient.loadDeviceSessions(deviceId), sessions -> {
             for (DeviceSessionRecord session : sessions) {
                 sessionTableModel.addRow(new Object[]{
                         formatTimestamp(session.getLoginTime()),
@@ -400,15 +400,8 @@ public class DeviceManagement extends JFrame {
                         defaultText(session.getSessionStatus())
                 });
             }
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not load session history.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        }, failure -> loadingState.failed(failure.getMessage(), true,
+                () -> loadSessionHistory(deviceId)));
     }
 
     private void saveApprovalSetting() {
@@ -438,7 +431,7 @@ public class DeviceManagement extends JFrame {
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",selectedDevice.getDeviceId(),allowStaySignedIn,
                 allowSales,allowOrders,notesArea.getText(),null,null);
         try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             if (selectedDevice.getDeviceId() != null
                     && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())) {
                 if (allowStaySignedIn) {
@@ -484,7 +477,7 @@ public class DeviceManagement extends JFrame {
 
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,notesArea.getText(),null,null);
         try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
 
             if (isCurrentDevice) {
                 SessionManager.clearSessionState();
@@ -518,7 +511,7 @@ public class DeviceManagement extends JFrame {
         }
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,null,null,receiptCodeField.getText());
         try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             loadDevices();
             JOptionPane.showMessageDialog(this, "Device code saved.");
         } catch (Exception ex) {
@@ -538,7 +531,7 @@ public class DeviceManagement extends JFrame {
         }
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,null,deviceNameField.getText(),null);
         try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             loadDevices();
             JOptionPane.showMessageDialog(this, "Device name saved.");
         } catch (Exception ex) {
@@ -560,7 +553,7 @@ public class DeviceManagement extends JFrame {
         if (choice != JOptionPane.OK_OPTION) return;
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,null,null,null);
         try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             JOptionPane.showMessageDialog(this,
                     "Rotation queued. The server will issue and the register will claim the replacement automatically.",
                     "Device Credential", JOptionPane.INFORMATION_MESSAGE);

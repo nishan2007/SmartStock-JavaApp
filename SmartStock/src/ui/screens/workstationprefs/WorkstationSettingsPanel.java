@@ -4,6 +4,9 @@ import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import services.LanApiClient;
 import ui.helpers.ThemeManager;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -23,6 +26,7 @@ public class WorkstationSettingsPanel extends JPanel {
     private final JLabel nextReceiveLabel = new JLabel();
     private final JLabel nextSequenceLabel = new JLabel();
     private final JCheckBox darkModeBox = new JCheckBox("Use dark mode on this workstation");
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public WorkstationSettingsPanel() {
         setLayout(new BorderLayout(0, 12));
@@ -84,7 +88,7 @@ public class WorkstationSettingsPanel extends JPanel {
 
         add(titleLabel, BorderLayout.NORTH);
         add(contentPanel, BorderLayout.CENTER);
-        add(buttonPanel, BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.setOpaque(false);footer.add(loadingState,BorderLayout.CENTER);footer.add(buttonPanel,BorderLayout.SOUTH);add(footer, BorderLayout.SOUTH);
 
         deviceIdField.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -178,8 +182,8 @@ public class WorkstationSettingsPanel extends JPanel {
     }
 
     private void loadSettings() {
-        try {
-            LanApiClient.WorkstationSettings settings = LanApiClient.loadWorkstationSettings();
+        CachedUiLoader.loadAfterDisplay(this,"workstation:settings",LanApiClient.WorkstationSettings.class,
+                SessionDataCache.SCREEN_TTL,loadingState,LanApiClient::loadWorkstationSettings,settings->{
             deviceIdField.setText(settings.deviceCode());
             sanitizedPreviewField.setText(settings.deviceCode());
             configPathField.setText(ReceiptNumberManager.getConfigPath().toString());
@@ -190,14 +194,7 @@ public class WorkstationSettingsPanel extends JPanel {
             nextReceiveLabel.setText(settings.nextReceivePreview());
             nextSequenceLabel.setText("Receipt: " + settings.nextSequence() + "   Receiving: " + settings.nextReceiveSequence());
             darkModeBox.setSelected(ThemeManager.isDarkModeEnabled());
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to load workstation settings.\n\n" + ex.getMessage(),
-                    "Workstation Settings",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        });
     }
 
     private void saveDeviceId() {

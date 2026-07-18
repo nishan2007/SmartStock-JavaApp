@@ -1,11 +1,12 @@
 package ui.screens;
 
-import Receipt.AccountPaymentReceiptBuilder;
-import Receipt.AccountPaymentReceiptData;
-import Receipt.QuotationInvoiceDocumentBuilder;
 import services.QuotationInvoiceService;
 import services.QuotationInvoiceViewService;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -31,6 +32,7 @@ public class Invoices extends JFrame {
     private final JTable invoiceTable = new JTable(invoiceModel);
     private final JTable deliveryTable = new JTable(deliveryModel);
     private final JTable auditTable = new JTable(auditModel);
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public Invoices() {
         this(InitialTab.QUOTATIONS);
@@ -58,6 +60,7 @@ public class Invoices extends JFrame {
         tabs.addTab("Audit", tablePanel(auditTable, auditButtons()));
         tabs.setSelectedIndex(initialTab == InitialTab.QUOTATIONS ? 0 : 1);
         mainPanel.add(tabs, BorderLayout.CENTER);
+        mainPanel.add(loadingState, BorderLayout.SOUTH);
 
         refreshAll();
         WindowHelper.configurePosWindow(this);
@@ -88,7 +91,7 @@ public class Invoices extends JFrame {
         issue.addActionListener(e -> issueSelectedQuotation());
         accept.addActionListener(e -> acceptSelectedQuotation());
         preview.addActionListener(e -> previewQuotation());
-        refresh.addActionListener(e -> loadQuotations());
+        refresh.addActionListener(e -> refreshAll());
         return panel;
     }
 
@@ -146,10 +149,37 @@ public class Invoices extends JFrame {
     }
 
     private void refreshAll() {
-        loadQuotations();
-        loadInvoices();
-        loadDeliveries();
-        loadAudit();
+        CachedUiLoader.load(this,"invoices.snapshot",InvoiceSnapshot.class,SessionDataCache.SCREEN_TTL,
+                loadingState,()->new InvoiceSnapshot(
+                        UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listQuotations),
+                        UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listInvoices),
+                        UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listDeliveries),
+                        UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listAudit)
+                ).joined(),this::applySnapshot);
+    }
+
+    private void applySnapshot(InvoiceSnapshot snapshot) {
+        quotationModel.setRowCount(0);
+        for (var row : snapshot.quotations()) quotationModel.addRow(new Object[]{row.quotationId(),row.quotationNumber(),row.customerName(),row.status(),row.validUntil(),row.totalAmount()});
+        invoiceModel.setRowCount(0);
+        for (var row : snapshot.invoices()) invoiceModel.addRow(new Object[]{row.invoiceId(),row.invoiceNumber(),row.customerName(),row.status(),row.paymentStatus(),row.balanceDue(),row.quotationNumber()});
+        deliveryModel.setRowCount(0);
+        for (var row : snapshot.deliveries()) deliveryModel.addRow(new Object[]{row.deliveryEventId(),row.deliveryNumber(),row.invoiceNumber(),row.customerName(),row.deliveryMethod(),row.balanceDue(),row.createdAt()});
+        auditModel.setRowCount(0);
+        for (var row : snapshot.audit()) auditModel.addRow(new Object[]{row.createdAt(),row.document(),row.actionType(),row.fieldName(),row.oldValue(),row.newValue(),row.userName(),row.reason()});
+    }
+
+    private record InvoiceSnapshot(List<QuotationInvoiceViewService.QuotationSummary> quotations,
+                                   List<QuotationInvoiceViewService.InvoiceSummary> invoices,
+                                   List<QuotationInvoiceViewService.DeliverySummary> deliveries,
+                                   List<QuotationInvoiceViewService.AuditEntry> audit) {
+        private InvoiceSnapshot(java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.QuotationSummary>> quotations,
+                                java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.InvoiceSummary>> invoices,
+                                java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.DeliverySummary>> deliveries,
+                                java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.AuditEntry>> audit) {
+            this(quotations.join(),invoices.join(),deliveries.join(),audit.join());
+        }
+        private InvoiceSnapshot joined() { return this; }
     }
 
     private void loadQuotations() {
@@ -282,37 +312,22 @@ public class Invoices extends JFrame {
         if (receiptRef == null) {
             return;
         }
-        try {
-            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(receiptRef.customerId(), receiptRef.transactionId());
-            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
-                    "Payment Receipt",
-                    JOptionPane.WARNING_MESSAGE
-            );
-        }
+        WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(
+                receiptRef.customerId(), receiptRef.transactionId()), this);
     }
 
     private void previewInvoice() {
         Long invoiceId = selectedId(invoiceTable);
         if (invoiceId == null) return;
-        try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Invoice Preview", QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId), false, "INVOICE", invoiceId), this);
-        } catch (SQLException ex) {
-            showError("Failed to preview invoice", ex);
-        }
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Invoice Preview", false, "INVOICE", invoiceId), this);
     }
 
     private void previewDelivery() {
         Long deliveryId = selectedId(deliveryTable);
         if (deliveryId == null) return;
-        try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Delivery Bill Preview", QuotationInvoiceDocumentBuilder.buildDelivery(deliveryId), false, "DELIVERY_BILL", deliveryId), this);
-        } catch (SQLException ex) {
-            showError("Failed to preview delivery bill", ex);
-        }
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Delivery Bill Preview", false, "DELIVERY_BILL", deliveryId), this);
     }
 
     private void openQuotationDialog() {
@@ -417,17 +432,13 @@ public class Invoices extends JFrame {
     private void previewQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
-        try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId), false, "QUOTATION", quotationId), this);
-        } catch (SQLException ex) {
-            showError("Failed to preview quotation", ex);
-        }
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Quotation Preview", false, "QUOTATION", quotationId), this);
     }
 
     private void openQuotationPrintDialog(long quotationId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Quotation Print",
-                QuotationInvoiceDocumentBuilder.buildQuotation(quotationId),
                 true,
                 "QUOTATION",
                 quotationId
@@ -437,7 +448,6 @@ public class Invoices extends JFrame {
     private void openSalesInvoicePrintDialog(long invoiceId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Invoice Print",
-                QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId),
                 true,
                 "INVOICE",
                 invoiceId
@@ -447,7 +457,6 @@ public class Invoices extends JFrame {
     private void openDeliveryPrintDialog(long deliveryEventId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Delivery Bill Print",
-                QuotationInvoiceDocumentBuilder.buildDelivery(deliveryEventId),
                 true,
                 "DELIVERY_BILL",
                 deliveryEventId
@@ -512,8 +521,8 @@ public class Invoices extends JFrame {
         }
 
         private void loadLines() {
-            try {
-                for (QuotationInvoiceViewService.DeliverableLine line : QuotationInvoiceViewService.listDeliverableLines(invoiceId)) {
+            UiTaskRunner.submit(this,"invoice.delivery-lines",()->QuotationInvoiceViewService.listDeliverableLines(invoiceId),lines->{lineModel.setRowCount(0);
+                for (QuotationInvoiceViewService.DeliverableLine line : lines) {
                     lineModel.addRow(new Object[]{
                             line.invoiceLineId(),
                             line.itemName(),
@@ -524,9 +533,7 @@ public class Invoices extends JFrame {
                             0
                     });
                 }
-            } catch (SQLException ex) {
-                JOptionPane.showMessageDialog(this, "Failed to load invoice lines.\n\n" + ex.getMessage(), "Delivery", JOptionPane.ERROR_MESSAGE);
-            }
+            },ex->JOptionPane.showMessageDialog(this,"Failed to load invoice lines.\n\n"+ex.getMessage(),"Delivery",JOptionPane.ERROR_MESSAGE));
         }
 
         private void post() {

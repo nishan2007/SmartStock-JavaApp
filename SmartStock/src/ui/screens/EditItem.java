@@ -82,7 +82,7 @@ public class EditItem extends JFrame {
 
         wireActions();
         setFormEnabled(false);
-        WindowHelper.showPosWindow(this);
+        WindowHelper.configurePosWindow(this);
         SwingUtilities.invokeLater(() -> {
             searchField.requestFocusInWindow();
             SwingUtilities.invokeLater(() -> inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0)));

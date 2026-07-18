@@ -78,7 +78,7 @@ public class NewItem extends JFrame {
         wireActions();
         updateQuantityEnabledForType();
 
-        WindowHelper.showPosWindow(this);
+        WindowHelper.configurePosWindow(this);
         SwingUtilities.invokeLater(() -> {
             nameField.requestFocusInWindow();
             SwingUtilities.invokeLater(() -> inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0)));

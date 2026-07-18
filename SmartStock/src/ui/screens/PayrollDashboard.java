@@ -5,8 +5,11 @@ import managers.TimeClockManager;
 import managers.TimeClockManager.PayrollSummary;
 import managers.TimeClockManager.TimeClockRow;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -32,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class PayrollDashboard extends JFrame {
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     private final MetricCard totalEmployeesCard;
     private final MetricCard totalHoursCard;
@@ -189,6 +193,7 @@ public class PayrollDashboard extends JFrame {
 
         mainPanel.add(headerPanel, BorderLayout.NORTH);
         mainPanel.add(centerPanel, BorderLayout.CENTER);
+        mainPanel.add(loadingState, BorderLayout.SOUTH);
         add(mainPanel, BorderLayout.CENTER);
 
         payPeriodBox.addActionListener(e -> {
@@ -248,16 +253,17 @@ public class PayrollDashboard extends JFrame {
     }
 
     private void loadPayroll() {
-        try {
-            TimeClockManager.PayrollDashboard dashboard = TimeClockManager.loadPayrollDashboard();
-            allRows = dashboard.timeRows();
-            allSummaries = dashboard.summaries();
-            populatePayPeriods();
-            populateEmployees();
-            renderTables();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load payroll: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
+        CachedUiLoader.load(this, "payroll:dashboard", TimeClockManager.PayrollDashboard.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                TimeClockManager::loadPayrollDashboard, this::applyPayroll);
+    }
+
+    private void applyPayroll(TimeClockManager.PayrollDashboard dashboard) {
+        allRows = dashboard.timeRows();
+        allSummaries = dashboard.summaries();
+        populatePayPeriods();
+        populateEmployees();
+        renderTables();
     }
 
     private void populatePayPeriods() {

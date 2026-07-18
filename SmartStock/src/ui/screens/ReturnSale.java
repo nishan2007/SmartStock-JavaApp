@@ -6,8 +6,10 @@ import services.LanApiClient;
 import services.ManagerApprovalService;
 import services.RefundApprovalIdentity;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 import utils.CurrencyFormatter;
 
 import javax.swing.*;
@@ -50,6 +52,8 @@ public class ReturnSale extends JFrame {
     private final JTable saleSearchTable;
     private final JPopupMenu saleSearchPopup = new JPopupMenu();
     private final Timer saleSearchTimer;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private final JButton submitButton = new JButton("Submit Return");
 
     private SaleSnapshot loadedSale;
     private boolean updatingModel;
@@ -87,7 +91,7 @@ public class ReturnSale extends JFrame {
             }
         };
         saleSearchTable = new JTable(saleSearchModel);
-        saleSearchTimer = new Timer(250, e -> refreshSaleSearchResults());
+        saleSearchTimer = new Timer(300, e -> refreshSaleSearchResults());
         saleSearchTimer.setRepeats(false);
 
         JPanel root = new JPanel(new BorderLayout(14, 14));
@@ -205,7 +209,6 @@ public class ReturnSale extends JFrame {
         overrideStatusLabel.setForeground(new Color(71, 85, 105));
         JButton returnAllButton = new JButton("Return All Available");
         JButton clearButton = new JButton("Clear Qty");
-        JButton submitButton = new JButton("Submit Return");
         actionPanel.add(new JLabel("Refund Method:"));
         actionPanel.add(refundMethodBox);
         actionPanel.add(totalReturnLabel);
@@ -222,6 +225,7 @@ public class ReturnSale extends JFrame {
         footer.setOpaque(false);
         footer.add(overrideStatusLabel, BorderLayout.WEST);
         footer.add(actionPanel, BorderLayout.EAST);
+        footer.add(loadingState, BorderLayout.NORTH);
         panel.add(footer, BorderLayout.SOUTH);
         return panel;
     }
@@ -237,17 +241,14 @@ public class ReturnSale extends JFrame {
             saleSearchPopup.setVisible(false);
             return;
         }
-        try {
-            List<LanApiClient.SaleSearchResult> results = LanApiClient.searchSalesForReturn(search);
+        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search),results->{
             populateSearchResults(results);
             if (results.isEmpty()) {
                 saleSearchPopup.setVisible(false);
             } else {
                 showSaleSearchPopup();
             }
-        } catch (Exception ex) {
-            saleSearchPopup.setVisible(false);
-        }
+        },ex->saleSearchPopup.setVisible(false));
     }
 
     private void populateSearchResults(List<LanApiClient.SaleSearchResult> results) {
@@ -292,8 +293,7 @@ public class ReturnSale extends JFrame {
             JOptionPane.showMessageDialog(this, "Enter a sale ID or receipt number.");
             return;
         }
-        try {
-            List<LanApiClient.SaleSearchResult> matches = LanApiClient.searchSalesForReturn(search);
+        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search),matches->{
             if (matches.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "Sale was not found.");
             } else if (matches.size() > 1) {
@@ -304,14 +304,15 @@ public class ReturnSale extends JFrame {
             } else {
                 loadSaleById(matches.get(0).saleId());
             }
-        } catch (Exception ex) {
-            showApiError("Failed to load sale", ex);
-        }
+        },ex->showApiError("Failed to load sale",ex));
     }
 
     private void loadSaleById(int saleId) {
-        try {
-            LanApiClient.ReturnSaleDetails details = LanApiClient.loadReturnSaleDetails(saleId);
+        UiTaskRunner.submit(this,"return-sale.details",()->LanApiClient.loadReturnSaleDetails(saleId),this::applySaleDetails,
+                ex->{updatingModel=false;showApiError("Failed to load sale",ex);});
+    }
+
+    private void applySaleDetails(LanApiClient.ReturnSaleDetails details) {
             loadedSale = new SaleSnapshot(details.saleId(), details.receiptNumber(), details.customerId(),
                     safe(details.paymentMethod()), safe(details.paymentStatus()), zero(details.totalAmount()),
                     zero(details.returnedAmount()), zero(details.returnApprovalLimit()),
@@ -338,10 +339,6 @@ public class ReturnSale extends JFrame {
                     + "  Sale Total: " + CURRENCY.format(loadedSale.totalAmount())
                     + "  Previously Returned: " + CURRENCY.format(loadedSale.returnedAmount()));
             updateReturnTotal();
-        } catch (Exception ex) {
-            updatingModel = false;
-            showApiError("Failed to load sale", ex);
-        }
     }
 
     private void submitReturn() {
@@ -395,17 +392,20 @@ public class ReturnSale extends JFrame {
             pendingRefundFingerprint = fingerprint;
             pendingRefundKey = "return-" + UUID.randomUUID();
         }
-        try {
-            LanApiClient.RefundResult result = LanApiClient.refund(request, pendingRefundKey);
+        String refundKey = pendingRefundKey;
+        int saleId = loadedSale.saleId();
+        submitButton.setEnabled(false);
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this,"return-sale.refund",()->LanApiClient.refund(request,refundKey),result->{
             pendingRefundKey = null;
             pendingRefundFingerprint = null;
+            submitButton.setEnabled(true);
+            loadingState.ready(java.time.Instant.now());
             JOptionPane.showMessageDialog(this,
                     "Return processed successfully.\nReturn ID: " + result.returnId()
                             + "\nRefund amount: " + CURRENCY.format(result.refundAmount()));
-            loadSaleById(loadedSale.saleId());
-        } catch (Exception ex) {
-            showApiError("Failed to process return", ex);
-        }
+            loadSaleById(saleId);
+        },failure->{submitButton.setEnabled(true);loadingState.failed(failure.getMessage(),false,this::submitReturn);});
     }
 
     private boolean ensureApprovalFor(List<ReturnLine> lines, BigDecimal total) {
@@ -552,7 +552,7 @@ public class ReturnSale extends JFrame {
         return value.toString();
     }
 
-    private void showApiError(String prefix, Exception ex) {
+    private void showApiError(String prefix, Throwable ex) {
         String message = ex.getMessage() == null || ex.getMessage().isBlank()
                 ? "The SmartStock server could not complete the request." : ex.getMessage();
         JOptionPane.showMessageDialog(this, prefix + ": " + message,

@@ -1,6 +1,8 @@
 package ui.components;
 
 import services.LanApiClient;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import java.awt.*;
@@ -15,38 +17,43 @@ public class VendorSelector extends JPanel {
     private final Map<String, Integer> idsByName = new LinkedHashMap<>();
     private final Map<Integer, String> namesById = new LinkedHashMap<>();
     private boolean loading;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public VendorSelector() {
         setLayout(new BorderLayout(6, 0));
         add(vendorBox, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
         loadVendors();
     }
 
     public void loadVendors() {
         String selectedText = getSelectedVendorName();
+        CachedUiLoader.loadAfterDisplay(this, "reference:inventory-lookups:all",
+                LanApiClient.InventoryLookups.class, SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> LanApiClient.loadInventoryLookups(null),
+                lookups -> applyVendors(lookups, selectedText));
+    }
+
+    private void applyVendors(LanApiClient.InventoryLookups lookups, String selectedText) {
+        String desiredText = getSelectedVendorName();
+        if (desiredText.isBlank()) desiredText = selectedText;
         loading = true;
         idsByName.clear();
         namesById.clear();
         List<String> options = new ArrayList<>();
 
-        try {
-            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
-            for (LanApiClient.NamedId vendor : lookups.vendors()) {
+        for (LanApiClient.NamedId vendor : lookups.vendors()) {
                 int id = vendor.id();
                 String name = vendor.name();
                 options.add(name);
                 idsByName.put(normalize(name), id);
                 namesById.put(id, name);
-            }
-            vendorBox.setOptions(options);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(), "LAN Service", JOptionPane.ERROR_MESSAGE);
-        } finally {
-            loading = false;
         }
+        vendorBox.setOptions(options);
+        loading = false;
 
-        if (!selectedText.isBlank()) {
-            setSelectedVendorByName(selectedText);
+        if (!desiredText.isBlank()) {
+            setSelectedVendorByName(desiredText);
         }
     }
 

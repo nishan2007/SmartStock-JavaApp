@@ -3,7 +3,11 @@ package ui.screens;
 import managers.SessionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -14,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 
 public class ReceivingHistory extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -23,6 +28,7 @@ public class ReceivingHistory extends JFrame {
     private final JLabel summaryLabel = new JLabel("Records: 0   Units: 0");
     private final DefaultTableModel tableModel;
     private final JTable historyTable;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ReceivingHistory() {
         setTitle("Receiving History");
@@ -62,6 +68,7 @@ public class ReceivingHistory extends JFrame {
         historyTable.getColumnModel().getColumn(8).setPreferredWidth(260);
 
         root.add(new JScrollPane(historyTable), BorderLayout.CENTER);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root);
 
         loadReceivingHistory();
@@ -128,6 +135,7 @@ public class ReceivingHistory extends JFrame {
             loadReceivingHistory();
         });
         searchField.addActionListener(e -> loadReceivingHistory());
+        UiDebouncer.bind(searchField, 300, this::loadReceivingHistory);
         fromDateField.addActionListener(e -> loadReceivingHistory());
         toDateField.addActionListener(e -> loadReceivingHistory());
 
@@ -159,29 +167,34 @@ public class ReceivingHistory extends JFrame {
     }
 
     private void loadReceivingHistory() {
-        tableModel.setRowCount(0);
         updateStoreLabel();
         LocalDate fromDate = parseDate(fromDateField.getText().trim(), "From");
         LocalDate toDate = parseDate(toDateField.getText().trim(), "To");
         if (fromDate == null && !fromDateField.getText().trim().isEmpty()) return;
         if (toDate == null && !toDateField.getText().trim().isEmpty()) return;
+        String search = searchField.getText().trim();
+        String from = fromDate == null ? "" : fromDate.toString();
+        String to = toDate == null ? "" : toDate.toString();
+        CachedUiLoader.load(this, "receiving-history.search", "receiving-history:" + search + ":" + from + ":" + to,
+                ReceivingSnapshot.class, SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new ReceivingSnapshot(LanApiClient.loadReceivingHistory(search, from, to)),
+                this::applyReceivingHistory);
+    }
+
+    private void applyReceivingHistory(ReceivingSnapshot snapshot) {
+        tableModel.setRowCount(0);
         int totalUnits = 0;
-        try {
-            for (LanApiClient.ReceivingHistoryRow row : LanApiClient.loadReceivingHistory(
-                    searchField.getText().trim(), fromDate == null ? "" : fromDate.toString(),
-                    toDate == null ? "" : toDate.toString())) {
+        for (LanApiClient.ReceivingHistoryRow row : snapshot.rows()) {
                 totalUnits += row.changeQuantity();
                 tableModel.addRow(new Object[]{row.receiveId(), row.movementId(),
                         formatTimestamp(row.createdAtEpochMillis()), row.productName(), row.sku(),
                         row.storeName(), row.changeQuantity(),
                         formatReceivedBy(row.receivedBy(), row.note()), row.note()});
-            }
-            summaryLabel.setText("Records: " + tableModel.getRowCount() + "   Units: " + totalUnits);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load receiving history.\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
+        summaryLabel.setText("Records: " + tableModel.getRowCount() + "   Units: " + totalUnits);
     }
+
+    private record ReceivingSnapshot(List<LanApiClient.ReceivingHistoryRow> rows) { }
 
     private LocalDate parseDate(String value, String label) {
         if (value == null || value.isBlank()) {

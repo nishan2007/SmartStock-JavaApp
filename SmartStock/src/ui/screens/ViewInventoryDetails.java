@@ -5,6 +5,9 @@ import services.LanApiClient;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -40,6 +43,8 @@ public class ViewInventoryDetails extends JDialog {
     private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
     private final boolean canViewVendor = PermissionManager.hasPermission("VIEW_VENDOR");
     private final boolean canViewCreatedBy = PermissionManager.hasPermission("VIEW_CREATED_BY");
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private final JPanel root = new JPanel(new BorderLayout(0,16));
 
     private static boolean darkMode() {
         return ThemeManager.isDarkModeEnabled();
@@ -82,28 +87,21 @@ public class ViewInventoryDetails extends JDialog {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        try {
-            LanApiClient.InventoryDetails payload = LanApiClient.loadInventoryDetails(productId);
+        root.setBackground(backgroundColor());root.setBorder(new EmptyBorder(18,18,18,18));root.add(new JLabel("Loading item details…",SwingConstants.CENTER),BorderLayout.CENTER);root.add(loadingState,BorderLayout.SOUTH);add(root,BorderLayout.CENTER);
+        CachedUiLoader.load(this,"inventory-details.selection","inventory-details:"+productId,
+                LanApiClient.InventoryDetails.class,SessionDataCache.SCREEN_TTL,loadingState,
+                ()->LanApiClient.loadInventoryDetails(productId),this::applyDetails);
+    }
+
+    private void applyDetails(LanApiClient.InventoryDetails payload) {
             ItemDetails itemDetails = new ItemDetails();
             if (payload.fields() != null) payload.fields().forEach(itemDetails::put);
             JTable movementTable = buildMovementHistoryTable(payload.activities());
 
-            JPanel root = new JPanel(new BorderLayout(0, 16));
-            root.setBackground(backgroundColor());
-            root.setBorder(new EmptyBorder(18, 18, 18, 18));
+            root.removeAll();
             root.add(buildHeaderPanel(itemDetails), BorderLayout.NORTH);
             root.add(buildContentTabs(itemDetails, movementTable), BorderLayout.CENTER);
-
-            add(root, BorderLayout.CENTER);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(
-                    owner,
-                    "Failed to load item details.\n" + ex.getMessage(),
-                    "LAN Service",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            dispose();
-        }
+            root.add(loadingState,BorderLayout.SOUTH);root.revalidate();root.repaint();
     }
 
     private JPanel buildHeaderPanel(ItemDetails itemDetails) {

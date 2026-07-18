@@ -18,6 +18,7 @@ public final class EmployeeScheduleService {
     public static Map<LocalDate,List<Assignment>> loadWeek(int locationId,LocalDate start)throws SQLException{return loadRange(locationId,start,start.plusDays(6));}
     public static Map<LocalDate,List<Assignment>> loadRange(int locationId,LocalDate start,LocalDate end)throws SQLException{return call(()->LanApiClient.loadScheduleRange(locationId,start,end));}
     public static Map<LocalDate,Holiday> loadHolidays(LocalDate start,LocalDate end)throws SQLException{return call(()->LanApiClient.loadScheduleHolidays(start,end,false));}
+    public static PeriodSnapshot loadPeriod(int locationId,LocalDate start,LocalDate end)throws SQLException{return call(()->LanApiClient.loadScheduleSnapshot(locationId,start,end));}
     public static Map<LocalDate,Holiday> loadCurrentStoreHolidaysForTimeClock(LocalDate start,LocalDate end)throws SQLException{return call(()->LanApiClient.loadScheduleHolidays(start,end,true));}
     public static void saveHoliday(LocalDate date,String name)throws SQLException{run(()->LanApiClient.updateSchedule("SAVE_HOLIDAY",new LanApiClient.ScheduleMutation(null,date,null,null,null,null,name,null,null),key()));}
     public static void removeHoliday(LocalDate date)throws SQLException{run(()->LanApiClient.updateSchedule("REMOVE_HOLIDAY",new LanApiClient.ScheduleMutation(null,date,null,null,null,null,null,null,null),key()));}
@@ -38,4 +39,5 @@ public final class EmployeeScheduleService {
     public record Shift(UUID shiftId,int locationId,String name,LocalTime startTime,LocalTime endTime,boolean active,int displayOrder){@Override public String toString(){return name;}}
     public record Holiday(UUID holidayId,LocalDate holidayDate,String name){}
     public record Assignment(int userId,String displayName,String username,LocalDate workDate,LocalTime lunchStartTime,UUID shiftId,String shiftName,LocalTime shiftStartTime,LocalTime shiftEndTime){public LocalTime lunchEndTime(){return lunchStartTime==null?null:lunchStartTime.plusMinutes(LUNCH_DURATION_MINUTES);}}
+    public record PeriodSnapshot(Map<LocalDate,List<Assignment>> assignments,Map<LocalDate,Holiday> holidays){}
 }

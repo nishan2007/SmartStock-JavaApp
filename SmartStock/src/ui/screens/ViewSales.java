@@ -5,7 +5,12 @@ import utils.CurrencyFormatter;
 import managers.PermissionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
+import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -17,6 +22,7 @@ import java.text.NumberFormat;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 
 public class ViewSales extends JFrame {
 
@@ -26,6 +32,7 @@ public class ViewSales extends JFrame {
     private JTextField fromDateField;
     private JTextField toDateField;
     private JLabel summaryLabel;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     private final DateTimeFormatter displayDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private final NumberFormat currencyFormat = CurrencyFormatter.create();
@@ -82,6 +89,7 @@ public class ViewSales extends JFrame {
         summaryLabel = new JLabel("Transactions: 0");
         summaryLabel.setBorder(new EmptyBorder(6, 2, 0, 2));
         bottomPanel.add(summaryLabel, BorderLayout.WEST);
+        bottomPanel.add(loadingState, BorderLayout.CENTER);
         mainPanel.add(bottomPanel, BorderLayout.SOUTH);
 
         loadSales();
@@ -181,6 +189,7 @@ public class ViewSales extends JFrame {
         returnButton.setEnabled(PermissionManager.hasPermission("PROCESS_RETURNS"));
 
         searchField.addActionListener(e -> loadSales());
+        UiDebouncer.bind(searchField, 300, this::loadSales);
         fromDateField.addActionListener(e -> loadSales());
         toDateField.addActionListener(e -> loadSales());
 
@@ -199,16 +208,22 @@ public class ViewSales extends JFrame {
         if (fromDate == null && !fromDateField.getText().trim().isEmpty()) return;
         LocalDate toDate = parseDate(toDateField.getText().trim(), "To Date");
         if (toDate == null && !toDateField.getText().trim().isEmpty()) return;
+        String search = searchField.getText().trim();
+        String from = fromDate == null ? "" : fromDate.toString();
+        String to = toDate == null ? "" : toDate.toString();
+        String cacheKey = "view-sales:" + search + ":" + from + ":" + to;
+        CachedUiLoader.load(this, "view-sales.search", cacheKey, SalesSnapshot.class, SessionDataCache.SCREEN_TTL,
+                loadingState,
+                () -> new SalesSnapshot(LanApiClient.loadSalesHistory(search, from, to)),
+                this::applySales);
+    }
+
+    private void applySales(SalesSnapshot snapshot) {
         salesTableModel.setRowCount(0);
         BigDecimal grossSales = BigDecimal.ZERO;
         BigDecimal returnTotal = BigDecimal.ZERO;
         int transactionCount = 0;
-        try {
-            java.util.List<LanApiClient.SalesHistoryRow> rows = LanApiClient.loadSalesHistory(
-                    searchField.getText().trim(),
-                    fromDate == null ? "" : fromDate.toString(),
-                    toDate == null ? "" : toDate.toString());
-            for (LanApiClient.SalesHistoryRow row : rows) {
+        for (LanApiClient.SalesHistoryRow row : snapshot.rows()) {
                 boolean returnRow = "RETURN".equalsIgnoreCase(row.transactionType());
                 salesTableModel.addRow(new Object[]{
                         row.saleId(),
@@ -228,18 +243,15 @@ public class ViewSales extends JFrame {
                 if (returnRow) returnTotal = returnTotal.add(zero(row.returnedAmount()));
                 else grossSales = grossSales.add(zero(row.totalAmount()));
                 transactionCount++;
-            }
-            BigDecimal netTotal = grossSales.subtract(returnTotal);
-            summaryLabel.setText("Transactions: " + transactionCount
-                    + "    Gross Sales: " + currencyFormat.format(grossSales)
-                    + "    Returns: " + currencyFormat.format(returnTotal)
-                    + "    Net: " + currencyFormat.format(netTotal));
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,
-                    "Failed to load sales.\n\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
+        BigDecimal netTotal = grossSales.subtract(returnTotal);
+        summaryLabel.setText("Transactions: " + transactionCount
+                + "    Gross Sales: " + currencyFormat.format(grossSales)
+                + "    Returns: " + currencyFormat.format(returnTotal)
+                + "    Net: " + currencyFormat.format(netTotal));
     }
+
+    private record SalesSnapshot(List<LanApiClient.SalesHistoryRow> rows) { }
 
     private void showSelectedSaleDetails() {
         int selectedRow = salesTable.getSelectedRow();
@@ -276,6 +288,16 @@ public class ViewSales extends JFrame {
     }
 
     private void showSaleDetailsDialog(int saleId) {
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "sales.details", () -> LanApiClient.loadSaleHistoryDetails(saleId),
+                details -> {
+                    loadingState.ready(java.time.Instant.now());
+                    renderSaleDetailsDialog(saleId, details);
+                }, failure -> loadingState.failed(failure.getMessage(), false,
+                        () -> showSaleDetailsDialog(saleId)));
+    }
+
+    private void renderSaleDetailsDialog(int saleId, LanApiClient.SaleHistoryDetails details) {
         DefaultTableModel detailsModel = readOnlyModel(
                 "Product ID", "Item Name", "Qty", "Returned", "Original Unit",
                 "Item Disc %", "Item Discount", "Final Unit", "Line Total");
@@ -286,16 +308,6 @@ public class ViewSales extends JFrame {
         DefaultTableModel overrideAuditModel = readOnlyModel(
                 "Time", "Action", "Scope", "Field", "Old", "New", "Amount", "Qty",
                 "Reason", "Note", "By User", "Device");
-
-        LanApiClient.SaleHistoryDetails details;
-        try {
-            details = LanApiClient.loadSaleHistoryDetails(saleId);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,
-                    "Failed to load sale details.\n\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
 
         if (details.items() != null) {
             for (LanApiClient.SaleHistoryItem item : details.items()) {

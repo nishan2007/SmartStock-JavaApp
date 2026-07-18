@@ -4,6 +4,7 @@ package managers;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import ui.helpers.SessionDataCache;
 
 public final class SessionManager {
 
@@ -29,6 +30,7 @@ public final class SessionManager {
 
     public static void setCurrentUserId(Integer currentUserId) {
         SessionManager.currentUserId = currentUserId;
+        refreshCacheScope();
     }
 
     public static String getCurrentUsername() {
@@ -64,6 +66,7 @@ public final class SessionManager {
 
     public static void setCurrentLocationId(Integer currentLocationId) {
         SessionManager.currentLocationId = currentLocationId;
+        refreshCacheScope();
     }
 
     public static String getCurrentLocationName() {
@@ -141,5 +144,12 @@ public final class SessionManager {
         currentDeviceId = null;
         currentDeviceSessionId = null;
         currentPermissions = Set.of();
+        SessionDataCache.setScope("anonymous");
+        SessionDataCache.clear();
+    }
+
+    private static void refreshCacheScope() {
+        SessionDataCache.setScope("user=" + (currentUserId == null ? "none" : currentUserId)
+                + "|location=" + (currentLocationId == null ? "none" : currentLocationId));
     }
 }

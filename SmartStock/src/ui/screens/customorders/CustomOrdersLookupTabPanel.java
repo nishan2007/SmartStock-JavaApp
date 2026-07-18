@@ -1,5 +1,7 @@
 package ui.screens.customorders;
 
+import ui.helpers.UiDebouncer;
+
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
@@ -84,6 +86,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
 
         searchButton.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
         searchField.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
+        UiDebouncer.bind(searchField, 300,
+                () -> handler.loadLookupOrders(model, searchField.getText().trim()));
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 Long orderId = handler.selectedLookupOrderId(table, model);

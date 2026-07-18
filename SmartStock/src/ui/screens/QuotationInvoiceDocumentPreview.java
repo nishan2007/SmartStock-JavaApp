@@ -1,6 +1,10 @@
 package ui.screens;
 
+import Receipt.QuotationInvoiceDocumentBuilder;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 import services.EmailOutboxService;
 
@@ -22,9 +26,10 @@ import java.util.regex.Pattern;
 public class QuotationInvoiceDocumentPreview extends JFrame {
     private final JTextArea documentArea = new JTextArea();
     private final JEditorPane documentPane = new JEditorPane();
-    private final String documentText;
+    private String documentText = "";
     private final String emailDocumentType;
     private final Long emailDocumentId;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public QuotationInvoiceDocumentPreview(String title, String documentText) {
         this(title, documentText, false, null, null);
@@ -36,6 +41,17 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
 
     public QuotationInvoiceDocumentPreview(String title, String documentText, boolean showPrintDialogOnOpen,
                                            String emailDocumentType, Long emailDocumentId) {
+        this(title, documentText, showPrintDialogOnOpen, emailDocumentType, emailDocumentId, false);
+    }
+
+    public QuotationInvoiceDocumentPreview(String title, boolean showPrintDialogOnOpen,
+                                           String emailDocumentType, long emailDocumentId) {
+        this(title, null, showPrintDialogOnOpen, emailDocumentType, emailDocumentId, true);
+    }
+
+    private QuotationInvoiceDocumentPreview(String title, String initialDocumentText, boolean showPrintDialogOnOpen,
+                                            String emailDocumentType, Long emailDocumentId,
+                                            boolean loadDocument) {
         this.emailDocumentType = emailDocumentType;
         this.emailDocumentId = emailDocumentId;
         setTitle(title);
@@ -52,17 +68,12 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 24));
         mainPanel.add(titleLabel, BorderLayout.NORTH);
 
-        String safeText = documentText == null ? "" : documentText;
-        this.documentText = safeText;
         documentArea.setEditable(false);
         documentArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
-        documentArea.setText(stripHtml(safeText));
-        documentArea.setCaretPosition(0);
 
         documentPane.setEditable(false);
-        documentPane.setContentType(safeText.stripLeading().startsWith("<html") ? "text/html" : "text/plain");
-        documentPane.setText(safeText);
-        documentPane.setCaretPosition(0);
+        documentPane.setContentType("text/plain");
+        documentPane.setText(loadDocument ? "Loading document preview..." : "");
         JScrollPane previewScrollPane = new JScrollPane(documentPane);
         previewScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         previewScrollPane.getHorizontalScrollBar().setUnitIncrement(16);
@@ -72,24 +83,64 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         JButton emailButton = new JButton("Email");
         JButton printButton = new JButton("Print");
         JButton closeButton = new JButton("Close");
+        emailButton.setEnabled(!loadDocument);
+        printButton.setEnabled(!loadDocument);
         if (emailDocumentType != null && emailDocumentId != null) {
             buttons.add(emailButton);
         }
         buttons.add(printButton);
         buttons.add(closeButton);
-        mainPanel.add(buttons, BorderLayout.SOUTH);
+        JPanel footerPanel = new JPanel(new BorderLayout());
+        footerPanel.add(loadingState, BorderLayout.CENTER);
+        footerPanel.add(buttons, BorderLayout.SOUTH);
+        mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         emailButton.addActionListener(e -> emailDocument());
         printButton.addActionListener(e -> printDocument());
         closeButton.addActionListener(e -> dispose());
         WindowHelper.configurePosWindow(this);
-        if (showPrintDialogOnOpen) {
-            SwingUtilities.invokeLater(() -> {
-                toFront();
-                requestFocus();
-                printDocument();
-            });
+        if (loadDocument) {
+            String cacheKey = "document-preview:" + emailDocumentType + ":" + emailDocumentId;
+            CachedUiLoader.load(this, "document-preview.load", cacheKey, String.class,
+                    SessionDataCache.SCREEN_TTL, loadingState,
+                    () -> buildDocument(emailDocumentType, emailDocumentId), text -> {
+                        applyDocument(text);
+                        emailButton.setEnabled(true);
+                        printButton.setEnabled(true);
+                        if (showPrintDialogOnOpen) openPrintDialogLater();
+                    });
+        } else {
+            applyDocument(initialDocumentText);
+            loadingState.ready(java.time.Instant.now());
+            if (showPrintDialogOnOpen) openPrintDialogLater();
         }
+    }
+
+    private String buildDocument(String type, long id) throws Exception {
+        return switch (type == null ? "" : type) {
+            case "QUOTATION" -> QuotationInvoiceDocumentBuilder.buildQuotation(id);
+            case "INVOICE" -> QuotationInvoiceDocumentBuilder.buildInvoice(id);
+            case "DELIVERY_BILL" -> QuotationInvoiceDocumentBuilder.buildDelivery(id);
+            default -> throw new IllegalArgumentException("Unsupported document preview type.");
+        };
+    }
+
+    private void applyDocument(String text) {
+        String safeText = text == null ? "" : text;
+        documentText = safeText;
+        documentArea.setText(stripHtml(safeText));
+        documentArea.setCaretPosition(0);
+        documentPane.setContentType(safeText.stripLeading().startsWith("<html") ? "text/html" : "text/plain");
+        documentPane.setText(safeText);
+        documentPane.setCaretPosition(0);
+    }
+
+    private void openPrintDialogLater() {
+        SwingUtilities.invokeLater(() -> {
+            toFront();
+            requestFocus();
+            printDocument();
+        });
     }
 
     private void emailDocument() {

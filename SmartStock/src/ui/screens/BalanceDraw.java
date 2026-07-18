@@ -10,6 +10,9 @@ import models.CashDrawerSession;
 import services.CashDrawerService;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -66,6 +69,7 @@ public class BalanceDraw extends JFrame {
     private Map<Integer, Integer> configuredFloatMix = CashDrawerService.DEFAULT_FLOAT_MIX;
     private boolean floatCalculated;
     private boolean updatingTable;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public BalanceDraw() {
         setTitle("Balance Draw");
@@ -201,6 +205,7 @@ public class BalanceDraw extends JFrame {
         panel.add(handoverButton);
         panel.add(closeButton);
         panel.add(editClosedButton);
+        panel.add(loadingState);
         return panel;
     }
 
@@ -216,8 +221,12 @@ public class BalanceDraw extends JFrame {
             return;
         }
 
-        try {
-            LanApiClient.CashDrawerRegisterState state=LanApiClient.loadCashDrawerRegisterState();
+        CachedUiLoader.load(this, "cash-drawer:state", LanApiClient.CashDrawerRegisterState.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                LanApiClient::loadCashDrawerRegisterState, this::applyState);
+    }
+
+    private void applyState(LanApiClient.CashDrawerRegisterState state) {
             activeSession=state.session();drawerLabel.setText(state.drawerName()==null?"Unassigned":state.drawerName());
             if (state.drawerId()==null) {
                 statusLabel.setText("This register is not assigned to an active cash drawer.");
@@ -264,10 +273,6 @@ public class BalanceDraw extends JFrame {
             closeButton.setEnabled(true);
             editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
-        } catch (Exception ex) {
-            statusLabel.setText("Unable to load draw status.");
-            JOptionPane.showMessageDialog(this, "Failed to load draw status: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     private void startDraw() {

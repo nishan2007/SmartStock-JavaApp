@@ -5,6 +5,9 @@ import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -22,6 +25,7 @@ public class CustomerTransactionHistory extends JFrame {
 
     private DefaultTableModel transactionModel;
     private JLabel summaryLabel;
+    private final LoadingStatePanel loadingState=new LoadingStatePanel();
 
     public CustomerTransactionHistory(int customerId, String customerLabel) {
         this.customerId = customerId;
@@ -39,7 +43,7 @@ public class CustomerTransactionHistory extends JFrame {
 
         mainPanel.add(buildHeaderPanel(), BorderLayout.NORTH);
         mainPanel.add(buildTablePanel(), BorderLayout.CENTER);
-        mainPanel.add(buildSummaryPanel(), BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.NORTH);footer.add(buildSummaryPanel(),BorderLayout.SOUTH);mainPanel.add(footer, BorderLayout.SOUTH);
 
         loadTransactions();
         WindowHelper.configurePosWindow(this);
@@ -117,9 +121,7 @@ public class CustomerTransactionHistory extends JFrame {
     }
 
     private void loadTransactions() {
-        transactionModel.setRowCount(0);
-        try {
-            LanApiClient.CustomerTransactionResult result=LanApiClient.loadCustomerTransactions(customerId);
+        CachedUiLoader.load(this,"customer-transactions:"+customerId,LanApiClient.CustomerTransactionResult.class,SessionDataCache.SCREEN_TTL,loadingState,()->LanApiClient.loadCustomerTransactions(customerId),result->{transactionModel.setRowCount(0);
             for(LanApiClient.CustomerTransactionRecord row:result.transactions()){
                     transactionModel.addRow(new Object[]{
                             row.transactionId(),row.paymentId(),formatTimestamp(row.createdAtEpochMillis()),row.userName(),
@@ -131,9 +133,7 @@ public class CustomerTransactionHistory extends JFrame {
             }
             summaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
                     +"    Payments: "+currencyFormat.format(result.totalPayments()));
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,"Failed to load transaction history: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
-        }
+        });
     }
 
     private void openPaymentHistory() {

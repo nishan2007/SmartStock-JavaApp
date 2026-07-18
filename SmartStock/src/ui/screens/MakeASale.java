@@ -10,6 +10,10 @@ import services.ProductSearchHelper;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
@@ -123,6 +127,7 @@ public class MakeASale extends JFrame {
     private String pendingHoldFingerprint;
     private Integer pendingResumeHeldCartId;
     private String pendingResumeKey;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
    public MakeASale() {
 
@@ -365,6 +370,7 @@ public class MakeASale extends JFrame {
        footerPanel.setOpaque(false);
        footerPanel.add(overrideStatusLabel, BorderLayout.WEST);
        footerPanel.add(actionPanel, BorderLayout.EAST);
+       footerPanel.add(loadingState, BorderLayout.SOUTH);
        bottomPanel.add(bottomTopPanel, BorderLayout.CENTER);
        bottomPanel.add(footerPanel, BorderLayout.SOUTH);
 
@@ -414,7 +420,7 @@ public class MakeASale extends JFrame {
        searchField.getDocument().addDocumentListener(new DocumentListener() {
            private void restartSearchDebounce() {
                if (searchDebounceTimer == null) {
-                   searchDebounceTimer = new javax.swing.Timer(250, e -> searchProducts(false));
+                   searchDebounceTimer = new javax.swing.Timer(300, e -> searchProducts(false));
                    searchDebounceTimer.setRepeats(false);
                }
 
@@ -549,12 +555,30 @@ public class MakeASale extends JFrame {
        });
        updateSelectedStoreLabel(); //displays the current store
        updateCurrentUserLabel(); //displays the current user
-	       loadSalesSettings(false);
-	       loadCustomerAccounts();
+	       loadStartupData();
 	       updateCustomerAccountEnabled();
        loadCompanyBranding();
-	       WindowHelper.showPosWindow(this); //runs last for the main UI to show
+	       WindowHelper.configurePosWindow(this);
 	   }
+
+    private void loadStartupData() {
+        CachedUiLoader.load(this,"make-sale:startup",SalesStartupSnapshot.class,SessionDataCache.SCREEN_TTL,
+                loadingState,()->{var settings=UiTaskRunner.supplyAsync(LanApiClient::loadSalesSettings);var customers=UiTaskRunner.supplyAsync(LanApiClient::loadCustomerAccounts);return new SalesStartupSnapshot(settings.join(),customers.join());},snapshot->{salesSettings=snapshot.settings();salesSettingsLoaded=true;applyCustomerAccounts(snapshot.customers());updateOverallTotal();updateCustomerAccountEnabled();});
+    }
+
+    private void applyCustomerAccounts(java.util.List<LanApiClient.CustomerAccount> accounts) {
+        CustomerAccountOption selectedBeforeReload = getSelectedCustomerAccount();
+        customerAccountOptions = new java.util.ArrayList<>();
+        customerAccountBox.removeAllItems();
+        for (LanApiClient.CustomerAccount account : accounts) customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),account.customerName(), account.creditLimit(), account.currentBalance(),account.availableCredit(), account.business(), account.customerTypeName()));
+        applyCustomerAccountFilter("", false);
+        if (selectedBeforeReload != null) selectCustomerById(selectedBeforeReload.customerId);
+    }
+
+    private record SalesStartupSnapshot(LanApiClient.SalesSettings settings,
+                                        java.util.List<LanApiClient.CustomerAccount> customers) { }
+    private record CheckoutSnapshot(LanApiClient.CheckoutResult result, ReceiptData receipt,
+                                    String receiptError) { }
 
     private JButton createPrimaryButton(String text) {
         // Standard blue command button: text color, fill color, border color, and internal padding live here.
@@ -1153,33 +1177,17 @@ public class MakeASale extends JFrame {
 
         final int locationId = SessionManager.getCurrentLocationId();
         warmProductSearchCacheInBackground();
-        final long requestId = ++latestSearchRequestId;
-        if (searchWorker != null && !searchWorker.isDone()) {
-            searchWorker.cancel(true);
-        }
-
-        searchWorker = new SwingWorker<>() {
-            @Override
-            protected java.util.List<Object[]> doInBackground() throws Exception {
+        UiTaskRunner.submit(this,"make-sale.search",()->{
                 java.util.List<Object[]> cachedRows = tryFilterCachedProducts(locationId, searchText);
                 if (cachedRows != null) {
                     return cachedRows;
                 }
                 java.util.List<Object[]> rows = new java.util.ArrayList<>();
                 for (LanApiClient.CatalogProduct product : LanApiClient.searchCatalog(searchText)) {
-                    if (isCancelled()) return rows;
                     rows.add(catalogRow(product));
                 }
                 return rows;
-            }
-
-            @Override
-            protected void done() {
-                if (isCancelled() || requestId != latestSearchRequestId || !isDisplayable()) {
-                    return;
-                }
-                try {
-                    java.util.List<Object[]> rows = get();
+            },rows->{
                     if (rows.isEmpty()) {
                         closeSearchPopup();
                         if (showMessages) {
@@ -1189,12 +1197,7 @@ public class MakeASale extends JFrame {
                         return;
                     }
                     showSearchResultsPopup(rows);
-                } catch (Exception e) {
-                    JOptionPane.showMessageDialog(MakeASale.this, "Database error: " + e.getMessage());
-                }
-            }
-        };
-        searchWorker.execute();
+            },failure->{if(showMessages)JOptionPane.showMessageDialog(MakeASale.this,"Database error: "+failure.getMessage());});
     }
 
     private java.util.List<Object[]> tryFilterCachedProducts(int locationId, String searchText) {
@@ -1856,46 +1859,13 @@ public class MakeASale extends JFrame {
         }
     }
 
-    private boolean loadSalesSettings(boolean showError) {
-        try {
-            salesSettings = LanApiClient.loadSalesSettings();
-            salesSettingsLoaded = true;
-        } catch (Exception ex) {
-            salesSettingsLoaded = false;
-            salesSettings = new LanApiClient.SalesSettings(
-                    false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), java.util.List.of());
-            if (showError) {
-                JOptionPane.showMessageDialog(this,
-                        "SmartStock could not load the store's sales settings. Check the LAN server and retry.",
-                        "LAN Service Unavailable", JOptionPane.WARNING_MESSAGE);
-            }
-        }
-        updateOverallTotal();
-        return salesSettingsLoaded;
-    }
-
     private void loadCustomerAccounts() {
         if (customerAccountBox == null) {
             return;
         }
-
-        CustomerAccountOption selectedBeforeReload = getSelectedCustomerAccount();
-        customerAccountOptions = new java.util.ArrayList<>();
-        customerAccountBox.removeAllItems();
-
-        try {
-            for (LanApiClient.CustomerAccount account : LanApiClient.loadCustomerAccounts()) {
-                customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),
-                        account.customerName(), account.creditLimit(), account.currentBalance(),
-                        account.availableCredit(), account.business(), account.customerTypeName()));
-            }
-            applyCustomerAccountFilter("", false);
-            if (selectedBeforeReload != null) {
-                selectCustomerById(selectedBeforeReload.customerId);
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
-        }
+        UiTaskRunner.submit(this, "sale.customer-accounts", LanApiClient::loadCustomerAccounts,
+                this::applyCustomerAccounts,
+                failure -> loadingState.failed(failure.getMessage(), true, this::loadCustomerAccounts));
     }
 
     private void openQuickCustomerAccount() {
@@ -2012,7 +1982,17 @@ public class MakeASale extends JFrame {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
         }
-        if (!salesSettingsLoaded && !loadSalesSettings(true)) return;
+        if (!salesSettingsLoaded) {
+            loadingState.loading(false, java.time.Instant.now());
+            UiTaskRunner.submit(this, "sale.settings-retry", LanApiClient::loadSalesSettings, settings -> {
+                salesSettings = settings;
+                salesSettingsLoaded = true;
+                loadingState.ready(java.time.Instant.now());
+                checkout(showReceiptPreview);
+            }, failure -> loadingState.failed(failure.getMessage(), false,
+                    () -> checkout(showReceiptPreview)));
+            return;
+        }
 
         BigDecimal discountPercent = parseDiscountPercentOrShowError();
         if (discountPercent == null) {
@@ -2109,8 +2089,26 @@ public class MakeASale extends JFrame {
             pendingCheckoutKey = UUID.randomUUID().toString();
             pendingCheckoutFingerprint = requestFingerprint;
         }
-        try {
-            LanApiClient.CheckoutResult result = LanApiClient.checkout(request, pendingCheckoutKey);
+        String checkoutKey = pendingCheckoutKey;
+        checkoutBtn.setEnabled(false);
+        checkoutPrintBtn.setEnabled(false);
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "sale.checkout", () -> {
+            LanApiClient.CheckoutResult result = LanApiClient.checkout(request, checkoutKey);
+            ReceiptData receipt = null;
+            String receiptError = null;
+            if (showReceiptPreview) {
+                try {
+                    receipt = ReceiptBuilder.loadSaleReceipt(result.saleId(),
+                            "CASH".equals(paymentMethod) ? result.cashCollected() : null,
+                            "CASH".equals(paymentMethod) ? result.changeDue() : null);
+                } catch (Exception ex) {
+                    receiptError = ex.getMessage();
+                }
+            }
+            return new CheckoutSnapshot(result, receipt, receiptError);
+        }, snapshot -> {
+            LanApiClient.CheckoutResult result = snapshot.result();
             pendingCheckoutKey = null;
             pendingCheckoutFingerprint = null;
             String message = "Sale completed successfully.\nReceipt #: " + result.receiptNumber()
@@ -2122,15 +2120,10 @@ public class MakeASale extends JFrame {
                 message += "\nCash Collected: " + utils.CurrencyFormatter.format(result.cashCollected())
                         + "\nChange Due: " + utils.CurrencyFormatter.format(result.changeDue());
             }
-            if (showReceiptPreview) {
-                try {
-                    ReceiptData receiptData = ReceiptBuilder.loadSaleReceipt(result.saleId(),
-                            "CASH".equals(paymentMethod) ? result.cashCollected() : null,
-                            "CASH".equals(paymentMethod) ? result.changeDue() : null);
-                    WindowHelper.showPosWindow(new ReceiptPreview(receiptData), this);
-                } catch (Exception receiptError) {
-                    message += "\n\nReceipt preview failed: " + receiptError.getMessage();
-                }
+            if (snapshot.receipt() != null) {
+                WindowHelper.showPosWindow(new ReceiptPreview(snapshot.receipt()), this);
+            } else if (snapshot.receiptError() != null) {
+                message += "\n\nReceipt preview failed: " + snapshot.receiptError();
             }
             JOptionPane.showMessageDialog(this, message);
             cartModel.setRowCount(0);
@@ -2143,9 +2136,16 @@ public class MakeASale extends JFrame {
             searchField.setText("");
             loadCustomerAccounts();
             updateOverallTotal();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Checkout failed: " + ex.getMessage());
-        }
+            checkoutBtn.setEnabled(true);
+            checkoutPrintBtn.setEnabled(true);
+            loadingState.ready(java.time.Instant.now());
+        }, failure -> {
+            checkoutBtn.setEnabled(true);
+            checkoutPrintBtn.setEnabled(true);
+            loadingState.failed(failure.getMessage(), false,
+                    () -> checkoutThroughLanApi(showReceiptPreview, paymentMethod, paymentReference,
+                            customer, saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason));
+        });
     }
 
     private void holdCurrentCart() {

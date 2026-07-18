@@ -5,6 +5,9 @@ import managers.NavigationManager;
 import models.AppNotification;
 import services.NotificationService;
 import ui.helpers.ThemeManager;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -28,6 +31,7 @@ public class NotificationsDialog extends JDialog {
     private final JLabel summaryLabel = new JLabel("Loading notifications...");
     private List<AppNotification> notifications = new ArrayList<>();
     private List<AppNotification> filtered = new ArrayList<>();
+    private final LoadingStatePanel loadingState=new LoadingStatePanel();
 
     public NotificationsDialog(JFrame parentFrame) {
         super(parentFrame, "Notifications", false);
@@ -69,16 +73,18 @@ public class NotificationsDialog extends JDialog {
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         root.add(topPanel, BorderLayout.NORTH);
         root.add(new JScrollPane(table), BorderLayout.CENTER);
-        root.add(buttons, BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.NORTH);footer.add(buttons,BorderLayout.SOUTH);root.add(footer, BorderLayout.SOUTH);
         setContentPane(root);
         ThemeManager.applyToWindow(this);
         refresh();
     }
 
     private void refresh() {
-        notifications = NotificationService.loadNotifications();
-        applyFilter();
+        CachedUiLoader.load(this,"notifications:list",NotificationSnapshot.class,SessionDataCache.NOTIFICATION_TTL,
+                loadingState,()->new NotificationSnapshot(NotificationService.loadNotifications()),snapshot->{notifications=new ArrayList<>(snapshot.notifications());applyFilter();});
     }
+
+    private record NotificationSnapshot(List<AppNotification> notifications) { }
 
     private void applyFilter() {
         filtered = new ArrayList<>();

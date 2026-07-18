@@ -2,6 +2,10 @@ package ui.screens;
 
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -26,6 +30,7 @@ public class VendorList extends JFrame {
     private List<LanApiClient.VendorRecord> loadedVendors = List.of();
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public VendorList() {
         setTitle("Vendor List");
@@ -55,6 +60,7 @@ public class VendorList extends JFrame {
         root.add(buildHeaderPanel(), BorderLayout.NORTH);
         root.add(new JScrollPane(vendorTable), BorderLayout.CENTER);
         root.add(buildEditorPanel(), BorderLayout.EAST);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root, BorderLayout.CENTER);
 
         loadVendors();
@@ -83,6 +89,7 @@ public class VendorList extends JFrame {
 
         searchButton.addActionListener(e -> loadVendors());
         searchField.addActionListener(e -> loadVendors());
+        UiDebouncer.bind(searchField, 300, this::loadVendors);
         refreshButton.addActionListener(e -> {
             searchField.setText("");
             loadVendors();
@@ -170,19 +177,22 @@ public class VendorList extends JFrame {
     }
 
     private void loadVendors() {
+        String search = searchField.getText().trim();
+        CachedUiLoader.load(this, "vendors.search", "vendors:" + search, VendorSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new VendorSnapshot(LanApiClient.loadVendors(search)), this::applyVendors);
+    }
+
+    private void applyVendors(VendorSnapshot snapshot) {
         tableModel.setRowCount(0);
-        try {
-            loadedVendors = LanApiClient.loadVendors(searchField.getText().trim());
-            for (LanApiClient.VendorRecord vendor : loadedVendors) {
-                tableModel.addRow(new Object[]{vendor.vendorId(), vendor.name(), vendor.contactName(),
-                        vendor.phone(), vendor.email(), vendor.active() ? "Yes" : "No"});
-            }
-        } catch (Exception ex) {
-            loadedVendors = List.of();
-            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
+        loadedVendors = snapshot.vendors();
+        for (LanApiClient.VendorRecord vendor : loadedVendors) {
+            tableModel.addRow(new Object[]{vendor.vendorId(), vendor.name(), vendor.contactName(),
+                    vendor.phone(), vendor.email(), vendor.active() ? "Yes" : "No"});
         }
     }
+
+    private record VendorSnapshot(List<LanApiClient.VendorRecord> vendors) { }
 
     private void selectCurrentRow() {
         int row = vendorTable.getSelectedRow();
@@ -221,6 +231,7 @@ public class VendorList extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             LanApiClient.saveVendor(request, pendingSaveKey);
+            SessionDataCache.invalidate("vendors:");
             pendingSaveKey = null;
             pendingSaveFingerprint = null;
             clearEditor();

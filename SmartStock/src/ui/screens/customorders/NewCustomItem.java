@@ -1,5 +1,7 @@
 package ui.screens.customorders;
 
+import ui.helpers.WindowHelper;
+
 import javax.swing.*;
 import java.awt.*;
 
@@ -16,7 +18,7 @@ public final class NewCustomItem extends JPanel {
         title.setAlignmentX(Component.CENTER_ALIGNMENT);
         detail.setAlignmentX(Component.CENTER_ALIGNMENT);
         open.setAlignmentX(Component.CENTER_ALIGNMENT);
-        open.addActionListener(e -> new CustomOrderItems());
+        open.addActionListener(e -> WindowHelper.showPosWindow(new CustomOrderItems(), parentWindow));
         card.add(title); card.add(Box.createVerticalStrut(12)); card.add(detail);
         card.add(Box.createVerticalStrut(18)); card.add(open);
         add(card);

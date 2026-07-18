@@ -1,6 +1,8 @@
 package ui.components;
 
 import services.LanApiClient;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import java.awt.*;
@@ -9,11 +11,15 @@ import java.util.List;
 public class ItemClassificationSelector extends JPanel {
     private final SearchableComboBox itemTypeBox = new SearchableComboBox();
     private final SearchableComboBox brandBox = new SearchableComboBox();
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ItemClassificationSelector(DepartmentSelector departmentSelector) {
-        setLayout(new GridLayout(2, 1, 0, 5));
-        add(itemTypeBox);
-        add(brandBox);
+        setLayout(new BorderLayout());
+        JPanel fields = new JPanel(new GridLayout(2, 1, 0, 5));
+        fields.add(itemTypeBox);
+        fields.add(brandBox);
+        add(fields, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
         loadBrands();
         departmentSelector.addSelectionListener(e -> loadItemTypes(departmentSelector.getSelectedDepartmentId()));
         loadItemTypes(departmentSelector.getSelectedDepartmentId());
@@ -52,13 +58,11 @@ public class ItemClassificationSelector extends JPanel {
     }
 
     private void loadItemTypes(Integer categoryId) {
-        String previous = selectedText(itemTypeBox);
         if (categoryId == null) {
             itemTypeBox.setOptions(List.of());
             return;
         }
         load(itemTypeBox, categoryId, true);
-        selectExistingOrClear(itemTypeBox, previous);
     }
 
     private void loadBrands() {
@@ -66,13 +70,13 @@ public class ItemClassificationSelector extends JPanel {
     }
 
     private void load(SearchableComboBox box, Integer categoryId, boolean itemTypes) {
-        try {
-            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(categoryId);
+        String key="reference:inventory-lookups:"+(categoryId==null?"all":"category:"+categoryId);
+        CachedUiLoader.loadAfterDisplay(this,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
+                loadingState,()->LanApiClient.loadInventoryLookups(categoryId),lookups->{
+            String desired=selectedText(box);
             box.setOptions(itemTypes ? lookups.itemTypes() : lookups.brands());
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load item classification: " + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
-        }
+            selectExistingOrClear(box,desired);
+        });
     }
 
     private static void selectExistingOrClear(JComboBox<String> box, String value) {

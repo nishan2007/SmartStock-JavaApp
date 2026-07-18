@@ -22,6 +22,10 @@ import services.CompanyBackupScheduler;
 import services.TimeClockAutoCloseService;
 import services.TimeClockAutoCloseService.AutoCloseSettings;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 import utils.ImageCacheManager;
 import ui.screens.companyprefs.CompanyIdentityPanel;
@@ -53,6 +57,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -250,6 +255,11 @@ public class CompanyCustomization extends JFrame {
     private JTree navigationTree;
     private boolean loadingSettings = false;
     private JButton saveButton;
+    private final LoadingStatePanel loadingStatePanel = new LoadingStatePanel();
+    private BigDecimal loadedChangeBasketTargetAmount = BigDecimal.valueOf(60000);
+    private CompanyCustomizationManager.SaleSafetySettings loadedSaleSafetySettings;
+    private CompanyCustomizationManager.CustomOrderSettings loadedCustomOrderSettings;
+    private CompanyBackupScheduler.BackupScheduleSettings loadedBackupSettings;
 
     public CompanyCustomization() {
         this(NAV_COMPANY_IDENTITY);
@@ -298,7 +308,11 @@ public class CompanyCustomization extends JFrame {
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
         buttonPanel.add(saveButton);
-        rootPanel.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setOpaque(false);
+        footer.add(loadingStatePanel, BorderLayout.CENTER);
+        footer.add(buttonPanel, BorderLayout.SOUTH);
+        rootPanel.add(footer, BorderLayout.SOUTH);
 
         add(rootPanel);
 
@@ -309,6 +323,7 @@ public class CompanyCustomization extends JFrame {
         saveButton.addActionListener(e -> saveSettings());
         wireLivePreview();
         configureActionButtons();
+        saveButton.setEnabled(false);
 
         loadSettings();
         routeNavigationKey(firstPermittedSection(initialSection));
@@ -581,7 +596,7 @@ public class CompanyCustomization extends JFrame {
 
     private CompanyCustomizationManager.PriceTagTemplateSettings priceTagSettingsFromFields() { String layout = priceTagTemplates.size() == 5 ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout); }
     private void savePriceTagFieldsToSlot() { if (priceTagTemplates.size() == 5) priceTagTemplates.set(activePriceTagTemplateSlot, priceTagSettingsFromFields()); }
-    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) priceTagTemplates = new ArrayList<>(CompanyCustomizationManager.loadPriceTagTemplateSettings()); activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); refreshPriceTagPreview(); }
+    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); refreshPriceTagPreview(); }
     private void refreshPriceTagPreview() { priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "A sample product description", "SKU-10025", "SKU-10025", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); }
     private void openPriceTagTemplateEditor() {
         savePriceTagFieldsToSlot(); int slot = priceTagTemplateSlotBox.getSelectedIndex();
@@ -638,10 +653,9 @@ public class CompanyCustomization extends JFrame {
         panel.add(form, BorderLayout.CENTER);
         panel.add(buttons, BorderLayout.SOUTH);
 
-        refreshButton.addActionListener(e -> loadBackupSchedulerSettings());
+        refreshButton.addActionListener(e -> loadSettings());
         saveButton.addActionListener(e -> saveBackupSchedulerSettings());
         runNowButton.addActionListener(e -> runScheduledBackupNow(runNowButton));
-        loadBackupSchedulerSettings();
         return panel;
     }
 
@@ -851,6 +865,7 @@ public class CompanyCustomization extends JFrame {
         dialog.add(buttons, BorderLayout.SOUTH);
 
         refreshBadgePreview();
+        saveButton.setEnabled(canEditCompanyPreferences());
         dialog.pack();
         dialog.setSize(new Dimension(760, 760));
         dialog.setLocationRelativeTo(this);
@@ -2205,8 +2220,31 @@ public class CompanyCustomization extends JFrame {
     }
 
     private void loadSettings() {
+        CachedUiLoader.load(this, "company-preferences.all-settings", PreferencesSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingStatePanel, () -> {
+                    var all = UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadAllSettings);
+                    var clock = UiTaskRunner.supplyAsync(CompanyCustomization::loadTimeClockSettingsSafely);
+                    var backup = UiTaskRunner.supplyAsync(CompanyBackupScheduler::loadSettings);
+                    return new PreferencesSnapshot(all.join(), clock.join(),backup.join());
+                }, this::applySettings);
+    }
+
+    private static AutoCloseSettings loadTimeClockSettingsSafely() {
+        try {
+            return TimeClockAutoCloseService.loadSettings();
+        } catch (Exception ex) {
+            return new AutoCloseSettings(true,
+                    TimeClockAutoCloseService.DEFAULT_SCHEDULED_DELAY_HOURS,
+                    TimeClockAutoCloseService.DEFAULT_UNSCHEDULED_DETECTION_HOURS,
+                    TimeClockAutoCloseService.DEFAULT_MAX_WORK_HOURS, null, null);
+        }
+    }
+
+    private void applySettings(PreferencesSnapshot snapshot) {
         loadingSettings = true;
-        CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+        CompanyCustomizationManager.AllSettings all = snapshot.settings();
+        CompanyCustomizationManager.ReceiptSettings settings = all.receipt();
+        loadedChangeBasketTargetAmount = settings.changeBasketTargetAmount()==null?BigDecimal.valueOf(60000):settings.changeBasketTargetAmount();
         companyNameField.setText(settings.companyName());
         companyAddressLine1Field.setText(settings.addressLine1());
         companyAddressLine2Field.setText(settings.addressLine2());
@@ -2232,30 +2270,28 @@ public class CompanyCustomization extends JFrame {
         vatFixedRatePercentField.setText(settings.vatFixedRatePercent().stripTrailingZeros().toPlainString());
         receiptStartCounterField.setText(String.valueOf(settings.nextReceiptCounter()));
         loadAccountPaymentReceiptFields(settings.accountPaymentReceiptSettings());
-        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
+        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = all.saleSafety();
+        loadedSaleSafetySettings=saleSafetySettings;
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
         saleReturnApprovalLimitField.setText(utils.CurrencyFormatter.normalize(saleSafetySettings.returnApprovalLimit()).toPlainString());
-        CompanyCustomizationManager.CustomOrderSettings customOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
+        CompanyCustomizationManager.CustomOrderSettings customOrderSettings = all.customOrder();
+        loadedCustomOrderSettings=customOrderSettings;
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
         customOrderRefundApprovalLimitField.setText(utils.CurrencyFormatter.normalize(customOrderSettings.refundApprovalLimit()).toPlainString());
-        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = all.customOrderSlip();
         loadSlipFields(slipSettings);
-        CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = CompanyCustomizationManager.loadQuotationInvoicePrintSettings();
+        CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = all.quotationInvoice();
         loadQuotationInvoicePrintFields(salesPrintSettings);
-        CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = CompanyCustomizationManager.loadBadgeTemplateSettings();
+        CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = all.badgeTemplate();
         loadBadgeTemplateFields(badgeTemplateSettings);
-        try {
-            AutoCloseSettings timeClockSettings = TimeClockAutoCloseService.loadSettings();
-            timeClockAutoCloseEnabledBox.setSelected(timeClockSettings.enabled());
-            scheduledDetectionDelaySpinner.setValue(timeClockSettings.scheduledDelayHours());
-            unscheduledDetectionHoursSpinner.setValue(timeClockSettings.unscheduledDetectionHours());
-            maximumAutomaticWorkHoursSpinner.setValue(timeClockSettings.maxWorkHours());
-        } catch (Exception ex) {
-            timeClockAutoCloseEnabledBox.setSelected(true);
-            scheduledDetectionDelaySpinner.setValue(TimeClockAutoCloseService.DEFAULT_SCHEDULED_DELAY_HOURS);
-            unscheduledDetectionHoursSpinner.setValue(TimeClockAutoCloseService.DEFAULT_UNSCHEDULED_DETECTION_HOURS);
-            maximumAutomaticWorkHoursSpinner.setValue(TimeClockAutoCloseService.DEFAULT_MAX_WORK_HOURS);
-        }
+        priceTagTemplates = new ArrayList<>(all.priceTags() == null ? List.of() : all.priceTags());
+        loadPriceTagTemplateFields();
+        AutoCloseSettings timeClockSettings = snapshot.timeClock();
+        timeClockAutoCloseEnabledBox.setSelected(timeClockSettings.enabled());
+        scheduledDetectionDelaySpinner.setValue(timeClockSettings.scheduledDelayHours());
+        unscheduledDetectionHoursSpinner.setValue(timeClockSettings.unscheduledDetectionHours());
+        maximumAutomaticWorkHoursSpinner.setValue(timeClockSettings.maxWorkHours());
+        applyBackupSchedulerSettings(snapshot.backup());
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
@@ -2265,32 +2301,28 @@ public class CompanyCustomization extends JFrame {
         refreshBadgePreview();
     }
 
+    private record PreferencesSnapshot(CompanyCustomizationManager.AllSettings settings,
+                                       AutoCloseSettings timeClock,
+                                       CompanyBackupScheduler.BackupScheduleSettings backup) { }
+
     private void saveSettings() {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
-            CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
-            CompanyCustomizationManager.SaleSafetySettings existingSaleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
-            if (saleDiscountLimitPercentField.isEnabled() || saleReturnApprovalLimitField.isEnabled()) {
-                CompanyCustomizationManager.saveSaleSafetySettings(getSaleSafetySettingsFromFields(existingSaleSafetySettings));
-            }
-            CompanyCustomizationManager.CustomOrderSettings existingCustomOrderSettings = CompanyCustomizationManager.loadCustomOrderSettings();
-            if (customOrderMinimumDepositPercentField.isEnabled() || customOrderRefundApprovalLimitField.isEnabled()) {
-                CompanyCustomizationManager.saveCustomOrderSettings(getCustomOrderSettingsFromFields(existingCustomOrderSettings));
-            }
-            CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
-            CompanyCustomizationManager.saveQuotationInvoicePrintSettings(getQuotationInvoicePrintSettingsFromFields());
-            CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsForSave());
-            TimeClockAutoCloseService.saveSettings(new AutoCloseSettings(
+            var receipt=getSettingsFromFields();
+            var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
+            var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
+            var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
+            var clock=new AutoCloseSettings(
                     timeClockAutoCloseEnabledBox.isSelected(),
                     ((Number) scheduledDetectionDelaySpinner.getValue()).intValue(),
                     ((Number) unscheduledDetectionHoursSpinner.getValue()).intValue(),
                     ((Number) maximumAutomaticWorkHoursSpinner.getValue()).intValue(),
                     null,
-                    null
-            ));
-            JOptionPane.showMessageDialog(this, "Company preferences saved.");
+                    null);
+            loadingStatePanel.loading(true,Instant.now());
+            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
+            loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings);
         }
     }
 
@@ -2368,6 +2400,11 @@ public class CompanyCustomization extends JFrame {
 
     private void loadBackupSchedulerSettings() {
         CompanyBackupScheduler.BackupScheduleSettings settings = CompanyBackupScheduler.loadSettings();
+        applyBackupSchedulerSettings(settings);
+    }
+
+    private void applyBackupSchedulerSettings(CompanyBackupScheduler.BackupScheduleSettings settings) {
+        loadedBackupSettings=settings;
         backupSchedulerEnabledBox.setSelected(settings.enabled());
         backupDirectoryField.setText(settings.directory().toString());
         backupIntervalMinutesSpinner.setValue((int) Math.max(15, Math.min(525600, settings.intervalMinutes())));
@@ -2393,7 +2430,9 @@ public class CompanyCustomization extends JFrame {
         Path directory = directoryText.isBlank() ? CompanyBackupScheduler.DEFAULT_BACKUP_DIRECTORY : Path.of(directoryText);
         int intervalMinutes = (Integer) backupIntervalMinutesSpinner.getValue();
         int retentionCount = (Integer) backupRetentionCountSpinner.getValue();
-        CompanyBackupScheduler.BackupScheduleSettings existing = CompanyBackupScheduler.loadSettings();
+        CompanyBackupScheduler.BackupScheduleSettings existing = loadedBackupSettings==null
+                ?new CompanyBackupScheduler.BackupScheduleSettings(false,directory,intervalMinutes,retentionCount,0,null,null)
+                :loadedBackupSettings;
         return new CompanyBackupScheduler.BackupScheduleSettings(
                 backupSchedulerEnabledBox.isSelected(),
                 directory,
@@ -2509,7 +2548,7 @@ public class CompanyCustomization extends JFrame {
                 vatUseDepartmentRatesBox.isSelected(),
                 parsePercentField(vatFixedRatePercentField.getText(), "Fixed VAT percent"),
                 parsePositiveCounter(receiptStartCounterField.getText()),
-                CompanyCustomizationManager.loadReceiptSettings().changeBasketTargetAmount(),
+                loadedChangeBasketTargetAmount,
                 getAccountPaymentReceiptSettingsFromFields()
         );
     }
@@ -3692,8 +3731,8 @@ public class CompanyCustomization extends JFrame {
 
     private static class CustomOrderSlipPreviewPanel extends JPanel {
         private CustomOrderSlipData slipData = CustomOrderSlipBuilder.sample();
-        private CompanyCustomizationManager.ReceiptSettings receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
-        private CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        private CompanyCustomizationManager.ReceiptSettings receiptSettings;
+        private CompanyCustomizationManager.CustomOrderSlipSettings slipSettings;
         private BufferedImage logo;
 
         CustomOrderSlipPreviewPanel() {
@@ -3720,6 +3759,11 @@ public class CompanyCustomization extends JFrame {
             super.paintComponent(graphics);
             Graphics2D g = (Graphics2D) graphics.create();
             try {
+                if (receiptSettings == null || slipSettings == null) {
+                    g.setColor(new Color(100,116,139));
+                    g.drawString("Loading preview…",20,30);
+                    return;
+                }
                 CustomOrderSlipRenderer.paintSlip(g, 20, 20, getWidth() - 40, 390, slipData, receiptSettings, slipSettings, logo);
             } finally {
                 g.dispose();

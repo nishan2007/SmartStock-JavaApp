@@ -6,6 +6,11 @@ import services.LanMaintenanceWorkflowService;
 import managers.NavigationManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -82,6 +87,7 @@ public class MaintenanceManagement extends JFrame {
     private final JButton closeResolvedButton = new JButton("Close Resolved");
     private Integer selectedTicketId;
     private String selectedTicketStatus;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public MaintenanceManagement() {
         setTitle("Maintenance Management");
@@ -117,6 +123,7 @@ public class MaintenanceManagement extends JFrame {
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         footer.setOpaque(false);
+        footer.add(loadingState);
         footer.add(closeButton);
 
         root.add(header, BorderLayout.NORTH);
@@ -128,6 +135,9 @@ public class MaintenanceManagement extends JFrame {
         configureTable(partTable);
         configureTable(logTable);
         configureTable(ticketTable);
+        UiDebouncer.bind(machineSearchField, 300, this::loadMachines);
+        UiDebouncer.bind(partSearchField, 300, this::loadParts);
+        UiDebouncer.bind(ticketSearchField, 300, this::loadWorkflow);
         logTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedLog();
@@ -293,42 +303,62 @@ public class MaintenanceManagement extends JFrame {
     }
 
     private void refreshAll() {
-        loadMachineOptions();
         loadMachines();
         loadParts();
-        loadLogs();
-        loadTickets();
+        loadWorkflow();
     }
 
     private void loadMachines() {
+        String search = machineSearchField.getText().trim();
+        CachedUiLoader.load(this, "maintenance.machines.search", "maintenance:machines:" + search, services.LanMachineService.State.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadMachineState(search), this::applyMachines);
+    }
+
+    private void applyMachines(services.LanMachineService.State state) {
         machineTableModel.setRowCount(0);
-        try {for(var row:LanApiClient.loadMachineState(machineSearchField.getText().trim()).machines())machineTableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),dateText(row.nextServiceDate())});}
-        catch (Exception ex) {
-            showDatabaseError("load machines", ex);
-        }
+        for(var row:state.machines())machineTableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),dateText(row.nextServiceDate())});
     }
 
     private void loadParts() {
+        String search = partSearchField.getText().trim();
+        CachedUiLoader.load(this, "maintenance.parts.search", "maintenance:parts:" + search, MaintenancePartsSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new MaintenancePartsSnapshot(LanApiClient.loadMaintenanceParts(search)), this::applyParts);
+    }
+
+    private void applyParts(MaintenancePartsSnapshot snapshot) {
         partTableModel.setRowCount(0);
-        try {for(var row:LanApiClient.loadMaintenanceParts(partSearchField.getText().trim()))partTableModel.addRow(new Object[]{row.partId(),row.name(),row.partNumber(),row.quantity(),row.reorderPoint(),row.vendor(),row.active()?"Yes":"No"});}
-        catch (Exception ex) {
-            showDatabaseError("load parts", ex);
-        }
+        for(var row:snapshot.parts())partTableModel.addRow(new Object[]{row.partId(),row.name(),row.partNumber(),row.quantity(),row.reorderPoint(),row.vendor(),row.active()?"Yes":"No"});
     }
 
     private void loadLogs() {
-        logTableModel.setRowCount(0);
-        try {for(var row:LanApiClient.loadMaintenanceWorkflow("","All").logs())logTableModel.addRow(new Object[]{row.id(),dateText(row.date()),row.machine(),row.type(),row.technician(),row.hours(),row.cost(),row.summary()});}
-        catch (Exception ex) {
-            showDatabaseError("load maintenance logs", ex);
-        }
+        loadWorkflow();
     }
 
     private void loadTickets() {
+        loadWorkflow();
+    }
+
+    private void loadWorkflow() {
+        String search = ticketSearchField.getText().trim();
+        String filter = String.valueOf(ticketFilterBox.getSelectedItem());
+        CachedUiLoader.load(this, "maintenance.workflow.search", "maintenance:workflow:" + search + ":" + filter,
+                services.LanMaintenanceWorkflowService.State.class, SessionDataCache.SCREEN_TTL,
+                loadingState, () -> LanApiClient.loadMaintenanceWorkflow(search, filter), this::applyWorkflow);
+    }
+
+    private void applyWorkflow(services.LanMaintenanceWorkflowService.State state) {
+        logTableModel.setRowCount(0);
+        for(var row:state.logs())logTableModel.addRow(new Object[]{row.id(),dateText(row.date()),row.machine(),row.type(),row.technician(),row.hours(),row.cost(),row.summary()});
         ticketTableModel.setRowCount(0);
-        try {var state=LanApiClient.loadMaintenanceWorkflow(ticketSearchField.getText().trim(),String.valueOf(ticketFilterBox.getSelectedItem()));for(var row:state.tickets())ticketTableModel.addRow(new Object[]{row.id(),formatTimestamp(new Timestamp(row.openedEpochMillis())),row.machine(),"Created by: "+row.creator(),row.priority(),row.status(),row.problem(),row.assigned(),dateText(row.dueDate())});}
-        catch (Exception ex) {
-            showDatabaseError("load tickets", ex);
+        for(var row:state.tickets())ticketTableModel.addRow(new Object[]{row.id(),formatTimestamp(new Timestamp(row.openedEpochMillis())),row.machine(),"Created by: "+row.creator(),row.priority(),row.status(),row.problem(),row.assigned(),dateText(row.dueDate())});
+        logMachineBox.removeAllItems();
+        ticketMachineBox.removeAllItems();
+        for(var row:state.machines()) {
+            ItemOption option = new ItemOption(row.id(), row.name());
+            logMachineBox.addItem(option);
+            ticketMachineBox.addItem(option);
         }
     }
 
@@ -337,16 +367,10 @@ public class MaintenanceManagement extends JFrame {
     }
 
     private void loadMachineOptions() {
-        logMachineBox.removeAllItems();
-        ticketMachineBox.removeAllItems();
-        try {for(var row:LanApiClient.loadMaintenanceWorkflow("","All").machines()) {
-                ItemOption option = new ItemOption(row.id(), row.name());
-                logMachineBox.addItem(option);
-                ticketMachineBox.addItem(option);
-            }} catch (Exception ex) {
-            showDatabaseError("load machine choices", ex);
-        }
+        loadWorkflow();
     }
+
+    private record MaintenancePartsSnapshot(java.util.List<LanApiClient.MaintenancePart> parts) { }
 
     private void saveMachine() {
         String name = machineNameField.getText().trim();
@@ -471,10 +495,7 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) machineTableModel.getValueAt(machineTable.convertRowIndexToModel(row), 0);
-        try {var m=LanApiClient.loadMachineDetail(id).machine();selectedMachineId=id;machineNameField.setText(m.name());assetTagField.setText(value(m.assetTag()));serialNumberField.setText(value(m.serialNumber()));manufacturerField.setText(value(m.manufacturer()));modelField.setText(value(m.model()));machineTypeField.setText(value(m.type()));machineLocationField.setText(value(m.locationName()));machineStatusBox.setSelectedItem(m.status());purchaseDateField.setText(dateText(m.purchaseDate()));warrantyDateField.setText(dateText(m.warrantyDate()));lastServiceDateField.setText(dateText(m.lastServiceDate()));nextServiceDateField.setText(dateText(m.nextServiceDate()));machineNotesArea.setText(value(m.notes()));}
-        catch (Exception ex) {
-            showDatabaseError("load selected machine", ex);
-        }
+        UiTaskRunner.submit(this,"maintenance.machine-detail",()->LanApiClient.loadMachineDetail(id).machine(),m->{selectedMachineId=id;machineNameField.setText(m.name());assetTagField.setText(value(m.assetTag()));serialNumberField.setText(value(m.serialNumber()));manufacturerField.setText(value(m.manufacturer()));modelField.setText(value(m.model()));machineTypeField.setText(value(m.type()));machineLocationField.setText(value(m.locationName()));machineStatusBox.setSelectedItem(m.status());purchaseDateField.setText(dateText(m.purchaseDate()));warrantyDateField.setText(dateText(m.warrantyDate()));lastServiceDateField.setText(dateText(m.lastServiceDate()));nextServiceDateField.setText(dateText(m.nextServiceDate()));machineNotesArea.setText(value(m.notes()));},ex->loadingState.failed(ex.getMessage(),true,this::loadSelectedMachine));
     }
 
     private void loadSelectedPart() {
@@ -483,10 +504,7 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) partTableModel.getValueAt(partTable.convertRowIndexToModel(row), 0);
-        try {var p=LanApiClient.loadMaintenanceParts("").stream().filter(v->v.partId()!=null&&v.partId().equals(id)).findFirst().orElseThrow(()->new IllegalStateException("Part not found."));selectedPartId=id;partNameField.setText(p.name());partNumberField.setText(value(p.partNumber()));categoryField.setText(value(p.category()));quantityField.setText(p.quantity().toPlainString());reorderPointField.setText(p.reorderPoint().toPlainString());reorderQuantityField.setText(p.reorderQuantity().toPlainString());unitCostField.setText(p.unitCost().toPlainString());vendorField.setText(value(p.vendor()));binLocationField.setText(value(p.binLocation()));partActiveBox.setSelected(p.active());partNotesArea.setText(value(p.notes()));}
-        catch (Exception ex) {
-            showDatabaseError("load selected part", ex);
-        }
+        UiTaskRunner.submit(this,"maintenance.part-detail",()->LanApiClient.loadMaintenanceParts("").stream().filter(v->v.partId()!=null&&v.partId().equals(id)).findFirst().orElseThrow(()->new IllegalStateException("Part not found.")),p->{selectedPartId=id;partNameField.setText(p.name());partNumberField.setText(value(p.partNumber()));categoryField.setText(value(p.category()));quantityField.setText(p.quantity().toPlainString());reorderPointField.setText(p.reorderPoint().toPlainString());reorderQuantityField.setText(p.reorderQuantity().toPlainString());unitCostField.setText(p.unitCost().toPlainString());vendorField.setText(value(p.vendor()));binLocationField.setText(value(p.binLocation()));partActiveBox.setSelected(p.active());partNotesArea.setText(value(p.notes()));},ex->loadingState.failed(ex.getMessage(),true,this::loadSelectedPart));
     }
 
     private void loadSelectedLog() {
@@ -495,10 +513,7 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) logTableModel.getValueAt(logTable.convertRowIndexToModel(row), 0);
-        try {var l=LanApiClient.loadMaintenanceDetail("LOG",id).log();selectedLogId=id;selectItem(logMachineBox,l.machineId());logDateField.setText(dateText(l.serviceDate()));logTypeBox.setSelectedItem(l.type());technicianField.setText(value(l.technician()));laborHoursField.setText(l.hours().toPlainString());logCostField.setText(l.cost().toPlainString());logSummaryArea.setText(value(l.summary()));logDetailsArea.setText(value(l.details()));partsUsedArea.setText(value(l.partsUsed()));}
-        catch (Exception ex) {
-            showDatabaseError("load selected log", ex);
-        }
+        UiTaskRunner.submit(this,"maintenance.log-detail",()->LanApiClient.loadMaintenanceDetail("LOG",id).log(),l->{selectedLogId=id;selectItem(logMachineBox,l.machineId());logDateField.setText(dateText(l.serviceDate()));logTypeBox.setSelectedItem(l.type());technicianField.setText(value(l.technician()));laborHoursField.setText(l.hours().toPlainString());logCostField.setText(l.cost().toPlainString());logSummaryArea.setText(value(l.summary()));logDetailsArea.setText(value(l.details()));partsUsedArea.setText(value(l.partsUsed()));},ex->loadingState.failed(ex.getMessage(),true,this::loadSelectedLog));
     }
 
     private void loadSelectedTicket() {
@@ -507,10 +522,7 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) ticketTableModel.getValueAt(ticketTable.convertRowIndexToModel(row), 0);
-        try {var t=LanApiClient.loadMaintenanceDetail("TICKET",id).ticket();selectedTicketId=id;if(t.machineId()==null)ticketMachineBox.setSelectedIndex(ticketMachineBox.getItemCount()>0?0:-1);else selectItem(ticketMachineBox,t.machineId());priorityBox.setSelectedItem(t.priority());selectedTicketStatus=t.status();ticketStatusBox.setSelectedItem(selectedTicketStatus);createdByField.setText(t.creator());assignedToField.setText(value(t.assigned()));dueDateField.setText(dateText(t.dueDate()));problemArea.setText(value(t.problem()));resolutionArea.setText(value(t.resolution()));ticketNotesArea.setText(value(t.notes()));setTicketActionState();}
-        catch (Exception ex) {
-            showDatabaseError("load selected ticket", ex);
-        }
+        UiTaskRunner.submit(this,"maintenance.ticket-detail",()->LanApiClient.loadMaintenanceDetail("TICKET",id).ticket(),t->{selectedTicketId=id;if(t.machineId()==null)ticketMachineBox.setSelectedIndex(ticketMachineBox.getItemCount()>0?0:-1);else selectItem(ticketMachineBox,t.machineId());priorityBox.setSelectedItem(t.priority());selectedTicketStatus=t.status();ticketStatusBox.setSelectedItem(selectedTicketStatus);createdByField.setText(t.creator());assignedToField.setText(value(t.assigned()));dueDateField.setText(dateText(t.dueDate()));problemArea.setText(value(t.problem()));resolutionArea.setText(value(t.resolution()));ticketNotesArea.setText(value(t.notes()));setTicketActionState();},ex->loadingState.failed(ex.getMessage(),true,this::loadSelectedTicket));
     }
 
     private void clearMachineEditor() {

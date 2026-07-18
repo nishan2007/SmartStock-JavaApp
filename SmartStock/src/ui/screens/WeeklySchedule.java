@@ -16,9 +16,12 @@ import services.EmployeeScheduleService.Holiday;
 import services.EmployeeScheduleService.Shift;
 import services.EmployeeScheduleService.StoreLocation;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -90,6 +93,7 @@ public class WeeklySchedule extends JFrame {
     private final CalendarGridPanel daysPanel = new CalendarGridPanel();
     private final Map<Integer, Color> employeeAccents = new HashMap<>();
     private Map<LocalDate, Holiday> holidays = Map.of();
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public WeeklySchedule() {
         setTitle("Employee Schedule");
@@ -111,19 +115,6 @@ public class WeeklySchedule extends JFrame {
         canScheduleOtherStores = PermissionManager.hasPermission("SCHEDULE_OTHER_STORES");
         setCurrentPeriod(LocalDate.now());
 
-        try {
-            List<StoreLocation> locations = EmployeeScheduleService.loadAccessibleLocations();
-            for (StoreLocation location : locations) {
-                storeBox.addItem(location);
-            }
-            selectLoginLocation();
-            setCurrentPeriod(scheduleToday());
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Schedule Error", JOptionPane.ERROR_MESSAGE);
-            dispose();
-            return;
-        }
-
         JPanel root = new JPanel(new BorderLayout(0, 12));
         root.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         root.setBackground(DeckersPalette.background());
@@ -141,7 +132,7 @@ public class WeeklySchedule extends JFrame {
         statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
         statusLabel.setForeground(DeckersPalette.muted());
         statusLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
-        root.add(statusLabel, BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.setOpaque(false);footer.add(statusLabel,BorderLayout.NORTH);footer.add(loadingState,BorderLayout.SOUTH);root.add(footer, BorderLayout.SOUTH);
         add(root, BorderLayout.CENTER);
 
         storeBox.addActionListener(e -> {
@@ -158,8 +149,22 @@ public class WeeklySchedule extends JFrame {
             loadPeriod();
         });
         displayBox.addActionListener(e -> loadPeriod());
-        loadPeriod();
         WindowHelper.configurePosWindow(this);
+        loadLocations();
+    }
+
+    private void loadLocations() {
+        CachedUiLoader.load(this,"weekly-schedule.locations","weekly-schedule:locations",LocationSnapshot.class,
+                SessionDataCache.REFERENCE_TTL,loadingState,
+                ()->new LocationSnapshot(EmployeeScheduleService.loadAccessibleLocations()),snapshot->{
+                    storeBox.removeAllItems();
+                    snapshot.locations().forEach(storeBox::addItem);
+                    if(snapshot.locations().isEmpty()){statusLabel.setText("No accessible store schedules were found.");return;}
+                    selectLoginLocation();
+                    storeBox.setEnabled(canScheduleOtherStores&&storeBox.getItemCount()>1);
+                    setCurrentPeriod(scheduleToday());
+                    loadPeriod();
+                });
     }
 
     private void selectLoginLocation() {
@@ -284,23 +289,26 @@ public class WeeklySchedule extends JFrame {
         weekLabel.setText(WEEK_RANGE.format(periodStart) + " – " + WEEK_RANGE.format(periodEnd)
                 + ", " + periodEnd.getYear());
         statusLabel.setText("Loading " + selectedLocation.name() + " schedule…");
-        try {
-            Map<LocalDate, List<Assignment>> assignments = EmployeeScheduleService.loadRange(locationId, periodStart, periodEnd);
-            holidays = EmployeeScheduleService.loadHolidays(periodStart, periodEnd);
-            renderDays(assignments, holidays);
+        int requestedLocation=locationId;LocalDate requestedStart=periodStart,requestedEnd=periodEnd;String locationName=selectedLocation.name();
+        String cacheKey="weekly-schedule:period:"+requestedLocation+":"+requestedStart+":"+requestedEnd;
+        CachedUiLoader.load(this,"weekly-schedule.period",cacheKey,ScheduleSnapshot.class,
+                SessionDataCache.SCREEN_TTL,loadingState,()->{
+                    var period=EmployeeScheduleService.loadPeriod(requestedLocation,requestedStart,requestedEnd);
+                    return new ScheduleSnapshot(period.assignments(),period.holidays(),locationName);
+                },snapshot->{
+            holidays = snapshot.holidays();
+            renderDays(snapshot.assignments(), holidays);
+            Map<LocalDate,List<Assignment>> assignments=snapshot.assignments();
             int count = assignments.values().stream().mapToInt(List::size).sum();
             statusLabel.setText((count == 0 ? "No one is scheduled for this period yet."
                     : count + (count == 1 ? " scheduled work day" : " scheduled work days"))
-                    + " • " + selectedLocation.name());
-        } catch (SQLException ex) {
-            daysPanel.removeAll();
-            daysPanel.revalidate();
-            daysPanel.repaint();
-            statusLabel.setText("Schedule could not be loaded.");
-            JOptionPane.showMessageDialog(this, "Failed to load the employee schedule:\n" + ex.getMessage(),
-                    "Schedule Error", JOptionPane.ERROR_MESSAGE);
-        }
+                    + " • " + snapshot.locationName());
+        });
     }
+
+    private record LocationSnapshot(List<StoreLocation> locations) { }
+    private record ScheduleSnapshot(Map<LocalDate,List<Assignment>> assignments,
+                                    Map<LocalDate,Holiday> holidays,String locationName) { }
 
     private void renderDays(Map<LocalDate, List<Assignment>> assignments, Map<LocalDate, Holiday> holidays) {
         daysPanel.removeAll();

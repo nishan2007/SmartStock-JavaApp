@@ -2,6 +2,10 @@ package ui.screens;
 
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -39,6 +43,7 @@ public class PartsManagement extends JFrame {
     private Integer selectedPartId;
     private final List<LanApiClient.MaintenancePart> parts=new ArrayList<>();
     private String pendingKey,pendingFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public PartsManagement() {
         setTitle("Parts List");
@@ -51,6 +56,7 @@ public class PartsManagement extends JFrame {
         root.add(buildHeader(), BorderLayout.NORTH);
         root.add(new JScrollPane(table), BorderLayout.CENTER);
         root.add(buildEditor(), BorderLayout.EAST);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root);
 
         table.setRowHeight(28);
@@ -89,6 +95,7 @@ public class PartsManagement extends JFrame {
         searchPanel.add(buttons, BorderLayout.EAST);
 
         searchField.addActionListener(e -> loadParts());
+        UiDebouncer.bind(searchField, 300, this::loadParts);
         searchButton.addActionListener(e -> loadParts());
         refreshButton.addActionListener(e -> {
             searchField.setText("");
@@ -157,18 +164,24 @@ public class PartsManagement extends JFrame {
     }
 
     private void loadParts() {
-        tableModel.setRowCount(0);
         String search = searchField.getText().trim();
-        try {parts.clear();parts.addAll(LanApiClient.loadMaintenanceParts(search));
-            for(LanApiClient.MaintenancePart r:parts){
+        CachedUiLoader.load(this, "maintenance-parts.search", "maintenance-parts:" + search, PartsSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new PartsSnapshot(LanApiClient.loadMaintenanceParts(search)), this::applyParts);
+    }
+
+    private void applyParts(PartsSnapshot snapshot) {
+        tableModel.setRowCount(0);
+        parts.clear();
+        parts.addAll(snapshot.parts());
+        for(LanApiClient.MaintenancePart r:parts){
                     tableModel.addRow(new Object[]{
                             r.partId(),r.name(),r.partNumber(),r.quantity(),r.reorderPoint(),r.vendor(),r.active()?"Yes":"No"
                     });
-            }
-        } catch (Exception ex) {
-            showError("load parts", ex);
         }
     }
+
+    private record PartsSnapshot(List<LanApiClient.MaintenancePart> parts) { }
 
     private void loadSelectedPart() {
         int row = table.getSelectedRow();
@@ -197,6 +210,7 @@ public class PartsManagement extends JFrame {
                 decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),activeBox.isSelected(),nullable(notesArea));
         try {
             LanApiClient.saveMaintenancePart(request,key(request.toString()));clearKey();
+            SessionDataCache.invalidate("maintenance-parts:");
             clearEditor();
             loadParts();
         } catch (Exception ex) {
@@ -221,6 +235,7 @@ public class PartsManagement extends JFrame {
         }
         try {
             LanApiClient.deleteMaintenancePart(selectedPartId,key("delete|"+selectedPartId));clearKey();
+            SessionDataCache.invalidate("maintenance-parts:");
             clearEditor();
             loadParts();
         } catch (Exception ex) {

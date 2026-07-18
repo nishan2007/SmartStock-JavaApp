@@ -6,6 +6,9 @@ import managers.SessionManager;
 import services.CustomOrderDataService;
 import services.CustomOrderDataService.EmployeeOption;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
@@ -23,6 +26,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.List;
 
 public class OrdersManagerDashboard extends JFrame {
     private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
@@ -46,6 +50,7 @@ public class OrdersManagerDashboard extends JFrame {
     private final DefaultTableModel auditModel;
     private final JLabel storeLabel = new JLabel();
     private ZoneId storeZone = resolveStoreZone();
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public OrdersManagerDashboard() {
         setTitle("Orders Manager Dashboard");
@@ -63,6 +68,7 @@ public class OrdersManagerDashboard extends JFrame {
         root.setBackground(new Color(245, 247, 250));
         root.add(buildHeader(), BorderLayout.NORTH);
         root.add(buildContent(), BorderLayout.CENTER);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root, BorderLayout.CENTER);
 
         loadDashboard();
@@ -198,30 +204,35 @@ public class OrdersManagerDashboard extends JFrame {
     private void loadDashboard() {
         storeZone = resolveStoreZone();
         updateStoreLabel();
-        try {
-            services.LanOrdersDashboardService.Dashboard dashboard = services.LanApiClient.loadCustomOrderDashboard();
-            var metrics=dashboard.metrics();
+        CachedUiLoader.load(this, "orders-dashboard", services.LanOrdersDashboardService.Dashboard.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                services.LanApiClient::loadCustomOrderDashboard, this::applyDashboard);
+    }
+
+    private void applyDashboard(services.LanOrdersDashboardService.Dashboard dashboard) {
+        var metrics=dashboard.metrics();
             overdueLabel.setText("Overdue Orders: "+metrics.overdue());dueTodayLabel.setText("Due Today: "+metrics.dueToday());readyLabel.setText("Ready Pickup: "+metrics.ready());assignedLabel.setText("Assigned Not Started: "+metrics.assigned());cancelledLabel.setText("Cancelled 7 Days: "+metrics.cancelled());unpaidLabel.setText("Unpaid Balance: "+CURRENCY.format(metrics.unpaid()));refundsLabel.setText("Refunds Today: "+CURRENCY.format(metrics.refunds()));lowStockLabel.setText("Low Stock Items: "+metrics.lowStock());
             actionQueueModel.setRowCount(0);for(var row:dashboard.actions())actionQueueModel.addRow(new Object[]{row.orderId(),row.orderNumber(),row.status(),row.dueDate(),row.customer(),row.phone(),row.store(),row.assigned(),CURRENCY.format(row.balance())});
             exceptionModel.setRowCount(0);for(var row:dashboard.exceptions())exceptionModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.type(),row.orderNumber(),row.customer(),CURRENCY.format(row.amount()),row.user(),row.reason()});
             lowStockModel.setRowCount(0);for(var row:dashboard.lowStock())lowStockModel.addRow(new Object[]{row.item(),row.variant(),row.quantity(),row.reorder(),row.status()});
             auditModel.setRowCount(0);for(var row:dashboard.audit())auditModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.orderNumber(),row.action(),row.field(),row.oldValue(),row.newValue(),row.user(),row.device(),row.reason()});
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load orders manager dashboard: " + ex.getMessage(), "Server Error", JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     private void loadEmployees() {
+        CachedUiLoader.load(this, "reference:active-employees", EmployeeSnapshot.class,
+                SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> new EmployeeSnapshot(CustomOrderDataService.listActiveEmployees()), this::applyEmployees);
+    }
+
+    private void applyEmployees(EmployeeSnapshot snapshot) {
         assignEmployeeBox.removeAllItems();
         assignEmployeeBox.addItem(new EmployeeOption(null, "Unassigned"));
-        try {
-            for (EmployeeOption employee : CustomOrderDataService.listActiveEmployees()) {
-                assignEmployeeBox.addItem(employee);
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load employees: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        for (EmployeeOption employee : snapshot.employees()) {
+            assignEmployeeBox.addItem(employee);
         }
     }
+
+    private record EmployeeSnapshot(List<EmployeeOption> employees) { }
 
     private void loadSelectedActionOrder() {
         if (actionQueueTable == null || actionQueueTable.getSelectedRow() < 0) {
@@ -272,6 +283,7 @@ public class OrdersManagerDashboard extends JFrame {
 
         try {
             services.LanApiClient.assignCustomOrder(orderId,assigned?employee.userId():null,status,java.util.UUID.randomUUID().toString());
+            SessionDataCache.invalidate("orders-dashboard");
             loadDashboard();
             JOptionPane.showMessageDialog(this, "Order assignment saved.");
         } catch (Exception ex) {

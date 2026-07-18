@@ -13,6 +13,7 @@ import data.DatabaseMode;
 import managers.ServerTimeClockManager;
 import managers.ServerCompanyCustomizationRepository;
 import managers.SupabaseSessionManager;
+import ui.helpers.PerformanceDiagnostics;
 
 import javax.crypto.Cipher;
 import java.io.IOException;
@@ -244,6 +245,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/schedule/shifts", exchange -> handle(exchange, this::scheduleShifts));
         server.createContext("/v1/schedule/range", exchange -> handle(exchange, this::scheduleRange));
         server.createContext("/v1/schedule/holidays", exchange -> handle(exchange, this::scheduleHolidays));
+        server.createContext("/v1/schedule/snapshot", exchange -> handle(exchange, this::scheduleSnapshot));
         server.createContext("/v1/schedule/update", exchange -> handle(exchange, this::scheduleUpdate));
         server.createContext("/v1/schedule/auto-generate", exchange -> handle(exchange, this::autoScheduleGenerate));
         server.createContext("/v1/schedule/auto-apply", exchange -> handle(exchange, this::autoScheduleApply));
@@ -1468,6 +1470,7 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult scheduleShifts(RequestContext x)throws Exception{return scheduleRead(x,(c,d,s)->Map.of("shifts",ServerEmployeeScheduleService.loadShifts(requiredInt(x.body(),"locationId"),x.body().has("includeInactive")&&x.body().get("includeInactive").getAsBoolean())));}
     private ApiResult scheduleRange(RequestContext x)throws Exception{return scheduleRead(x,(c,d,s)->{int location=requiredInt(x.body(),"locationId");java.time.LocalDate start=date(x.body(),"start"),end=date(x.body(),"end");Map<java.time.LocalDate,List<ServerEmployeeScheduleService.Assignment>>m=ServerEmployeeScheduleService.loadRange(location,start,end);List<Map<String,Object>>days=new ArrayList<>();for(var e:m.entrySet())days.add(Map.of("date",e.getKey(),"assignments",e.getValue()));return Map.of("days",days);});}
     private ApiResult scheduleHolidays(RequestContext x)throws Exception{return scheduleRead(x,(c,d,s)->{java.time.LocalDate start=date(x.body(),"start"),end=date(x.body(),"end");boolean clock=x.body().has("timeClock")&&x.body().get("timeClock").getAsBoolean();Map<java.time.LocalDate,ServerEmployeeScheduleService.Holiday>m=clock?ServerEmployeeScheduleService.loadCurrentStoreHolidaysForTimeClock(start,end):ServerEmployeeScheduleService.loadHolidays(start,end);return Map.of("holidays",m.values());});}
+    private ApiResult scheduleSnapshot(RequestContext x)throws Exception{return scheduleRead(x,(c,d,s)->{int location=requiredInt(x.body(),"locationId");java.time.LocalDate start=date(x.body(),"start"),end=date(x.body(),"end");Map<java.time.LocalDate,List<ServerEmployeeScheduleService.Assignment>>assignments=ServerEmployeeScheduleService.loadRange(location,start,end);Map<java.time.LocalDate,ServerEmployeeScheduleService.Holiday>holidays=ServerEmployeeScheduleService.loadHolidays(start,end);List<Map<String,Object>>days=new ArrayList<>();for(var entry:assignments.entrySet())days.add(Map.of("date",entry.getKey(),"assignments",entry.getValue()));return Map.of("days",days,"holidays",holidays.values());});}
     private ApiResult scheduleRead(RequestContext x,ScheduleOperation action)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){bindSchedule(c,s);try{return ApiResult.ok(action.run(c,d,s));}finally{clearScheduleContext();}}}
     private ApiResult scheduleUpdate(RequestContext x)throws Exception {
         return scheduleMutation(x,"schedule.update.v1",(c,d,s)-> {
@@ -1523,6 +1526,17 @@ public final class LanApiServer implements AutoCloseable {
             ServerRequestIdentity.bindSupabaseAccessToken(optional(x.body(), "supabaseAccessToken", 16384));
             try {
                 Object settings = switch (action) {
+                    case "ALL_SETTINGS" -> {
+                        Map<String, Object> all = new LinkedHashMap<>();
+                        all.put("receipt", ServerCompanyCustomizationRepository.loadReceiptSettings());
+                        all.put("saleSafety", ServerCompanyCustomizationRepository.loadSaleSafetySettings());
+                        all.put("customOrder", ServerCompanyCustomizationRepository.loadCustomOrderSettings());
+                        all.put("customOrderSlip", ServerCompanyCustomizationRepository.loadCustomOrderSlipSettings());
+                        all.put("quotationInvoice", ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings());
+                        all.put("badgeTemplate", ServerCompanyCustomizationRepository.loadBadgeTemplateSettings());
+                        all.put("priceTags", ServerCompanyCustomizationRepository.loadPriceTagTemplateSettings());
+                        yield all;
+                    }
                     case "RECEIPT" -> ServerCompanyCustomizationRepository.loadReceiptSettings();
                     case "CUSTOM_ORDER" -> ServerCompanyCustomizationRepository.loadCustomOrderSettings();
                     case "SALE_SAFETY" -> ServerCompanyCustomizationRepository.loadSaleSafetySettings();
@@ -2588,9 +2602,11 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private void handle(HttpExchange exchange, Operation operation) throws IOException {
+        long started = System.nanoTime();
         UUID requestId = UUID.randomUUID();
         exchange.getResponseHeaders().set("X-Request-Id", requestId.toString());
         int status = 500;
+        int resultCount = -1;
         String outcome = "ERROR";
         ApiEnvelope envelope;
         try {
@@ -2598,6 +2614,7 @@ public final class LanApiServer implements AutoCloseable {
             JsonObject body = readsBody(exchange.getRequestMethod()) ? readJson(exchange) : new JsonObject();
             ApiResult result = operation.run(new RequestContext(exchange, body, requestId));
             status = result.status();
+            resultCount = PerformanceDiagnostics.resultCount(result.data());
             outcome = status < 400 ? "SUCCESS" : "DENIED";
             envelope = success(result.data());
         } catch (ApiException ex) {
@@ -2608,6 +2625,8 @@ public final class LanApiServer implements AutoCloseable {
             ex.printStackTrace();
             envelope = failure("INTERNAL_ERROR", "SmartStock could not complete this request.", true);
         }
+        PerformanceDiagnostics.record("server", exchange.getRequestURI().getPath(), started,
+                status < 400, resultCount);
         bestEffortRequestAudit(requestId, exchange, status, outcome);
         send(exchange, status, envelope);
     }

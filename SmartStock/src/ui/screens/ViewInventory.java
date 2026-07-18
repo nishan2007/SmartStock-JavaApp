@@ -1,7 +1,11 @@
 package ui.screens;
 
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.ThemeManager;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -36,6 +40,8 @@ public class ViewInventory extends JFrame {
     private JLabel totalProductsLabel;
     private JLabel locationLabel;
     private JButton viewDetailsButton;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private LanApiClient.InventoryLookups allInventoryLookups;
     private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
     private final boolean canViewVendor = PermissionManager.hasPermission("VIEW_VENDOR");
     private final boolean canViewCreatedBy = PermissionManager.hasPermission("VIEW_CREATED_BY");
@@ -136,6 +142,8 @@ public class ViewInventory extends JFrame {
         });
         stockFilterCombo.addActionListener(e -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
         searchField.addActionListener(e -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
+        UiDebouncer.bind(searchField, 300,
+                () -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
         departmentFilterCombo.addActionListener(e -> {
             if (loadingDetailFilters) return;
             loadingDetailFilters = true;
@@ -312,6 +320,7 @@ public class ViewInventory extends JFrame {
         footerPanel.add(totalProductsLabel);
         footerPanel.add(totalItemsLabel);
         footerPanel.add(viewDetailsButton);
+        footerPanel.add(loadingState);
 
         return footerPanel;
     }
@@ -375,18 +384,21 @@ public class ViewInventory extends JFrame {
     }
 
     private void loadDetailFilters() {
+        CachedUiLoader.load(this, "inventory-lookups:all", LanApiClient.InventoryLookups.class,
+                SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> LanApiClient.loadInventoryLookups(null), this::applyDetailFilters);
+    }
+
+    private void applyDetailFilters(LanApiClient.InventoryLookups lookups) {
         loadingDetailFilters = true;
         try {
-            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
+            allInventoryLookups = lookups;
             replaceOptions(departmentFilterCombo, "All Departments",
                     lookups.departments().stream().map(LanApiClient.NamedId::name).toList());
             replaceOptions(brandFilterCombo, "All Brands", lookups.brands());
             replaceOptions(shelfFilterCombo, "All Shelves", lookups.shelves());
             replaceOptions(storageShelfFilterCombo, "All Storage Shelves", lookups.shelves());
             loadItemTypeFilter();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load inventory filters.\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         } finally {
             loadingDetailFilters = false;
         }
@@ -398,21 +410,26 @@ public class ViewInventory extends JFrame {
     }
 
     private void loadItemTypeFilter() {
-        try {
-            String department = selectedFilter(departmentFilterCombo, "All Departments");
-            LanApiClient.InventoryLookups all = LanApiClient.loadInventoryLookups(null);
-            Integer categoryId = null;
-            if (department != null) {
-                categoryId = all.departments().stream().filter(item -> item.name().equals(department))
-                        .map(LanApiClient.NamedId::id).findFirst().orElse(null);
-            }
-            LanApiClient.InventoryLookups filtered = categoryId == null
-                    ? all : LanApiClient.loadInventoryLookups(categoryId);
-            replaceOptions(itemTypeFilterCombo, "All Item Types", filtered.itemTypes());
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load item types.\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
+        String department = selectedFilter(departmentFilterCombo, "All Departments");
+        LanApiClient.InventoryLookups all = allInventoryLookups;
+        if (all == null) return;
+        Integer categoryId = department == null ? null : all.departments().stream()
+                .filter(item -> item.name().equals(department))
+                .map(LanApiClient.NamedId::id).findFirst().orElse(null);
+        if (categoryId == null) {
+            replaceOptions(itemTypeFilterCombo, "All Item Types", all.itemTypes());
+            return;
         }
+        int selectedCategoryId = categoryId;
+        CachedUiLoader.load(this, "inventory-lookups:category:" + selectedCategoryId,
+                LanApiClient.InventoryLookups.class, SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> LanApiClient.loadInventoryLookups(selectedCategoryId),
+                filtered -> {
+                    loadingDetailFilters = true;
+                    try { replaceOptions(itemTypeFilterCombo, "All Item Types", filtered.itemTypes()); }
+                    finally { loadingDetailFilters = false; }
+                    loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem());
+                });
     }
 
     private void replaceOptions(JComboBox<String> box, String allLabel, List<String> values) {
@@ -437,7 +454,6 @@ public class ViewInventory extends JFrame {
     }
 
     private void loadInventory(String searchText, String stockFilter) {
-        tableModel.setRowCount(0);
         LanApiClient.InventoryRequest request = new LanApiClient.InventoryRequest(
                 searchText, stockFilter,
                 selectedFilter(departmentFilterCombo, "All Departments"),
@@ -445,9 +461,15 @@ public class ViewInventory extends JFrame {
                 selectedFilter(brandFilterCombo, "All Brands"),
                 selectedFilter(shelfFilterCombo, "All Shelves"),
                 selectedFilter(storageShelfFilterCombo, "All Storage Shelves"));
-        try {
-            LanApiClient.InventoryResult result = LanApiClient.loadInventory(request);
-            for (LanApiClient.InventoryProduct product : result.products()) {
+        String cacheKey = "inventory-list:" + request;
+        CachedUiLoader.load(this, "inventory-list.search", cacheKey, LanApiClient.InventoryResult.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadInventory(request), this::applyInventory);
+    }
+
+    private void applyInventory(LanApiClient.InventoryResult result) {
+        tableModel.setRowCount(0);
+        for (LanApiClient.InventoryProduct product : result.products()) {
                 String productType = normalizeProductType(product.productType());
                 Vector<Object> row = new Vector<>();
                 row.add(product.productId()); row.add(product.sku()); row.add(product.name());
@@ -463,13 +485,9 @@ public class ViewInventory extends JFrame {
                         : formatProductType(productType));
                 if (canViewCreatedBy) row.add(product.createdBy());
                 tableModel.addRow(row);
-            }
-            totalProductsLabel.setText("Products: " + result.totalProducts());
-            totalItemsLabel.setText("Units in Stock: " + result.totalUnits());
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load inventory.\n" + ex.getMessage(),
-                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
+        totalProductsLabel.setText("Products: " + result.totalProducts());
+        totalItemsLabel.setText("Units in Stock: " + result.totalUnits());
     }
 
     private String getStockStatus(int quantity, int reorderLevel) {

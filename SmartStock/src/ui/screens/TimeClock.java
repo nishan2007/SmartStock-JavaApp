@@ -16,8 +16,11 @@ import services.TimeClockAutoCloseService;
 import services.TimeClockAutoCloseService.EmployeeAutoCloseNotice;
 import services.TimeClockAutoCloseService.PendingReview;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -43,6 +46,7 @@ import java.util.*;
 import java.util.List;
 
 public class TimeClock extends JFrame {
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     private JLabel statusLabel;
     private JButton clockInButton;
@@ -352,6 +356,7 @@ public class TimeClock extends JFrame {
 
         mainPanel.add(topPanel, BorderLayout.NORTH);
         mainPanel.add(calendarAndDetailsPanel, BorderLayout.CENTER);
+        mainPanel.add(loadingState, BorderLayout.SOUTH);
         add(mainPanel, BorderLayout.CENTER);
 
         wireActions();
@@ -500,23 +505,32 @@ public class TimeClock extends JFrame {
     }
 
     private void loadTimeClock() {
-        try {
-            TimeClockDashboard dashboard = TimeClockManager.loadDashboard(false);
-            allRows = dashboard.rows();
-            holidays = EmployeeScheduleService.loadCurrentStoreHolidaysForTimeClock(
-                    currentMonth.atDay(1), currentMonth.atEndOfMonth());
-            updateClockStatus(dashboard.status());
-            updateCurrentSession();
-            processDayData();
-            renderCalendar();
-            refreshAutoClockOutNotice();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load time clock: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-            updateButtons(false, false, false, false);
-        } catch (IllegalStateException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage());
-            updateButtons(false, false, false, false);
-        }
+        YearMonth month = currentMonth;
+        boolean loadReviews = autoClockOutReviewsButton != null;
+        String cacheKey = "time-clock:" + month;
+        CachedUiLoader.load(this, "time-clock.load", cacheKey, TimeClockSnapshot.class, SessionDataCache.SCREEN_TTL,
+                loadingState, () -> loadTimeClockSnapshot(month, loadReviews), this::applyTimeClockSnapshot);
+    }
+
+    private TimeClockSnapshot loadTimeClockSnapshot(YearMonth month, boolean loadReviews) throws SQLException {
+        TimeClockDashboard dashboard = TimeClockManager.loadDashboard(false);
+        Map<LocalDate, Holiday> loadedHolidays = EmployeeScheduleService.loadCurrentStoreHolidaysForTimeClock(
+                month.atDay(1), month.atEndOfMonth());
+        Integer userId = SessionManager.getCurrentUserId();
+        EmployeeAutoCloseNotice notice = userId == null ? null : TimeClockAutoCloseService.latestPendingNotice(userId);
+        int reviewCount = loadReviews ? TimeClockAutoCloseService.loadPendingReviews().size() : 0;
+        return new TimeClockSnapshot(dashboard, loadedHolidays, notice, reviewCount);
+    }
+
+    private void applyTimeClockSnapshot(TimeClockSnapshot snapshot) {
+        TimeClockDashboard dashboard = snapshot.dashboard();
+        allRows = dashboard.rows();
+        holidays = snapshot.holidays();
+        updateClockStatus(dashboard.status());
+        updateCurrentSession();
+        processDayData();
+        renderCalendar();
+        applyAutoClockOutNotice(snapshot.notice(), snapshot.reviewCount());
     }
 
     private void refreshAutoClockOutNotice() {
@@ -524,24 +538,31 @@ public class TimeClock extends JFrame {
             Integer userId = SessionManager.getCurrentUserId();
             EmployeeAutoCloseNotice notice = userId == null ? null
                     : TimeClockAutoCloseService.latestPendingNotice(userId);
-            if (notice == null) {
-                autoClockOutNoticeLabel.setVisible(false);
-            } else {
-                String rule = "SCHEDULED".equals(notice.rule())
-                        ? "the scheduled-shift safety rule" : "the unscheduled 12-hour safety rule";
-                autoClockOutNoticeLabel.setText("SmartStock automatically closed your session at "
-                        + formatTime(notice.clockOut()) + " using " + rule
-                        + ". It is included in payroll and awaiting manager review.");
-                autoClockOutNoticeLabel.setVisible(true);
-            }
-            if (autoClockOutReviewsButton != null) {
-                int count = TimeClockAutoCloseService.loadPendingReviews().size();
-                autoClockOutReviewsButton.setText("Auto Clock-Out Reviews (" + count + ")");
-            }
+            int count = autoClockOutReviewsButton == null ? 0 : TimeClockAutoCloseService.loadPendingReviews().size();
+            applyAutoClockOutNotice(notice, count);
         } catch (SQLException ex) {
             autoClockOutNoticeLabel.setVisible(false);
         }
     }
+
+    private void applyAutoClockOutNotice(EmployeeAutoCloseNotice notice, int reviewCount) {
+        if (notice == null) {
+            autoClockOutNoticeLabel.setVisible(false);
+        } else {
+            String rule = "SCHEDULED".equals(notice.rule())
+                    ? "the scheduled-shift safety rule" : "the unscheduled 12-hour safety rule";
+            autoClockOutNoticeLabel.setText("SmartStock automatically closed your session at "
+                    + formatTime(notice.clockOut()) + " using " + rule
+                    + ". It is included in payroll and awaiting manager review.");
+            autoClockOutNoticeLabel.setVisible(true);
+        }
+        if (autoClockOutReviewsButton != null) {
+            autoClockOutReviewsButton.setText("Auto Clock-Out Reviews (" + reviewCount + ")");
+        }
+    }
+
+    private record TimeClockSnapshot(TimeClockDashboard dashboard, Map<LocalDate, Holiday> holidays,
+                                     EmployeeAutoCloseNotice notice, int reviewCount) { }
 
     private void showAutoClockOutReviews() {
         try {

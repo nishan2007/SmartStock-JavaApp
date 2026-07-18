@@ -1288,6 +1288,8 @@ CREATE INDEX IF NOT EXISTS products_sku_idx ON products(sku);
 CREATE INDEX IF NOT EXISTS products_barcode_idx ON products(barcode);
 CREATE INDEX IF NOT EXISTS receiving_batches_location_created_idx ON receiving_batches(location_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS sales_location_created_idx ON sales(location_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sale_items_sale_idx ON sale_items(sale_id);
+CREATE INDEX IF NOT EXISTS sale_items_product_sale_idx ON sale_items(product_id, sale_id);
 CREATE INDEX IF NOT EXISTS inventory_movements_product_created_idx ON inventory_movements(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_payment_idx ON customer_account_payment_allocations(payment_transaction_id);
 CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sale_idx ON customer_account_payment_allocations(sale_id);

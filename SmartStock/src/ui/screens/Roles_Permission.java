@@ -3,6 +3,9 @@ package ui.screens;
 import managers.PermissionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -24,6 +27,7 @@ public class Roles_Permission extends JFrame {
     private final Map<String,JCheckBox> desktopChecks = new LinkedHashMap<>();
     private final Map<String,JCheckBox> mobileChecks = new LinkedHashMap<>();
     private JTabbedPane permissionTabs;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private LanApiClient.RoleAdminState state;
 
     public Roles_Permission() {
@@ -55,7 +59,7 @@ public class Roles_Permission extends JFrame {
         right.add(permissionTabs,BorderLayout.CENTER);
         JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT));actions.add(save);right.add(actions,BorderLayout.SOUTH);
 
-        add(left,BorderLayout.WEST);add(right,BorderLayout.CENTER);
+        add(left,BorderLayout.WEST);add(right,BorderLayout.CENTER);add(loadingState,BorderLayout.SOUTH);
         WindowHelper.configurePosWindow(this);
         loadState(null);
     }
@@ -66,8 +70,9 @@ public class Roles_Permission extends JFrame {
     }
 
     private void loadState(Integer selectRoleId) {
-        try {
-            state=LanApiClient.loadRoleAdminState();
+        CachedUiLoader.load(this,"roles.admin.state",LanApiClient.RoleAdminState.class,
+                SessionDataCache.REFERENCE_TTL,loadingState,LanApiClient::loadRoleAdminState,loaded->{
+            state=loaded;
             renderDefinitions(desktopPanel,desktopChecks,state.permissions());
             renderDefinitions(mobilePanel,mobileChecks,state.mobilePermissions());
             permissionTabs.setEnabledAt(1,state.mobileAvailable());
@@ -75,7 +80,7 @@ public class Roles_Permission extends JFrame {
             if(state.roles()!=null)for(LanApiClient.RoleRecord r:state.roles())roleModel.addElement(new RoleItem(r.roleId(),r.name()));
             int selected=0;if(selectRoleId!=null)for(int i=0;i<roleModel.size();i++)if(roleModel.get(i).id==selectRoleId){selected=i;break;}
             if(!roleModel.isEmpty())roleList.setSelectedIndex(selected);
-        } catch(Exception ex) { showError("Role information could not be loaded",ex); }
+        });
     }
 
     private void renderDefinitions(JPanel target,Map<String,JCheckBox>checks,List<LanApiClient.PermissionRecord>definitions) {
@@ -97,19 +102,22 @@ public class Roles_Permission extends JFrame {
     private void loadSelection() {
         RoleItem role=roleList.getSelectedValue();if(role==null)return;
         desktopChecks.values().forEach(b->b.setSelected(false));mobileChecks.values().forEach(b->b.setSelected(false));
-        try {var selected=LanApiClient.loadRolePermissionSelection(role.id);select(desktopChecks,selected.permissionKeys());select(mobileChecks,selected.mobilePermissionKeys());}
-        catch(Exception ex){showError("Permissions could not be loaded",ex);}
+        String key="roles.selection."+role.id;
+        CachedUiLoader.load(this,"roles.selection",key,LanApiClient.RolePermissionSelection.class,SessionDataCache.SCREEN_TTL,
+                loadingState,()->LanApiClient.loadRolePermissionSelection(role.id),selected->{
+                    select(desktopChecks,selected.permissionKeys());select(mobileChecks,selected.mobilePermissionKeys());
+                });
     }
 
     private void savePermissions() {
         RoleItem role=roleList.getSelectedValue();if(role==null)return;
-        try {LanApiClient.saveRolePermissions(role.id,selected(desktopChecks),selected(mobileChecks),UUID.randomUUID().toString());if(role.name!=null&&role.name.equalsIgnoreCase(PermissionManager.getCurrentRole()))PermissionManager.refreshOpenWindows();JOptionPane.showMessageDialog(this,"Permissions updated.");}
+        try {LanApiClient.saveRolePermissions(role.id,selected(desktopChecks),selected(mobileChecks),UUID.randomUUID().toString());SessionDataCache.invalidate("roles.");if(role.name!=null&&role.name.equalsIgnoreCase(PermissionManager.getCurrentRole()))PermissionManager.refreshOpenWindows();JOptionPane.showMessageDialog(this,"Permissions updated.");}
         catch(Exception ex){showError("Permissions could not be saved",ex);}
     }
 
     private void addRole() {
         String name=JOptionPane.showInputDialog(this,"Enter new role name:");if(name==null||name.isBlank())return;
-        try {var added=LanApiClient.addRole(name,UUID.randomUUID().toString());loadState(added.roleId());}
+        try {var added=LanApiClient.addRole(name,UUID.randomUUID().toString());SessionDataCache.invalidate("roles.");loadState(added.roleId());}
         catch(Exception ex){showError("The role could not be added",ex);}
     }
 

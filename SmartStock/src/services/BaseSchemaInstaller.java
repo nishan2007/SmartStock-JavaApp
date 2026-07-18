@@ -478,6 +478,8 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE sale_items ALTER COLUMN product_type SET DEFAULT 'INVENTORY'");
             stmt.executeUpdate("ALTER TABLE sale_items ALTER COLUMN product_type SET NOT NULL");
             stmt.executeUpdate("ALTER TABLE sale_items ALTER COLUMN product_id SET NOT NULL");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sale_items_sale_idx ON sale_items(sale_id)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sale_items_product_sale_idx ON sale_items(product_id, sale_id)");
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS inventory_movements (
                         movement_id BIGSERIAL PRIMARY KEY,

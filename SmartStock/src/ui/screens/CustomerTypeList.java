@@ -2,6 +2,10 @@ package ui.screens;
 
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -20,6 +24,7 @@ public class CustomerTypeList extends JFrame {
     private Integer selectedTypeId;
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
+    private final LoadingStatePanel loadingState=new LoadingStatePanel();
 
     public CustomerTypeList() {
         setTitle("Customer Types");
@@ -51,8 +56,10 @@ public class CustomerTypeList extends JFrame {
         root.add(buildHeaderPanel(), BorderLayout.NORTH);
         root.add(new JScrollPane(typeTable), BorderLayout.CENTER);
         root.add(buildEditorPanel(), BorderLayout.EAST);
+        root.add(loadingState,BorderLayout.SOUTH);
         add(root, BorderLayout.CENTER);
 
+        UiDebouncer.bind(searchField,300,this::loadCustomerTypes);
         loadCustomerTypes();
         WindowHelper.configurePosWindow(this);
     }
@@ -160,18 +167,15 @@ public class CustomerTypeList extends JFrame {
     }
 
     private void loadCustomerTypes() {
-        tableModel.setRowCount(0);
-        try {
-            for (LanApiClient.CustomerTypeRecord type :
-                    LanApiClient.loadCustomerTypes(searchField.getText().trim(), false)) {
+        String search=searchField.getText().trim();CachedUiLoader.load(this,"customer-types.search","customer-types:"+search,CustomerTypeSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->new CustomerTypeSnapshot(LanApiClient.loadCustomerTypes(search,false)),snapshot->{tableModel.setRowCount(0);
+            for (LanApiClient.CustomerTypeRecord type : snapshot.types()) {
                 tableModel.addRow(new Object[]{type.customerTypeId(), type.name(),
                         type.description(), type.active()});
             }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
-        }
+        });
     }
+
+    private record CustomerTypeSnapshot(java.util.List<LanApiClient.CustomerTypeRecord> types) { }
 
     private void selectCurrentRow() {
         int row = typeTable.getSelectedRow();

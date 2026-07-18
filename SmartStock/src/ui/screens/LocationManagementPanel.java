@@ -1,6 +1,10 @@
 package ui.screens;
 
 import services.LanApiClient;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -45,6 +49,7 @@ public class LocationManagementPanel extends JPanel {
     private boolean hasEmailDeliveryColumns=true;
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public LocationManagementPanel() {
         setLayout(new BorderLayout(14, 14));
@@ -74,6 +79,8 @@ public class LocationManagementPanel extends JPanel {
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(new JScrollPane(locationTable), BorderLayout.CENTER);
         add(buildEditorPanel(), BorderLayout.EAST);
+        add(loadingState, BorderLayout.SOUTH);
+        UiDebouncer.bind(searchField,300,this::loadLocations);
         loadLocations();
     }
 
@@ -252,20 +259,22 @@ public class LocationManagementPanel extends JPanel {
     }
 
     private void loadLocations() {
-        tableModel.setRowCount(0);
         String search = searchField.getText().trim();
-        try {
-            for(LanApiClient.LocationRecord r:LanApiClient.loadLocationRecords(search)){
+        CachedUiLoader.loadAfterDisplay(this,"locations.search","locations:"+search,LocationSnapshot.class,
+                SessionDataCache.SCREEN_TTL,loadingState,
+                ()->new LocationSnapshot(LanApiClient.loadLocationRecords(search)),snapshot->{
+            tableModel.setRowCount(0);
+            for(LanApiClient.LocationRecord r:snapshot.locations()){
                     tableModel.addRow(new Object[]{
                             r.locationId(),r.name(),r.storeCode(),r.address(),r.addressLine1(),r.addressLine2(),r.addressLine3(),r.phoneLine1(),r.phoneLine2(),
                             r.emailLine1(),r.emailLine2(),r.senderEmail(),r.senderName(),r.bccEmail(),r.balanceSheetEmail(),r.emailReceipts(),r.emailOrders(),
                             r.emailQuotes(),r.emailInvoices(),r.emailDelivery(),r.timezone()
                     });
             }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load locations: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
+        });
     }
+
+    private record LocationSnapshot(List<LanApiClient.LocationRecord> locations) { }
 
     private void selectCurrentRow() {
         int row = locationTable.getSelectedRow();

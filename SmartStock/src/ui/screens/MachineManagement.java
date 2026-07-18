@@ -3,6 +3,10 @@ package ui.screens;
 import services.LanApiClient;
 import services.LanMachineService;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -48,6 +52,7 @@ public class MachineManagement extends JFrame {
     private final JComboBox<PartOption> partBox = new JComboBox<>();
     private final JTextField partNotesField = new JTextField();
     private Integer selectedMachineId;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public MachineManagement() {
         setTitle("Machine List");
@@ -66,6 +71,7 @@ public class MachineManagement extends JFrame {
         editorScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         editorScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         root.add(editorScrollPane, BorderLayout.EAST);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root);
 
         table.setRowHeight(28);
@@ -86,8 +92,6 @@ public class MachineManagement extends JFrame {
         associatedPartsTable.getColumnModel().getColumn(2).setPreferredWidth(160);
         associatedPartsTable.setFillsViewportHeight(true);
 
-        loadLocationOptions();
-        loadPartOptions();
         loadMachines();
         WindowHelper.configurePosWindow(this);
     }
@@ -113,6 +117,7 @@ public class MachineManagement extends JFrame {
         searchPanel.add(buttons, BorderLayout.EAST);
 
         searchField.addActionListener(e -> loadMachines());
+        UiDebouncer.bind(searchField, 300, this::loadMachines);
         searchButton.addActionListener(e -> loadMachines());
         refreshButton.addActionListener(e -> {
             searchField.setText("");
@@ -238,13 +243,20 @@ public class MachineManagement extends JFrame {
     }
 
     private void loadMachines() {
+        String search = searchField.getText().trim();
+        CachedUiLoader.load(this, "machine-state.search", "machine-state:" + search, LanMachineService.State.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadMachineState(search), this::applyMachineState);
+    }
+
+    private void applyMachineState(LanMachineService.State state) {
         tableModel.setRowCount(0);
-        try {
-            LanMachineService.State state=LanApiClient.loadMachineState(searchField.getText().trim());
-            for(var row:state.machines())tableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),row.nextServiceDate()==null?"":row.nextServiceDate().toString()});
-        } catch (Exception ex) {
-            showError("load machines", ex);
-        }
+        for(var row:state.machines())tableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),row.nextServiceDate()==null?"":row.nextServiceDate().toString()});
+        partBox.removeAllItems();
+        for(var part:state.parts())partBox.addItem(new PartOption(part.id(),part.name(),part.partNumber()));
+        locationBox.removeAllItems();
+        locationBox.addItem(new LocationOption(null, "Unassigned"));
+        for(var location:state.locations())locationBox.addItem(new LocationOption(location.id(),location.name()));
     }
 
     private void loadSelectedMachine() {
@@ -253,11 +265,13 @@ public class MachineManagement extends JFrame {
             return;
         }
         Integer id = (Integer) tableModel.getValueAt(table.convertRowIndexToModel(row), 0);
-        try {
-            LanMachineService.Detail detail=LanApiClient.loadMachineDetail(id);LanMachineService.Machine machine=detail.machine();selectedMachineId=id;nameField.setText(machine.name());assetTagField.setText(value(machine.assetTag()));serialNumberField.setText(value(machine.serialNumber()));manufacturerField.setText(value(machine.manufacturer()));modelField.setText(value(machine.model()));typeField.setText(value(machine.type()));if(machine.locationId()==null)selectLocationByName(machine.locationName());else selectLocation(machine.locationId());statusBox.setSelectedItem(machine.status());purchaseDateField.setText(dateText(machine.purchaseDate()));warrantyDateField.setText(dateText(machine.warrantyDate()));lastServiceDateField.setText(dateText(machine.lastServiceDate()));nextServiceDateField.setText(dateText(machine.nextServiceDate()));notesArea.setText(value(machine.notes()));populateAssociatedParts(detail.parts());
-        } catch (Exception ex) {
-            showError("load selected machine", ex);
-        }
+        CachedUiLoader.load(this, "machine-detail.selection", "machine-detail:" + id, LanMachineService.Detail.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadMachineDetail(id), detail -> applyMachineDetail(id, detail));
+    }
+
+    private void applyMachineDetail(Integer id, LanMachineService.Detail detail) {
+        LanMachineService.Machine machine=detail.machine();selectedMachineId=id;nameField.setText(machine.name());assetTagField.setText(value(machine.assetTag()));serialNumberField.setText(value(machine.serialNumber()));manufacturerField.setText(value(machine.manufacturer()));modelField.setText(value(machine.model()));typeField.setText(value(machine.type()));if(machine.locationId()==null)selectLocationByName(machine.locationName());else selectLocation(machine.locationId());statusBox.setSelectedItem(machine.status());purchaseDateField.setText(dateText(machine.purchaseDate()));warrantyDateField.setText(dateText(machine.warrantyDate()));lastServiceDateField.setText(dateText(machine.lastServiceDate()));nextServiceDateField.setText(dateText(machine.nextServiceDate()));notesArea.setText(value(machine.notes()));populateAssociatedParts(detail.parts());
     }
 
     private void saveMachine() {
@@ -269,6 +283,7 @@ public class MachineManagement extends JFrame {
         try {
             LocationOption location = (LocationOption) locationBox.getSelectedItem();
             LanApiClient.saveMachine(new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(typeField),location==null?null:location.id,location==null?null:location.name,String.valueOf(statusBox.getSelectedItem()),parseDate(purchaseDateField),parseDate(warrantyDateField),parseDate(lastServiceDateField),parseDate(nextServiceDateField),nullable(notesArea)),java.util.UUID.randomUUID().toString());
+            SessionDataCache.invalidate("machine-");
             clearEditor();
             loadMachines();
         } catch (Exception ex) {
@@ -293,6 +308,7 @@ public class MachineManagement extends JFrame {
         }
         try {
             LanApiClient.updateMachineLink("DELETE",selectedMachineId,null,null,null,java.util.UUID.randomUUID().toString());
+            SessionDataCache.invalidate("machine-");
             clearEditor();
             loadMachines();
         } catch (Exception ex) {

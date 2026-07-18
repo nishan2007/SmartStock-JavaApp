@@ -1,12 +1,17 @@
 package ui.screens;
 
 import Receipt.AccountPaymentReceiptData;
+import Receipt.AccountPaymentReceiptBuilder;
 import Receipt.AccountPaymentReceiptFormatter;
 import Receipt.AccountPaymentReceiptPrinter;
 import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
 import services.EmailOutboxService;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.print.PrintException;
@@ -17,26 +22,33 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
-import javax.swing.SwingWorker;
 import javax.swing.border.EmptyBorder;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.List;
 
 public class AccountPaymentReceiptPreview extends JFrame {
-    private final AccountPaymentReceiptData receiptData;
-    private final CompanyCustomizationManager.ReceiptSettings receiptSettings;
+    private AccountPaymentReceiptData receiptData;
+    private CompanyCustomizationManager.ReceiptSettings receiptSettings;
     private final ReceiptPreview.ReceiptPaperPanel receiptPaperPanel = new ReceiptPreview.ReceiptPaperPanel();
     private final JComboBox<PrinterOption> printerBox = new JComboBox<>();
     private final JComboBox<HardwareSettingsManager.PrintFormat> formatBox = new JComboBox<>(HardwareSettingsManager.PrintFormat.values());
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public AccountPaymentReceiptPreview(AccountPaymentReceiptData receiptData) {
-        this.receiptData = receiptData;
-        this.receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
+        this(receiptData, null, null);
+    }
+
+    public AccountPaymentReceiptPreview(int customerId, long transactionId) {
+        this(null, customerId, transactionId);
+    }
+
+    private AccountPaymentReceiptPreview(AccountPaymentReceiptData initialData,
+                                         Integer customerId, Long transactionId) {
+        this.receiptData = initialData;
 
         setTitle("Account Payment Receipt");
         setSize(560, 760);
@@ -74,10 +86,15 @@ public class AccountPaymentReceiptPreview extends JFrame {
         JButton emailButton = new JButton("Email Receipt");
         JButton printButton = new JButton("Print Receipt");
         JButton closeButton = new JButton("Close");
+        emailButton.setEnabled(false);
+        printButton.setEnabled(false);
         buttonPanel.add(emailButton);
         buttonPanel.add(printButton);
         buttonPanel.add(closeButton);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel footerPanel = new JPanel(new BorderLayout());
+        footerPanel.add(loadingState, BorderLayout.CENTER);
+        footerPanel.add(buttonPanel, BorderLayout.SOUTH);
+        mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         emailButton.addActionListener(e -> emailReceipt());
         printButton.addActionListener(e -> printReceipt());
@@ -86,9 +103,25 @@ public class AccountPaymentReceiptPreview extends JFrame {
         formatBox.addActionListener(e -> updateReceiptPreview());
 
         loadPrinterOptions();
-        updateReceiptPreview();
-        loadLogoPreviewAsync();
+        receiptPaperPanel.setReceiptText("Loading payment receipt preview...", false,
+                receiptData == null ? "" : receiptData.getPaymentId());
         WindowHelper.configurePosWindow(this);
+        String identity = receiptData != null ? receiptData.getPaymentId() : customerId + ":" + transactionId;
+        CachedUiLoader.load(this, "account-payment-preview.load", "account-payment-preview:" + identity,
+                PreviewSnapshot.class, SessionDataCache.SCREEN_TTL, loadingState, () -> {
+                    var data = initialData != null
+                            ? java.util.concurrent.CompletableFuture.completedFuture(initialData)
+                            : UiTaskRunner.supplyAsync(() -> AccountPaymentReceiptBuilder.loadPaymentReceipt(customerId, transactionId));
+                    var settings = UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadReceiptSettings);
+                    return new PreviewSnapshot(data.join(), settings.join());
+                }, snapshot -> {
+                    receiptData = snapshot.data();
+                    receiptSettings = snapshot.settings();
+                    emailButton.setEnabled(true);
+                    printButton.setEnabled(true);
+                    updateReceiptPreview();
+                    loadLogoPreviewAsync();
+                });
     }
 
     private void loadPrinterOptions() {
@@ -124,6 +157,7 @@ public class AccountPaymentReceiptPreview extends JFrame {
     }
 
     private void updateReceiptPreview() {
+        if (receiptSettings == null) return;
         HardwareSettingsManager.PrintFormat format = getSelectedPrintFormat();
         String barcodeText = receiptSettings.accountPaymentReceiptSettings().showBarcode() ? receiptData.getPaymentId() : "";
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
@@ -140,21 +174,10 @@ public class AccountPaymentReceiptPreview extends JFrame {
         }
 
         receiptPaperPanel.setLogoLoading(true);
-        new SwingWorker<BufferedImage, Void>() {
-            @Override
-            protected BufferedImage doInBackground() {
-                return CompanyCustomizationManager.loadReceiptLogo(receiptSettings);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    receiptPaperPanel.setLogo(get(), false);
-                } catch (Exception ex) {
-                    receiptPaperPanel.setLogo(null, false);
-                }
-            }
-        }.execute();
+        UiTaskRunner.submit(this, "account-payment-preview.logo",
+                () -> CompanyCustomizationManager.loadReceiptLogo(receiptSettings),
+                logo -> receiptPaperPanel.setLogo(logo, false),
+                failure -> receiptPaperPanel.setLogo(null, false));
     }
 
     private void printReceipt() {
@@ -206,6 +229,9 @@ public class AccountPaymentReceiptPreview extends JFrame {
         }
         return HardwareSettingsManager.PrintFormat.RECEIPT_40;
     }
+
+    private record PreviewSnapshot(AccountPaymentReceiptData data,
+                                   CompanyCustomizationManager.ReceiptSettings settings) { }
 
     private static class PrinterOption {
         private final HardwareSettingsManager.PosPrinter printer;

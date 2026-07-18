@@ -2,6 +2,10 @@ package ui.screens;
 
 import services.LanApiClient;
 import ui.helpers.ThemeManager;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -26,6 +30,7 @@ public class SyncStatus extends JFrame {
             return false;
         }
     };
+    private final LoadingStatePanel loadingState=new LoadingStatePanel();
 
     public SyncStatus() {
         super("Local Sync Status");
@@ -42,18 +47,9 @@ public class SyncStatus extends JFrame {
         runNowButton.addActionListener(e -> {
             runNowButton.setEnabled(false);
             runNowButton.setText("Syncing...");
-            SwingWorker<LanApiClient.SyncStatusSnapshot, Void> worker = new SwingWorker<>() {
-                @Override
-                protected LanApiClient.SyncStatusSnapshot doInBackground() throws Exception {
-                    return LanApiClient.runSyncNow();
-                }
-
-                @Override
-                protected void done() {
+            UiTaskRunner.submit(this,"sync-status.run",LanApiClient::runSyncNow,status->{
                     runNowButton.setEnabled(true);
                     runNowButton.setText("Run Sync Now");
-                    try {
-                        LanApiClient.SyncStatusSnapshot status = get();
                         if (status.lockRunning()) {
                             JOptionPane.showMessageDialog(
                                     SyncStatus.this,
@@ -63,13 +59,8 @@ public class SyncStatus extends JFrame {
                                     JOptionPane.INFORMATION_MESSAGE
                             );
                         }
-                    } catch (Exception ex) {
-                        JOptionPane.showMessageDialog(SyncStatus.this, ex.getMessage(), "Manual Sync", JOptionPane.ERROR_MESSAGE);
-                    }
                     refresh();
-                }
-            };
-            worker.execute();
+                },ex->{runNowButton.setEnabled(true);runNowButton.setText("Run Sync Now");JOptionPane.showMessageDialog(SyncStatus.this,ex.getMessage(),"Manual Sync",JOptionPane.ERROR_MESSAGE);});
         });
         resolveButton.addActionListener(e -> resolveSelected(conflictsTable));
 
@@ -85,17 +76,19 @@ public class SyncStatus extends JFrame {
         tabs.addTab("Conflicts", new JScrollPane(conflictsTable));
         tabs.addTab("Audit History", new JScrollPane(auditTable));
         root.add(tabs, BorderLayout.CENTER);
-        root.add(buttons, BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.NORTH);footer.add(buttons,BorderLayout.SOUTH);root.add(footer, BorderLayout.SOUTH);
         setContentPane(root);
         ThemeManager.applyToWindow(this);
         refresh();
     }
 
     private void refresh() {
-        conflictModel.setRowCount(0);
-        auditModel.setRowCount(0);
-        try {
-            LanApiClient.SyncStatusSnapshot status = LanApiClient.loadSyncStatus();
+        CachedUiLoader.load(this,"sync-status:snapshot",LanApiClient.SyncStatusSnapshot.class,
+                SessionDataCache.SCREEN_TTL,loadingState,LanApiClient::loadSyncStatus,this::applyStatus);
+    }
+
+    private void applyStatus(LanApiClient.SyncStatusSnapshot status) {
+            conflictModel.setRowCount(0);auditModel.setRowCount(0);
             if (status.conflicts() != null) for (LanApiClient.SyncConflict conflict : status.conflicts()) {
                 conflictModel.addRow(new Object[]{conflict.conflictId(), conflict.eventType(),
                         conflict.conflictType(), conflict.status(), instant(conflict.createdAtEpochMillis())});
@@ -114,9 +107,6 @@ public class SyncStatus extends JFrame {
                     + " | Conflicts: " + status.conflictCount()
                     + " | Last success: " + instantOrNever(status.lastSuccessEpochMillis())
                     + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Sync Status", JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     private void resolveSelected(JTable table) {

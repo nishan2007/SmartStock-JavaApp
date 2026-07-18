@@ -1,14 +1,12 @@
 package ui.screens;
 
-import Receipt.AccountPaymentReceiptBuilder;
-import Receipt.AccountPaymentReceiptData;
-import Receipt.QuotationInvoiceDocumentBuilder;
 import managers.PermissionManager;
 import services.ManagerApprovalService;
 import services.QuotationInvoiceService;
 import services.QuotationInvoiceViewService;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -224,17 +222,13 @@ public class Quotations extends JFrame {
     void previewQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
-        try {
-            WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview("Quotation Preview", QuotationInvoiceDocumentBuilder.buildQuotation(quotationId), false, "QUOTATION", quotationId), this);
-        } catch (SQLException ex) {
-            showError("Failed to preview quotation", ex);
-        }
+        WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
+                "Quotation Preview", false, "QUOTATION", quotationId), this);
     }
 
     private void openQuotationPrintDialog(long quotationId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Quotation Print",
-                QuotationInvoiceDocumentBuilder.buildQuotation(quotationId),
                 true,
                 "QUOTATION",
                 quotationId
@@ -244,7 +238,6 @@ public class Quotations extends JFrame {
     private void openSalesInvoicePrintDialog(long invoiceId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Invoice Print",
-                QuotationInvoiceDocumentBuilder.buildInvoice(invoiceId),
                 true,
                 "INVOICE",
                 invoiceId
@@ -254,7 +247,6 @@ public class Quotations extends JFrame {
     private void openDeliveryPrintDialog(long deliveryEventId) throws SQLException {
         WindowHelper.showPosWindow(new QuotationInvoiceDocumentPreview(
                 "Delivery Bill Print",
-                QuotationInvoiceDocumentBuilder.buildDelivery(deliveryEventId),
                 true,
                 "DELIVERY_BILL",
                 deliveryEventId
@@ -265,17 +257,8 @@ public class Quotations extends JFrame {
         if (receiptRef == null) {
             return;
         }
-        try {
-            AccountPaymentReceiptData receipt = AccountPaymentReceiptBuilder.loadPaymentReceipt(receiptRef.customerId(), receiptRef.transactionId());
-            WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt), this);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Payment was recorded, but the receipt preview could not be loaded: " + ex.getMessage(),
-                    "Payment Receipt",
-                    JOptionPane.WARNING_MESSAGE
-            );
-        }
+        WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(
+                receiptRef.customerId(), receiptRef.transactionId()), this);
     }
 
     Long selectedId(JTable table) {
@@ -502,7 +485,7 @@ public class Quotations extends JFrame {
             super(owner, editData == null ? "New Quotation" : "Edit Draft Quotation " + editData.quotationNumber(), true);
             this.editQuotationId = editData == null ? null : editData.quotationId();
             this.editQuotationNumber = editData == null ? null : editData.quotationNumber();
-            this.customerSearchTimer = new Timer(250, e -> refreshCustomerResults(editorText(customerBox)));
+            this.customerSearchTimer = new Timer(300, e -> refreshCustomerResults(editorText(customerBox)));
             customerSearchTimer.setRepeats(false);
             setSize(860, 620);
             setLocationRelativeTo(owner);
@@ -746,13 +729,7 @@ public class Quotations extends JFrame {
         }
 
         private void loadCustomers() {
-            try {
-                for (QuotationInvoiceViewService.CustomerOption customer : QuotationInvoiceViewService.listCustomers()) {
-                    customerBox.addItem(customer);
-                }
-            } catch (SQLException ex) {
-                JOptionPane.showMessageDialog(this, "Failed to load customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
-            }
+            refreshCustomerResults("");
         }
 
         private void installCustomerSearch() {
@@ -794,21 +771,18 @@ public class Quotations extends JFrame {
         }
 
         private void refreshCustomerResults(String searchText) {
-            try {
-                List<QuotationInvoiceViewService.CustomerOption> customers = QuotationInvoiceViewService.searchCustomers(searchText);
+            String query=searchText==null?"":searchText;
+            UiTaskRunner.submit(this,"quotation.customers",()->QuotationInvoiceViewService.searchCustomers(query),customers->{
                 updatingCustomerResults = true;
                 customerBox.removeAllItems();
                 for (QuotationInvoiceViewService.CustomerOption customer : customers) {
                     customerBox.addItem(customer);
                 }
-                customerBox.getEditor().setItem(searchText);
+                customerBox.getEditor().setItem(query);
                 updatingCustomerResults = false;
-                selectExactCustomerMatch(searchText, customers);
+                selectExactCustomerMatch(query, customers);
                 showCustomerPopupIfUseful();
-            } catch (SQLException ex) {
-                updatingCustomerResults = false;
-                JOptionPane.showMessageDialog(this, "Failed to search customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
-            }
+            },ex->{updatingCustomerResults=false;});
         }
 
         private QuotationInvoiceViewService.CustomerOption selectedCustomer() {
@@ -820,12 +794,7 @@ public class Quotations extends JFrame {
         }
 
         private QuotationInvoiceViewService.CustomerOption selectBestCustomerMatch(String searchText) {
-            try {
-                return selectBestCustomerMatch(searchText, QuotationInvoiceViewService.searchCustomers(searchText), true);
-            } catch (SQLException ex) {
-                JOptionPane.showMessageDialog(this, "Failed to search customers.\n\n" + ex.getMessage(), "Quotation", JOptionPane.ERROR_MESSAGE);
-                return null;
-            }
+            List<QuotationInvoiceViewService.CustomerOption> current=new ArrayList<>();for(int i=0;i<customerBox.getItemCount();i++)current.add(customerBox.getItemAt(i));return selectBestCustomerMatch(searchText,current,true);
         }
 
         private void selectExactCustomerMatch(String searchText, List<QuotationInvoiceViewService.CustomerOption> customers) {
@@ -904,7 +873,7 @@ public class Quotations extends JFrame {
 
         LineEditor(JDialog owner, LineInput existingLine) {
             super(owner, "Add Quotation Line", true);
-            productSearchTimer = new Timer(250, e -> refreshProductResults(editorText(productBox)));
+            productSearchTimer = new Timer(300, e -> refreshProductResults(editorText(productBox)));
             productSearchTimer.setRepeats(false);
             setSize(520, 360);
             setLocationRelativeTo(owner);
@@ -1039,13 +1008,7 @@ public class Quotations extends JFrame {
         }
 
         private void loadProducts(String searchText) {
-            try {
-                for (QuotationInvoiceViewService.ProductOption product : QuotationInvoiceViewService.searchProducts(searchText)) {
-                    productBox.addItem(product);
-                }
-            } catch (SQLException ex) {
-                JOptionPane.showMessageDialog(this, "Failed to load products.\n\n" + ex.getMessage(), "Products", JOptionPane.ERROR_MESSAGE);
-            }
+            refreshProductResults(searchText);
         }
 
         private void installProductSearch() {
@@ -1087,29 +1050,22 @@ public class Quotations extends JFrame {
         }
 
         private void refreshProductResults(String searchText) {
-            try {
-                List<QuotationInvoiceViewService.ProductOption> products = QuotationInvoiceViewService.searchProducts(searchText);
+            String query=searchText==null?"":searchText;
+            UiTaskRunner.submit(this,"quotation.products",()->QuotationInvoiceViewService.searchProducts(query),products->{
                 updatingProductResults = true;
                 productBox.removeAllItems();
                 for (QuotationInvoiceViewService.ProductOption product : products) {
                     productBox.addItem(product);
                 }
-                productBox.getEditor().setItem(searchText);
+                productBox.getEditor().setItem(query);
                 updatingProductResults = false;
-                selectExactProductMatch(searchText, products);
+                selectExactProductMatch(query, products);
                 showProductPopupIfUseful();
-            } catch (SQLException ex) {
-                updatingProductResults = false;
-                JOptionPane.showMessageDialog(this, "Failed to search products.\n\n" + ex.getMessage(), "Products", JOptionPane.ERROR_MESSAGE);
-            }
+            },ex->{updatingProductResults=false;});
         }
 
         private void selectBestProductMatch(String searchText) {
-            try {
-                selectBestProductMatch(searchText, QuotationInvoiceViewService.searchProducts(searchText));
-            } catch (SQLException ex) {
-                JOptionPane.showMessageDialog(this, "Failed to search products.\n\n" + ex.getMessage(), "Products", JOptionPane.ERROR_MESSAGE);
-            }
+            List<QuotationInvoiceViewService.ProductOption> current=new ArrayList<>();for(int i=0;i<productBox.getItemCount();i++)current.add(productBox.getItemAt(i));selectBestProductMatch(searchText,current);
         }
 
         private void selectBestProductMatch(String searchText, List<QuotationInvoiceViewService.ProductOption> products) {

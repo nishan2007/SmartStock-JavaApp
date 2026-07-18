@@ -1,10 +1,11 @@
 package ui.screens;
 
-import Receipt.AccountPaymentReceiptBuilder;
-import Receipt.AccountPaymentReceiptData;
 import services.LanApiClient;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import utils.CurrencyFormatter;
 
 import javax.swing.*;
@@ -23,12 +24,13 @@ public class CustomerPaymentHistory extends JFrame {
     private final NumberFormat currencyFormat=CurrencyFormatter.create();
     private final DateTimeFormatter dateTimeFormatter=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private DefaultTableModel paymentModel;private JTable paymentTable;private JLabel summaryLabel;
+    private final LoadingStatePanel loadingState=new LoadingStatePanel();
 
     public CustomerPaymentHistory(int customerId,String customerLabel){
         this.customerId=customerId;this.customerLabel=customerLabel==null?"Customer Account":customerLabel;
         setTitle("Customer Payment History");setSize(1050,620);setDefaultCloseOperation(DISPOSE_ON_CLOSE);setLayout(new BorderLayout(12,12));
         JPanel main=new JPanel(new BorderLayout(12,12));main.setBorder(new EmptyBorder(14,14,14,14));add(main,BorderLayout.CENTER);
-        main.add(buildHeaderPanel(),BorderLayout.NORTH);main.add(buildTablePanel(),BorderLayout.CENTER);main.add(buildSummaryPanel(),BorderLayout.SOUTH);
+        main.add(buildHeaderPanel(),BorderLayout.NORTH);main.add(buildTablePanel(),BorderLayout.CENTER);JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.NORTH);footer.add(buildSummaryPanel(),BorderLayout.SOUTH);main.add(footer,BorderLayout.SOUTH);
         loadPayments();WindowHelper.configurePosWindow(this);
     }
 
@@ -49,8 +51,7 @@ public class CustomerPaymentHistory extends JFrame {
     private JPanel buildSummaryPanel(){JPanel p=new JPanel(new BorderLayout());summaryLabel=new JLabel("Payments: 0");summaryLabel.setBorder(new EmptyBorder(4,2,0,2));p.add(summaryLabel,BorderLayout.WEST);return p;}
 
     private void loadPayments(){
-        paymentModel.setRowCount(0);try{
-            LanApiClient.CustomerPaymentResult result=LanApiClient.loadCustomerPayments(customerId);
+        CachedUiLoader.load(this,"customer-payments:"+customerId,LanApiClient.CustomerPaymentResult.class,SessionDataCache.SCREEN_TTL,loadingState,()->LanApiClient.loadCustomerPayments(customerId),result->{paymentModel.setRowCount(0);
             for(LanApiClient.CustomerPaymentRecord row:result.payments())paymentModel.addRow(new Object[]{
                     row.paymentId(),formatTimestamp(row.paymentDateEpochMillis()),row.userName(),row.paymentMethod(),row.paymentReference(),
                     row.deviceName(),row.cashDrawerName(),currencyFormat.format(zero(row.paymentAmount())),row.target(),
@@ -58,15 +59,14 @@ public class CustomerPaymentHistory extends JFrame {
                     currencyFormat.format(zero(row.chargePaid())),formatStatus(row.paymentStatus()),formatTimestamp(row.chargeDateEpochMillis()),row.transactionId()});
             summaryLabel.setText("Payments: "+result.paymentCount()+"    Rows: "+result.rowCount()+"    Total Paid: "
                     +currencyFormat.format(zero(result.totalPayments()))+"    Applied: "+currencyFormat.format(zero(result.totalApplied())));
-        }catch(Exception ex){JOptionPane.showMessageDialog(this,"Failed to load payment history: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);}
+        });
     }
 
     private void openSelectedPaymentReceipt(){
         if(paymentTable==null||paymentTable.getSelectedRow()<0){JOptionPane.showMessageDialog(this,"Select a payment first.");return;}
         int modelRow=paymentTable.convertRowIndexToModel(paymentTable.getSelectedRow());Object value=paymentModel.getValueAt(modelRow,14);
         if(!(value instanceof Number number)){JOptionPane.showMessageDialog(this,"Selected payment is missing its transaction ID.");return;}
-        try{AccountPaymentReceiptData receipt=AccountPaymentReceiptBuilder.loadPaymentReceipt(customerId,number.longValue());WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(receipt),this);}
-        catch(Exception ex){JOptionPane.showMessageDialog(this,"Failed to load payment receipt: "+ex.getMessage(),"Payment Receipt",JOptionPane.ERROR_MESSAGE);}
+        WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(customerId,number.longValue()),this);
     }
 
     private String formatTimestamp(long epoch){return epoch<=0?"":Instant.ofEpochMilli(epoch).atZone(StoreTimeZoneHelper.getStoreZone()).format(dateTimeFormatter);}

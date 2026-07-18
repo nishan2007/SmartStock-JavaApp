@@ -2,6 +2,10 @@ package ui.screens;
 
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -21,6 +25,7 @@ public class DepartmentList extends JFrame {
     private boolean departmentVatEditable;
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public DepartmentList() {
         setTitle("Department List");
@@ -50,6 +55,7 @@ public class DepartmentList extends JFrame {
         root.add(buildHeaderPanel(), BorderLayout.NORTH);
         root.add(new JScrollPane(departmentTable), BorderLayout.CENTER);
         root.add(buildEditorPanel(), BorderLayout.EAST);
+        root.add(loadingState, BorderLayout.SOUTH);
         add(root, BorderLayout.CENTER);
 
         updateVatEditState();
@@ -79,6 +85,7 @@ public class DepartmentList extends JFrame {
 
         searchButton.addActionListener(e -> loadDepartments());
         searchField.addActionListener(e -> loadDepartments());
+        UiDebouncer.bind(searchField, 300, this::loadDepartments);
         refreshButton.addActionListener(e -> {
             searchField.setText("");
             loadDepartments();
@@ -160,20 +167,19 @@ public class DepartmentList extends JFrame {
     }
 
     private void loadDepartments() {
+        String search = searchField.getText().trim();
+        CachedUiLoader.load(this, "departments.search", "departments:" + search, LanApiClient.DepartmentListResult.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadDepartments(search), this::applyDepartments);
+    }
+
+    private void applyDepartments(LanApiClient.DepartmentListResult result) {
         tableModel.setRowCount(0);
-        try {
-            LanApiClient.DepartmentListResult result = LanApiClient.loadDepartments(searchField.getText().trim());
-            departmentVatEditable = result.vatEditable();
-            updateVatEditState();
-            for (LanApiClient.DepartmentRecord department : result.departments()) {
-                tableModel.addRow(new Object[]{department.categoryId(), department.name(),
-                        department.vatRatePercent(), department.description()});
-            }
-        } catch (Exception ex) {
-            departmentVatEditable = false;
-            updateVatEditState();
-            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
+        departmentVatEditable = result.vatEditable();
+        updateVatEditState();
+        for (LanApiClient.DepartmentRecord department : result.departments()) {
+            tableModel.addRow(new Object[]{department.categoryId(), department.name(),
+                    department.vatRatePercent(), department.description()});
         }
     }
 
@@ -213,6 +219,7 @@ public class DepartmentList extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             LanApiClient.saveDepartment(request, pendingSaveKey);
+            SessionDataCache.invalidate("departments:");
             pendingSaveKey = null;
             pendingSaveFingerprint = null;
             clearEditor();

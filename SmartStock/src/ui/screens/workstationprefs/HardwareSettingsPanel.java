@@ -1,6 +1,10 @@
 package ui.screens.workstationprefs;
 
 import managers.HardwareSettingsManager;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -16,6 +20,7 @@ public class HardwareSettingsPanel extends JPanel {
     private final DefaultTableModel configuredPrinterModel;
     private final JTable configuredPrinterTable;
     private final JTextField configPathField = new JTextField();
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public HardwareSettingsPanel() {
         setLayout(new BorderLayout(0, 12));
@@ -72,20 +77,19 @@ public class HardwareSettingsPanel extends JPanel {
         buttonPanel.add(removeButton);
         buttonPanel.add(defaultButton);
         buttonPanel.add(saveButton);
-        bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
+        bottomPanel.add(loadingState,BorderLayout.CENTER);bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
 
         add(titleLabel, BorderLayout.NORTH);
         add(contentPanel, BorderLayout.CENTER);
         add(bottomPanel, BorderLayout.SOUTH);
 
-        refreshButton.addActionListener(e -> loadInstalledPrinters());
+        refreshButton.addActionListener(e -> {SessionDataCache.invalidate("workstation:hardware");loadHardware();});
         addButton.addActionListener(e -> addSelectedPrinter());
         removeButton.addActionListener(e -> removeSelectedPrinter());
         defaultButton.addActionListener(e -> setSelectedDefault());
         saveButton.addActionListener(e -> saveConfiguredPrinters());
 
-        loadInstalledPrinters();
-        loadConfiguredPrinters();
+        loadHardware();
     }
 
     private JPanel wrapPanel(String title, JComponent component) {
@@ -111,10 +115,26 @@ public class HardwareSettingsPanel extends JPanel {
         }
     }
 
+    private void loadHardware() {
+        CachedUiLoader.loadAfterDisplay(this,"workstation.hardware","workstation:hardware",HardwareSnapshot.class,
+                SessionDataCache.REFERENCE_TTL,loadingState,()->{
+                    var installed=UiTaskRunner.supplyAsync(HardwareSettingsManager::getAvailablePrinterNames);
+                    var configured=UiTaskRunner.supplyAsync(HardwareSettingsManager::getConfiguredPrinters);
+                    return new HardwareSnapshot(installed.join(),configured.join());
+                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyConfiguredPrinters(snapshot.configured());});
+    }
+
     private void loadConfiguredPrinters() {
-        configuredPrinterModel.setRowCount(0);
         try {
-            for (HardwareSettingsManager.PosPrinter printer : HardwareSettingsManager.getConfiguredPrinters()) {
+            applyConfiguredPrinters(HardwareSettingsManager.getConfiguredPrinters());
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void applyConfiguredPrinters(List<HardwareSettingsManager.PosPrinter> printers) {
+        configuredPrinterModel.setRowCount(0);
+            for (HardwareSettingsManager.PosPrinter printer : printers) {
                 configuredPrinterModel.addRow(new Object[]{
                         printer.displayName(),
                         printer.systemName(),
@@ -122,9 +142,6 @@ public class HardwareSettingsPanel extends JPanel {
                         printer.printFormat()
                 });
             }
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     private void addSelectedPrinter() {
@@ -180,8 +197,9 @@ public class HardwareSettingsPanel extends JPanel {
 
         try {
             HardwareSettingsManager.saveConfiguredPrinters(printers);
+            SessionDataCache.invalidate("workstation:hardware");
             JOptionPane.showMessageDialog(this, "Hardware settings saved.");
-            loadConfiguredPrinters();
+            loadHardware();
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to save hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
@@ -205,4 +223,7 @@ public class HardwareSettingsPanel extends JPanel {
         }
         return HardwareSettingsManager.PrintFormat.fromConfigValue(String.valueOf(value));
     }
+
+    private record HardwareSnapshot(List<String> installed,
+                                    List<HardwareSettingsManager.PosPrinter> configured) { }
 }

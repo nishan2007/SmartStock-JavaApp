@@ -8,6 +8,10 @@ import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.print.PrintException;
@@ -16,27 +20,29 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.sql.SQLException;
 import java.util.List;
 
 public class CustomOrderSlipPreview extends JFrame {
-    private final CustomOrderSlipData slipData;
-    private final CompanyCustomizationManager.ReceiptSettings receiptSettings;
-    private final CompanyCustomizationManager.CustomOrderSlipSettings slipSettings;
+    private CustomOrderSlipData slipData;
+    private CompanyCustomizationManager.ReceiptSettings receiptSettings;
+    private CompanyCustomizationManager.CustomOrderSlipSettings slipSettings;
     private final SlipLetterPanel letterPanel = new SlipLetterPanel();
     private final ReceiptPreview.ReceiptPaperPanel receipt40Panel = new ReceiptPreview.ReceiptPaperPanel();
     private final JComboBox<PrinterOption> printerBox = new JComboBox<>();
     private final JComboBox<HardwareSettingsManager.PrintFormat> formatBox = new JComboBox<>(HardwareSettingsManager.PrintFormat.values());
     private final JTabbedPane previewTabs = new JTabbedPane();
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
-    public CustomOrderSlipPreview(String orderNumber) throws SQLException {
-        this(CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber));
+    public CustomOrderSlipPreview(String orderNumber) {
+        this(null, orderNumber);
     }
 
     public CustomOrderSlipPreview(CustomOrderSlipData slipData) {
-        this.slipData = slipData;
-        this.receiptSettings = CompanyCustomizationManager.loadReceiptSettings();
-        this.slipSettings = CompanyCustomizationManager.loadCustomOrderSlipSettings();
+        this(slipData, null);
+    }
+
+    private CustomOrderSlipPreview(CustomOrderSlipData initialData, String orderNumber) {
+        this.slipData = initialData;
 
         setTitle("Custom Order Slip Preview");
         setSize(680, 760);
@@ -75,10 +81,14 @@ public class CustomOrderSlipPreview extends JFrame {
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         JButton printButton = new JButton("Print Slip");
+        printButton.setEnabled(false);
         JButton closeButton = new JButton("Close");
         buttonPanel.add(printButton);
         buttonPanel.add(closeButton);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel footerPanel = new JPanel(new BorderLayout());
+        footerPanel.add(loadingState, BorderLayout.CENTER);
+        footerPanel.add(buttonPanel, BorderLayout.SOUTH);
+        mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         printerBox.addActionListener(e -> updateFormatFromPrinter());
         formatBox.addActionListener(e -> previewTabs.setSelectedIndex(getSelectedPrintFormat() == HardwareSettingsManager.PrintFormat.LETTER ? 0 : 1));
@@ -86,9 +96,27 @@ public class CustomOrderSlipPreview extends JFrame {
         closeButton.addActionListener(e -> dispose());
 
         loadPrinterOptions();
-        updatePreview();
-        loadLogoPreviewAsync();
+        receipt40Panel.setReceiptText("Loading custom order slip preview...", false);
         WindowHelper.configurePosWindow(this);
+        String snapshotIdentity = orderNumber != null ? orderNumber
+                : initialData == null ? "unknown" : initialData.orderNumber();
+        String cacheKey = "custom-order-slip:" + snapshotIdentity;
+        CachedUiLoader.load(this, "custom-order-slip-preview.load", cacheKey, PreviewSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState, () -> {
+                    var data = orderNumber == null
+                            ? java.util.concurrent.CompletableFuture.completedFuture(initialData)
+                            : UiTaskRunner.supplyAsync(() -> CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber));
+                    var settings = UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadAllSettings);
+                    CompanyCustomizationManager.AllSettings all = settings.join();
+                    return new PreviewSnapshot(data.join(), all.receipt(), all.customOrderSlip());
+                }, snapshot -> {
+                    slipData = snapshot.data();
+                    receiptSettings = snapshot.receiptSettings();
+                    slipSettings = snapshot.slipSettings();
+                    printButton.setEnabled(true);
+                    updatePreview();
+                    loadLogoPreviewAsync();
+                });
     }
 
     private void loadPrinterOptions() {
@@ -127,6 +155,7 @@ public class CustomOrderSlipPreview extends JFrame {
     }
 
     private void updatePreview() {
+        if (slipData == null || receiptSettings == null || slipSettings == null) return;
         letterPanel.setSlip(slipData, receiptSettings, slipSettings);
         receipt40Panel.setReceiptText(CustomOrderSlipFormatter.format40Column(slipData, receiptSettings, slipSettings), false);
     }
@@ -138,24 +167,14 @@ public class CustomOrderSlipPreview extends JFrame {
             return;
         }
         receipt40Panel.setLogoLoading(true);
-        new SwingWorker<BufferedImage, Void>() {
-            @Override
-            protected BufferedImage doInBackground() {
-                return CompanyCustomizationManager.loadCompanyLogo(receiptSettings);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    BufferedImage logo = get();
+        UiTaskRunner.submit(this, "custom-order-slip-preview.logo",
+                () -> CompanyCustomizationManager.loadCompanyLogo(receiptSettings), logo -> {
                     letterPanel.setLogo(logo);
                     receipt40Panel.setLogo(logo, false);
-                } catch (Exception ex) {
+                }, failure -> {
                     letterPanel.setLogo(null);
                     receipt40Panel.setLogo(null, false);
-                }
-            }
-        }.execute();
+                });
     }
 
     private void printSlip() {
@@ -175,6 +194,10 @@ public class CustomOrderSlipPreview extends JFrame {
         }
         return HardwareSettingsManager.PrintFormat.RECEIPT_40;
     }
+
+    private record PreviewSnapshot(CustomOrderSlipData data,
+                                   CompanyCustomizationManager.ReceiptSettings receiptSettings,
+                                   CompanyCustomizationManager.CustomOrderSlipSettings slipSettings) { }
 
     private static class PrinterOption {
         private final HardwareSettingsManager.PosPrinter printer;

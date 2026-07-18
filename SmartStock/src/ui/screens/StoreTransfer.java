@@ -4,7 +4,11 @@ import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -37,6 +41,7 @@ public class StoreTransfer extends JFrame {
     private String pendingCreateFingerprint;
     private Long pendingReceiveTransferId;
     private String pendingReceiveKey;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public StoreTransfer() {
         setTitle("Store Transfer");
@@ -169,9 +174,11 @@ public class StoreTransfer extends JFrame {
         tabbedPane.addTab("Create Transfer", createTransferPanel);
         tabbedPane.addTab("Incoming Transfers", buildIncomingPanel());
         add(tabbedPane, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
 
         searchButton.addActionListener(e -> loadProducts());
         searchField.addActionListener(e -> loadProducts());
+        UiDebouncer.bind(searchField, 300, this::loadProducts);
         addItemButton.addActionListener(e -> addSelectedProduct());
         removeButton.addActionListener(e -> removeSelectedRow());
         submitButton.addActionListener(e -> submitTransfer());
@@ -244,13 +251,16 @@ public class StoreTransfer extends JFrame {
     }
 
     private void loadLocations() {
+        CachedUiLoader.load(this, "reference:transfer-destinations", TransferLocationsSnapshot.class,
+                SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> new TransferLocationsSnapshot(LanApiClient.loadTransferDestinations()),
+                this::applyLocations);
+    }
+
+    private void applyLocations(TransferLocationsSnapshot snapshot) {
         destinationBox.removeAllItems();
-        try {
-            for (LanApiClient.TransferLocation location : LanApiClient.loadTransferDestinations()) {
+        for (LanApiClient.TransferLocation location : snapshot.locations()) {
                 destinationBox.addItem(new LocationOption(location.locationId(), location.name()));
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -261,13 +271,18 @@ public class StoreTransfer extends JFrame {
             return;
         }
 
-        try {
-            for (LanApiClient.TransferProduct product : LanApiClient.searchTransferProducts(searchField.getText().trim())) {
+        String search = searchField.getText().trim();
+        CachedUiLoader.load(this, "transfer-products.search", "transfer-products:" + search, TransferProductsSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new TransferProductsSnapshot(LanApiClient.searchTransferProducts(search)),
+                this::applyProducts);
+    }
+
+    private void applyProducts(TransferProductsSnapshot snapshot) {
+        productListModel.clear();
+        for (LanApiClient.TransferProduct product : snapshot.products()) {
                 productListModel.addElement(new ProductOption(product.productId(), product.sku(), product.name(),
                         product.availableQuantity()));
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load products: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -351,6 +366,8 @@ public class StoreTransfer extends JFrame {
             }
             LanApiClient.CreateTransferResult result =
                     LanApiClient.createTransfer(request, pendingCreateKey);
+            SessionDataCache.invalidate("transfer-products:");
+            SessionDataCache.invalidate("incoming-transfer");
             pendingCreateKey = null;
             pendingCreateFingerprint = null;
 
@@ -368,13 +385,19 @@ public class StoreTransfer extends JFrame {
     }
 
     private void loadIncomingTransfers() {
-        incomingModel.setRowCount(0);
-        incomingItemsModel.setRowCount(0);
         if (SessionManager.getCurrentLocationId() == null) {
             return;
         }
-        try {
-            for (LanApiClient.IncomingTransfer transfer : LanApiClient.loadIncomingTransfers()) {
+        CachedUiLoader.load(this, "incoming-transfers", IncomingTransfersSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new IncomingTransfersSnapshot(LanApiClient.loadIncomingTransfers()),
+                this::applyIncomingTransfers);
+    }
+
+    private void applyIncomingTransfers(IncomingTransfersSnapshot snapshot) {
+        incomingModel.setRowCount(0);
+        incomingItemsModel.setRowCount(0);
+        for (LanApiClient.IncomingTransfer transfer : snapshot.transfers()) {
                 incomingModel.addRow(new Object[]{
                         transfer.transferId(),
                         transfer.fromStore(),
@@ -384,10 +407,6 @@ public class StoreTransfer extends JFrame {
                         transfer.sentBy(),
                         transfer.note()
                 });
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load incoming transfers: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -401,21 +420,29 @@ public class StoreTransfer extends JFrame {
     }
 
     private void loadIncomingTransferItems(Long transferId) {
-        incomingItemsModel.setRowCount(0);
         if (transferId == null) {
+            incomingItemsModel.setRowCount(0);
             return;
         }
-        try {
-            for (LanApiClient.TransferDetailItem item : LanApiClient.loadTransferItems(transferId)) {
+        CachedUiLoader.load(this, "incoming-transfer-items.selection", "incoming-transfer-items:" + transferId, TransferItemsSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new TransferItemsSnapshot(LanApiClient.loadTransferItems(transferId)),
+                this::applyTransferItems);
+    }
+
+    private void applyTransferItems(TransferItemsSnapshot snapshot) {
+        incomingItemsModel.setRowCount(0);
+        for (LanApiClient.TransferDetailItem item : snapshot.items()) {
                 incomingItemsModel.addRow(new Object[]{
                         item.productId(), item.sku(), item.name(), item.quantity()
                 });
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load transfer items: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+    private record TransferLocationsSnapshot(List<LanApiClient.TransferLocation> locations) { }
+    private record TransferProductsSnapshot(List<LanApiClient.TransferProduct> products) { }
+    private record IncomingTransfersSnapshot(List<LanApiClient.IncomingTransfer> transfers) { }
+    private record TransferItemsSnapshot(List<LanApiClient.TransferDetailItem> items) { }
 
     private void receiveSelectedTransfer() {
         if (!PermissionManager.requirePermission("STORE_TRANSFER", this, "Receive Transfer")) {
@@ -452,6 +479,8 @@ public class StoreTransfer extends JFrame {
             }
             LanApiClient.ReceiveTransferResult response =
                     LanApiClient.receiveTransfer(transferId, pendingReceiveKey);
+            SessionDataCache.invalidate("transfer-products:");
+            SessionDataCache.invalidate("incoming-transfer");
             pendingReceiveTransferId = null;
             pendingReceiveKey = null;
 

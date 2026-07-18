@@ -6,7 +6,11 @@ import managers.PermissionManager;
 import services.ReportDataService;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.ThemeManager;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -28,6 +32,8 @@ import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import org.knowm.xchart.*;
 import org.knowm.xchart.internal.chartpart.Chart;
 import org.knowm.xchart.CategorySeries.CategorySeriesRenderStyle;
@@ -42,7 +48,7 @@ public class Reports extends JFrame {
     private final JTextField fromField = new JTextField();
     private final JTextField toField = new JTextField();
     private final JLabel storeLabel = new JLabel();
-    private final JLabel loadingLabel = new JLabel(" ");
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private final JCheckBox allRevenueToggle = new JCheckBox("All Revenue");
     private final JPanel filterChips = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
     private final Set<Integer> selectedProducts = new LinkedHashSet<>();
@@ -52,7 +58,6 @@ public class Reports extends JFrame {
     private final Set<Integer> selectedEmployees = new LinkedHashSet<>();
     private final Set<String> selectedPayments = new LinkedHashSet<>();
     private ReportDataService.FilterOptions filterOptions;
-    private SwingWorker<ReportDataService.Snapshot, Void> reportWorker;
 
     private final JPanel overviewRevenueChart = chartHolder();
     private final JPanel overviewCashChart = chartHolder();
@@ -131,7 +136,6 @@ public class Reports extends JFrame {
         add(root, BorderLayout.CENTER);
 
         setDefaultRange();
-        loadFilterOptions();
         loadReports();
         WindowHelper.configurePosWindow(this);
     }
@@ -186,8 +190,7 @@ public class Reports extends JFrame {
         advanced.add(presetsButton); advanced.add(productButton); advanced.add(brandButton);
         advanced.add(departmentButton); advanced.add(typeButton); advanced.add(employeeButton);
         advanced.add(paymentButton); advanced.add(clearButton); advanced.add(allRevenueToggle);
-        loadingLabel.setForeground(new Color(37, 99, 235));
-        advanced.add(loadingLabel);
+        advanced.add(loadingState);
         gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 6; gbc.anchor = GridBagConstraints.WEST;
         gbc.insets = new Insets(10, 0, 0, 0);
         filterPanel.add(advanced, gbc);
@@ -357,48 +360,44 @@ public class Reports extends JFrame {
             JOptionPane.showMessageDialog(this, "To must be after From.");
             return;
         }
-        if (reportWorker != null && !reportWorker.isDone()) {
-            reportWorker.cancel(true);
-        }
-        loadingLabel.setText("Loading reports...");
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
         ReportDataService.Filters filters = new ReportDataService.Filters(
                 from, to, storeZone, SessionManager.getCurrentLocationId(),
                 Set.copyOf(selectedProducts), Set.copyOf(selectedBrands), Set.copyOf(selectedDepartments),
                 Set.copyOf(selectedItemTypes), Set.copyOf(selectedEmployees), Set.copyOf(selectedPayments)
         );
-        reportWorker = new SwingWorker<>() {
-            @Override protected ReportDataService.Snapshot doInBackground() throws Exception {
-                ReportDataService.Snapshot snapshot = ReportDataService.load(filters, allRevenueToggle.isSelected(), PermissionManager.hasPermission("BALANCE_SHEET"));
-                loadOrdersReport(from, to);
-                loadInvoicesReport(from, to);
-                return snapshot;
-            }
-            @Override protected void done() {
-                setCursor(Cursor.getDefaultCursor());
-                if (isCancelled()) return;
-                try {
-                    applySnapshot(get());
-                    loadingLabel.setText("Updated " + java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("hh:mm a")));
-                } catch (Exception ex) {
-                    loadingLabel.setText("Could not load");
-                    Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-                    JOptionPane.showMessageDialog(Reports.this, "Failed to load reports: " + cause.getMessage(), "Reports", JOptionPane.ERROR_MESSAGE);
-                }
-            }
-        };
-        reportWorker.execute();
+        boolean allRevenue = allRevenueToggle.isSelected();
+        boolean includeAccounting = PermissionManager.hasPermission("BALANCE_SHEET");
+        String cacheKey = "reports:" + filters + ":allRevenue=" + allRevenue + ":accounting=" + includeAccounting;
+        CachedUiLoader.load(this, "reports.load", cacheKey, ReportsScreenSnapshot.class, SessionDataCache.SCREEN_TTL,
+                loadingState, () -> loadReportsSnapshot(filters, from, to, allRevenue, includeAccounting),
+                this::applyReportsSnapshot);
     }
 
-    private void loadFilterOptions() {
-        new SwingWorker<ReportDataService.FilterOptions, Void>() {
-            @Override protected ReportDataService.FilterOptions doInBackground() throws Exception {
-                return ReportDataService.loadOptions(SessionManager.getCurrentLocationId());
-            }
-            @Override protected void done() {
-                try { filterOptions = get(); } catch (Exception ignored) { filterOptions = null; }
-            }
-        }.execute();
+    private ReportsScreenSnapshot loadReportsSnapshot(ReportDataService.Filters filters,
+                                                       ZonedDateTime from, ZonedDateTime to,
+                                                       boolean allRevenue, boolean includeAccounting) {
+        CompletableFuture<ReportDataService.Snapshot> analytics = async(
+                () -> ReportDataService.load(filters, allRevenue, includeAccounting));
+        CompletableFuture<LanApiClient.OrderReport> orders = async(() -> LanApiClient.loadOrderReport(from, to));
+        CompletableFuture<LanApiClient.InvoiceReport> invoices = async(() -> LanApiClient.loadInvoiceReport(from, to));
+        CompletableFuture<ReportDataService.FilterOptions> options = async(
+                () -> ReportDataService.loadOptions(SessionManager.getCurrentLocationId()));
+        CompletableFuture.allOf(analytics, orders, invoices, options).join();
+        return new ReportsScreenSnapshot(analytics.join(), orders.join(), invoices.join(), options.join());
+    }
+
+    private void applyReportsSnapshot(ReportsScreenSnapshot snapshot) {
+        filterOptions = snapshot.options();
+        applySnapshot(snapshot.analytics());
+        applyOrdersReport(snapshot.orders());
+        applyInvoicesReport(snapshot.invoices());
+    }
+
+    private static <T> CompletableFuture<T> async(ThrowingSupplier<T> supplier) {
+        return UiTaskRunner.supplyAsync(() -> {
+            try { return supplier.get(); }
+            catch (Exception ex) { throw new CompletionException(ex); }
+        });
     }
 
     private void applySnapshot(ReportDataService.Snapshot s) {
@@ -622,42 +621,40 @@ public class Reports extends JFrame {
         selectedEmployees.clear(); selectedPayments.clear(); refreshFilterChips(); loadReports();
     }
 
-    private void loadOrdersReport(ZonedDateTime from, ZonedDateTime to) {
+    private void applyOrdersReport(LanApiClient.OrderReport report) {
         orderModel.setRowCount(0);
-        try {
-            LanApiClient.OrderReport report=LanApiClient.loadOrderReport(from,to);
-            for(LanApiClient.OrderReportRow row:report.rows()){
+        for(LanApiClient.OrderReportRow row:report.rows()){
                     orderModel.addRow(new Object[]{
                             row.paymentId(),row.orderNumber(),row.time().format(DISPLAY_FORMAT),row.customer(),row.employee(),row.device(),row.drawer(),row.method(),
                             CURRENCY.format(row.amount()),CURRENCY.format(row.total()),CURRENCY.format(row.balance()),row.status()
                     });
-            }
-            orderPaymentsLabel.setText("Payments: "+report.payments());orderTotalLabel.setText("Order Total: "+CURRENCY.format(report.total()));
-            orderCollectedLabel.setText("Collected: "+CURRENCY.format(report.collected()));orderBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));
-            orderCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));orderCardLabel.setText("Card: "+CURRENCY.format(report.card()));orderChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));
-            orderMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));orderAccountLabel.setText("Account: "+CURRENCY.format(report.account()));orderReturnsLabel.setText("Returns: "+CURRENCY.format(report.returns()));
-        } catch (Exception ex) {
-            showReportError("order report", ex);
         }
+        orderPaymentsLabel.setText("Payments: "+report.payments());orderTotalLabel.setText("Order Total: "+CURRENCY.format(report.total()));
+        orderCollectedLabel.setText("Collected: "+CURRENCY.format(report.collected()));orderBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));
+        orderCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));orderCardLabel.setText("Card: "+CURRENCY.format(report.card()));orderChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));
+        orderMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));orderAccountLabel.setText("Account: "+CURRENCY.format(report.account()));orderReturnsLabel.setText("Returns: "+CURRENCY.format(report.returns()));
     }
 
-    private void loadInvoicesReport(ZonedDateTime from, ZonedDateTime to) {
+    private void applyInvoicesReport(LanApiClient.InvoiceReport report) {
         invoiceModel.setRowCount(0);
-        try {
-            LanApiClient.InvoiceReport report=LanApiClient.loadInvoiceReport(from,to);
-            for(LanApiClient.InvoiceReportRow row:report.rows()){
+        for(LanApiClient.InvoiceReportRow row:report.rows()){
                     invoiceModel.addRow(new Object[]{
                             row.invoiceId(),row.invoiceNumber(),row.invoiceDate(),row.customer(),row.status(),row.paymentStatus(),CURRENCY.format(row.total()),
                             CURRENCY.format(row.paid()),CURRENCY.format(row.balance()),row.creator(),row.device(),row.drawer()
                     });
-            }
-            invoiceCountLabel.setText("Invoices: "+report.count());invoiceTotalLabel.setText("Invoice Total: "+CURRENCY.format(report.total()));invoicePaidLabel.setText("Paid: "+CURRENCY.format(report.paid()));
-            invoiceBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));invoiceOpenLabel.setText("Open: "+report.open());invoiceDeliveredLabel.setText("Delivered: "+report.delivered());
-            invoiceCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));invoiceCardLabel.setText("Card: "+CURRENCY.format(report.card()));invoiceChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));invoiceMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));
-        } catch (Exception ex) {
-            showReportError("invoice report", ex);
         }
+        invoiceCountLabel.setText("Invoices: "+report.count());invoiceTotalLabel.setText("Invoice Total: "+CURRENCY.format(report.total()));invoicePaidLabel.setText("Paid: "+CURRENCY.format(report.paid()));
+        invoiceBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));invoiceOpenLabel.setText("Open: "+report.open());invoiceDeliveredLabel.setText("Delivered: "+report.delivered());
+        invoiceCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));invoiceCardLabel.setText("Card: "+CURRENCY.format(report.card()));invoiceChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));invoiceMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));
     }
+
+    private record ReportsScreenSnapshot(ReportDataService.Snapshot analytics,
+                                         LanApiClient.OrderReport orders,
+                                         LanApiClient.InvoiceReport invoices,
+                                         ReportDataService.FilterOptions options) { }
+
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> { T get() throws Exception; }
 
     private ZonedDateTime parseDateTime(String value, String label) {
         try {

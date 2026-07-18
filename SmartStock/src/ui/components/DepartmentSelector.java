@@ -1,6 +1,8 @@
 package ui.components;
 
 import services.LanApiClient;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import java.awt.*;
@@ -19,39 +21,44 @@ public class DepartmentSelector extends JPanel {
     private final List<ActionListener> selectionListeners = new ArrayList<>();
     private boolean loading;
     private Integer lastNotifiedDepartmentId;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public DepartmentSelector() {
         setLayout(new BorderLayout(6, 0));
         add(departmentBox, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
         departmentBox.addActionListener(this::handleSelectionChange);
         loadDepartments();
     }
 
     public void loadDepartments() {
         String selectedText = getSelectedDepartmentName();
+        CachedUiLoader.loadAfterDisplay(this, "reference:inventory-lookups:all",
+                LanApiClient.InventoryLookups.class, SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> LanApiClient.loadInventoryLookups(null),
+                lookups -> applyDepartments(lookups, selectedText));
+    }
+
+    private void applyDepartments(LanApiClient.InventoryLookups lookups, String selectedText) {
+        String desiredText = getSelectedDepartmentName();
+        if (desiredText.isBlank()) desiredText = selectedText;
         loading = true;
         idsByName.clear();
         namesById.clear();
         List<String> options = new ArrayList<>();
 
-        try {
-            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
-            for (LanApiClient.NamedId department : lookups.departments()) {
+        for (LanApiClient.NamedId department : lookups.departments()) {
                 int id = department.id();
                 String name = department.name();
                 options.add(name);
                 idsByName.put(normalize(name), id);
                 namesById.put(id, name);
-            }
-            departmentBox.setOptions(options);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(), "LAN Service", JOptionPane.ERROR_MESSAGE);
-        } finally {
-            loading = false;
         }
+        departmentBox.setOptions(options);
+        loading = false;
 
-        if (!selectedText.isBlank()) {
-            setSelectedDepartmentByName(selectedText);
+        if (!desiredText.isBlank()) {
+            setSelectedDepartmentByName(desiredText);
         }
     }
 

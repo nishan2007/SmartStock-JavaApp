@@ -4,7 +4,11 @@ import utils.CurrencyFormatter;
 import managers.PermissionManager;
 import services.LanApiClient;
 import ui.components.CustomerTypeSelector;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -43,6 +47,7 @@ public class CustomerAccountDetails extends JFrame {
     private String customerLabel = "Customer Account";
     private String pendingSaveKey;
     private String pendingFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public CustomerAccountDetails(int customerId, Runnable afterSave) {
         this.customerId = customerId;
@@ -63,9 +68,9 @@ public class CustomerAccountDetails extends JFrame {
         mainPanel.add(buildContentPanel(), BorderLayout.CENTER);
         mainPanel.add(buildFooterPanel(), BorderLayout.SOUTH);
 
-        loadDetails();
-        loadTransactions();
+        add(loadingState, BorderLayout.SOUTH);
         WindowHelper.configurePosWindow(this);
+        loadAccountSnapshot();
     }
 
     private JPanel buildHeaderPanel() {
@@ -81,8 +86,8 @@ public class CustomerAccountDetails extends JFrame {
         buttonPanel.add(paymentHistoryButton);
 
         refreshButton.addActionListener(e -> {
-            loadDetails();
-            loadTransactions();
+            SessionDataCache.invalidate("customer-account:" + customerId);
+            loadAccountSnapshot();
         });
         paymentHistoryButton.addActionListener(e -> openPaymentHistory());
 
@@ -215,9 +220,18 @@ public class CustomerAccountDetails extends JFrame {
         return panel;
     }
 
-    private void loadDetails() {
-        try {
-                LanApiClient.CustomerAccountRecord account=LanApiClient.loadCustomerAccountDetails(customerId);
+    private void loadAccountSnapshot() {
+        String cacheKey = "customer-account:" + customerId;
+        CachedUiLoader.load(this, "customer-account.load", cacheKey, AccountSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState, () -> {
+                    var details = UiTaskRunner.supplyAsync(() -> LanApiClient.loadCustomerAccountDetails(customerId));
+                    var transactions = UiTaskRunner.supplyAsync(() -> LanApiClient.loadCustomerTransactions(customerId));
+                    return new AccountSnapshot(details.join(), transactions.join());
+                }, this::applyAccountSnapshot);
+    }
+
+    private void applyAccountSnapshot(AccountSnapshot snapshot) {
+                LanApiClient.CustomerAccountRecord account = snapshot.account();
                 String accountNumber=text(account.accountNumber());String name=text(account.name());
                 customerLabel = accountNumber.isBlank() ? name : accountNumber + " - " + name;
 
@@ -230,15 +244,8 @@ public class CustomerAccountDetails extends JFrame {
                 phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());
                 activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));availableCreditLabel.setText(money(account.availableCredit()));
                 creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,"Failed to load account details: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void loadTransactions() {
         transactionModel.setRowCount(0);
-        try {
-            LanApiClient.CustomerTransactionResult result=LanApiClient.loadCustomerTransactions(customerId);
+            LanApiClient.CustomerTransactionResult result = snapshot.transactions();
             for(LanApiClient.CustomerTransactionRecord row:result.transactions())transactionModel.addRow(new Object[]{
                     row.transactionId(),row.paymentId(),formatTimestamp(row.createdAtEpochMillis()),row.userName(),row.deviceName(),
                     row.cashDrawerName(),formatType(row.transactionType()),row.paymentMethod(),row.paymentReference(),
@@ -247,9 +254,6 @@ public class CustomerAccountDetails extends JFrame {
                     currencyFormat.format(defaultZero(row.chargeTotal())),row.note()});
             transactionSummaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
                     +"    Payments: "+currencyFormat.format(result.totalPayments()));
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,"Failed to load transaction history: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     private void saveAccountDetails() {
@@ -284,21 +288,28 @@ public class CustomerAccountDetails extends JFrame {
             }
         }
 
-        try {
-            LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
+        LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
                     customerTypeId,phone,email,creditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes);
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
-            LanApiClient.saveCustomerAccount(request,pendingSaveKey);pendingSaveKey=null;pendingFingerprint=null;
+        String saveKey = pendingSaveKey;
+        saveButton.setEnabled(false);
+        UiTaskRunner.submit(this, "customer-account.save", () -> {
+            LanApiClient.saveCustomerAccount(request, saveKey);
+            return null;
+        }, ignored -> {
+            pendingSaveKey=null;pendingFingerprint=null;
+            saveButton.setEnabled(true);
             JOptionPane.showMessageDialog(this, "Customer account updated.");
             if (afterSave != null) {
                 afterSave.run();
             }
-            loadDetails();
-            loadTransactions();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,"Failed to update customer account: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
-        }
+            SessionDataCache.invalidate("customer-account:" + customerId);
+            loadAccountSnapshot();
+        }, failure -> {
+            saveButton.setEnabled(true);
+            loadingState.failed(failure.getMessage(), true, this::saveAccountDetails);
+        });
     }
 
     private void openPaymentHistory() {
@@ -312,6 +323,9 @@ public class CustomerAccountDetails extends JFrame {
         }
         return java.time.Instant.ofEpochMilli(epochMillis).atZone(StoreTimeZoneHelper.getStoreZone()).format(dateTimeFormatter);
     }
+
+    private record AccountSnapshot(LanApiClient.CustomerAccountRecord account,
+                                   LanApiClient.CustomerTransactionResult transactions) { }
 
     private String formatType(String type) {
         if (type == null || type.isBlank()) {

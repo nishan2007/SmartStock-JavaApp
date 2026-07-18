@@ -77,6 +77,10 @@
         <version>3.5.2</version>
         <configuration>
           <useModulePath>false</useModulePath>
+          <systemPropertyVariables>
+            <java.awt.headless>true</java.awt.headless>
+            <smartstock.failOnEdtBlocking>true</smartstock.failOnEdtBlocking>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
       <plugin>

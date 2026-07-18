@@ -7,6 +7,9 @@ import services.CashDrawerService;
 import services.CashDrawerService.DeviceOption;
 import services.CashDrawerService.StoreOption;
 import services.LanApiClient;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -62,6 +65,7 @@ public class CashDrawerManagementPanel extends JPanel {
     private Long selectedDrawerId;
     private String pendingMutationKey;
     private String pendingMutationFingerprint;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public CashDrawerManagementPanel() {
         setLayout(new BorderLayout(16, 16));
@@ -69,7 +73,7 @@ public class CashDrawerManagementPanel extends JPanel {
         setOpaque(false);
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(buildMainPanel(), BorderLayout.CENTER);
-        add(buildFooterPanel(), BorderLayout.SOUTH);
+        JPanel footer=new JPanel(new BorderLayout());footer.setOpaque(false);footer.add(loadingState,BorderLayout.NORTH);footer.add(buildFooterPanel(),BorderLayout.SOUTH);add(footer, BorderLayout.SOUTH);
 
         drawerTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         drawerTable.setRowHeight(28);
@@ -380,14 +384,12 @@ public class CashDrawerManagementPanel extends JPanel {
     }
 
     private void loadInitialData() {
-        try {
-            LanApiClient.CashDrawerAdminState state=LanApiClient.loadCashDrawerAdminState(null,includeInactiveBox.isSelected());
+        boolean includeInactive=includeInactiveBox.isSelected();
+        CachedUiLoader.loadAfterDisplay(this,"cash-drawer.admin","cash-drawer:admin:all:"+includeInactive,
+                LanApiClient.CashDrawerAdminState.class,SessionDataCache.SCREEN_TTL,loadingState,
+                ()->LanApiClient.loadCashDrawerAdminState(null,includeInactive),state->{
             loadStores(state);loadDevices(state);applyAdminState(state);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load cash drawer data: " + ex.getMessage(),
-                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
-            summaryLabel.setText("Unable to load cash drawers.");
-        }
+        });
     }
 
     private void loadStores(LanApiClient.CashDrawerAdminState state) {
@@ -411,13 +413,10 @@ public class CashDrawerManagementPanel extends JPanel {
     }
 
     private void loadDrawersAndAssignments() {
-        try {
-            StoreOption store=(StoreOption)storeBox.getSelectedItem();
-            applyAdminState(LanApiClient.loadCashDrawerAdminState(store==null?null:store.id(),includeInactiveBox.isSelected()));
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to refresh cash drawers: " + ex.getMessage(),
-                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
-        }
+        StoreOption store=(StoreOption)storeBox.getSelectedItem();Integer storeId=store==null?null:store.id();boolean includeInactive=includeInactiveBox.isSelected();
+        CachedUiLoader.loadAfterDisplay(this,"cash-drawer.admin","cash-drawer:admin:"+storeId+":"+includeInactive,
+                LanApiClient.CashDrawerAdminState.class,SessionDataCache.SCREEN_TTL,loadingState,
+                ()->LanApiClient.loadCashDrawerAdminState(storeId,includeInactive),this::applyAdminState);
     }
 
     private void applyAdminState(LanApiClient.CashDrawerAdminState state) {

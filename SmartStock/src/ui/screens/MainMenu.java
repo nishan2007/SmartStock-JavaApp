@@ -12,6 +12,9 @@ import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
 import ui.helpers.WindowHelper;
 import ui.helpers.ThemeManager;
+import ui.helpers.UiTaskRunner;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 import ui.helpers.WelcomeGreetingHelper;
 
 import javax.swing.*;
@@ -27,9 +30,12 @@ import java.awt.image.BufferedImage;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 public class MainMenu extends JFrame {
+    private static final Map<String, ImageIcon> MENU_ICON_CACHE = new ConcurrentHashMap<>();
     private static boolean drawStartPromptShownThisAppSession;
     private static final int MENU_ICON_SIZE = 74;
     private static final int MENU_TILE_WIDTH = 315;
@@ -292,8 +298,10 @@ public class MainMenu extends JFrame {
         });
     }
     private ImageIcon loadIcon(String path) {
-        ImageIcon icon = null;
         String fileName = new File(path).getName();
+        ImageIcon cached = MENU_ICON_CACHE.get(fileName);
+        if (cached != null) return cached;
+        ImageIcon icon = null;
         java.net.URL resource = getClass().getResource("/ICONS/" + fileName);
         if (resource != null) {
             icon = new ImageIcon(resource);
@@ -308,11 +316,15 @@ public class MainMenu extends JFrame {
         }
 
         if (icon.getIconWidth() <= 0) {
-            return createFallbackIcon();
+            ImageIcon fallback = createFallbackIcon();
+            MENU_ICON_CACHE.putIfAbsent(fileName, fallback);
+            return fallback;
         }
 
         Image img = icon.getImage().getScaledInstance(MENU_ICON_SIZE, MENU_ICON_SIZE, Image.SCALE_SMOOTH);
-        return new ImageIcon(img);
+        ImageIcon scaled = new ImageIcon(img);
+        MENU_ICON_CACHE.putIfAbsent(fileName, scaled);
+        return scaled;
     }
 
     private ImageIcon createFallbackIcon() {
@@ -398,25 +410,17 @@ public class MainMenu extends JFrame {
     }
 
     private void loadCompanyLogo(JLabel companyLogoLabel) {
-        new SwingWorker<BufferedImage, Void>() {
-            @Override
-            protected BufferedImage doInBackground() {
+        SessionDataCache.get("main-menu.company-logo",BufferedImage.class,SessionDataCache.REFERENCE_TTL)
+                .ifPresent(cached->setLogoImage(companyLogoLabel,cached.value(),280,100));
+        UiTaskRunner.submit(this,"main-menu.company-logo",()->{
                 CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
                 return CompanyCustomizationManager.loadCompanyLogo(settings);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    BufferedImage logo = get();
+            },logo->{
                     if (logo != null) {
+                        SessionDataCache.put("main-menu.company-logo",logo);
                         setLogoImage(companyLogoLabel, logo, 280, 100);
                     }
-                } catch (Exception ignored) {
-                    // Keep the Deckers fallback when saved company branding cannot be loaded.
-                }
-            }
-        }.execute();
+            },ignored->{ });
     }
 
     private void setLogoImage(JLabel logoLabel, Image image, int maxWidth, int maxHeight) {
@@ -1392,7 +1396,6 @@ public class MainMenu extends JFrame {
 
         logoutButton.addActionListener(e -> {
             endSessionSafely();
-            services.LanApiClient.logout();
             SessionManager.clearSessionState();
             SupabaseSessionManager.clearSession();
             SupabaseSessionManager.clearPersistedSession();
@@ -1426,16 +1429,8 @@ public class MainMenu extends JFrame {
     }
 
     private void refreshNotifications(boolean allowPopup) {
-        SwingWorker<List<AppNotification>, Void> worker = new SwingWorker<>() {
-            @Override
-            protected List<AppNotification> doInBackground() {
-                return NotificationService.loadNotifications();
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    List<AppNotification> notifications = get();
+        UiTaskRunner.submit(this,"main-menu.notifications",NotificationService::loadNotifications,
+                notifications->{
                     int unread = 0;
                     int urgent = 0;
                     for (AppNotification notification : notifications) {
@@ -1450,12 +1445,7 @@ public class MainMenu extends JFrame {
                     if (allowPopup) {
                         showUrgentNotificationPopup(notifications);
                     }
-                } catch (Exception ex) {
-                    AppMenuBar.updateNotificationMenuLabel(getJMenuBar(), 0, 0);
-                }
-            }
-        };
-        worker.execute();
+                },ex->AppMenuBar.updateNotificationMenuLabel(getJMenuBar(),0,0));
     }
 
     public void refreshNotificationMenu() {
@@ -1579,15 +1569,12 @@ public class MainMenu extends JFrame {
         if (drawStartPromptShownThisAppSession || !PermissionManager.hasPermission("BALANCE_DRAWER")) {
             return;
         }
+        UiTaskRunner.submit(this,"main-menu.drawer-prompt",LanApiClient::currentCashDrawer,
+                this::showStartDrawPromptIfNeeded,
+                ex->System.err.println("Failed to check cash draw startup status: "+ex.getMessage()));
+    }
 
-        LanApiClient.CashDrawerStatus drawer;
-        try {
-            drawer = LanApiClient.currentCashDrawer();
-        } catch (Exception ex) {
-            System.err.println("Failed to check cash draw startup status: " + ex.getMessage());
-            return;
-        }
-
+    private void showStartDrawPromptIfNeeded(LanApiClient.CashDrawerStatus drawer) {
         if (!drawer.assigned() || drawer.activeSession()) {
             return;
         }
@@ -1611,7 +1598,7 @@ public class MainMenu extends JFrame {
     }
 
     private void endSessionSafely() {
-        LanApiClient.logout();
+        LanApiClient.logoutWithoutWaiting();
     }
 
     private void openCustomerTransactionHistory() {
@@ -1624,22 +1611,7 @@ public class MainMenu extends JFrame {
         JButton cancelButton = new JButton("Cancel");
 
         Runnable loadCustomers = () -> loadCustomerHistoryOptions(model, searchField.getText().trim());
-        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                loadCustomers.run();
-            }
-
-            @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                loadCustomers.run();
-            }
-
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                loadCustomers.run();
-            }
-        });
+        UiDebouncer.bind(searchField, 300, loadCustomers);
 
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
@@ -1685,11 +1657,12 @@ public class MainMenu extends JFrame {
     }
 
     private void loadCustomerHistoryOptions(DefaultListModel<CustomerHistoryOption> model, String search) {
-        model.clear();
-        try {
-            String token = search == null ? "" : search.trim().toLowerCase();
+        String token = search == null ? "" : search.trim().toLowerCase();
+        UiTaskRunner.submit(this, "main-menu.customer-history",
+                LanApiClient::loadCustomerAccounts, accounts -> {
+            model.clear();
             int count = 0;
-            for (LanApiClient.CustomerAccount account : LanApiClient.loadCustomerAccounts()) {
+            for (LanApiClient.CustomerAccount account : accounts) {
                 if (!token.isEmpty() && !(safe(account.accountNumber()).toLowerCase().contains(token)
                         || safe(account.customerName()).toLowerCase().contains(token)
                         || safe(account.phone()).toLowerCase().contains(token))) continue;
@@ -1697,9 +1670,7 @@ public class MainMenu extends JFrame {
                         account.customerName(), account.phone()));
                 if (++count >= 100) break;
             }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Server Error", JOptionPane.ERROR_MESSAGE);
-        }
+        }, failure -> model.clear());
     }
 
     private static String safe(String value) {

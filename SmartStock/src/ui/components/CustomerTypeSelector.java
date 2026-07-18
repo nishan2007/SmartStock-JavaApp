@@ -1,43 +1,52 @@
 package ui.components;
 
 import services.LanApiClient;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.List;
 
 public class CustomerTypeSelector extends JPanel {
     private final JComboBox<CustomerTypeOption> customerTypeBox = new JComboBox<>();
     private boolean loading;
+    private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public CustomerTypeSelector() {
         setLayout(new BorderLayout(6, 0));
         customerTypeBox.setEditable(true);
         add(customerTypeBox, BorderLayout.CENTER);
+        add(loadingState, BorderLayout.SOUTH);
         loadCustomerTypes();
     }
 
     public void loadCustomerTypes() {
         Object selected = customerTypeBox.getSelectedItem();
         String selectedText = selected == null ? "" : selected.toString();
+        CachedUiLoader.loadAfterDisplay(this, "reference:customer-types", CustomerTypesSnapshot.class,
+                SessionDataCache.REFERENCE_TTL, loadingState,
+                () -> new CustomerTypesSnapshot(LanApiClient.loadCustomerTypes("", true)),
+                snapshot -> applyCustomerTypes(snapshot.types(), selectedText));
+    }
+
+    private void applyCustomerTypes(List<LanApiClient.CustomerTypeRecord> types, String selectedText) {
+        String desiredText=getSelectedCustomerTypeName();
+        if(desiredText.isBlank())desiredText=selectedText;
         loading = true;
         customerTypeBox.removeAllItems();
         customerTypeBox.addItem(new CustomerTypeOption(null, ""));
-
-        try {
-            for (LanApiClient.CustomerTypeRecord type : LanApiClient.loadCustomerTypes("", true)) {
-                customerTypeBox.addItem(new CustomerTypeOption(type.customerTypeId(), type.name()));
-            }
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(),
-                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
-        } finally {
-            loading = false;
+        for (LanApiClient.CustomerTypeRecord type : types) {
+            customerTypeBox.addItem(new CustomerTypeOption(type.customerTypeId(), type.name()));
         }
+        loading = false;
 
-        if (!selectedText.isBlank()) {
-            setSelectedCustomerTypeByName(selectedText);
+        if (!desiredText.isBlank()) {
+            setSelectedCustomerTypeByName(desiredText);
         }
     }
+
+    private record CustomerTypesSnapshot(List<LanApiClient.CustomerTypeRecord> types) { }
 
     public Integer getSelectedCustomerTypeId() {
         Object selected = customerTypeBox.getSelectedItem();

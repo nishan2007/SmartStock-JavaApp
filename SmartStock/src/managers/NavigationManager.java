@@ -36,6 +36,8 @@ import ui.screens.TimeClock;
 import ui.screens.WeeklySchedule;
 import ui.screens.WorkstationPreferences;
 import ui.helpers.WindowHelper;
+import ui.helpers.PerformanceDiagnostics;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import java.awt.Window;
@@ -88,15 +90,26 @@ public final class NavigationManager {
         WORKSTATION_PREFERENCES
     }
 
-    private static void openScreen(JFrame parent, JFrame screen) {
-        if (screen == null) {
-            return;
-        }
-
-        if (parent instanceof MainMenu mainMenu) {
-            openFromMainMenu(mainMenu, screen);
-        } else {
-            switchChildScreen(parent, screen);
+    private static void openScreen(JFrame parent, ScreenType screenType) {
+        if (transitionInProgress || screenType == null) return;
+        transitionInProgress = true;
+        long started = System.nanoTime();
+        try {
+            JFrame screen = createScreen(screenType);
+            if (screen == null) {
+                transitionInProgress = false;
+                return;
+            }
+            if (parent instanceof MainMenu mainMenu) {
+                openFromMainMenuPrepared(mainMenu, screen);
+            } else {
+                switchChildScreenPrepared(parent, screen);
+            }
+            PerformanceDiagnostics.record("navigation", screenType.name(), started, true, -1);
+        } catch (RuntimeException | Error ex) {
+            transitionInProgress = false;
+            PerformanceDiagnostics.record("navigation", screenType.name(), started, false, -1);
+            throw ex;
         }
     }
 
@@ -106,141 +119,141 @@ public final class NavigationManager {
             return;
         }
 
-        openScreen(parent, createScreen(screenType));
+        openScreen(parent, screenType);
     }
 
     public static void openMakeSale(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.MAKE_SALE));
+        openScreen(parent, ScreenType.MAKE_SALE);
     }
 
     public static void openReturnSale(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.RETURN_SALE));
+        openScreen(parent, ScreenType.RETURN_SALE);
     }
 
     public static void openBalanceDraw(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.BALANCE_DRAW));
+        openScreen(parent, ScreenType.BALANCE_DRAW);
     }
 
     public static void openChangeBasket(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.CHANGE_BASKET));
+        openScreen(parent, ScreenType.CHANGE_BASKET);
     }
 
     public static void openBalanceSheet(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.BALANCE_SHEET));
+        openScreen(parent, ScreenType.BALANCE_SHEET);
     }
 
     public static void openOrdersManagerDashboard(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.ORDERS_MANAGER_DASHBOARD));
+        openScreen(parent, ScreenType.ORDERS_MANAGER_DASHBOARD);
     }
 
     public static void openReports(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.REPORTS));
+        openScreen(parent, ScreenType.REPORTS);
     }
 
     public static void openEnterInventory(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.RECEIVING_INVENTORY));
+        openScreen(parent, ScreenType.RECEIVING_INVENTORY);
     }
 
     public static void openReceivingHistory(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.RECEIVING_HISTORY));
+        openScreen(parent, ScreenType.RECEIVING_HISTORY);
     }
 
     public static void openStoreTransfer(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.STORE_TRANSFER));
+        openScreen(parent, ScreenType.STORE_TRANSFER);
     }
 
     public static void openCustomOrderItems(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.CUSTOM_ORDER_ITEMS));
+        openScreen(parent, ScreenType.CUSTOM_ORDER_ITEMS);
     }
 
     public static void openDepartmentList(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.DEPARTMENT_LIST));
+        openScreen(parent, ScreenType.DEPARTMENT_LIST);
     }
 
     public static void openVendorList(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.VENDOR_LIST));
+        openScreen(parent, ScreenType.VENDOR_LIST);
     }
 
     public static void openNewItem(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.NEW_ITEM));
+        openScreen(parent, ScreenType.NEW_ITEM);
     }
 
     public static void openEditItem(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.EDIT_ITEM));
+        openScreen(parent, ScreenType.EDIT_ITEM);
     }
 
     public static void openViewSales(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.VIEW_SALES));
+        openScreen(parent, ScreenType.VIEW_SALES);
     }
 
     public static void openViewInventory(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.VIEW_INVENTORY));
+        openScreen(parent, ScreenType.VIEW_INVENTORY);
     }
 
-    public static void openPriceTagPrinting(JFrame parent) { openScreen(parent, createScreen(ScreenType.PRICE_TAG_PRINTING)); }
+    public static void openPriceTagPrinting(JFrame parent) { openScreen(parent, ScreenType.PRICE_TAG_PRINTING); }
 
     public static void openCustomerAccounts(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.CUSTOMER_ACCOUNTS));
+        openScreen(parent, ScreenType.CUSTOMER_ACCOUNTS);
     }
 
     public static void openQuotations(JFrame parent) {
-        openScreen(parent, new Invoices(Invoices.InitialTab.QUOTATIONS));
+        openScreen(parent, ScreenType.QUOTATIONS);
     }
 
     public static void openInvoices(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.INVOICES));
+        openScreen(parent, ScreenType.INVOICES);
     }
 
     public static void openCustomOrders(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.CUSTOM_ORDERS));
+        openScreen(parent, ScreenType.CUSTOM_ORDERS);
     }
 
     public static void openOrders(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.ORDERS));
+        openScreen(parent, ScreenType.ORDERS);
     }
 
     public static void openTimeClock(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.TIME_CLOCK));
+        openScreen(parent, ScreenType.TIME_CLOCK);
     }
 
     public static void openPayrollDashboard(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.PAYROLL_DASHBOARD));
+        openScreen(parent, ScreenType.PAYROLL_DASHBOARD);
     }
 
     public static void openWeeklySchedule(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.WEEKLY_SCHEDULE));
+        openScreen(parent, ScreenType.WEEKLY_SCHEDULE);
     }
 
     public static void openEmployeeManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.EMPLOYEE_MANAGEMENT));
+        openScreen(parent, ScreenType.EMPLOYEE_MANAGEMENT);
     }
 
     public static void openRolesPermission(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.ROLES_PERMISSION));
+        openScreen(parent, ScreenType.ROLES_PERMISSION);
     }
 
     public static void openDeviceManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.DEVICE_MANAGEMENT));
+        openScreen(parent, ScreenType.DEVICE_MANAGEMENT);
     }
 
     public static void openMachineManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.MACHINE_MANAGEMENT));
+        openScreen(parent, ScreenType.MACHINE_MANAGEMENT);
     }
 
     public static void openPartsManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.PARTS_MANAGEMENT));
+        openScreen(parent, ScreenType.PARTS_MANAGEMENT);
     }
 
     public static void openMaintenanceManagement(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.MAINTENANCE_MANAGEMENT));
+        openScreen(parent, ScreenType.MAINTENANCE_MANAGEMENT);
     }
 
     public static void openCompanyCustomization(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.COMPANY_CUSTOMIZATION));
+        openScreen(parent, ScreenType.COMPANY_CUSTOMIZATION);
     }
 
     public static void openWorkstationPreferences(JFrame parent) {
-        openScreen(parent, createScreen(ScreenType.WORKSTATION_PREFERENCES));
+        openScreen(parent, ScreenType.WORKSTATION_PREFERENCES);
     }
 
     private static JFrame createScreen(ScreenType screenType) {
@@ -337,15 +350,8 @@ public final class NavigationManager {
         }
     }
 
-    public static void openFromMainMenu(MainMenu mainMenu, JFrame childScreen) {
-        if (transitionInProgress) {
-            return;
-        }
-
-        transitionInProgress = true;
+    private static void openFromMainMenuPrepared(MainMenu mainMenu, JFrame childScreen) {
         activeMainMenu = mainMenu;
-
-        mainMenu.setVisible(false);
         if (childScreen.getRootPane() != null) {
             childScreen.getRootPane().putClientProperty("returnToMainMenu", Boolean.TRUE);
         }
@@ -358,6 +364,7 @@ public final class NavigationManager {
 
             @Override
             public void windowClosed(WindowEvent e) {
+                UiTaskRunner.cancelAll(childScreen);
                 transitionInProgress = false;
                 Object returnToMainMenu = null;
                 if (childScreen.getRootPane() != null) {
@@ -378,15 +385,11 @@ public final class NavigationManager {
         });
 
         WindowHelper.showPosWindow(childScreen, mainMenu);
+        mainMenu.setVisible(false);
         transitionInProgress = false;
     }
 
-    public static void switchChildScreen(JFrame currentScreen, JFrame newScreen) {
-        if (transitionInProgress) {
-            return;
-        }
-
-        transitionInProgress = true;
+    private static void switchChildScreenPrepared(JFrame currentScreen, JFrame newScreen) {
         if (currentScreen != null && currentScreen.getRootPane() != null) {
             currentScreen.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
         }
@@ -402,6 +405,7 @@ public final class NavigationManager {
 
             @Override
             public void windowClosed(WindowEvent e) {
+                UiTaskRunner.cancelAll(newScreen);
                 transitionInProgress = false;
                 Object returnToMainMenu = null;
                 if (newScreen.getRootPane() != null) {
@@ -415,6 +419,7 @@ public final class NavigationManager {
 
         WindowHelper.showPosWindow(newScreen, currentScreen);
         transitionInProgress = false;
+        UiTaskRunner.cancelAll(currentScreen);
         currentScreen.dispose();
     }
 
@@ -475,7 +480,7 @@ public final class NavigationManager {
     public static void closeApplication(JFrame currentScreen) {
         transitionInProgress = true;
 
-        services.LanApiClient.logout();
+        services.LanApiClient.logoutWithoutWaiting();
 
         for (Window window : Window.getWindows()) {
             if (!(window instanceof JFrame frame)) {
