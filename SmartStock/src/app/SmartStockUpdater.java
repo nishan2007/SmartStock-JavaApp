@@ -6,8 +6,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -44,8 +46,6 @@ public final class SmartStockUpdater {
         String currentJar = required(props, "current.jar");
         String layout = props.getProperty("install.layout", "jar-dir");
 
-        stopSyncTask(props.getProperty("sync.service.task.name"));
-
         unzip(releaseZip, extractDir);
         Path payloadDir = normalizePayloadDir(extractDir);
         Path launchTarget;
@@ -56,6 +56,7 @@ public final class SmartStockUpdater {
                 throw new IOException("Mac release zip must contain a SmartStock.app bundle.");
             }
             backupMacAppBundle(currentBundle, backupDir);
+            stopSyncService(props);
             try {
                 replaceMacAppBundle(currentBundle, newBundle);
                 Path newAppDir = findJarDirectoryInMacApp(currentBundle);
@@ -66,7 +67,7 @@ public final class SmartStockUpdater {
                 restoreMacAppBundle(currentBundle, backupDir);
                 throw ex;
             } finally {
-                startSyncTask(props.getProperty("sync.service.task.name"));
+                startSyncService(props);
             }
             launchTarget = currentBundle;
         } else {
@@ -76,6 +77,7 @@ public final class SmartStockUpdater {
             }
 
             backupCurrentApp(appDir, backupDir);
+            stopSyncService(props);
             try {
                 replaceApp(appDir, payloadDir);
                 updateSyncServiceCopy(appDir, props.getProperty("sync.service.app.dir"));
@@ -83,7 +85,7 @@ public final class SmartStockUpdater {
                 restoreBackup(appDir, backupDir);
                 throw ex;
             } finally {
-                startSyncTask(props.getProperty("sync.service.task.name"));
+                startSyncService(props);
             }
             Path launchJar = findReleaseJar(appDir);
             launchTarget = launchJar == null ? appDir.resolve(currentJar) : launchJar;
@@ -304,12 +306,67 @@ public final class SmartStockUpdater {
         }
     }
 
-    private static void stopSyncTask(String taskName) {
-        runWindowsTaskCommand(taskName, "/End");
+    private static void stopSyncService(Properties props) {
+        if (isMac()) {
+            runMacLaunchctl("bootout", props.getProperty("sync.service.launch.agent.label"));
+            return;
+        }
+        runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
     }
 
-    private static void startSyncTask(String taskName) {
-        runWindowsTaskCommand(taskName, "/Run");
+    private static void startSyncService(Properties props) {
+        if (isMac()) {
+            String label = props.getProperty("sync.service.launch.agent.label");
+            runMacLaunchctl("bootstrap", label);
+            runMacLaunchctl("kickstart", label);
+            return;
+        }
+        runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/Run");
+    }
+
+    private static void runMacLaunchctl(String action, String label) {
+        if (label == null || label.isBlank()) {
+            return;
+        }
+        try {
+            String uid = commandOutput(List.of("/usr/bin/id", "-u"));
+            Path plist = Path.of(System.getProperty("user.home"), "Library", "LaunchAgents", label + ".plist");
+            if (uid.isBlank() || !Files.exists(plist)) {
+                return;
+            }
+            runCommand(macLaunchctlCommand(action, uid, plist, label));
+        } catch (Exception ignored) {
+        }
+    }
+
+    static List<String> macLaunchctlCommand(String action, String uid, Path plist, String label) {
+        String domain = "gui/" + uid;
+        return switch (action) {
+            case "bootout" -> List.of("/bin/launchctl", "bootout", domain, plist.toString());
+            case "bootstrap" -> List.of("/bin/launchctl", "bootstrap", domain, plist.toString());
+            case "kickstart" -> List.of("/bin/launchctl", "kickstart", "-k", domain + "/" + label);
+            default -> throw new IllegalArgumentException("Unsupported launchctl action: " + action);
+        };
+    }
+
+    private static void runCommand(List<String> command) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        if (!process.waitFor(15, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+        }
+    }
+
+    private static String commandOutput(List<String> command) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String output;
+        try (InputStream input = process.getInputStream()) {
+            output = new String(input.readAllBytes()).trim();
+        }
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            return "";
+        }
+        return process.exitValue() == 0 ? output : "";
     }
 
     private static void runWindowsTaskCommand(String taskName, String action) {

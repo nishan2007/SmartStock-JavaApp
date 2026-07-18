@@ -1,0 +1,32 @@
+package app;
+
+import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class SmartStockUpdaterTest {
+    private static final Path PLIST = Path.of("/Users/test/Library/LaunchAgents/com.smartstock.sync.plist");
+
+    @Test
+    void buildsMacLaunchAgentLifecycleCommands() {
+        assertEquals(
+                List.of("/bin/launchctl", "bootout", "gui/501", PLIST.toString()),
+                SmartStockUpdater.macLaunchctlCommand("bootout", "501", PLIST, "com.smartstock.sync"));
+        assertEquals(
+                List.of("/bin/launchctl", "bootstrap", "gui/501", PLIST.toString()),
+                SmartStockUpdater.macLaunchctlCommand("bootstrap", "501", PLIST, "com.smartstock.sync"));
+        assertEquals(
+                List.of("/bin/launchctl", "kickstart", "-k", "gui/501/com.smartstock.sync"),
+                SmartStockUpdater.macLaunchctlCommand("kickstart", "501", PLIST, "com.smartstock.sync"));
+    }
+
+    @Test
+    void rejectsUnknownLaunchctlActions() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SmartStockUpdater.macLaunchctlCommand("remove", "501", PLIST, "com.smartstock.sync"));
+    }
+}

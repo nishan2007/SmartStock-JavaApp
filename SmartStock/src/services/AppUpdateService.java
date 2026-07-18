@@ -223,6 +223,7 @@ public final class AppUpdateService {
         manifest.setProperty("java.bin", javaBinary().toString());
         manifest.setProperty("sync.service.app.dir", Path.of(System.getProperty("user.home"), ".smartstock", "sync-service", "app").toString());
         manifest.setProperty("sync.service.task.name", "SmartStockBackgroundSync");
+        manifest.setProperty("sync.service.launch.agent.label", "com.smartstock.sync");
         manifest.setProperty("relaunch", "true");
         Path manifestPath = stagingDir.resolve("update.properties");
         try (var output = Files.newOutputStream(manifestPath)) {
@@ -254,10 +255,18 @@ public final class AppUpdateService {
         if (isBlank(signedUrl)) {
             throw new IOException("Supabase did not return a signed download URL.");
         }
+        return resolveSignedDownloadUrl(SupabaseSessionManager.getSupabaseUrl(), signedUrl);
+    }
+
+    static String resolveSignedDownloadUrl(String supabaseUrl, String signedUrl) {
         if (signedUrl.startsWith("http://") || signedUrl.startsWith("https://")) {
             return signedUrl;
         }
-        return SupabaseSessionManager.getSupabaseUrl() + (signedUrl.startsWith("/") ? signedUrl : "/" + signedUrl);
+        String path = signedUrl.startsWith("/") ? signedUrl : "/" + signedUrl;
+        if (path.startsWith("/object/")) {
+            path = "/storage/v1" + path;
+        }
+        return supabaseUrl + path;
     }
 
     private static void downloadFile(String url, Path target) throws IOException, InterruptedException {

@@ -96,6 +96,8 @@ if jar tf "$JAR_PATH" | rg -q '(^|/)(\.env|database-credentials\.txt|database\.p
 fi
 VERSION="${JAR_NAME#inventory-management-}"
 VERSION="${VERSION%.jar}"
+IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
+BUILD_NUMBER=$((10#$VERSION_MAJOR * 10000 + 10#$VERSION_MINOR * 100 + 10#$VERSION_PATCH))
 ZIP_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.dmg"
 
@@ -129,6 +131,7 @@ JPACKAGE_OUTPUT="$(jpackage \
   --app-version "$VERSION" \
   --icon "$MAC_ICON_PATH" \
   --mac-package-identifier "com.smartstock.desktop" \
+  --add-modules "java.base,java.desktop,java.management,java.net.http,java.prefs,java.sql,jdk.httpserver" \
   --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
 JPACKAGE_STATUS=$?
 set -e
@@ -235,7 +238,7 @@ insert into app_releases (
   version, build_number, platform, artifact_bucket, artifact_path,
   sha256, file_size_bytes, release_notes, required, published, published_at
 ) values (
-  '$VERSION', 10000, 'mac', 'smartstock-releases', 'mac/smartstock-mac-$VERSION.zip',
+  '$VERSION', $BUILD_NUMBER, 'mac', 'smartstock-releases', 'mac/smartstock-mac-$VERSION.zip',
   '$SHA256', $SIZE_BYTES, 'SmartStock $VERSION Mac update.', false, true, now()
 );
 EOF
