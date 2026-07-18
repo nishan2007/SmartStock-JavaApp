@@ -1,8 +1,7 @@
 package ui.screens;
 
-import data.DB;
 import managers.PermissionManager;
-import managers.SessionManager;
+import services.LanApiClient;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
@@ -13,20 +12,12 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import java.awt.*;
-import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public class ViewInventoryDetails extends JDialog {
     private static final Color LIGHT_BACKGROUND = new Color(245, 247, 250);
@@ -91,9 +82,11 @@ public class ViewInventoryDetails extends JDialog {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        try (Connection conn = DB.getConnection()) {
-            ItemDetails itemDetails = loadItemDetails(conn);
-            JTable movementTable = buildMovementHistoryTable(conn);
+        try {
+            LanApiClient.InventoryDetails payload = LanApiClient.loadInventoryDetails(productId);
+            ItemDetails itemDetails = new ItemDetails();
+            if (payload.fields() != null) payload.fields().forEach(itemDetails::put);
+            JTable movementTable = buildMovementHistoryTable(payload.activities());
 
             JPanel root = new JPanel(new BorderLayout(0, 16));
             root.setBackground(backgroundColor());
@@ -106,7 +99,7 @@ public class ViewInventoryDetails extends JDialog {
             JOptionPane.showMessageDialog(
                     owner,
                     "Failed to load item details.\n" + ex.getMessage(),
-                    "Database Error",
+                    "LAN Service",
                     JOptionPane.ERROR_MESSAGE
             );
             dispose();
@@ -212,12 +205,19 @@ public class ViewInventoryDetails extends JDialog {
         if (canViewCreatedBy) {
             productFields.add("Created By Name");
         }
-        if (canViewVendor) {
-            productFields.add("Vendor Name");
-        }
         content.add(buildSection("Product", itemDetails, productFields), gbc);
 
         gbc.gridx = 1;
+        List<String> classificationFields = new ArrayList<>(List.of(
+                "Item Type", "Item Brand", "Shelf Location", "Storage Shelf Location"
+        ));
+        if (canViewVendor) {
+            classificationFields.add("Vendor Name");
+        }
+        content.add(buildSection("Item Details", itemDetails, classificationFields), gbc);
+
+        gbc.gridy = 1;
+        gbc.gridx = 0;
         List<String> pricingFields = new ArrayList<>();
         if (canViewCostPrice) {
             pricingFields.add("Cost Price");
@@ -225,25 +225,26 @@ public class ViewInventoryDetails extends JDialog {
         pricingFields.add("Price");
         content.add(buildSection("Pricing", itemDetails, pricingFields), gbc);
 
-        gbc.gridy = 1;
-        gbc.gridx = 0;
+        gbc.gridx = 1;
         content.add(buildSection("Inventory", itemDetails, List.of(
                 "Quantity On Hand", "Reorder Level"
         )), gbc);
 
-        gbc.gridx = 1;
+        gbc.gridy = 2;
+        gbc.gridx = 0;
+        gbc.gridwidth = 2;
         content.add(buildSection("Barcodes", itemDetails, List.of(
                 "Additional Barcodes"
         )), gbc);
 
-        gbc.gridy = 2;
+        gbc.gridy = 3;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
         content.add(buildSection("Sales Summary", itemDetails, List.of(
                 "Total Sold", "Total Sales Amount", "Total Returned", "Total Return Amount"
         )), gbc);
 
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
@@ -254,6 +255,7 @@ public class ViewInventoryDetails extends JDialog {
         scrollPane.setBackground(backgroundColor());
         scrollPane.getViewport().setBackground(backgroundColor());
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         return scrollPane;
     }
 
@@ -279,7 +281,7 @@ public class ViewInventoryDetails extends JDialog {
 
         int row = 1;
         for (String field : fields) {
-            addDetailRow(panel, row++, field, formatDisplayValue(field, itemDetails.get(field, "")));
+            addDetailRow(panel, row++, displayLabel(field), formatDisplayValue(field, itemDetails.get(field, "")));
         }
 
         gbc.gridy = row;
@@ -334,7 +336,7 @@ public class ViewInventoryDetails extends JDialog {
         valueGbc.anchor = GridBagConstraints.NORTHWEST;
         valueGbc.insets = new Insets(0, 0, 10, 0);
 
-        JLabel valueText = new JLabel("<html><body style='width:260px'>" + escapeHtml(value == null || value.isBlank() ? "-" : value) + "</body></html>");
+        JLabel valueText = new JLabel("<html><body style='width:190px'>" + escapeHtml(value == null || value.isBlank() ? "-" : value) + "</body></html>");
         valueText.setFont(new Font("SansSerif", Font.BOLD, 13));
         valueText.setForeground(textColor());
         panel.add(valueText, valueGbc);
@@ -373,173 +375,25 @@ public class ViewInventoryDetails extends JDialog {
         return panel;
     }
 
-    private ItemDetails loadItemDetails(Connection conn) throws SQLException {
-        ItemDetails details = new ItemDetails();
-
-        Integer currentLocationId = getCurrentLocationId();
-        String sql = """
-                SELECT p.*,
-                       COALESCE(c.name, '') AS category_name,
-                       COALESCE(v.name, '') AS vendor_name,
-                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
-                       COALESCE(i.reorder_level, 0) AS reorder_level
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.category_id
-                LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
-                LEFT JOIN inventory i ON p.product_id = i.product_id
-                """;
-        if (currentLocationId != null) {
-            sql += " AND i.location_id = ?";
-        }
-        sql += """
-
-                WHERE p.product_id = ?
-                """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (currentLocationId != null) {
-                ps.setInt(1, currentLocationId);
-                ps.setInt(2, productId);
-            } else {
-                ps.setInt(1, productId);
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    ResultSetMetaData metaData = rs.getMetaData();
-                    for (int i = 1; i <= metaData.getColumnCount(); i++) {
-                        String fieldName = formatFieldName(metaData.getColumnLabel(i));
-                        if (isRestrictedField(fieldName)) {
-                            continue;
-                        }
-                        details.put(fieldName, formatValue(rs.getObject(i)));
-                    }
-                }
-            }
-        }
-
-        details.put("Additional Barcodes", loadAdditionalBarcodes(conn));
-        loadSalesSummary(conn, details);
-        return details;
-    }
-
-    private void loadSalesSummary(Connection conn, ItemDetails details) throws SQLException {
-        String salesSql = """
-                SELECT COALESCE(SUM(si.quantity), 0) AS total_sold,
-                       COALESCE(SUM(si.quantity * si.unit_price), 0) AS total_sales_amount
-                FROM sale_items si
-                JOIN sales s ON s.sale_id = si.sale_id
-                WHERE si.product_id = ?
-                """;
-        String returnsSql = """
-                SELECT COALESCE(SUM(sri.quantity), 0) AS total_returned,
-                       COALESCE(SUM(sri.quantity * sri.unit_price), 0) AS total_return_amount
-                FROM sale_return_items sri
-                JOIN sale_returns sr ON sr.return_id = sri.return_id
-                WHERE sri.product_id = ?
-                """;
-
-        Integer currentLocationId = getCurrentLocationId();
-        if (currentLocationId != null) {
-            salesSql += " AND s.location_id = ?";
-            returnsSql += " AND sr.location_id = ?";
-        }
-
-        int totalSold = 0;
-        BigDecimal totalSalesAmount = BigDecimal.ZERO;
-        try (PreparedStatement ps = conn.prepareStatement(salesSql)) {
-            ps.setInt(1, productId);
-            if (currentLocationId != null) {
-                ps.setInt(2, currentLocationId);
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    totalSold = rs.getInt("total_sold");
-                    totalSalesAmount = defaultZero(rs.getBigDecimal("total_sales_amount"));
-                }
-            }
-        }
-
-        int totalReturned = 0;
-        BigDecimal totalReturnAmount = BigDecimal.ZERO;
-        if (!getTableColumns(conn, "sale_return_items").isEmpty() && !getTableColumns(conn, "sale_returns").isEmpty()) {
-            try (PreparedStatement ps = conn.prepareStatement(returnsSql)) {
-                ps.setInt(1, productId);
-                if (currentLocationId != null) {
-                    ps.setInt(2, currentLocationId);
-                }
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        totalReturned = rs.getInt("total_returned");
-                        totalReturnAmount = defaultZero(rs.getBigDecimal("total_return_amount"));
-                    }
-                }
-            }
-        }
-
-        details.put("Total Sold", String.valueOf(Math.max(0, totalSold - totalReturned)));
-        details.put("Total Sales Amount", totalSalesAmount.subtract(totalReturnAmount).max(BigDecimal.ZERO).toPlainString());
-        details.put("Total Returned", String.valueOf(totalReturned));
-        details.put("Total Return Amount", totalReturnAmount.toPlainString());
-    }
-
-    private boolean isRestrictedField(String fieldName) {
-        if (!canViewCostPrice && "Cost Price".equals(fieldName)) {
-            return true;
-        }
-        if (!canViewVendor && ("Vendor Id".equals(fieldName) || "Vendor Name".equals(fieldName))) {
-            return true;
-        }
-        return !canViewCreatedBy && ("Created By User Id".equals(fieldName) || "Created By Name".equals(fieldName));
-    }
-
-    private JTable buildMovementHistoryTable(Connection conn) throws SQLException {
-        List<ActivityRow> rows = new ArrayList<>();
-        loadInventoryMovementRows(conn, rows);
-        loadNonInventorySaleRows(conn, rows);
-        loadNonInventoryReturnRows(conn, rows);
-
-        rows.sort((left, right) -> {
-            Timestamp leftTime = left.sortTime();
-            Timestamp rightTime = right.sortTime();
-            if (leftTime == null && rightTime == null) {
-                return 0;
-            }
-            if (leftTime == null) {
-                return 1;
-            }
-            if (rightTime == null) {
-                return -1;
-            }
-            return rightTime.compareTo(leftTime);
-        });
-
+    private JTable buildMovementHistoryTable(List<LanApiClient.InventoryActivity> activities) {
         DefaultTableModel movementModel = new DefaultTableModel(
-                new Object[]{"Date / Time", "Activity", "Qty", "Amount", "Reference", "User", "Note"},
-                0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+                new Object[]{"Date / Time", "Activity", "Qty", "Amount", "Reference", "User", "Note"}, 0) {
+            @Override public boolean isCellEditable(int row, int column) { return false; }
         };
-
-        for (ActivityRow row : rows) {
-            movementModel.addRow(new Object[]{
-                    formatValue(row.displayTime()),
-                    row.activityType(),
-                    row.quantity(),
-                    row.amount(),
-                    row.reference(),
-                    row.userName(),
-                    row.note()
-            });
+        if (activities != null) {
+            for (LanApiClient.InventoryActivity row : activities) {
+                String time = row.createdAtEpochMillis() <= 0 ? ""
+                        : Instant.ofEpochMilli(row.createdAtEpochMillis())
+                        .atZone(StoreTimeZoneHelper.getStoreZone()).format(DATE_TIME_FORMAT);
+                String amount = row.amount() == null || row.amount().isBlank()
+                        ? "" : moneyValue(row.amount());
+                movementModel.addRow(new Object[]{time, row.activityType(), row.quantity(), amount,
+                        row.reference(), row.userName(), row.note()});
+            }
         }
-
         if (movementModel.getRowCount() == 0) {
             movementModel.addRow(new Object[]{"", "No activity history found for this item.", "", "", "", "", ""});
         }
-
         JTable movementTable = new JTable(movementModel);
         movementTable.setRowHeight(30);
         movementTable.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -563,148 +417,6 @@ public class ViewInventoryDetails extends JDialog {
         return movementTable;
     }
 
-    private void loadInventoryMovementRows(Connection conn, List<ActivityRow> rows) throws SQLException {
-        Set<String> movementColumns = getTableColumns(conn, "inventory_movements");
-        if (movementColumns.isEmpty()) {
-            return;
-        }
-
-        String createdAtSelect = movementColumns.contains("created_at")
-                ? "created_at, (created_at AT TIME ZONE ?) AS local_created_at"
-                : "NULL::timestamptz AS created_at, NULL::timestamp AS local_created_at";
-        String movementIdSelect = movementColumns.contains("movement_id")
-                ? "CAST(movement_id AS TEXT) AS reference"
-                : "'' AS reference";
-        String reasonSelect = movementColumns.contains("reason") ? "COALESCE(reason, 'INVENTORY') AS reason" : "'INVENTORY' AS reason";
-        String noteSelect = movementColumns.contains("note") ? "COALESCE(note, '') AS note" : "'' AS note";
-        String userSelect = movementColumns.contains("user_name") ? "COALESCE(user_name, '') AS user_name" : "'' AS user_name";
-
-        String sql = "SELECT " + createdAtSelect + ", " + movementIdSelect + ", " + reasonSelect + ", "
-                + noteSelect + ", " + userSelect + ", COALESCE(change_qty, 0) AS change_qty "
-                + "FROM inventory_movements WHERE product_id = ?";
-        Integer currentLocationId = getCurrentLocationId();
-        if (currentLocationId != null && movementColumns.contains("location_id")) {
-            sql += " AND location_id = ?";
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            int paramIndex = 1;
-            if (movementColumns.contains("created_at")) {
-                ps.setString(paramIndex++, StoreTimeZoneHelper.getStoreZoneId());
-            }
-            ps.setInt(paramIndex++, productId);
-            if (currentLocationId != null && movementColumns.contains("location_id")) {
-                ps.setInt(paramIndex, currentLocationId);
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    rows.add(new ActivityRow(
-                            rs.getTimestamp("created_at"),
-                            rs.getTimestamp("local_created_at"),
-                            rs.getString("reason"),
-                            rs.getInt("change_qty"),
-                            "",
-                            rs.getString("reference"),
-                            rs.getString("user_name"),
-                            rs.getString("note")
-                    ));
-                }
-            }
-        }
-    }
-
-    private void loadNonInventorySaleRows(Connection conn, List<ActivityRow> rows) throws SQLException {
-        String sql = """
-                SELECT s.created_at,
-                       (s.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(si.quantity, 0) AS quantity,
-                       COALESCE(si.unit_price, 0) * COALESCE(si.quantity, 0) AS amount,
-                       COALESCE(s.receipt_number, 'Sale #' || s.sale_id) AS reference,
-                       COALESCE(s.user_name, '') AS user_name
-                FROM sale_items si
-                JOIN sales s ON s.sale_id = si.sale_id
-                WHERE si.product_id = ?
-                  AND COALESCE(si.product_type, 'INVENTORY') <> 'INVENTORY'
-                """;
-        Integer currentLocationId = getCurrentLocationId();
-        if (currentLocationId != null) {
-            sql += " AND s.location_id = ?";
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, productId);
-            if (currentLocationId != null) {
-                ps.setInt(3, currentLocationId);
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    rows.add(new ActivityRow(
-                            rs.getTimestamp("created_at"),
-                            rs.getTimestamp("local_created_at"),
-                            "SALE",
-                            -rs.getInt("quantity"),
-                            moneyValue(defaultZero(rs.getBigDecimal("amount")).toPlainString()),
-                            rs.getString("reference"),
-                            rs.getString("user_name"),
-                            "Sold without inventory quantity change"
-                    ));
-                }
-            }
-        }
-    }
-
-    private void loadNonInventoryReturnRows(Connection conn, List<ActivityRow> rows) throws SQLException {
-        if (getTableColumns(conn, "sale_returns").isEmpty() || getTableColumns(conn, "sale_return_items").isEmpty()) {
-            return;
-        }
-
-        String sql = """
-                SELECT sr.created_at,
-                       (sr.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(sri.quantity, 0) AS quantity,
-                       COALESCE(sri.unit_price, 0) * COALESCE(sri.quantity, 0) AS amount,
-                       'Return #' || sr.return_id AS reference,
-                       COALESCE(sr.user_name, '') AS user_name,
-                       COALESCE(s.receipt_number, '') AS receipt_number
-                FROM sale_return_items sri
-                JOIN sale_returns sr ON sr.return_id = sri.return_id
-                JOIN sale_items si ON si.sale_item_id = sri.sale_item_id
-                LEFT JOIN sales s ON s.sale_id = sr.sale_id
-                WHERE sri.product_id = ?
-                  AND COALESCE(si.product_type, 'INVENTORY') <> 'INVENTORY'
-                """;
-        Integer currentLocationId = getCurrentLocationId();
-        if (currentLocationId != null) {
-            sql += " AND sr.location_id = ?";
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, productId);
-            if (currentLocationId != null) {
-                ps.setInt(3, currentLocationId);
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    rows.add(new ActivityRow(
-                            rs.getTimestamp("created_at"),
-                            rs.getTimestamp("local_created_at"),
-                            "RETURN",
-                            rs.getInt("quantity"),
-                            moneyValue(defaultZero(rs.getBigDecimal("amount")).toPlainString()),
-                            rs.getString("reference"),
-                            rs.getString("user_name"),
-                            "Returned from receipt " + rs.getString("receipt_number")
-                    ));
-                }
-            }
-        }
-    }
-
     private static class MovementTableRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
@@ -721,48 +433,6 @@ public class ViewInventoryDetails extends JDialog {
             setBorder(new EmptyBorder(0, 8, 0, 8));
             return component;
         }
-    }
-
-    private String loadAdditionalBarcodes(Connection conn) throws SQLException {
-        String sql = "SELECT barcode FROM product_barcodes WHERE product_id = ? ORDER BY barcode";
-        List<String> barcodes = new ArrayList<>();
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, productId);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String barcode = rs.getString("barcode");
-                    if (barcode != null && !barcode.isBlank()) {
-                        barcodes.add(barcode);
-                    }
-                }
-            }
-        }
-
-        return String.join(", ", barcodes);
-    }
-
-    private Set<String> getTableColumns(Connection conn, String tableName) throws SQLException {
-        Set<String> columns = new HashSet<>();
-        String sql = """
-                SELECT LOWER(column_name) AS column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = ?
-                """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tableName);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    columns.add(rs.getString("column_name"));
-                }
-            }
-        }
-
-        return columns;
     }
 
     private String getStockStatus(ItemDetails details) {
@@ -785,32 +455,6 @@ public class ViewInventoryDetails extends JDialog {
         }
     }
 
-    private BigDecimal defaultZero(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
-    }
-
-    private String formatFieldName(String fieldName) {
-        if (fieldName == null || fieldName.isBlank()) {
-            return "";
-        }
-
-        String[] words = fieldName.replace("_", " ").split("\\s+");
-        StringBuilder formatted = new StringBuilder();
-        for (String word : words) {
-            if (word.isBlank()) {
-                continue;
-            }
-            if (!formatted.isEmpty()) {
-                formatted.append(" ");
-            }
-            formatted.append(Character.toUpperCase(word.charAt(0)));
-            if (word.length() > 1) {
-                formatted.append(word.substring(1).toLowerCase());
-            }
-        }
-        return formatted.toString();
-    }
-
     private String formatDisplayValue(String field, String value) {
         if ("Cost Price".equals(field) || "Price".equals(field)) {
             return moneyValue(value);
@@ -819,6 +463,15 @@ public class ViewInventoryDetails extends JDialog {
             return formatProductType(value);
         }
         return value;
+    }
+
+    private String displayLabel(String field) {
+        return switch (field) {
+            case "Product Type" -> "Product Classification";
+            case "Category Id" -> "Department ID";
+            case "Category Name" -> "Department";
+            default -> field;
+        };
     }
 
     private String formatProductType(String productType) {
@@ -852,28 +505,10 @@ public class ViewInventoryDetails extends JDialog {
         }
     }
 
-    private String formatValue(Object value) {
-        if (value == null) {
-            return "";
-        }
-        if (value instanceof Timestamp timestamp) {
-            return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DATE_TIME_FORMAT);
-        }
-        return String.valueOf(value);
-    }
-
     private String escapeHtml(String value) {
         return value.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
-    }
-
-    private Integer getCurrentLocationId() {
-        try {
-            return SessionManager.getCurrentLocationId();
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private static class ItemDetails {
@@ -888,15 +523,4 @@ public class ViewInventoryDetails extends JDialog {
         }
     }
 
-    private record ActivityRow(
-            Timestamp sortTime,
-            Timestamp displayTime,
-            String activityType,
-            int quantity,
-            String amount,
-            String reference,
-            String userName,
-            String note
-    ) {
-    }
 }

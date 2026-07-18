@@ -31,12 +31,22 @@ public final class ReferenceDataSyncService {
             "company_customization",
             "users",
             "user_locations",
+            "time_clock_auto_close_settings",
+            "employee_payroll_settings",
+            "employee_schedule_shifts",
+            "employee_schedule_holidays",
             "employee_schedule_assignments",
+            "employee_time_clock",
+            "employee_time_clock_adjustments",
             "devices",
             "device_sessions",
             "categories",
+            "item_types",
+            "item_brands",
+            "shelf_locations",
             "vendors",
             "products",
+            "product_shelf_assignments",
             "product_barcodes",
             "inventory",
             "customer_accounts",
@@ -58,12 +68,20 @@ public final class ReferenceDataSyncService {
             "customer_types",
             "users",
             "user_locations",
+            "time_clock_auto_close_settings",
+            "employee_payroll_settings",
+            "employee_schedule_shifts",
+            "employee_schedule_holidays",
             "employee_schedule_assignments",
             "devices",
             "device_sessions",
             "categories",
+            "item_types",
+            "item_brands",
+            "shelf_locations",
             "vendors",
             "products",
+            "product_shelf_assignments",
             "product_barcodes",
             "inventory",
             "customer_accounts",
@@ -114,6 +132,7 @@ public final class ReferenceDataSyncService {
             "expense_categories",
             "expenses",
             "employee_time_clock",
+            "employee_time_clock_adjustments",
             "employee_payroll_bonuses",
             "payroll_payments",
             "bank_transactions",
@@ -140,6 +159,10 @@ public final class ReferenceDataSyncService {
             "company_customization",
             "users",
             "user_locations",
+            "time_clock_auto_close_settings",
+            "employee_payroll_settings",
+            "employee_schedule_shifts",
+            "employee_schedule_holidays",
             "employee_schedule_assignments",
             "device_sessions",
             "cash_drawers",
@@ -148,7 +171,12 @@ public final class ReferenceDataSyncService {
             "cash_drawer_sessions",
             "cash_drawer_handovers",
             "change_basket_updates",
+            "categories",
+            "item_types",
+            "item_brands",
+            "shelf_locations",
             "products",
+            "product_shelf_assignments",
             "product_barcodes",
             "receiving_batches",
             "sales",
@@ -193,6 +221,7 @@ public final class ReferenceDataSyncService {
             "expense_categories",
             "expenses",
             "employee_time_clock",
+            "employee_time_clock_adjustments",
             "employee_payroll_bonuses",
             "payroll_payments",
             "bank_transactions",
@@ -215,9 +244,10 @@ public final class ReferenceDataSyncService {
     }
 
     public static int refreshFromCloud(Connection local, Connection cloud) throws SQLException {
+        requireWorkflowSyncIdentitySchema(local, cloud);
+        ensureItemDetailsSyncSchema(local, cloud);
         ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
-        ensureWorkflowSyncIdentitySchema(local, cloud);
         int copied = 0;
         truncateLocalTables(local);
         for (String table : TABLES) {
@@ -231,10 +261,11 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pullReferenceData(Connection local, Connection cloud) throws SQLException {
+        requireWorkflowSyncIdentitySchema(local, cloud);
+        ensureItemDetailsSyncSchema(local, cloud);
         ensureMissingCloudTables(local, cloud);
         ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
-        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         ensureTombstoneSchema(local);
@@ -245,17 +276,20 @@ public final class ReferenceDataSyncService {
             if (!tableExists(local, table) || !tableExists(cloud, table)) {
                 continue;
             }
-            copied += upsertAll(cloud, local, table);
+            copied += usesWorkflowSyncUuid(table)
+                    ? pullUuidKeyedRowsAndAlignIds(local, cloud, table)
+                    : upsertAll(cloud, local, table);
         }
         repairSequences(local);
         return copied;
     }
 
     public static int pullExistingLocationHistory(Connection local, Connection cloud, Integer locationId) throws SQLException {
+        requireWorkflowSyncIdentitySchema(local, cloud);
+        ensureItemDetailsSyncSchema(local, cloud);
         ensureMissingCloudTables(local, cloud);
         ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
-        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         int copied = 0;
@@ -267,9 +301,10 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pushLocalOperationalChanges(Connection local, Connection cloud) throws SQLException {
+        requireWorkflowSyncIdentitySchema(local, cloud);
+        ensureItemDetailsSyncSchema(local, cloud);
         ensureEmailSyncSchema(local, cloud);
         ensureQuotationInvoiceSyncSchema(local, cloud);
-        ensureWorkflowSyncIdentitySchema(local, cloud);
         ensureUpdatedAtSyncSchema(local);
         ensureUpdatedAtSyncSchema(cloud);
         ensureTombstoneSchema(local);
@@ -281,7 +316,9 @@ public final class ReferenceDataSyncService {
             if (!tableExists(local, table) || !tableExists(cloud, table)) {
                 continue;
             }
-            if ("sales".equals(table)) {
+            if (usesWorkflowSyncUuid(table)) {
+                copied += pushUuidKeyedRowsAndAlignIds(local, cloud, table);
+            } else if ("sales".equals(table)) {
                 copied += pushSalesAndAlignIds(local, cloud);
             } else if ("custom_orders".equals(table)) {
                 copied += pushCustomOrdersAndAlignIds(local, cloud);
@@ -293,8 +330,6 @@ public final class ReferenceDataSyncService {
                 copied += pushGeneratedDocumentAndAlignIds(local, cloud, "invoice_delivery_events", "invoice_delivery_event_id", "delivery_number", "INVOICE_DELIVERY_ID_REMAP");
             } else if ("products".equals(table)) {
                 copied += pushProductsAndAlignIds(local, cloud);
-            } else if (usesWorkflowChildUuid(table)) {
-                copied += pushUuidKeyedRowsAndAlignIds(local, cloud, table);
             } else {
                 copied += upsertAll(local, cloud, table);
             }
@@ -304,31 +339,59 @@ public final class ReferenceDataSyncService {
         return copied;
     }
 
-    private static void ensureWorkflowSyncIdentitySchema(Connection local, Connection cloud) throws SQLException {
-        WorkflowSyncIdentitySchemaInstaller.HealthReport localReport = WorkflowSyncIdentitySchemaInstaller.repairAndReport(local);
-        WorkflowSyncIdentitySchemaInstaller.HealthReport cloudReport = WorkflowSyncIdentitySchemaInstaller.repairAndReport(cloud);
-        if (!localReport.healthy()) {
-            SyncAuditService.record(local,
-                    "WORKFLOW_SYNC_IDENTITY_SCHEMA_REPAIR",
-                    "local",
-                    null,
-                    null,
-                    null,
-                    "workflow_sync_identity",
-                    "WARNING",
-                    Map.of("summary", localReport.summary()));
+    public static int pushTimeClockSafetyChanges(Connection local, Connection cloud) throws SQLException {
+        TimeClockAutoCloseService.ensureSchema(local);
+        TimeClockAutoCloseService.ensureSchema(cloud);
+        int copied = 0;
+        for (String table : List.of("time_clock_auto_close_settings", "employee_time_clock",
+                "employee_time_clock_adjustments")) {
+            if (tableExists(local, table) && tableExists(cloud, table)) {
+                copied += upsertAll(local, cloud, table);
+            }
         }
-        if (!cloudReport.healthy()) {
-            SyncAuditService.record(local,
-                    "WORKFLOW_SYNC_IDENTITY_SCHEMA_REPAIR",
-                    "cloud",
-                    null,
-                    null,
-                    null,
-                    "workflow_sync_identity",
-                    "WARNING",
-                    Map.of("summary", cloudReport.summary()));
+        return copied;
+    }
+
+    public static int syncScheduleHolidayChanges(Connection local, Connection cloud) throws SQLException {
+        ServerEmployeeScheduleService.ensureSchema(local);
+        ServerEmployeeScheduleService.ensureSchema(cloud);
+        ensureTombstoneSchema(local);
+        ensureTombstoneSchema(cloud);
+        int copied = pushTombstones(local, cloud);
+        copied += pullTombstones(cloud, local);
+        copied += upsertAll(local, cloud, "employee_schedule_holidays");
+        copied += upsertAll(cloud, local, "employee_schedule_holidays");
+        return copied;
+    }
+
+    public static int pullTimeClockSafetyChanges(Connection cloud, Connection local) throws SQLException {
+        TimeClockAutoCloseService.ensureSchema(cloud);
+        TimeClockAutoCloseService.ensureSchema(local);
+        int copied = 0;
+        for (String table : List.of("time_clock_auto_close_settings", "employee_time_clock",
+                "employee_time_clock_adjustments")) {
+            if (tableExists(cloud, table) && tableExists(local, table)) {
+                copied += upsertAll(cloud, local, table);
+            }
         }
+        return copied;
+    }
+
+    private static void requireWorkflowSyncIdentitySchema(Connection local, Connection cloud) throws SQLException {
+        WorkflowSyncIdentitySchemaInstaller.HealthReport localReport =
+                WorkflowSyncIdentitySchemaInstaller.healthReport(local);
+        WorkflowSyncIdentitySchemaInstaller.HealthReport cloudReport =
+                WorkflowSyncIdentitySchemaInstaller.healthReport(cloud);
+        if (!localReport.healthy() || !cloudReport.healthy()) {
+            throw new SQLException("Workflow sync identity schema is missing. Run Server Provisioning or apply "
+                    + "database/workflow_sync_identity_setup.sql before syncing. Local: "
+                    + localReport.summary() + " Cloud: " + cloudReport.summary());
+        }
+    }
+
+    private static void ensureItemDetailsSyncSchema(Connection local, Connection cloud) throws SQLException {
+        ItemDetailsSchemaInstaller.ensureSchema(local);
+        ItemDetailsSchemaInstaller.ensureSchema(cloud);
     }
 
     private static void ensureQuotationInvoiceSyncSchema(Connection local, Connection cloud) throws SQLException {
@@ -651,6 +714,9 @@ public final class ReferenceDataSyncService {
         if (!tableExists(local, table) || !tableExists(cloud, table)) {
             return 0;
         }
+        if (usesWorkflowSyncUuid(table)) {
+            return pullUuidKeyedRowsAndAlignIds(local, cloud, table);
+        }
         if ("sales".equals(table)) {
             return pullGeneratedDocumentsAndAlignIds(local, cloud, "sales", "sale_id", "receipt_number", "SALE_PULL_ID_REMAP");
         }
@@ -665,9 +731,6 @@ public final class ReferenceDataSyncService {
         }
         if ("invoice_delivery_events".equals(table)) {
             return pullGeneratedDocumentsAndAlignIds(local, cloud, "invoice_delivery_events", "invoice_delivery_event_id", "delivery_number", "INVOICE_DELIVERY_PULL_ID_REMAP");
-        }
-        if (usesWorkflowChildUuid(table)) {
-            return pullUuidKeyedRowsAndAlignIds(local, cloud, table);
         }
         if (usesNaturalKeyReferenceSync(table)) {
             return upsertAll(cloud, local, table);
@@ -1180,7 +1243,9 @@ public final class ReferenceDataSyncService {
                 String syncUuid = rs.getString(columns.indexOf("sync_uuid") + 1);
                 Long cloudId = cloudIdsByUuid.get(syncUuid);
                 if (cloudId == null) {
-                    if (cloudExistingIds.contains(localId)) {
+                    if (cloudExistingIds.contains(localId)
+                            && (!isWorkflowParentUuid(table)
+                            || rowLooksLikeSameWorkflowParent(cloud, table, idColumn, columns, rs, localId))) {
                         String cloudSyncUuid = cloudUuidById.get(localId);
                         addUuidUpdate(localUuidUpdate, localId, cloudSyncUuid);
                         uuidBatch++;
@@ -1191,9 +1256,12 @@ public final class ReferenceDataSyncService {
                         cloudId = localId;
                         syncUuid = cloudSyncUuid;
                     } else {
-                        cloudId = findSuppressedDuplicateSaleAuditId(cloud, table, idColumn, columns, rs);
+                        cloudId = isWorkflowParentUuid(table)
+                                ? null
+                                : findSuppressedDuplicateSaleAuditId(cloud, table, idColumn, columns, rs);
                         if (cloudId == null) {
-                            cloudId = insertUuidKeyedRow(cloud, table, idColumn, columns, rs, true);
+                            cloudId = insertUuidKeyedRow(cloud, table, idColumn, columns, rs,
+                                    !cloudExistingIds.contains(localId));
                             changed++;
                         } else {
                             String cloudSyncUuid = cloudUuidById.get(cloudId);
@@ -1259,7 +1327,9 @@ public final class ReferenceDataSyncService {
                 String syncUuid = rs.getString(columns.indexOf("sync_uuid") + 1);
                 Long localId = localIdsByUuid.get(syncUuid);
                 if (localId == null) {
-                    if (localExistingIds.contains(cloudId)) {
+                    if (localExistingIds.contains(cloudId)
+                            && (!isWorkflowParentUuid(table)
+                            || rowLooksLikeSameWorkflowParent(local, table, idColumn, columns, rs, cloudId))) {
                         addUuidUpdate(uuidUpdate, cloudId, syncUuid);
                         uuidBatch++;
                         if (uuidBatch >= 500) {
@@ -2805,6 +2875,13 @@ public final class ReferenceDataSyncService {
                       AND r.work_date = (tombstone.key_data->>'work_date')::date
                       AND r.updated_at <= tombstone.deleted_at
                     """;
+            case "employee_schedule_holidays" -> """
+                    WITH tombstone AS (SELECT ?::jsonb AS key_data, ?::timestamptz AS deleted_at)
+                    DELETE FROM employee_schedule_holidays r
+                    USING tombstone
+                    WHERE r.holiday_date = (tombstone.key_data->>'holiday_date')::date
+                      AND r.updated_at <= tombstone.deleted_at
+                    """;
             case "product_barcodes" -> """
                     WITH tombstone AS (SELECT ?::jsonb AS key_data, ?::timestamptz AS deleted_at)
                     DELETE FROM product_barcodes r
@@ -2827,6 +2904,9 @@ public final class ReferenceDataSyncService {
                         deleted_at = GREATEST(sync_tombstones.deleted_at, EXCLUDED.deleted_at),
                         origin_device_id = COALESCE(EXCLUDED.origin_device_id, sync_tombstones.origin_device_id)
                     """;
+        }
+        if ("employee_time_clock_adjustments".equals(table)) {
+            return "ON CONFLICT (adjustment_id) DO NOTHING";
         }
         List<String> updateColumns = new ArrayList<>();
         for (String column : columns) {
@@ -2904,7 +2984,12 @@ public final class ReferenceDataSyncService {
         if ("inventory".equals(table) && columns.contains("product_id") && columns.contains("location_id")) {
             return List.of("product_id", "location_id");
         }
-        if (usesWorkflowChildUuid(table)
+        if ("categories".equals(table)
+                && columns.contains("name")
+                && hasUniqueConflictTarget(target, table, List.of("name"))) {
+            return List.of("name");
+        }
+        if (usesWorkflowSyncUuid(table)
                 && columns.contains("sync_uuid")
                 && hasUniqueConflictTarget(target, table, List.of("sync_uuid"))) {
             return List.of("sync_uuid");
@@ -2938,7 +3023,7 @@ public final class ReferenceDataSyncService {
         return primaryKeys;
     }
 
-    private static boolean usesWorkflowChildUuid(String table) {
+    private static boolean usesWorkflowSyncUuid(String table) {
         return "quotation_lines".equals(table)
                 || "invoice_lines".equals(table)
                 || "invoice_payments".equals(table)
@@ -2947,16 +3032,19 @@ public final class ReferenceDataSyncService {
                 || "quotation_audit_log".equals(table)
                 || "invoice_status_history".equals(table)
                 || "invoice_audit_log".equals(table)
+                || "sales".equals(table)
                 || "sale_items".equals(table)
                 || "sale_returns".equals(table)
                 || "sale_return_items".equals(table)
                 || "sale_audit_log".equals(table)
                 || "inventory_movements".equals(table)
+                || "customer_accounts".equals(table)
                 || "customer_account_transactions".equals(table)
                 || "customer_account_payment_allocations".equals(table)
                 || "custom_order_lines".equals(table)
                 || "custom_order_line_print_addons".equals(table)
                 || "custom_order_payments".equals(table)
+                || "custom_orders".equals(table)
                 || "custom_order_inventory_reservations".equals(table)
                 || "custom_order_status_history".equals(table)
                 || "custom_order_line_deliveries".equals(table)
@@ -2967,6 +3055,34 @@ public final class ReferenceDataSyncService {
                 || "employee_payroll_bonuses".equals(table)
                 || "email_outbox".equals(table)
                 || "email_outbox_events".equals(table);
+    }
+
+    private static boolean isWorkflowParentUuid(String table) {
+        return "sales".equals(table)
+                || "customer_accounts".equals(table)
+                || "custom_orders".equals(table);
+    }
+
+    private static boolean rowLooksLikeSameWorkflowParent(Connection target, String table, String idColumn,
+                                                           List<String> columns, ResultSet sourceRow, long id) throws SQLException {
+        String naturalKeyColumn = "sales".equals(table) ? "receipt_number"
+                : "customer_accounts".equals(table) ? "account_number"
+                : "custom_orders".equals(table) ? "order_number" : null;
+        if (naturalKeyColumn == null || !columns.contains(naturalKeyColumn)) {
+            return false;
+        }
+        String naturalKey = sourceRow.getString(columns.indexOf(naturalKeyColumn) + 1);
+        if (naturalKey == null || naturalKey.isBlank()) {
+            return false;
+        }
+        try (PreparedStatement ps = target.prepareStatement("SELECT 1 FROM " + quote(table)
+                + " WHERE " + quote(idColumn) + " = ? AND " + quote(naturalKeyColumn) + " = ?")) {
+            ps.setLong(1, id);
+            ps.setString(2, naturalKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     private static boolean isWorkflowAppendOnlyTable(String table) {
@@ -3188,6 +3304,10 @@ public final class ReferenceDataSyncService {
             ensureUpdatedAtTableSchema(conn, stmt, "locations");
             ensureUpdatedAtTableSchema(conn, stmt, "company_customization");
             ensureUpdatedAtTableSchema(conn, stmt, "users");
+            ensureUpdatedAtTableSchema(conn, stmt, "item_types");
+            ensureUpdatedAtTableSchema(conn, stmt, "item_brands");
+            ensureUpdatedAtTableSchema(conn, stmt, "shelf_locations");
+            ensureUpdatedAtTableSchema(conn, stmt, "product_shelf_assignments");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
@@ -3195,7 +3315,12 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS balance_sheet_recipient_email TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS hire_date DATE");
+            stmt.executeUpdate("UPDATE users SET hire_date = COALESCE(created_at::date, CURRENT_DATE) WHERE hire_date IS NULL");
+            stmt.executeUpdate("ALTER TABLE users ALTER COLUMN hire_date SET DEFAULT CURRENT_DATE");
+            stmt.executeUpdate("ALTER TABLE users ALTER COLUMN hire_date SET NOT NULL");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_user_id INTEGER");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by_name TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_cache_invalidated_at TIMESTAMPTZ");
@@ -3209,13 +3334,16 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_print_count INTEGER NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_rotated_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_rotated_by_user_id INTEGER");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_rotated_by_name TEXT");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS users_badge_normalized_idx ON users(UPPER(REGEXP_REPLACE(COALESCE(badge_id, ''), '[^a-zA-Z0-9]', '', 'g')))");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_company_name TEXT NOT NULL DEFAULT 'SmartStock'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_logo_url TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_quote TEXT NOT NULL DEFAULT '\"Sales goes up and down, Service is Forever\"'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_signatory_name TEXT NOT NULL DEFAULT 'Authorized Signature'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_signatory_title TEXT NOT NULL DEFAULT 'Management'");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan or swipe this badge for SmartStock access.'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan, swipe, or tap this badge for SmartStock access.'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_quote BOOLEAN NOT NULL DEFAULT TRUE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_employee_id BOOLEAN NOT NULL DEFAULT TRUE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_show_issue_date BOOLEAN NOT NULL DEFAULT TRUE");
@@ -3226,6 +3354,10 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track2 TEXT NOT NULL DEFAULT '{badge_id}'");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_track3 TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_enabled BOOLEAN NOT NULL DEFAULT FALSE");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_payload TEXT NOT NULL DEFAULT '{badge_id}'");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_writer_command TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_verify_command TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE");
@@ -3235,7 +3367,7 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
             ensureUpdatedAtTableSchema(conn, stmt, "user_locations");
-            EmployeeScheduleService.ensureSchema(conn);
+            ServerEmployeeScheduleService.ensureSchema(conn);
             ensureUpdatedAtTableSchema(conn, stmt, "inventory");
             ensureUpdatedAtTableSchema(conn, stmt, "customer_accounts");
             CustomerAccountLedgerService.ensureSchema(conn);

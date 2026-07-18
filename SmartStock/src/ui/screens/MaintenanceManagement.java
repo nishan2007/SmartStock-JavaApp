@@ -1,6 +1,8 @@
 package ui.screens;
 
-import data.DB;
+import services.LanApiClient;
+import services.LanMachineService;
+import services.LanMaintenanceWorkflowService;
 import managers.NavigationManager;
 import managers.SessionManager;
 import ui.components.AppMenuBar;
@@ -11,11 +13,6 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -305,218 +302,48 @@ public class MaintenanceManagement extends JFrame {
 
     private void loadMachines() {
         machineTableModel.setRowCount(0);
-        String search = machineSearchField.getText().trim();
-        String sql = """
-                SELECT machine_id, machine_name, COALESCE(asset_tag, '') AS asset_tag,
-                       COALESCE(machine_type, '') AS machine_type, status,
-                       COALESCE(l.name, mm.location_name, '') AS location_name, next_service_date
-                FROM maintenance_machines mm
-                LEFT JOIN locations l ON l.location_id = mm.location_id
-                """ + (search.isBlank() ? "" : """
-                WHERE machine_name ILIKE ?
-                   OR COALESCE(asset_tag, '') ILIKE ?
-                   OR COALESCE(serial_number, '') ILIKE ?
-                   OR COALESCE(machine_type, '') ILIKE ?
-                   OR COALESCE(l.name, mm.location_name, '') ILIKE ?
-                """) + " ORDER BY machine_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
-                    ps.setString(i, pattern);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    machineTableModel.addRow(new Object[]{
-                            rs.getInt("machine_id"),
-                            rs.getString("machine_name"),
-                            rs.getString("asset_tag"),
-                            rs.getString("machine_type"),
-                            rs.getString("status"),
-                            rs.getString("location_name"),
-                            formatDate(rs.getDate("next_service_date"))
-                    });
-                }
-            }
-        } catch (SQLException ex) {
+        try {for(var row:LanApiClient.loadMachineState(machineSearchField.getText().trim()).machines())machineTableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),dateText(row.nextServiceDate())});}
+        catch (Exception ex) {
             showDatabaseError("load machines", ex);
         }
     }
 
     private void loadParts() {
         partTableModel.setRowCount(0);
-        String search = partSearchField.getText().trim();
-        String sql = """
-                SELECT part_id, part_name, COALESCE(part_number, '') AS part_number,
-                       quantity_on_hand, reorder_point, COALESCE(vendor_name, '') AS vendor_name, is_active
-                FROM maintenance_parts
-                """ + (search.isBlank() ? "" : """
-                WHERE part_name ILIKE ?
-                   OR COALESCE(part_number, '') ILIKE ?
-                   OR COALESCE(category, '') ILIKE ?
-                   OR COALESCE(vendor_name, '') ILIKE ?
-                   OR COALESCE(bin_location, '') ILIKE ?
-                """) + " ORDER BY part_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
-                    ps.setString(i, pattern);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    partTableModel.addRow(new Object[]{
-                            rs.getInt("part_id"),
-                            rs.getString("part_name"),
-                            rs.getString("part_number"),
-                            rs.getBigDecimal("quantity_on_hand"),
-                            rs.getBigDecimal("reorder_point"),
-                            rs.getString("vendor_name"),
-                            rs.getBoolean("is_active") ? "Yes" : "No"
-                    });
-                }
-            }
-        } catch (SQLException ex) {
+        try {for(var row:LanApiClient.loadMaintenanceParts(partSearchField.getText().trim()))partTableModel.addRow(new Object[]{row.partId(),row.name(),row.partNumber(),row.quantity(),row.reorderPoint(),row.vendor(),row.active()?"Yes":"No"});}
+        catch (Exception ex) {
             showDatabaseError("load parts", ex);
         }
     }
 
     private void loadLogs() {
         logTableModel.setRowCount(0);
-        String sql = """
-                SELECT l.log_id, l.service_date, m.machine_name, l.service_type,
-                       COALESCE(l.technician_name, '') AS technician_name,
-                       l.labor_hours, l.total_cost, COALESCE(l.summary, '') AS summary
-                FROM maintenance_logs l
-                JOIN maintenance_machines m ON m.machine_id = l.machine_id
-                ORDER BY l.service_date DESC, l.log_id DESC
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                logTableModel.addRow(new Object[]{
-                        rs.getInt("log_id"),
-                        formatDate(rs.getDate("service_date")),
-                        rs.getString("machine_name"),
-                        rs.getString("service_type"),
-                        rs.getString("technician_name"),
-                        rs.getBigDecimal("labor_hours"),
-                        rs.getBigDecimal("total_cost"),
-                        rs.getString("summary")
-                });
-            }
-        } catch (SQLException ex) {
+        try {for(var row:LanApiClient.loadMaintenanceWorkflow("","All").logs())logTableModel.addRow(new Object[]{row.id(),dateText(row.date()),row.machine(),row.type(),row.technician(),row.hours(),row.cost(),row.summary()});}
+        catch (Exception ex) {
             showDatabaseError("load maintenance logs", ex);
         }
     }
 
     private void loadTickets() {
-        autoCloseResolvedTickets();
         ticketTableModel.setRowCount(0);
-        String search = ticketSearchField.getText().trim();
-        String selectedFilter = String.valueOf(ticketFilterBox.getSelectedItem());
-        String filterSql = switch (selectedFilter) {
-            case "Resolved" -> " WHERE t.status = 'RESOLVED'";
-            case "Ticket History" -> " WHERE t.status = 'CLOSED'";
-            case "All" -> "";
-            default -> " WHERE t.status IN ('OPEN', 'IN_PROGRESS', 'WAITING_PARTS')";
-        };
-        String searchSql = search.isBlank() ? "" : (filterSql.isBlank() ? " WHERE " : " AND ") + """
-                (COALESCE(m.machine_name, '') ILIKE ?
-                   OR COALESCE(t.problem_summary, '') ILIKE ?
-                   OR COALESCE(t.assigned_to_name, '') ILIKE ?
-                   OR COALESCE(t.status, '') ILIKE ?
-                   OR COALESCE(t.priority, '') ILIKE ?
-                   OR CASE
-                        WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
-                        WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
-                        ELSE 'User #' || t.opened_by_user_id::text
-                      END ILIKE ?)
-                """;
-        String sql = """
-                SELECT t.ticket_id, t.opened_at, m.machine_name, t.priority, t.status,
-                       COALESCE(t.problem_summary, '') AS problem_summary,
-                       COALESCE(t.assigned_to_name, '') AS assigned_to_name, t.due_date,
-                       CASE
-                           WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
-                           WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
-                           ELSE 'User #' || t.opened_by_user_id::text
-                       END AS creator_name
-                FROM maintenance_tickets t
-                LEFT JOIN maintenance_machines m ON m.machine_id = t.machine_id
-                LEFT JOIN users u ON u.user_id = t.opened_by_user_id
-                """ + filterSql + searchSql + " ORDER BY t.opened_at DESC, t.ticket_id DESC";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 6; i++) {
-                    ps.setString(i, pattern);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    ticketTableModel.addRow(new Object[]{
-                            rs.getInt("ticket_id"),
-                            formatTimestamp(rs.getTimestamp("opened_at")),
-                            rs.getString("machine_name"),
-                            "Created by: " + rs.getString("creator_name"),
-                            rs.getString("priority"),
-                            rs.getString("status"),
-                            rs.getString("problem_summary"),
-                            rs.getString("assigned_to_name"),
-                            formatDate(rs.getDate("due_date"))
-                    });
-                }
-            }
-        } catch (SQLException ex) {
+        try {var state=LanApiClient.loadMaintenanceWorkflow(ticketSearchField.getText().trim(),String.valueOf(ticketFilterBox.getSelectedItem()));for(var row:state.tickets())ticketTableModel.addRow(new Object[]{row.id(),formatTimestamp(new Timestamp(row.openedEpochMillis())),row.machine(),"Created by: "+row.creator(),row.priority(),row.status(),row.problem(),row.assigned(),dateText(row.dueDate())});}
+        catch (Exception ex) {
             showDatabaseError("load tickets", ex);
         }
     }
 
     private void autoCloseResolvedTickets() {
-        String sql = """
-                UPDATE maintenance_tickets
-                SET status = 'CLOSED',
-                    closed_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE status = 'RESOLVED'
-                  AND resolved_at IS NOT NULL
-                  AND resolved_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours'
-                  AND closed_at IS NULL
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.executeUpdate();
-        } catch (SQLException ex) {
-            showDatabaseError("auto-close resolved tickets", ex);
-        }
+        // Performed atomically by the server whenever the ticket state is loaded.
     }
 
     private void loadMachineOptions() {
         logMachineBox.removeAllItems();
         ticketMachineBox.removeAllItems();
-        String sql = "SELECT machine_id, machine_name FROM maintenance_machines ORDER BY machine_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                ItemOption option = new ItemOption(rs.getInt("machine_id"), rs.getString("machine_name"));
+        try {for(var row:LanApiClient.loadMaintenanceWorkflow("","All").machines()) {
+                ItemOption option = new ItemOption(row.id(), row.name());
                 logMachineBox.addItem(option);
                 ticketMachineBox.addItem(option);
-            }
-        } catch (SQLException ex) {
+            }} catch (Exception ex) {
             showDatabaseError("load machine choices", ex);
         }
     }
@@ -528,44 +355,11 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        String insertSql = """
-                INSERT INTO maintenance_machines (
-                    machine_name, asset_tag, serial_number, manufacturer, model, machine_type,
-                    location_name, status, purchase_date, warranty_expiration_date,
-                    last_service_date, next_service_date, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_machines
-                SET machine_name = ?, asset_tag = ?, serial_number = ?, manufacturer = ?, model = ?,
-                    machine_type = ?, location_name = ?, status = ?, purchase_date = ?,
-                    warranty_expiration_date = ?, last_service_date = ?, next_service_date = ?,
-                    notes = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE machine_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedMachineId == null ? insertSql : updateSql)) {
-            ps.setString(1, name);
-            ps.setString(2, nullable(assetTagField));
-            ps.setString(3, nullable(serialNumberField));
-            ps.setString(4, nullable(manufacturerField));
-            ps.setString(5, nullable(modelField));
-            ps.setString(6, nullable(machineTypeField));
-            ps.setString(7, nullable(machineLocationField));
-            ps.setString(8, selected(machineStatusBox));
-            setDate(ps, 9, purchaseDateField);
-            setDate(ps, 10, warrantyDateField);
-            setDate(ps, 11, lastServiceDateField);
-            setDate(ps, 12, nextServiceDateField);
-            ps.setString(13, nullable(machineNotesArea));
-            if (selectedMachineId != null) {
-                ps.setInt(14, selectedMachineId);
-            }
-            ps.executeUpdate();
+        try {
+            LanApiClient.saveMachine(new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(machineTypeField),null,nullable(machineLocationField),selected(machineStatusBox),parseOptionalDate(purchaseDateField),parseOptionalDate(warrantyDateField),parseOptionalDate(lastServiceDateField),parseOptionalDate(nextServiceDateField),nullable(machineNotesArea)),java.util.UUID.randomUUID().toString());
             clearMachineEditor();
             refreshAll();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showDatabaseError("save machine", ex);
         }
     }
@@ -577,40 +371,11 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        String insertSql = """
-                INSERT INTO maintenance_parts (
-                    part_name, part_number, category, quantity_on_hand, reorder_point,
-                    reorder_quantity, unit_cost, vendor_name, bin_location, is_active, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_parts
-                SET part_name = ?, part_number = ?, category = ?, quantity_on_hand = ?,
-                    reorder_point = ?, reorder_quantity = ?, unit_cost = ?, vendor_name = ?,
-                    bin_location = ?, is_active = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE part_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedPartId == null ? insertSql : updateSql)) {
-            ps.setString(1, name);
-            ps.setString(2, nullable(partNumberField));
-            ps.setString(3, nullable(categoryField));
-            ps.setBigDecimal(4, decimal(quantityField, "On hand"));
-            ps.setBigDecimal(5, decimal(reorderPointField, "Reorder point"));
-            ps.setBigDecimal(6, decimal(reorderQuantityField, "Reorder quantity"));
-            ps.setBigDecimal(7, moneyDecimal(unitCostField, "Unit cost"));
-            ps.setString(8, nullable(vendorField));
-            ps.setString(9, nullable(binLocationField));
-            ps.setBoolean(10, partActiveBox.isSelected());
-            ps.setString(11, nullable(partNotesArea));
-            if (selectedPartId != null) {
-                ps.setInt(12, selectedPartId);
-            }
-            ps.executeUpdate();
+        try {
+            LanApiClient.saveMaintenancePart(new LanApiClient.MaintenancePart(selectedPartId,name,nullable(partNumberField),nullable(categoryField),decimal(quantityField,"On hand"),decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),partActiveBox.isSelected(),nullable(partNotesArea)),java.util.UUID.randomUUID().toString());
             clearPartEditor();
             loadParts();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showDatabaseError("save part", ex);
         }
     }
@@ -622,40 +387,12 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        String insertSql = """
-                INSERT INTO maintenance_logs (
-                    machine_id, service_date, service_type, technician_name,
-                    labor_hours, total_cost, summary, details, parts_used, created_by_user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_logs
-                SET machine_id = ?, service_date = ?, service_type = ?, technician_name = ?,
-                    labor_hours = ?, total_cost = ?, summary = ?, details = ?, parts_used = ?
-                WHERE log_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedLogId == null ? insertSql : updateSql)) {
-            ps.setInt(1, machine.id);
-            setRequiredDate(ps, 2, logDateField, "Service date");
-            ps.setString(3, selected(logTypeBox));
-            ps.setString(4, nullable(technicianField));
-            ps.setBigDecimal(5, decimal(laborHoursField, "Labor hours"));
-            ps.setBigDecimal(6, moneyDecimal(logCostField, "Cost"));
-            ps.setString(7, nullable(logSummaryArea));
-            ps.setString(8, nullable(logDetailsArea));
-            ps.setString(9, nullable(partsUsedArea));
-            if (selectedLogId == null) {
-                setInteger(ps, 10, SessionManager.getCurrentUserId());
-            } else {
-                ps.setInt(10, selectedLogId);
-            }
-            ps.executeUpdate();
+        try {
+            LanApiClient.saveMaintenanceWorkflow("SAVE_LOG",new LanMaintenanceWorkflowService.Log(selectedLogId,machine.id,parseRequiredDate(logDateField,"Service date"),selected(logTypeBox),nullable(technicianField),decimal(laborHoursField,"Labor hours"),moneyDecimal(logCostField,"Cost"),nullable(logSummaryArea),nullable(logDetailsArea),nullable(partsUsedArea)),java.util.UUID.randomUUID().toString());
             clearLogEditor();
             loadLogs();
             loadMachines();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showDatabaseError("save maintenance log", ex);
         }
     }
@@ -678,51 +415,11 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        String insertSql = """
-                INSERT INTO maintenance_tickets (
-                    machine_id, priority, status, assigned_to_name, due_date,
-                    problem_summary, resolution_summary, notes, opened_by_user_id,
-                    resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_tickets
-                SET machine_id = ?, priority = ?, status = ?, assigned_to_name = ?, due_date = ?,
-                    problem_summary = ?, resolution_summary = ?, notes = ?,
-                    resolved_at = CASE WHEN ? = 'RESOLVED' AND status <> 'RESOLVED' THEN CURRENT_TIMESTAMP ELSE resolved_at END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE ticket_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedTicketId == null ? insertSql : updateSql)) {
-            if (machine == null) {
-                ps.setNull(1, java.sql.Types.INTEGER);
-            } else {
-                ps.setInt(1, machine.id);
-            }
-            ps.setString(2, selected(priorityBox));
-            ps.setString(3, status);
-            ps.setString(4, nullable(assignedToField));
-            setDate(ps, 5, dueDateField);
-            ps.setString(6, problem);
-            ps.setString(7, resolutionSummary.isBlank() ? null : resolutionSummary);
-            ps.setString(8, nullable(ticketNotesArea));
-            if (selectedTicketId == null) {
-                setInteger(ps, 9, SessionManager.getCurrentUserId());
-                if ("RESOLVED".equals(status)) {
-                    ps.setTimestamp(10, new Timestamp(System.currentTimeMillis()));
-                } else {
-                    ps.setNull(10, java.sql.Types.TIMESTAMP);
-                }
-            } else {
-                ps.setString(9, status);
-                ps.setInt(10, selectedTicketId);
-            }
-            ps.executeUpdate();
+        try {
+            LanApiClient.saveMaintenanceWorkflow("SAVE_TICKET",new LanMaintenanceWorkflowService.Ticket(selectedTicketId,machine==null?null:machine.id,selected(priorityBox),status,nullable(assignedToField),parseOptionalDate(dueDateField),problem,resolutionSummary.isBlank()?null:resolutionSummary,nullable(ticketNotesArea),createdByField.getText()),java.util.UUID.randomUUID().toString());
             clearTicketEditor();
             loadTickets();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showDatabaseError("save ticket", ex);
         }
     }
@@ -751,23 +448,12 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        String sql = """
-                UPDATE maintenance_tickets
-                SET status = 'CLOSED',
-                    closed_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE ticket_id = ?
-                  AND status = 'RESOLVED'
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, selectedTicketId);
-            ps.executeUpdate();
+        try {
+            LanApiClient.closeMaintenanceTicket(selectedTicketId,java.util.UUID.randomUUID().toString());
             clearTicketEditor();
             ticketFilterBox.setSelectedItem("Ticket History");
             loadTickets();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showDatabaseError("close resolved ticket", ex);
         }
     }
@@ -785,29 +471,8 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) machineTableModel.getValueAt(machineTable.convertRowIndexToModel(row), 0);
-        String sql = "SELECT * FROM maintenance_machines WHERE machine_id = ?";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    selectedMachineId = id;
-                    machineNameField.setText(rs.getString("machine_name"));
-                    assetTagField.setText(value(rs.getString("asset_tag")));
-                    serialNumberField.setText(value(rs.getString("serial_number")));
-                    manufacturerField.setText(value(rs.getString("manufacturer")));
-                    modelField.setText(value(rs.getString("model")));
-                    machineTypeField.setText(value(rs.getString("machine_type")));
-                    machineLocationField.setText(value(rs.getString("location_name")));
-                    machineStatusBox.setSelectedItem(rs.getString("status"));
-                    purchaseDateField.setText(formatDate(rs.getDate("purchase_date")));
-                    warrantyDateField.setText(formatDate(rs.getDate("warranty_expiration_date")));
-                    lastServiceDateField.setText(formatDate(rs.getDate("last_service_date")));
-                    nextServiceDateField.setText(formatDate(rs.getDate("next_service_date")));
-                    machineNotesArea.setText(value(rs.getString("notes")));
-                }
-            }
-        } catch (SQLException ex) {
+        try {var m=LanApiClient.loadMachineDetail(id).machine();selectedMachineId=id;machineNameField.setText(m.name());assetTagField.setText(value(m.assetTag()));serialNumberField.setText(value(m.serialNumber()));manufacturerField.setText(value(m.manufacturer()));modelField.setText(value(m.model()));machineTypeField.setText(value(m.type()));machineLocationField.setText(value(m.locationName()));machineStatusBox.setSelectedItem(m.status());purchaseDateField.setText(dateText(m.purchaseDate()));warrantyDateField.setText(dateText(m.warrantyDate()));lastServiceDateField.setText(dateText(m.lastServiceDate()));nextServiceDateField.setText(dateText(m.nextServiceDate()));machineNotesArea.setText(value(m.notes()));}
+        catch (Exception ex) {
             showDatabaseError("load selected machine", ex);
         }
     }
@@ -818,27 +483,8 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) partTableModel.getValueAt(partTable.convertRowIndexToModel(row), 0);
-        String sql = "SELECT * FROM maintenance_parts WHERE part_id = ?";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    selectedPartId = id;
-                    partNameField.setText(rs.getString("part_name"));
-                    partNumberField.setText(value(rs.getString("part_number")));
-                    categoryField.setText(value(rs.getString("category")));
-                    quantityField.setText(rs.getBigDecimal("quantity_on_hand").toPlainString());
-                    reorderPointField.setText(rs.getBigDecimal("reorder_point").toPlainString());
-                    reorderQuantityField.setText(rs.getBigDecimal("reorder_quantity").toPlainString());
-                    unitCostField.setText(rs.getBigDecimal("unit_cost").toPlainString());
-                    vendorField.setText(value(rs.getString("vendor_name")));
-                    binLocationField.setText(value(rs.getString("bin_location")));
-                    partActiveBox.setSelected(rs.getBoolean("is_active"));
-                    partNotesArea.setText(value(rs.getString("notes")));
-                }
-            }
-        } catch (SQLException ex) {
+        try {var p=LanApiClient.loadMaintenanceParts("").stream().filter(v->v.partId()!=null&&v.partId().equals(id)).findFirst().orElseThrow(()->new IllegalStateException("Part not found."));selectedPartId=id;partNameField.setText(p.name());partNumberField.setText(value(p.partNumber()));categoryField.setText(value(p.category()));quantityField.setText(p.quantity().toPlainString());reorderPointField.setText(p.reorderPoint().toPlainString());reorderQuantityField.setText(p.reorderQuantity().toPlainString());unitCostField.setText(p.unitCost().toPlainString());vendorField.setText(value(p.vendor()));binLocationField.setText(value(p.binLocation()));partActiveBox.setSelected(p.active());partNotesArea.setText(value(p.notes()));}
+        catch (Exception ex) {
             showDatabaseError("load selected part", ex);
         }
     }
@@ -849,25 +495,8 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) logTableModel.getValueAt(logTable.convertRowIndexToModel(row), 0);
-        String sql = "SELECT * FROM maintenance_logs WHERE log_id = ?";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    selectedLogId = id;
-                    selectItem(logMachineBox, rs.getInt("machine_id"));
-                    logDateField.setText(formatDate(rs.getDate("service_date")));
-                    logTypeBox.setSelectedItem(rs.getString("service_type"));
-                    technicianField.setText(value(rs.getString("technician_name")));
-                    laborHoursField.setText(rs.getBigDecimal("labor_hours").toPlainString());
-                    logCostField.setText(rs.getBigDecimal("total_cost").toPlainString());
-                    logSummaryArea.setText(value(rs.getString("summary")));
-                    logDetailsArea.setText(value(rs.getString("details")));
-                    partsUsedArea.setText(value(rs.getString("parts_used")));
-                }
-            }
-        } catch (SQLException ex) {
+        try {var l=LanApiClient.loadMaintenanceDetail("LOG",id).log();selectedLogId=id;selectItem(logMachineBox,l.machineId());logDateField.setText(dateText(l.serviceDate()));logTypeBox.setSelectedItem(l.type());technicianField.setText(value(l.technician()));laborHoursField.setText(l.hours().toPlainString());logCostField.setText(l.cost().toPlainString());logSummaryArea.setText(value(l.summary()));logDetailsArea.setText(value(l.details()));partsUsedArea.setText(value(l.partsUsed()));}
+        catch (Exception ex) {
             showDatabaseError("load selected log", ex);
         }
     }
@@ -878,42 +507,8 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
         Integer id = (Integer) ticketTableModel.getValueAt(ticketTable.convertRowIndexToModel(row), 0);
-        String sql = """
-                SELECT t.*,
-                       CASE
-                           WHEN t.opened_by_user_id IS NULL THEN 'Unknown'
-                           WHEN NULLIF(TRIM(u.full_name), '') IS NOT NULL THEN u.full_name
-                           ELSE 'User #' || t.opened_by_user_id::text
-                       END AS creator_name
-                FROM maintenance_tickets t
-                LEFT JOIN users u ON u.user_id = t.opened_by_user_id
-                WHERE t.ticket_id = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    selectedTicketId = id;
-                    int machineId = rs.getInt("machine_id");
-                    if (rs.wasNull()) {
-                        ticketMachineBox.setSelectedIndex(ticketMachineBox.getItemCount() > 0 ? 0 : -1);
-                    } else {
-                        selectItem(ticketMachineBox, machineId);
-                    }
-                    priorityBox.setSelectedItem(rs.getString("priority"));
-                    selectedTicketStatus = rs.getString("status");
-                    ticketStatusBox.setSelectedItem(selectedTicketStatus);
-                    createdByField.setText(rs.getString("creator_name"));
-                    assignedToField.setText(value(rs.getString("assigned_to_name")));
-                    dueDateField.setText(formatDate(rs.getDate("due_date")));
-                    problemArea.setText(value(rs.getString("problem_summary")));
-                    resolutionArea.setText(value(rs.getString("resolution_summary")));
-                    ticketNotesArea.setText(value(rs.getString("notes")));
-                    setTicketActionState();
-                }
-            }
-        } catch (SQLException ex) {
+        try {var t=LanApiClient.loadMaintenanceDetail("TICKET",id).ticket();selectedTicketId=id;if(t.machineId()==null)ticketMachineBox.setSelectedIndex(ticketMachineBox.getItemCount()>0?0:-1);else selectItem(ticketMachineBox,t.machineId());priorityBox.setSelectedItem(t.priority());selectedTicketStatus=t.status();ticketStatusBox.setSelectedItem(selectedTicketStatus);createdByField.setText(t.creator());assignedToField.setText(value(t.assigned()));dueDateField.setText(dateText(t.dueDate()));problemArea.setText(value(t.problem()));resolutionArea.setText(value(t.resolution()));ticketNotesArea.setText(value(t.notes()));setTicketActionState();}
+        catch (Exception ex) {
             showDatabaseError("load selected ticket", ex);
         }
     }
@@ -1135,21 +730,17 @@ public class MaintenanceManagement extends JFrame {
         return utils.CurrencyFormatter.normalize(decimal(field, label));
     }
 
-    private static void setDate(PreparedStatement ps, int index, JTextField field) throws SQLException {
+    private static LocalDate parseOptionalDate(JTextField field) {
         String value = field.getText().trim();
-        if (value.isBlank()) {
-            ps.setNull(index, java.sql.Types.DATE);
-            return;
-        }
-        ps.setDate(index, Date.valueOf(parseDate(value)));
+        return value.isBlank()?null:parseDate(value);
     }
 
-    private static void setRequiredDate(PreparedStatement ps, int index, JTextField field, String label) throws SQLException {
+    private static LocalDate parseRequiredDate(JTextField field, String label) {
         String value = field.getText().trim();
         if (value.isBlank()) {
             throw new IllegalArgumentException(label + " is required. Use YYYY-MM-DD.");
         }
-        ps.setDate(index, Date.valueOf(parseDate(value)));
+        return parseDate(value);
     }
 
     private static LocalDate parseDate(String value) {
@@ -1160,21 +751,11 @@ public class MaintenanceManagement extends JFrame {
         }
     }
 
-    private static void setInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
     private static String value(String text) {
         return text == null ? "" : text;
     }
 
-    private static String formatDate(Date date) {
-        return date == null ? "" : date.toLocalDate().toString();
-    }
+    private static String dateText(LocalDate date) { return date == null ? "" : date.toString(); }
 
     private static String formatTimestamp(Timestamp timestamp) {
         if (timestamp == null) {

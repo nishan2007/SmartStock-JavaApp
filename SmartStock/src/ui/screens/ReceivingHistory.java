@@ -1,7 +1,7 @@
 package ui.screens;
 
-import data.DB;
 import managers.SessionManager;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -10,15 +10,10 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
-import java.util.List;
 
 public class ReceivingHistory extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -166,110 +161,25 @@ public class ReceivingHistory extends JFrame {
     private void loadReceivingHistory() {
         tableModel.setRowCount(0);
         updateStoreLabel();
-
         LocalDate fromDate = parseDate(fromDateField.getText().trim(), "From");
         LocalDate toDate = parseDate(toDateField.getText().trim(), "To");
-        if (fromDate == null && !fromDateField.getText().trim().isEmpty()) {
-            return;
-        }
-        if (toDate == null && !toDateField.getText().trim().isEmpty()) {
-            return;
-        }
-
-        StringBuilder sql = new StringBuilder("""
-                SELECT im.movement_id,
-                       COALESCE(im.receive_id, '') AS receive_id,
-                       (im.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(p.name, 'Unknown') AS product_name,
-                       COALESCE(p.sku, '') AS sku,
-                       COALESCE(l.name, 'Unknown') AS store_name,
-                       COALESCE(im.change_qty, 0) AS change_qty,
-                       COALESCE(im.user_name, rb.user_name, u.full_name, u.username, '') AS received_by,
-                       COALESCE(im.note, '') AS note
-                FROM inventory_movements im
-                LEFT JOIN receiving_batches rb ON im.receive_id = rb.receive_id
-                LEFT JOIN products p ON im.product_id = p.product_id
-                LEFT JOIN locations l ON im.location_id = l.location_id
-                LEFT JOIN users u ON u.user_id = COALESCE(rb.user_id, NULLIF(SUBSTRING(im.note FROM 'entered_by_user_id=([0-9]+)'), '')::INTEGER)
-                WHERE UPPER(COALESCE(im.reason, '')) = 'INVENTORY_ENTRY'
-                """);
-
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-
-        Integer currentLocationId = SessionManager.getCurrentLocationId();
-        if (currentLocationId != null) {
-            sql.append(" AND im.location_id = ?");
-            parameters.add(currentLocationId);
-        }
-
-        String searchText = searchField.getText().trim();
-        if (!searchText.isEmpty()) {
-            sql.append("""
-                     AND (
-                        CAST(im.movement_id AS TEXT) ILIKE ?
-                        OR COALESCE(im.receive_id, '') ILIKE ?
-                        OR COALESCE(p.name, '') ILIKE ?
-                        OR COALESCE(p.sku, '') ILIKE ?
-                        OR COALESCE(l.name, '') ILIKE ?
-                        OR COALESCE(im.user_name, rb.user_name, u.full_name, u.username, '') ILIKE ?
-                        OR COALESCE(im.note, '') ILIKE ?
-                     )
-                    """);
-            String likeValue = "%" + searchText + "%";
-            for (int i = 0; i < 7; i++) {
-                parameters.add(likeValue);
-            }
-        }
-
-        if (fromDate != null) {
-            sql.append(" AND (im.created_at AT TIME ZONE ?) >= ?");
-            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            parameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
-        }
-
-        if (toDate != null) {
-            sql.append(" AND (im.created_at AT TIME ZONE ?) < ?");
-            parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            parameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
-        }
-
-        sql.append(" ORDER BY im.created_at DESC, im.movement_id DESC");
-
+        if (fromDate == null && !fromDateField.getText().trim().isEmpty()) return;
+        if (toDate == null && !toDateField.getText().trim().isEmpty()) return;
         int totalUnits = 0;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-
-            for (int i = 0; i < parameters.size(); i++) {
-                ps.setObject(i + 1, parameters.get(i));
+        try {
+            for (LanApiClient.ReceivingHistoryRow row : LanApiClient.loadReceivingHistory(
+                    searchField.getText().trim(), fromDate == null ? "" : fromDate.toString(),
+                    toDate == null ? "" : toDate.toString())) {
+                totalUnits += row.changeQuantity();
+                tableModel.addRow(new Object[]{row.receiveId(), row.movementId(),
+                        formatTimestamp(row.createdAtEpochMillis()), row.productName(), row.sku(),
+                        row.storeName(), row.changeQuantity(),
+                        formatReceivedBy(row.receivedBy(), row.note()), row.note()});
             }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    int qty = rs.getInt("change_qty");
-                    totalUnits += qty;
-                    tableModel.addRow(new Object[]{
-                            rs.getString("receive_id"),
-                            rs.getInt("movement_id"),
-                            formatTimestamp(rs.getTimestamp("local_created_at")),
-                            rs.getString("product_name"),
-                            rs.getString("sku"),
-                            rs.getString("store_name"),
-                            qty,
-                            formatReceivedBy(rs.getString("received_by"), rs.getString("note")),
-                            rs.getString("note")
-                    });
-                }
-            }
-
             summaryLabel.setText("Records: " + tableModel.getRowCount() + "   Units: " + totalUnits);
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to load receiving history.\n" + ex.getMessage(),
-                    "Database Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
+            JOptionPane.showMessageDialog(this, "Failed to load receiving history.\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -286,11 +196,10 @@ public class ReceivingHistory extends JFrame {
         }
     }
 
-    private String formatTimestamp(Timestamp timestamp) {
-        if (timestamp == null) {
-            return "";
-        }
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
+    private String formatTimestamp(long epochMillis) {
+        if (epochMillis <= 0) return "";
+        return Instant.ofEpochMilli(epochMillis).atZone(StoreTimeZoneHelper.getStoreZone())
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
     }
 
     private String formatReceivedBy(String receivedBy, String note) {

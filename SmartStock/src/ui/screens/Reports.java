@@ -1,23 +1,20 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import data.DB;
 import managers.SessionManager;
+import managers.PermissionManager;
+import services.ReportDataService;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
-import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,6 +25,14 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import org.knowm.xchart.*;
+import org.knowm.xchart.internal.chartpart.Chart;
+import org.knowm.xchart.CategorySeries.CategorySeriesRenderStyle;
+import org.knowm.xchart.style.Styler;
+import org.knowm.xchart.style.AxesChartStyler;
 
 public class Reports extends JFrame {
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -37,6 +42,34 @@ public class Reports extends JFrame {
     private final JTextField fromField = new JTextField();
     private final JTextField toField = new JTextField();
     private final JLabel storeLabel = new JLabel();
+    private final JLabel loadingLabel = new JLabel(" ");
+    private final JCheckBox allRevenueToggle = new JCheckBox("All Revenue");
+    private final JPanel filterChips = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+    private final Set<Integer> selectedProducts = new LinkedHashSet<>();
+    private final Set<Integer> selectedBrands = new LinkedHashSet<>();
+    private final Set<Integer> selectedDepartments = new LinkedHashSet<>();
+    private final Set<Integer> selectedItemTypes = new LinkedHashSet<>();
+    private final Set<Integer> selectedEmployees = new LinkedHashSet<>();
+    private final Set<String> selectedPayments = new LinkedHashSet<>();
+    private ReportDataService.FilterOptions filterOptions;
+    private SwingWorker<ReportDataService.Snapshot, Void> reportWorker;
+
+    private final JPanel overviewRevenueChart = chartHolder();
+    private final JPanel overviewCashChart = chartHolder();
+    private final JPanel overviewDepartmentChart = chartHolder();
+    private final JPanel overviewEmployeeChart = chartHolder();
+    private final JPanel productChart = chartHolder();
+    private final JPanel employeeChart = chartHolder();
+    private final JPanel cashChart = chartHolder();
+    private final JPanel expenseChart = chartHolder();
+    private final JPanel balanceChart = chartHolder();
+    private final JPanel overviewMetrics = new JPanel(new GridLayout(0, 4, 10, 10));
+
+    private final DefaultTableModel productModel = readOnlyModel("Product", "Brand", "Department", "Item Type", "Units", "Returned", "Net Revenue", "Return Value", "Avg Price", "Est. Cost", "Est. Profit");
+    private final DefaultTableModel employeeModel = readOnlyModel("Employee", "Transactions", "Items", "Gross", "Discounts", "Returns", "Net", "Average", "Share");
+    private final DefaultTableModel cashModel = readOnlyModel("Time", "Direction", "Source", "Method", "Reference", "Amount");
+    private final DefaultTableModel expenseModel = readOnlyModel("ID", "Date", "Category", "Payee", "Description", "Method", "Status", "Source", "Created By", "Amount");
+    private final DefaultTableModel balanceModel = readOnlyModel("ID", "Period Start", "Period End", "Submitted", "Submitted By", "Balance B/F", "Income", "Expenses", "Payables", "Balance C/F");
 
     private final DefaultTableModel salesModel = readOnlyModel(
             "Sale ID", "Receipt", "Time", "Employee", "Device", "Drawer", "Payment", "Status", "Paid", "Total"
@@ -98,6 +131,7 @@ public class Reports extends JFrame {
         add(root, BorderLayout.CENTER);
 
         setDefaultRange();
+        loadFilterOptions();
         loadReports();
         WindowHelper.configurePosWindow(this);
     }
@@ -126,6 +160,15 @@ public class Reports extends JFrame {
 
         JButton runButton = new JButton("Run Reports");
         JButton todayButton = new JButton("Today");
+        JButton allTimeButton = new JButton("All Time");
+        JButton presetsButton = new JButton("Date Preset");
+        JButton productButton = new JButton("Products");
+        JButton brandButton = new JButton("Brands");
+        JButton departmentButton = new JButton("Departments");
+        JButton typeButton = new JButton("Item Types");
+        JButton employeeButton = new JButton("Employees");
+        JButton paymentButton = new JButton("Payments");
+        JButton clearButton = new JButton("Clear Filters");
         addFilter(filterPanel, 0, "From", fromField, 190);
         addFilter(filterPanel, 2, "To", toField, 190);
 
@@ -136,14 +179,38 @@ public class Reports extends JFrame {
         filterPanel.add(runButton, gbc);
         gbc.gridx = 5;
         filterPanel.add(todayButton, gbc);
+        gbc.gridx = 6;
+        filterPanel.add(allTimeButton, gbc);
+        JPanel advanced = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
+        advanced.setOpaque(false);
+        advanced.add(presetsButton); advanced.add(productButton); advanced.add(brandButton);
+        advanced.add(departmentButton); advanced.add(typeButton); advanced.add(employeeButton);
+        advanced.add(paymentButton); advanced.add(clearButton); advanced.add(allRevenueToggle);
+        loadingLabel.setForeground(new Color(37, 99, 235));
+        advanced.add(loadingLabel);
+        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 6; gbc.anchor = GridBagConstraints.WEST;
+        gbc.insets = new Insets(10, 0, 0, 0);
+        filterPanel.add(advanced, gbc);
+        filterChips.setOpaque(false);
+        gbc.gridy = 2; filterPanel.add(filterChips, gbc);
 
         runButton.addActionListener(e -> loadReports());
         todayButton.addActionListener(e -> {
             setDefaultRange();
             loadReports();
         });
+        allTimeButton.addActionListener(e -> setAllTimeRangeAndLoad());
         fromField.addActionListener(e -> loadReports());
         toField.addActionListener(e -> loadReports());
+        allRevenueToggle.addActionListener(e -> loadReports());
+        presetsButton.addActionListener(e -> showDatePresets(presetsButton));
+        productButton.addActionListener(e -> selectOptions("Products", filterOptions == null ? List.of() : filterOptions.products(), selectedProducts));
+        brandButton.addActionListener(e -> selectOptions("Brands", filterOptions == null ? List.of() : filterOptions.brands(), selectedBrands));
+        departmentButton.addActionListener(e -> selectOptions("Departments", filterOptions == null ? List.of() : filterOptions.departments(), selectedDepartments));
+        typeButton.addActionListener(e -> selectOptions("Item Types", filterOptions == null ? List.of() : filterOptions.itemTypes(), selectedItemTypes));
+        employeeButton.addActionListener(e -> selectOptions("Employees", filterOptions == null ? List.of() : filterOptions.employees(), selectedEmployees));
+        paymentButton.addActionListener(e -> selectStrings("Payment Methods", filterOptions == null ? List.of() : filterOptions.paymentMethods(), selectedPayments));
+        clearButton.addActionListener(e -> clearAdvancedFilters());
 
         headerPanel.add(titleRow, BorderLayout.NORTH);
         headerPanel.add(filterPanel, BorderLayout.CENTER);
@@ -152,11 +219,19 @@ public class Reports extends JFrame {
 
     private JTabbedPane buildTabs() {
         JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Overview", buildOverviewTab());
         tabs.addTab("Sales", reportPanel(
                 metricsPanel(salesTransactionsLabel, salesGrossLabel, salesReturnsLabel, salesNetLabel, salesPaidLabel,
                         salesUnpaidLabel, salesCashLabel, salesCardLabel, salesMmgLabel, salesAccountLabel),
                 new JTable(salesModel)
         ));
+        tabs.addTab("Products", chartTablePanel(productChart, new JTable(productModel)));
+        tabs.addTab("Employees", chartTablePanel(employeeChart, new JTable(employeeModel)));
+        tabs.addTab("Cash Flow", chartTablePanel(cashChart, new JTable(cashModel)));
+        if (PermissionManager.hasPermission("BALANCE_SHEET")) {
+            tabs.addTab("Expenses", expenseReportPanel());
+            tabs.addTab("Balance C/F", chartTablePanel(balanceChart, new JTable(balanceModel)));
+        }
         tabs.addTab("Orders", reportPanel(
                 metricsPanel(orderPaymentsLabel, orderTotalLabel, orderCollectedLabel, orderBalanceLabel, orderCashLabel,
                         orderCardLabel, orderChequeLabel, orderMmgLabel, orderAccountLabel, orderReturnsLabel),
@@ -169,6 +244,65 @@ public class Reports extends JFrame {
                 new JTable(invoiceModel)
         ));
         return tabs;
+    }
+
+    private JPanel buildOverviewTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setOpaque(false);
+        overviewMetrics.setOpaque(false);
+        panel.add(overviewMetrics, BorderLayout.NORTH);
+        JPanel charts = new JPanel(new GridLayout(2, 2, 10, 10));
+        charts.setOpaque(false);
+        charts.add(overviewRevenueChart); charts.add(overviewCashChart);
+        charts.add(overviewDepartmentChart); charts.add(overviewEmployeeChart);
+        panel.add(charts, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel chartTablePanel(JPanel chart, JTable table) {
+        table.setRowHeight(27); table.setAutoCreateRowSorter(true);
+        JPanel panel = new JPanel(new BorderLayout(10, 10)); panel.setOpaque(false);
+        chart.setPreferredSize(new Dimension(600, 300));
+        panel.add(chart, BorderLayout.NORTH); panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel expenseReportPanel() {
+        JTable table = new JTable(expenseModel);
+        table.setRowHeight(27);
+        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(expenseModel);
+        table.setRowSorter(sorter);
+        JTextField category = new JTextField(10), payee = new JTextField(10), source = new JTextField(10), creator = new JTextField(10);
+        JComboBox<String> status = new JComboBox<>(new String[]{"All Statuses", "PAID", "UNPAID"});
+        JComboBox<String> method = new JComboBox<>(new String[]{"All Methods", "CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT", "BANK"});
+        JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 4));
+        filters.add(new JLabel("Category")); filters.add(category); filters.add(new JLabel("Payee")); filters.add(payee);
+        filters.add(new JLabel("Status")); filters.add(status); filters.add(new JLabel("Method")); filters.add(method);
+        filters.add(new JLabel("Source")); filters.add(source); filters.add(new JLabel("Creator")); filters.add(creator);
+        Runnable update = () -> {
+            List<RowFilter<Object,Object>> fs = new ArrayList<>();
+            addTextRowFilter(fs, category.getText(), 2); addTextRowFilter(fs, payee.getText(), 3);
+            addTextRowFilter(fs, source.getText(), 7); addTextRowFilter(fs, creator.getText(), 8);
+            if (status.getSelectedIndex() > 0) fs.add(RowFilter.regexFilter("^" + java.util.regex.Pattern.quote(status.getSelectedItem().toString()) + "$", 6));
+            if (method.getSelectedIndex() > 0) fs.add(RowFilter.regexFilter("^" + java.util.regex.Pattern.quote(method.getSelectedItem().toString()) + "$", 5));
+            sorter.setRowFilter(fs.isEmpty() ? null : RowFilter.andFilter(fs));
+        };
+        javax.swing.event.DocumentListener listener = new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e){update.run();}
+            public void removeUpdate(javax.swing.event.DocumentEvent e){update.run();}
+            public void changedUpdate(javax.swing.event.DocumentEvent e){update.run();}
+        };
+        category.getDocument().addDocumentListener(listener); payee.getDocument().addDocumentListener(listener);
+        source.getDocument().addDocumentListener(listener); creator.getDocument().addDocumentListener(listener);
+        status.addActionListener(e -> update.run()); method.addActionListener(e -> update.run());
+        JPanel panel = new JPanel(new BorderLayout(10,10)); panel.setOpaque(false);
+        JPanel top = new JPanel(new BorderLayout()); top.setOpaque(false); top.add(expenseChart, BorderLayout.CENTER); top.add(filters, BorderLayout.SOUTH);
+        top.setPreferredSize(new Dimension(600,350)); panel.add(top,BorderLayout.NORTH); panel.add(new JScrollPane(table),BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void addTextRowFilter(List<RowFilter<Object,Object>> filters, String value, int column) {
+        if (value != null && !value.isBlank()) filters.add(RowFilter.regexFilter("(?i)" + java.util.regex.Pattern.quote(value.trim()), column));
     }
 
     private JPanel reportPanel(JPanel metricsPanel, JTable table) {
@@ -223,407 +357,305 @@ public class Reports extends JFrame {
             JOptionPane.showMessageDialog(this, "To must be after From.");
             return;
         }
-
-        loadSalesReport(from, to);
-        loadOrdersReport(from, to);
-        loadInvoicesReport(from, to);
-    }
-
-    private void loadSalesReport(ZonedDateTime from, ZonedDateTime to) {
-        salesModel.setRowCount(0);
-        Integer locationId = SessionManager.getCurrentLocationId();
-        StringBuilder sql = new StringBuilder("""
-                SELECT sale_id,
-                       COALESCE(receipt_number, '') AS receipt_number,
-                       created_at AT TIME ZONE ? AS local_created_at,
-                       COALESCE(user_name, 'Unknown') AS employee_name,
-                       COALESCE(receipt_device_id, '') AS device_id,
-                       COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'Unassigned') AS cash_drawer_name,
-                       payment_method,
-                       payment_status,
-                       COALESCE(amount_paid, 0) AS amount_paid,
-                       COALESCE(total_amount, 0) AS total_amount,
-                       COALESCE(discount_amount, 0) AS discount_amount,
-                       COALESCE(returned_amount, 0) AS returned_amount
-                FROM sales
-                WHERE (created_at AT TIME ZONE ?) >= ?
-                  AND (created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = dateParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND location_id = ?");
-            parameters.add(locationId);
+        if (reportWorker != null && !reportWorker.isDone()) {
+            reportWorker.cancel(true);
         }
-        sql.append(" ORDER BY created_at ASC, sale_id ASC");
-
-        int transactions = 0;
-        BigDecimal gross = BigDecimal.ZERO;
-        BigDecimal paid = BigDecimal.ZERO;
-        BigDecimal returned = BigDecimal.ZERO;
-        BigDecimal cash = BigDecimal.ZERO;
-        BigDecimal card = BigDecimal.ZERO;
-        BigDecimal mmg = BigDecimal.ZERO;
-        BigDecimal account = BigDecimal.ZERO;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    transactions++;
-                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal total = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal returnAmount = defaultZero(rs.getBigDecimal("returned_amount"));
-                    String method = rs.getString("payment_method");
-                    gross = gross.add(total);
-                    paid = paid.add(amountPaid);
-                    returned = returned.add(returnAmount);
-                    if ("CASH".equalsIgnoreCase(method)) {
-                        cash = cash.add(amountPaid);
-                    } else if ("CARD".equalsIgnoreCase(method) || "CHEQUE".equalsIgnoreCase(method)) {
-                        card = card.add(amountPaid);
-                    } else if ("MMG".equalsIgnoreCase(method)) {
-                        mmg = mmg.add(amountPaid);
-                    } else if ("ACCOUNT".equalsIgnoreCase(method)) {
-                        account = account.add(total.subtract(amountPaid));
-                    }
-                    salesModel.addRow(new Object[]{
-                            rs.getInt("sale_id"),
-                            rs.getString("receipt_number"),
-                            formatLocalTime(rs.getTimestamp("local_created_at")),
-                            rs.getString("employee_name"),
-                            rs.getString("device_id"),
-                            rs.getString("cash_drawer_name"),
-                            method,
-                            rs.getString("payment_status"),
-                            CURRENCY.format(amountPaid),
-                            CURRENCY.format(total)
-                    });
+        loadingLabel.setText("Loading reports...");
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        ReportDataService.Filters filters = new ReportDataService.Filters(
+                from, to, storeZone, SessionManager.getCurrentLocationId(),
+                Set.copyOf(selectedProducts), Set.copyOf(selectedBrands), Set.copyOf(selectedDepartments),
+                Set.copyOf(selectedItemTypes), Set.copyOf(selectedEmployees), Set.copyOf(selectedPayments)
+        );
+        reportWorker = new SwingWorker<>() {
+            @Override protected ReportDataService.Snapshot doInBackground() throws Exception {
+                ReportDataService.Snapshot snapshot = ReportDataService.load(filters, allRevenueToggle.isSelected(), PermissionManager.hasPermission("BALANCE_SHEET"));
+                loadOrdersReport(from, to);
+                loadInvoicesReport(from, to);
+                return snapshot;
+            }
+            @Override protected void done() {
+                setCursor(Cursor.getDefaultCursor());
+                if (isCancelled()) return;
+                try {
+                    applySnapshot(get());
+                    loadingLabel.setText("Updated " + java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("hh:mm a")));
+                } catch (Exception ex) {
+                    loadingLabel.setText("Could not load");
+                    Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                    JOptionPane.showMessageDialog(Reports.this, "Failed to load reports: " + cause.getMessage(), "Reports", JOptionPane.ERROR_MESSAGE);
                 }
             }
-            BigDecimal returnTotal = loadSalesReturnTotal(conn, from, to, locationId);
-            returned = returned.max(returnTotal);
-            salesTransactionsLabel.setText("Transactions: " + transactions);
-            salesGrossLabel.setText("Gross Sales: " + CURRENCY.format(gross));
-            salesReturnsLabel.setText("Returns: " + CURRENCY.format(returned));
-            salesNetLabel.setText("Net Sales: " + CURRENCY.format(gross.subtract(returned)));
-            salesPaidLabel.setText("Paid: " + CURRENCY.format(paid));
-            salesUnpaidLabel.setText("Unpaid: " + CURRENCY.format(gross.subtract(paid)));
-            salesCashLabel.setText("Cash: " + CURRENCY.format(cash));
-            salesCardLabel.setText("Card/Check: " + CURRENCY.format(card));
-            salesMmgLabel.setText("MMG: " + CURRENCY.format(mmg));
-            salesAccountLabel.setText("Account: " + CURRENCY.format(account));
-        } catch (SQLException ex) {
-            showReportError("sales report", ex);
+        };
+        reportWorker.execute();
+    }
+
+    private void loadFilterOptions() {
+        new SwingWorker<ReportDataService.FilterOptions, Void>() {
+            @Override protected ReportDataService.FilterOptions doInBackground() throws Exception {
+                return ReportDataService.loadOptions(SessionManager.getCurrentLocationId());
+            }
+            @Override protected void done() {
+                try { filterOptions = get(); } catch (Exception ignored) { filterOptions = null; }
+            }
+        }.execute();
+    }
+
+    private void applySnapshot(ReportDataService.Snapshot s) {
+        overviewMetrics.removeAll();
+        s.metrics().forEach((name, value) -> {
+            boolean count = name.equals("Transactions") || name.equals("Items Sold");
+            JLabel label = metricLabel();
+            label.setText("<html><span style='font-size:10px'>" + name + "</span><br><span style='font-size:16px'>" +
+                    (count ? value.toBigInteger().toString() : CURRENCY.format(value)) + "</span></html>");
+            overviewMetrics.add(label);
+        });
+        setSeriesChart(overviewRevenueChart, "Revenue Over Time", s.revenueSeries());
+        setSeriesChart(overviewCashChart, "Actual Cash In vs Cash Out", s.cashSeries());
+        setRankChart(overviewDepartmentChart, "Top Departments", s.departments());
+        setRankChart(overviewEmployeeChart, "Top Employees", s.employees());
+        setRankChart(productChart, "Top Products", s.products());
+        setRankChart(employeeChart, "Employee Net Sales", s.employees());
+        setSeriesChart(cashChart, "Cash Movement", s.cashSeries());
+        setExpenseChart(s.expenses());
+        setBalanceChart(s.balances());
+
+        productModel.setRowCount(0);
+        for (ReportDataService.ProductRow r : s.productRows()) productModel.addRow(new Object[]{
+                r.product(), r.brand(), r.department(), r.itemType(), r.units(), r.returned(),
+                CURRENCY.format(r.revenue()), CURRENCY.format(r.returnValue()), CURRENCY.format(r.averagePrice()),
+                CURRENCY.format(r.cost()), CURRENCY.format(r.profit())
+        });
+        employeeModel.setRowCount(0);
+        for (ReportDataService.EmployeeRow r : s.employeeRows()) employeeModel.addRow(new Object[]{
+                r.employee(), r.transactions(), r.items(), CURRENCY.format(r.gross()), CURRENCY.format(r.discounts()),
+                CURRENCY.format(r.returns()), CURRENCY.format(r.net()), CURRENCY.format(r.average()), r.share() + "%"
+        });
+        cashModel.setRowCount(0);
+        for (ReportDataService.CashRow r : s.cashRows()) cashModel.addRow(new Object[]{
+                r.time().format(DISPLAY_FORMAT), r.direction(), r.source(), r.method(), r.reference(), CURRENCY.format(r.amount())
+        });
+        expenseModel.setRowCount(0);
+        for (ReportDataService.ExpenseRow r : s.expenses()) expenseModel.addRow(new Object[]{
+                r.id(), r.date(), r.category(), r.payee(), r.description(), r.method(), r.status(), r.source(), r.creator(), CURRENCY.format(r.amount())
+        });
+        balanceModel.setRowCount(0);
+        for (ReportDataService.BalanceRow r : s.balances()) balanceModel.addRow(new Object[]{
+                r.id(), r.from(), r.to(), r.submittedAt().format(DISPLAY_FORMAT), r.submitter(),
+                CURRENCY.format(r.bf()), CURRENCY.format(r.income()), CURRENCY.format(r.expenses()),
+                CURRENCY.format(r.payables()), CURRENCY.format(r.cf())
+        });
+        salesModel.setRowCount(0);
+        BigDecimal paid = BigDecimal.ZERO;
+        Map<String, BigDecimal> paymentTotals = new java.util.HashMap<>();
+        for (ReportDataService.SaleRow r : s.sales()) {
+            paid = paid.add(r.paid());
+            paymentTotals.merge(r.payment().toUpperCase(), r.paid(), BigDecimal::add);
+            salesModel.addRow(new Object[]{r.id(), r.receipt(), r.time().format(DISPLAY_FORMAT), r.employee(), "", "",
+                    r.payment(), r.status(), CURRENCY.format(r.paid()), CURRENCY.format(r.total())});
         }
+        BigDecimal gross = s.metrics().getOrDefault("Gross Sales", BigDecimal.ZERO);
+        salesTransactionsLabel.setText("Transactions: " + s.sales().size());
+        salesGrossLabel.setText("Gross Sales: " + CURRENCY.format(gross));
+        salesReturnsLabel.setText("Returns: " + CURRENCY.format(s.metrics().getOrDefault("Returns", BigDecimal.ZERO)));
+        salesNetLabel.setText("Net Sales: " + CURRENCY.format(s.metrics().getOrDefault("Net Sales", BigDecimal.ZERO)));
+        salesPaidLabel.setText("Paid: " + CURRENCY.format(paid));
+        salesUnpaidLabel.setText("Unpaid: " + CURRENCY.format(gross.subtract(paid).max(BigDecimal.ZERO)));
+        salesCashLabel.setText("Cash: " + CURRENCY.format(paymentTotals.getOrDefault("CASH", BigDecimal.ZERO)));
+        salesCardLabel.setText("Card/Check: " + CURRENCY.format(paymentTotals.getOrDefault("CARD", BigDecimal.ZERO).add(paymentTotals.getOrDefault("CHEQUE", BigDecimal.ZERO))));
+        salesMmgLabel.setText("MMG: " + CURRENCY.format(paymentTotals.getOrDefault("MMG", BigDecimal.ZERO)));
+        salesAccountLabel.setText("Account: " + CURRENCY.format(paymentTotals.getOrDefault("ACCOUNT", BigDecimal.ZERO)));
+        overviewMetrics.revalidate(); overviewMetrics.repaint();
+    }
+
+    private void setSeriesChart(JPanel holder, String title, List<ReportDataService.Series> series) {
+        String yAxis = title.toLowerCase(Locale.ROOT).contains("cash") ? "Cash Amount" : "Net Sales";
+        CategoryChart chart = new CategoryChartBuilder().width(700).height(300).title(title).xAxisTitle("Period").yAxisTitle(yAxis).build();
+        chart.getStyler().setDefaultSeriesRenderStyle(CategorySeriesRenderStyle.Line);
+        chart.getStyler().setYAxisDecimalPattern("$#,##0.00");
+        styleChart(chart);
+        for (ReportDataService.Series line : series) {
+            List<String> labels = line.points().stream().map(ReportDataService.Point::label).toList();
+            List<BigDecimal> values = line.points().stream().map(ReportDataService.Point::value).toList();
+            if (!labels.isEmpty()) chart.addSeries(line.name(), labels, values);
+        }
+        replaceChart(holder, chart);
+    }
+
+    private void setRankChart(JPanel holder, String title, List<ReportDataService.Rank> ranks) {
+        CategoryChart chart = new CategoryChartBuilder().width(700).height(300).title(title).xAxisTitle("").yAxisTitle("Net Sales").build();
+        chart.getStyler().setYAxisDecimalPattern("$#,##0.00");
+        chart.getStyler().setLegendVisible(false);
+        chart.getStyler().setXAxisLabelRotation(ranks.size() > 5 ? 25 : 0);
+        chart.getStyler().setAvailableSpaceFill(0.72);
+        styleChart(chart);
+        if (!ranks.isEmpty()) chart.addSeries("Net", ranks.stream().map(ReportDataService.Rank::label).toList(),
+                ranks.stream().map(ReportDataService.Rank::amount).toList());
+        replaceChart(holder, chart);
+    }
+
+    private void setExpenseChart(List<ReportDataService.ExpenseRow> rows) {
+        Map<String, BigDecimal> grouped = new java.util.TreeMap<>();
+        for (ReportDataService.ExpenseRow r : rows) grouped.merge(r.category(), r.amount(), BigDecimal::add);
+        CategoryChart chart = new CategoryChartBuilder().width(700).height(300).title("Expenses by Category").yAxisTitle("Amount").build();
+        chart.getStyler().setYAxisDecimalPattern("$#,##0.00");
+        chart.getStyler().setLegendVisible(false);
+        chart.getStyler().setXAxisLabelRotation(grouped.size() > 5 ? 25 : 0);
+        styleChart(chart);
+        if (!grouped.isEmpty()) chart.addSeries("Expenses", new ArrayList<>(grouped.keySet()), new ArrayList<>(grouped.values()));
+        replaceChart(expenseChart, chart);
+    }
+
+    private void setBalanceChart(List<ReportDataService.BalanceRow> rows) {
+        CategoryChart chart = new CategoryChartBuilder().width(700).height(300).title("Saved Balance C/F History").xAxisTitle("Period End").yAxisTitle("Balance C/F").build();
+        chart.getStyler().setDefaultSeriesRenderStyle(CategorySeriesRenderStyle.Line);
+        chart.getStyler().setYAxisDecimalPattern("$#,##0.00");
+        chart.getStyler().setLegendVisible(false);
+        styleChart(chart);
+        if (!rows.isEmpty()) chart.addSeries("Balance C/F", rows.stream().map(r -> r.to().toString()).toList(), rows.stream().map(ReportDataService.BalanceRow::cf).toList());
+        replaceChart(balanceChart, chart);
+    }
+
+    private void styleChart(Chart<?, ?> chart) {
+        boolean dark = ThemeManager.isDarkModeEnabled();
+        Color background = dark ? new Color(30,30,30) : Color.WHITE;
+        Color plot = dark ? new Color(38,38,38) : new Color(248,250,252);
+        Color text = dark ? new Color(238,238,238) : new Color(31,41,55);
+        Color grid = dark ? new Color(105,105,105) : new Color(203,213,225);
+        Styler styler = chart.getStyler();
+        AxesChartStyler axes = (AxesChartStyler) styler;
+        styler.setLegendPosition(Styler.LegendPosition.InsideNW);
+        styler.setChartBackgroundColor(background);
+        styler.setPlotBackgroundColor(plot);
+        styler.setLegendBackgroundColor(plot);
+        styler.setLegendBorderColor(grid);
+        styler.setChartFontColor(text);
+        styler.setXAxisTitleColor(text);
+        styler.setYAxisTitleColor(text);
+        axes.setAxisTickLabelsColor(text);
+        axes.setAxisTickMarksColor(text);
+        axes.setPlotGridLinesColor(grid);
+        styler.setPlotBorderColor(grid);
+        styler.setBaseFont(new Font("SansSerif", Font.PLAIN, 12));
+        styler.setChartTitleFont(new Font("SansSerif", Font.BOLD, 14));
+        axes.setAxisTitleFont(new Font("SansSerif", Font.BOLD, 12));
+        axes.setAxisTickLabelsFont(new Font("SansSerif", Font.PLAIN, 11));
+        styler.setLegendFont(new Font("SansSerif", Font.BOLD, 11));
+        axes.setXAxisMaxLabelCount(12);
+        axes.setYAxisTickMarkSpacingHint(45);
+    }
+
+    private void replaceChart(JPanel holder, Chart<?, ?> chart) {
+        holder.removeAll(); holder.add(new XChartPanel<>(chart), BorderLayout.CENTER);
+        holder.revalidate(); holder.repaint();
+    }
+
+    private void showDatePresets(Component anchor) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem allTime = new JMenuItem("All Time");
+        allTime.addActionListener(e -> setAllTimeRangeAndLoad());
+        menu.add(allTime); menu.addSeparator();
+        addPreset(menu, "Today", 0); addPreset(menu, "Last 7 Days", 7);
+        addPreset(menu, "Last 30 Days", 30); addPreset(menu, "Last 90 Days", 90);
+        JMenuItem month = new JMenuItem("This Month");
+        month.addActionListener(e -> {
+            LocalDate today = LocalDate.now(storeZone);
+            fromField.setText(today.withDayOfMonth(1).atStartOfDay().format(INPUT_FORMAT));
+            toField.setText(today.plusMonths(1).withDayOfMonth(1).atStartOfDay().format(INPUT_FORMAT)); loadReports();
+        });
+        menu.add(month); menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    private void setAllTimeRangeAndLoad() {
+        fromField.setText(LocalDate.of(1970, 1, 1).atStartOfDay().format(INPUT_FORMAT));
+        toField.setText(LocalDate.now(storeZone).plusDays(1).atStartOfDay().format(INPUT_FORMAT));
+        loadReports();
+    }
+
+    private void addPreset(JPopupMenu menu, String name, int days) {
+        JMenuItem item = new JMenuItem(name);
+        item.addActionListener(e -> {
+            LocalDate today = LocalDate.now(storeZone);
+            LocalDate start = days == 0 ? today : today.minusDays(days - 1L);
+            fromField.setText(start.atStartOfDay().format(INPUT_FORMAT));
+            toField.setText(today.plusDays(1).atStartOfDay().format(INPUT_FORMAT)); loadReports();
+        });
+        menu.add(item);
+    }
+
+    private void selectOptions(String title, List<ReportDataService.Option> options, Set<Integer> selected) {
+        JList<ReportDataService.Option> list = new JList<>(options.toArray(ReportDataService.Option[]::new));
+        list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        int[] indexes = java.util.stream.IntStream.range(0, options.size()).filter(i -> selected.contains(options.get(i).id())).toArray();
+        list.setSelectedIndices(indexes);
+        if (JOptionPane.showConfirmDialog(this, new JScrollPane(list), title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+            selected.clear(); list.getSelectedValuesList().forEach(x -> selected.add(x.id())); refreshFilterChips(); loadReports();
+        }
+    }
+
+    private void selectStrings(String title, List<String> options, Set<String> selected) {
+        JList<String> list = new JList<>(options.toArray(String[]::new));
+        list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        list.setSelectedIndices(java.util.stream.IntStream.range(0, options.size()).filter(i -> selected.contains(options.get(i))).toArray());
+        if (JOptionPane.showConfirmDialog(this, new JScrollPane(list), title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+            selected.clear(); selected.addAll(list.getSelectedValuesList()); refreshFilterChips(); loadReports();
+        }
+    }
+
+    private void refreshFilterChips() {
+        filterChips.removeAll();
+        addChip("Products", selectedProducts.size()); addChip("Brands", selectedBrands.size());
+        addChip("Departments", selectedDepartments.size()); addChip("Item Types", selectedItemTypes.size());
+        addChip("Employees", selectedEmployees.size()); addChip("Payments", selectedPayments.size());
+        filterChips.revalidate(); filterChips.repaint();
+    }
+
+    private void addChip(String name, int count) {
+        if (count == 0) return;
+        JLabel chip = new JLabel(name + ": " + count);
+        chip.setOpaque(true); chip.setBackground(new Color(219,234,254)); chip.setForeground(new Color(30,64,175));
+        chip.setBorder(new EmptyBorder(4,8,4,8)); filterChips.add(chip);
+    }
+
+    private void clearAdvancedFilters() {
+        selectedProducts.clear(); selectedBrands.clear(); selectedDepartments.clear(); selectedItemTypes.clear();
+        selectedEmployees.clear(); selectedPayments.clear(); refreshFilterChips(); loadReports();
     }
 
     private void loadOrdersReport(ZonedDateTime from, ZonedDateTime to) {
         orderModel.setRowCount(0);
-        Integer locationId = SessionManager.getCurrentLocationId();
-        StringBuilder sql = new StringBuilder("""
-                SELECT p.custom_order_payment_id,
-                       co.order_number AS invoice_number,
-                       p.created_at AT TIME ZONE ? AS local_created_at,
-                       COALESCE(co.customer_name, '') AS customer_name,
-                       COALESCE(p.taken_by_name, u.full_name, u.username, 'Unknown') AS employee_name,
-                       COALESCE(p.device_name, co.device_name, p.device_id, co.device_id, '') AS device_name,
-                       COALESCE(NULLIF(TRIM(p.cash_drawer_name), ''), 'Unassigned') AS cash_drawer_name,
-                       p.payment_method,
-                       COALESCE(p.payment_action, 'PAYMENT') AS payment_action,
-                       COALESCE(p.payment_amount, 0) AS payment_amount,
-                       COALESCE(co.total_amount, 0) AS total_amount,
-                       COALESCE(co.balance_due, 0) AS balance_due,
-                       COALESCE(co.status, '') AS status,
-                       COALESCE(co.payment_status, '') AS payment_status
-                FROM custom_order_payments p
-                JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
-                LEFT JOIN users u ON u.user_id = p.taken_by_user_id
-                WHERE (p.created_at AT TIME ZONE ?) >= ?
-                  AND (p.created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = dateParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND co.location_id = ?");
-            parameters.add(locationId);
-        }
-        sql.append(" ORDER BY p.created_at ASC, p.custom_order_payment_id ASC");
-
-        int payments = 0;
-        BigDecimal collected = BigDecimal.ZERO;
-        BigDecimal cash = BigDecimal.ZERO;
-        BigDecimal card = BigDecimal.ZERO;
-        BigDecimal cheque = BigDecimal.ZERO;
-        BigDecimal mmg = BigDecimal.ZERO;
-        BigDecimal account = BigDecimal.ZERO;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    payments++;
-                    BigDecimal amount = signedAmount(rs.getString("payment_action"), rs.getBigDecimal("payment_amount"));
-                    String method = rs.getString("payment_method");
-                    collected = collected.add(amount);
-                    if ("CASH".equalsIgnoreCase(method)) {
-                        cash = cash.add(amount);
-                    } else if ("CARD".equalsIgnoreCase(method)) {
-                        card = card.add(amount);
-                    } else if ("CHEQUE".equalsIgnoreCase(method)) {
-                        cheque = cheque.add(amount);
-                    } else if ("MMG".equalsIgnoreCase(method)) {
-                        mmg = mmg.add(amount);
-                    } else if ("ACCOUNT".equalsIgnoreCase(method)) {
-                        account = account.add(amount);
-                    }
+        try {
+            LanApiClient.OrderReport report=LanApiClient.loadOrderReport(from,to);
+            for(LanApiClient.OrderReportRow row:report.rows()){
                     orderModel.addRow(new Object[]{
-                            rs.getLong("custom_order_payment_id"),
-                            rs.getString("invoice_number"),
-                            formatLocalTime(rs.getTimestamp("local_created_at")),
-                            rs.getString("customer_name"),
-                            rs.getString("employee_name"),
-                            rs.getString("device_name"),
-                            rs.getString("cash_drawer_name"),
-                            method,
-                            CURRENCY.format(amount),
-                            CURRENCY.format(defaultZero(rs.getBigDecimal("total_amount"))),
-                            CURRENCY.format(defaultZero(rs.getBigDecimal("balance_due"))),
-                            rs.getString("status") + " / " + rs.getString("payment_status")
+                            row.paymentId(),row.orderNumber(),row.time().format(DISPLAY_FORMAT),row.customer(),row.employee(),row.device(),row.drawer(),row.method(),
+                            CURRENCY.format(row.amount()),CURRENCY.format(row.total()),CURRENCY.format(row.balance()),row.status()
                     });
-                }
             }
-
-            OrderTotals totals = loadCustomOrderTotals(conn, from, to, locationId);
-            BigDecimal returnTotal = loadCustomOrderReturnTotal(conn, from, to, locationId);
-            orderPaymentsLabel.setText("Payments: " + payments);
-            orderTotalLabel.setText("Order Total: " + CURRENCY.format(totals.total()));
-            orderCollectedLabel.setText("Collected: " + CURRENCY.format(collected));
-            orderBalanceLabel.setText("Balance Due: " + CURRENCY.format(totals.balance()));
-            orderCashLabel.setText("Cash: " + CURRENCY.format(cash));
-            orderCardLabel.setText("Card: " + CURRENCY.format(card));
-            orderChequeLabel.setText("Cheque: " + CURRENCY.format(cheque));
-            orderMmgLabel.setText("MMG: " + CURRENCY.format(mmg));
-            orderAccountLabel.setText("Account: " + CURRENCY.format(account));
-            orderReturnsLabel.setText("Returns: " + CURRENCY.format(returnTotal));
-        } catch (SQLException ex) {
+            orderPaymentsLabel.setText("Payments: "+report.payments());orderTotalLabel.setText("Order Total: "+CURRENCY.format(report.total()));
+            orderCollectedLabel.setText("Collected: "+CURRENCY.format(report.collected()));orderBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));
+            orderCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));orderCardLabel.setText("Card: "+CURRENCY.format(report.card()));orderChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));
+            orderMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));orderAccountLabel.setText("Account: "+CURRENCY.format(report.account()));orderReturnsLabel.setText("Returns: "+CURRENCY.format(report.returns()));
+        } catch (Exception ex) {
             showReportError("order report", ex);
         }
     }
 
     private void loadInvoicesReport(ZonedDateTime from, ZonedDateTime to) {
         invoiceModel.setRowCount(0);
-        Integer locationId = SessionManager.getCurrentLocationId();
-        StringBuilder sql = new StringBuilder("""
-                SELECT invoice_id,
-                       invoice_number,
-                       invoice_date,
-                       customer_name,
-                       status,
-                       payment_status,
-                       total_amount,
-                       amount_paid,
-                       balance_due,
-                       COALESCE(created_by_name, '') AS created_by_name,
-                       COALESCE(device_name, device_id, '') AS device_name,
-                       COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'Unassigned') AS cash_drawer_name
-                FROM invoices
-                WHERE (created_at AT TIME ZONE ?) >= ?
-                  AND (created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = rangeParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND location_id = ?");
-            parameters.add(locationId);
-        }
-        sql.append(" ORDER BY created_at ASC, invoice_id ASC");
-
-        int count = 0;
-        int open = 0;
-        int delivered = 0;
-        BigDecimal total = BigDecimal.ZERO;
-        BigDecimal paid = BigDecimal.ZERO;
-        BigDecimal balance = BigDecimal.ZERO;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    count++;
-                    BigDecimal rowTotal = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal rowPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal rowBalance = defaultZero(rs.getBigDecimal("balance_due"));
-                    String status = rs.getString("status");
-                    total = total.add(rowTotal);
-                    paid = paid.add(rowPaid);
-                    balance = balance.add(rowBalance);
-                    if ("DELIVERED".equalsIgnoreCase(status)) {
-                        delivered++;
-                    } else if (!"CANCELLED".equalsIgnoreCase(status)) {
-                        open++;
-                    }
+        try {
+            LanApiClient.InvoiceReport report=LanApiClient.loadInvoiceReport(from,to);
+            for(LanApiClient.InvoiceReportRow row:report.rows()){
                     invoiceModel.addRow(new Object[]{
-                            rs.getLong("invoice_id"),
-                            rs.getString("invoice_number"),
-                            rs.getDate("invoice_date"),
-                            rs.getString("customer_name"),
-                            status,
-                            rs.getString("payment_status"),
-                            CURRENCY.format(rowTotal),
-                            CURRENCY.format(rowPaid),
-                            CURRENCY.format(rowBalance),
-                            rs.getString("created_by_name"),
-                            rs.getString("device_name"),
-                            rs.getString("cash_drawer_name")
+                            row.invoiceId(),row.invoiceNumber(),row.invoiceDate(),row.customer(),row.status(),row.paymentStatus(),CURRENCY.format(row.total()),
+                            CURRENCY.format(row.paid()),CURRENCY.format(row.balance()),row.creator(),row.device(),row.drawer()
                     });
-                }
             }
-
-            PaymentTotals payments = loadInvoicePaymentTotals(conn, from, to, locationId);
-            invoiceCountLabel.setText("Invoices: " + count);
-            invoiceTotalLabel.setText("Invoice Total: " + CURRENCY.format(total));
-            invoicePaidLabel.setText("Paid: " + CURRENCY.format(paid));
-            invoiceBalanceLabel.setText("Balance Due: " + CURRENCY.format(balance));
-            invoiceOpenLabel.setText("Open: " + open);
-            invoiceDeliveredLabel.setText("Delivered: " + delivered);
-            invoiceCashLabel.setText("Cash: " + CURRENCY.format(payments.cash()));
-            invoiceCardLabel.setText("Card: " + CURRENCY.format(payments.card()));
-            invoiceChequeLabel.setText("Cheque: " + CURRENCY.format(payments.cheque()));
-            invoiceMmgLabel.setText("MMG: " + CURRENCY.format(payments.mmg()));
-        } catch (SQLException ex) {
+            invoiceCountLabel.setText("Invoices: "+report.count());invoiceTotalLabel.setText("Invoice Total: "+CURRENCY.format(report.total()));invoicePaidLabel.setText("Paid: "+CURRENCY.format(report.paid()));
+            invoiceBalanceLabel.setText("Balance Due: "+CURRENCY.format(report.balance()));invoiceOpenLabel.setText("Open: "+report.open());invoiceDeliveredLabel.setText("Delivered: "+report.delivered());
+            invoiceCashLabel.setText("Cash: "+CURRENCY.format(report.cash()));invoiceCardLabel.setText("Card: "+CURRENCY.format(report.card()));invoiceChequeLabel.setText("Cheque: "+CURRENCY.format(report.cheque()));invoiceMmgLabel.setText("MMG: "+CURRENCY.format(report.mmg()));
+        } catch (Exception ex) {
             showReportError("invoice report", ex);
-        }
-    }
-
-    private BigDecimal loadSalesReturnTotal(Connection conn, ZonedDateTime from, ZonedDateTime to, Integer locationId) throws SQLException {
-        StringBuilder sql = new StringBuilder("""
-                SELECT COALESCE(SUM(refund_amount), 0) AS total
-                FROM sale_returns
-                WHERE (created_at AT TIME ZONE ?) >= ?
-                  AND (created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = rangeParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND location_id = ?");
-            parameters.add(locationId);
-        }
-        return loadMoney(conn, sql.toString(), parameters);
-    }
-
-    private OrderTotals loadCustomOrderTotals(Connection conn, ZonedDateTime from, ZonedDateTime to, Integer locationId) throws SQLException {
-        StringBuilder sql = new StringBuilder("""
-                SELECT COALESCE(SUM(total_amount), 0) AS total,
-                       COALESCE(SUM(balance_due), 0) AS balance
-                FROM custom_orders
-                WHERE (created_at AT TIME ZONE ?) >= ?
-                  AND (created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = rangeParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND location_id = ?");
-            parameters.add(locationId);
-        }
-        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return new OrderTotals(defaultZero(rs.getBigDecimal("total")), defaultZero(rs.getBigDecimal("balance")));
-                }
-            }
-        }
-        return new OrderTotals(BigDecimal.ZERO, BigDecimal.ZERO);
-    }
-
-    private BigDecimal loadCustomOrderReturnTotal(Connection conn, ZonedDateTime from, ZonedDateTime to, Integer locationId) throws SQLException {
-        StringBuilder sql = new StringBuilder("""
-                SELECT COALESCE(SUM(r.refund_amount), 0) AS total
-                FROM custom_order_line_returns r
-                JOIN custom_orders co ON co.custom_order_id = r.custom_order_id
-                WHERE (r.created_at AT TIME ZONE ?) >= ?
-                  AND (r.created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = rangeParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND co.location_id = ?");
-            parameters.add(locationId);
-        }
-        return loadMoney(conn, sql.toString(), parameters);
-    }
-
-    private PaymentTotals loadInvoicePaymentTotals(Connection conn, ZonedDateTime from, ZonedDateTime to, Integer locationId) throws SQLException {
-        StringBuilder sql = new StringBuilder("""
-                SELECT payment_method,
-                       COALESCE(payment_action, 'PAYMENT') AS payment_action,
-                       COALESCE(SUM(payment_amount), 0) AS total
-                FROM invoice_payments
-                WHERE voided_at IS NULL
-                  AND (created_at AT TIME ZONE ?) >= ?
-                  AND (created_at AT TIME ZONE ?) < ?
-                """);
-        List<Object> parameters = rangeParameters(from, to);
-        if (locationId != null) {
-            sql.append(" AND location_id = ?");
-            parameters.add(locationId);
-        }
-        sql.append(" GROUP BY payment_method, COALESCE(payment_action, 'PAYMENT')");
-
-        BigDecimal cash = BigDecimal.ZERO;
-        BigDecimal card = BigDecimal.ZERO;
-        BigDecimal cheque = BigDecimal.ZERO;
-        BigDecimal mmg = BigDecimal.ZERO;
-        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    BigDecimal total = signedAmount(rs.getString("payment_action"), rs.getBigDecimal("total"));
-                    String method = rs.getString("payment_method");
-                    if ("CASH".equalsIgnoreCase(method)) {
-                        cash = cash.add(total);
-                    } else if ("CARD".equalsIgnoreCase(method)) {
-                        card = card.add(total);
-                    } else if ("CHEQUE".equalsIgnoreCase(method)) {
-                        cheque = cheque.add(total);
-                    } else if ("MMG".equalsIgnoreCase(method)) {
-                        mmg = mmg.add(total);
-                    }
-                }
-            }
-        }
-        return new PaymentTotals(cash, card, cheque, mmg);
-    }
-
-    private BigDecimal loadMoney(Connection conn, String sql, List<Object> parameters) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            bind(ps, parameters);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return defaultZero(rs.getBigDecimal("total"));
-                }
-            }
-        }
-        return BigDecimal.ZERO;
-    }
-
-    private List<Object> dateParameters(ZonedDateTime from, ZonedDateTime to) {
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(storeZone.getId());
-        parameters.addAll(rangeParameters(from, to));
-        return parameters;
-    }
-
-    private List<Object> rangeParameters(ZonedDateTime from, ZonedDateTime to) {
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(storeZone.getId());
-        parameters.add(Timestamp.valueOf(from.toLocalDateTime()));
-        parameters.add(storeZone.getId());
-        parameters.add(Timestamp.valueOf(to.toLocalDateTime()));
-        return parameters;
-    }
-
-    private void bind(PreparedStatement ps, List<Object> parameters) throws SQLException {
-        for (int i = 0; i < parameters.size(); i++) {
-            ps.setObject(i + 1, parameters.get(i));
         }
     }
 
@@ -634,13 +666,6 @@ public class Reports extends JFrame {
             JOptionPane.showMessageDialog(this, label + " must use YYYY-MM-DD HH:MM in this store timezone (" + storeZone + ").");
             return null;
         }
-    }
-
-    private String formatLocalTime(Timestamp timestamp) {
-        if (timestamp == null) {
-            return "";
-        }
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DISPLAY_FORMAT);
     }
 
     private void updateStoreLabel() {
@@ -661,13 +686,8 @@ public class Reports extends JFrame {
         return ZoneId.systemDefault();
     }
 
-    private void showReportError(String reportName, SQLException ex) {
+    private void showReportError(String reportName, Exception ex) {
         JOptionPane.showMessageDialog(this, "Failed to load " + reportName + ": " + ex.getMessage(), "Reports", JOptionPane.ERROR_MESSAGE);
-    }
-
-    private static BigDecimal signedAmount(String action, BigDecimal amount) {
-        BigDecimal value = defaultZero(amount);
-        return "REFUND".equalsIgnoreCase(action) || "REVERSAL".equalsIgnoreCase(action) ? value.negate() : value;
     }
 
     private static JLabel metricLabel() {
@@ -685,6 +705,13 @@ public class Reports extends JFrame {
         return label;
     }
 
+    private static JPanel chartHolder() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(false);
+        panel.setBorder(BorderFactory.createLineBorder(new Color(220, 224, 230)));
+        return panel;
+    }
+
     private static DefaultTableModel readOnlyModel(Object... columns) {
         return new DefaultTableModel(columns, 0) {
             @Override
@@ -694,13 +721,4 @@ public class Reports extends JFrame {
         };
     }
 
-    private static BigDecimal defaultZero(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
-    }
-
-    private record OrderTotals(BigDecimal total, BigDecimal balance) {
-    }
-
-    private record PaymentTotals(BigDecimal cash, BigDecimal card, BigDecimal cheque, BigDecimal mmg) {
-    }
 }

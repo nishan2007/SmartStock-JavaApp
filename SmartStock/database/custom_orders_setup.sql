@@ -161,6 +161,9 @@ CREATE TABLE IF NOT EXISTS custom_order_items (
     barcode TEXT UNIQUE,
     description TEXT,
     image_url TEXT,
+    category_id INTEGER REFERENCES categories(category_id),
+    item_type_id INTEGER REFERENCES item_types(item_type_id),
+    brand_id INTEGER REFERENCES item_brands(brand_id),
     product_type TEXT NOT NULL DEFAULT 'INVENTORY',
     pricing_type TEXT NOT NULL DEFAULT 'VARIABLE',
     fixed_price NUMERIC(12, 2),
@@ -211,6 +214,15 @@ ADD COLUMN IF NOT EXISTS barcode TEXT;
 
 ALTER TABLE custom_order_items
 ADD COLUMN IF NOT EXISTS image_url TEXT;
+
+ALTER TABLE custom_order_items
+ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES categories(category_id);
+
+ALTER TABLE custom_order_items
+ADD COLUMN IF NOT EXISTS item_type_id INTEGER REFERENCES item_types(item_type_id);
+
+ALTER TABLE custom_order_items
+ADD COLUMN IF NOT EXISTS brand_id INTEGER REFERENCES item_brands(brand_id);
 
 ALTER TABLE custom_order_items
 ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'INVENTORY';
@@ -289,6 +301,15 @@ WHERE barcode IS NOT NULL AND barcode <> '';
 
 CREATE INDEX IF NOT EXISTS custom_order_items_low_stock_idx
 ON custom_order_items(is_active, quantity_on_hand, reorder_level);
+
+CREATE INDEX IF NOT EXISTS custom_order_items_category_idx
+ON custom_order_items(category_id);
+
+CREATE INDEX IF NOT EXISTS custom_order_items_item_type_idx
+ON custom_order_items(item_type_id);
+
+CREATE INDEX IF NOT EXISTS custom_order_items_brand_idx
+ON custom_order_items(brand_id);
 
 CREATE TABLE IF NOT EXISTS custom_order_item_barcodes (
     custom_item_barcode_id BIGSERIAL PRIMARY KEY,

@@ -4,31 +4,31 @@ import ui.screens.customorders.EditCustomItem;
 
 import managers.PermissionManager;
 import managers.SessionManager;
-import data.DB;
-import services.DeviceContextService;
-import services.OfflineWriteGuard;
-import services.ReferenceDataSyncService;
+import services.LanApiClient;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
+import ui.components.ItemDetailsSelector;
 import ui.components.VendorSelector;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.text.JTextComponent;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.KeyEvent;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public class EditItem extends JFrame {
 
@@ -47,61 +47,51 @@ public class EditItem extends JFrame {
     private JTextField quantityField;
     private JTextField reorderLevelField;
     private DepartmentSelector departmentSelector;
+    private ItemDetailsSelector itemDetailsSelector;
     private VendorSelector vendorSelector;
     private ProductImageHelper.ImageSelector imageSelector;
 
     private JButton saveButton;
     private JButton clearButton;
     private JButton cancelButton;
+    private JLabel quantityHintLabel;
+    private JLabel selectionStatusLabel;
+    private JScrollPane inventoryScrollPane;
 
     private int selectedProductId = -1;
     private int selectedOriginalQuantity = 0;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
     private String selectedProductType = "INVENTORY";
     private final boolean canManualAdjustment = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
 
     public EditItem() {
         setTitle("Edit Item");
         setSize(1280, 780);
+        setMinimumSize(new Dimension(900, 650));
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "EditItem"));
+        initializeFields();
 
-        JPanel panel = new JPanel(new BorderLayout(10, 10));
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createEmptyBorder(5, 5, 5, 5),
-                BorderFactory.createTitledBorder(
-                        new RoundedBorder(12, Color.GRAY, 1),
-                        "Edit Item",
-                        javax.swing.border.TitledBorder.LEFT,
-                        javax.swing.border.TitledBorder.TOP,
-                        panel.getFont().deriveFont(Font.BOLD)
-                )
-        ));
+        JTabbedPane editTabs = new JTabbedPane();
+        editTabs.setFont(new Font("SansSerif", Font.BOLD, 13));
+        editTabs.addTab("Inventory Item", createInventoryEditPanel());
+        editTabs.addTab("Custom Item", new EditCustomItem(this));
+        add(editTabs);
 
-        JPanel topPanel = new JPanel(new BorderLayout(10, 10));
-        topPanel.setBorder(BorderFactory.createTitledBorder("Find Product"));
+        wireActions();
+        setFormEnabled(false);
+        WindowHelper.showPosWindow(this);
+        SwingUtilities.invokeLater(() -> {
+            searchField.requestFocusInWindow();
+            SwingUtilities.invokeLater(() -> inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0)));
+        });
+    }
 
+    private void initializeFields() {
         searchField = new JTextField();
         searchBtn = new JButton("Search");
-
-        topPanel.add(searchField, BorderLayout.CENTER);
-        topPanel.add(searchBtn, BorderLayout.EAST);
-
-        JPanel formPanel = new JPanel(new GridLayout(1, 2, 20, 0));
-
-        JPanel leftColumn = new JPanel(new GridBagLayout());
-        JPanel rightColumn = new JPanel(new GridBagLayout());
-
-        GridBagConstraints leftGbc = new GridBagConstraints();
-        leftGbc.insets = new Insets(5, 5, 5, 5);
-        leftGbc.fill = GridBagConstraints.HORIZONTAL;
-        leftGbc.anchor = GridBagConstraints.NORTHWEST;
-
-        GridBagConstraints rightGbc = new GridBagConstraints();
-        rightGbc.insets = new Insets(5, 5, 5, 5);
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-
         nameField = new JTextField();
         sizeField = new JTextField();
         skuField = new JTextField();
@@ -121,234 +111,308 @@ public class EditItem extends JFrame {
         }
         reorderLevelField = new JTextField();
         departmentSelector = new DepartmentSelector();
+        Integer initialLocationId = getCurrentSelectedLocationId();
+        itemDetailsSelector = new ItemDetailsSelector(departmentSelector, initialLocationId == null ? 1 : initialLocationId);
         vendorSelector = new VendorSelector();
-        imageSelector = ProductImageHelper.createImageSelector(this);
-
-        JScrollPane descriptionScrollPane = new JScrollPane(descriptionArea);
-        descriptionScrollPane.setPreferredSize(new Dimension(240, 120));
-
-        JScrollPane barcodeScrollPane = new JScrollPane(barcodesArea);
-        barcodeScrollPane.setPreferredSize(new Dimension(220, 75));
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 0;
-        leftGbc.weightx = 0;
-        leftGbc.weighty = 0;
-        leftColumn.add(new JLabel("Item Name:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(nameField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 1;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Size:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(sizeField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 2;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("SKU:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(skuField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 3;
-        leftGbc.weightx = 0;
-        leftGbc.anchor = GridBagConstraints.NORTHWEST;
-        leftColumn.add(new JLabel("Description:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftGbc.weighty = 1;
-        leftGbc.fill = GridBagConstraints.BOTH;
-        leftColumn.add(descriptionScrollPane, leftGbc);
-
-        leftGbc.fill = GridBagConstraints.HORIZONTAL;
-        leftGbc.weighty = 0;
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 4;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Barcode:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(barcodeField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 5;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Price:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(priceField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 6;
-        leftGbc.weightx = 0;
-        leftGbc.weighty = 1;
-        leftColumn.add(Box.createVerticalGlue(), leftGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 0;
-        rightGbc.weightx = 0;
-        rightGbc.weighty = 0;
-        rightColumn.add(new JLabel("Cost Price:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(costPriceField, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 1;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Item Type:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(itemTypeBox, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 2;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Quantity:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(quantityField, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 3;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Reorder Quantity:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(reorderLevelField, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 4;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Department:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(departmentSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 5;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Vendor:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(vendorSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 6;
-        rightGbc.weightx = 0;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-        rightColumn.add(new JLabel("Additional Barcodes:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightGbc.weighty = 0;
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightColumn.add(barcodeScrollPane, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 7;
-        rightGbc.weightx = 0;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-        rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightGbc.weighty = 0;
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightColumn.add(imageSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 8;
-        rightGbc.weightx = 0;
-        rightGbc.weighty = 1;
-        rightColumn.add(Box.createVerticalGlue(), rightGbc);
-
-        formPanel.add(leftColumn);
-        formPanel.add(rightColumn);
-
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-
+        imageSelector = ProductImageHelper.createSimpleImageSelector(this);
+        quantityHintLabel = createHelperLabel(canManualAdjustment
+                ? "Current on-hand quantity for the selected store."
+                : "Read-only. Requires Manual Adjustment permission.");
+        selectionStatusLabel = createHelperLabel("No product selected.");
         saveButton = new JButton("Save Changes");
         clearButton = new JButton("Clear Selection");
         cancelButton = new JButton("Close");
+    }
 
-        buttonPanel.add(saveButton);
-        buttonPanel.add(clearButton);
-        buttonPanel.add(cancelButton);
+    private JPanel createInventoryEditPanel() {
+        JPanel root = DeckersSwing.panel();
+        root.setLayout(new BorderLayout());
 
-        JPanel centerPanel = new JPanel(new BorderLayout(10, 10));
-        centerPanel.add(topPanel, BorderLayout.NORTH);
-        centerPanel.add(formPanel, BorderLayout.CENTER);
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        top.add(createHeaderPanel(), BorderLayout.NORTH);
+        top.add(createSearchPanel(), BorderLayout.SOUTH);
+        root.add(top, BorderLayout.NORTH);
 
-        panel.add(centerPanel, BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-        panel.setPreferredSize(new Dimension(780, 360));
+        ResponsiveSectionPanel form = new ResponsiveSectionPanel(
+                createItemDetailsSection(),
+                createPricingSection(),
+                createOrganizationSection(),
+                createImageSection()
+        );
+        inventoryScrollPane = new JScrollPane(form);
+        inventoryScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        inventoryScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        inventoryScrollPane.getVerticalScrollBar().setUnitIncrement(18);
+        root.add(inventoryScrollPane, BorderLayout.CENTER);
+        root.add(createFooterPanel(), BorderLayout.SOUTH);
+        return root;
+    }
 
-        JTabbedPane editTabs = new JTabbedPane();
-        editTabs.addTab("Inventory Item", panel);
-        editTabs.addTab("Custom Item", new EditCustomItem(this));
-        add(editTabs);
+    private JPanel createHeaderPanel() {
+        JPanel header = new JPanel(new BorderLayout(18, 0));
+        header.setBorder(new EmptyBorder(18, 26, 16, 26));
+        header.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        header.setBackground(DeckersPalette.sectionFill(DeckersPalette.ORANGE));
 
-        setFormEnabled(false);
+        JPanel copy = new JPanel();
+        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+        copy.setOpaque(false);
+        JLabel title = new JLabel("Edit an inventory item");
+        title.setFont(new Font("SansSerif", Font.BOLD, 24));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel subtitle = new JLabel("Find a product, review its current information, and save only the changes you need.");
+        subtitle.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        subtitle.setForeground(DeckersPalette.muted());
+        subtitle.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        copy.add(title);
+        copy.add(Box.createVerticalStrut(5));
+        copy.add(subtitle);
 
-        searchBtn.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                searchProduct();
-            }
-        });
+        JLabel required = new JLabel("* Required");
+        required.setFont(new Font("SansSerif", Font.BOLD, 12));
+        required.setForeground(DeckersPalette.ORANGE);
+        required.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        header.add(copy, BorderLayout.CENTER);
+        header.add(required, BorderLayout.EAST);
+        return header;
+    }
 
-        searchField.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                searchProduct();
-            }
-        });
+    private JPanel createSearchPanel() {
+        JPanel panel = new JPanel(new BorderLayout(14, 6));
+        DeckersSwing.styleBand(panel, DeckersPalette.PURPLE, new Insets(10, 20, 10, 20));
 
-        saveButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                saveChanges();
-            }
-        });
+        JPanel copy = new JPanel();
+        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+        copy.setOpaque(false);
+        JLabel title = new JLabel("Find a product");
+        title.setFont(new Font("SansSerif", Font.BOLD, 14));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel hint = createHelperLabel("Search by name, size, SKU, or barcode.");
+        copy.add(title);
+        copy.add(Box.createVerticalStrut(3));
+        copy.add(hint);
 
-        clearButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                clearSelection();
-            }
-        });
+        JPanel searchControls = new JPanel(new BorderLayout(8, 0));
+        searchControls.setOpaque(false);
+        setComfortableControlSize(searchField);
+        DeckersSwing.styleUtilityButton(searchBtn, DeckersPalette.PURPLE);
+        searchBtn.setPreferredSize(new Dimension(105, 38));
+        searchControls.add(searchField, BorderLayout.CENTER);
+        searchControls.add(searchBtn, BorderLayout.EAST);
+
+        panel.add(copy, BorderLayout.WEST);
+        panel.add(searchControls, BorderLayout.CENTER);
+        panel.add(selectionStatusLabel, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel createItemDetailsSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Item name", nameField, "Shown in sales and inventory search.", true, 1);
+        addField(fields, 1, 0, "Primary barcode", barcodeField, "Scan or enter the main barcode.", true, 1);
+        addField(fields, 0, 1, "Size", sizeField, "Optional, such as Small, 10 mm, or 5 lb.", false, 1);
+        addField(fields, 1, 1, "SKU", skuField, "The product's permanent stock identifier.", true, 1);
+        addField(fields, 0, 2, "Description", createTextAreaScroll(descriptionArea, 76),
+                "Optional product notes or customer-facing details.", false, 2);
+        return createSectionCard("1", "Item details", "Review the product identity and searchable information.", DeckersPalette.ORANGE, fields);
+    }
+
+    private JPanel createPricingSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Cost price", costPriceField, "What the business pays for one item.", true, 1);
+        addField(fields, 1, 0, "Selling price", priceField, "The price charged to the customer.", true, 1);
+        addField(fields, 0, 1, "Product classification", itemTypeBox, "Inventory, Service, or Non Inventory.", false, 1);
+        addField(fields, 1, 1, "Current quantity", quantityField, quantityHintLabel, false, 1);
+        addField(fields, 0, 2, "Reorder quantity", reorderLevelField,
+                "Required for inventory items; this signals when more stock is needed.", false, 2);
+        return createSectionCard("2", "Pricing and stock", "Update pricing and store-level inventory settings.", DeckersPalette.LIME, fields);
+    }
+
+    private JPanel createOrganizationSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Department", departmentSelector, "Select the business department first.", true, 1);
+        addField(fields, 1, 0, "Item type", itemDetailsSelector.itemTypeComponent(), "Filtered by the selected department.", true, 1);
+        addField(fields, 0, 1, "Brand", itemDetailsSelector.brandComponent(), "Choose an existing brand or enter a new one.", true, 1);
+        addField(fields, 1, 1, "Vendor", vendorSelector, "Optional preferred supplier.", false, 1);
+        addField(fields, 0, 2, "Sales shelf", itemDetailsSelector.shelfComponent(), "Where staff find it on the sales floor.", true, 1);
+        addField(fields, 1, 2, "Storage shelf", itemDetailsSelector.storageShelfComponent(), "Optional location for reserve stock.", false, 1);
+        return createSectionCard("3", "Organization", "Update where the product belongs and where it is stored.", DeckersPalette.MAGENTA, fields);
+    }
+
+    private JPanel createImageSection() {
+        JPanel fields = createFieldGrid();
+        imageSelector.setPreferredSize(new Dimension(380, 112));
+        imageSelector.setMinimumSize(new Dimension(300, 112));
+        addField(fields, 0, 0, "Additional barcodes", createTextAreaScroll(barcodesArea, 112),
+                "Optional. Enter one per line, or separate them with commas.", false, 1);
+        addField(fields, 1, 0, "Product image", imageSelector, "A clear product image is required.", true, 1);
+        return createSectionCard("4", "Barcodes and image", "Maintain the required product image and any additional barcodes.", DeckersPalette.PURPLE, fields);
+    }
+
+    private JPanel createFieldGrid() {
+        JPanel fields = new JPanel(new GridBagLayout());
+        fields.setOpaque(false);
+        return fields;
+    }
+
+    private void addField(JPanel panel, int column, int row, String labelText, JComponent component,
+                          String helperText, boolean required, int width) {
+        addField(panel, column, row, labelText, component, createHelperLabel(helperText), required, width);
+    }
+
+    private void addField(JPanel panel, int column, int row, String labelText, JComponent component,
+                          JLabel helperLabel, boolean required, int width) {
+        JPanel fieldPanel = new JPanel();
+        fieldPanel.setLayout(new BoxLayout(fieldPanel, BoxLayout.Y_AXIS));
+        fieldPanel.setOpaque(false);
+        JLabel label = new JLabel(labelText + (required ? " *" : ""));
+        label.setFont(new Font("SansSerif", Font.BOLD, 13));
+        label.setForeground(DeckersPalette.text());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        setComfortableControlSize(component);
+        helperLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        fieldPanel.add(label);
+        fieldPanel.add(Box.createVerticalStrut(6));
+        fieldPanel.add(component);
+        if (!helperLabel.getText().isBlank()) {
+            fieldPanel.add(Box.createVerticalStrut(5));
+            fieldPanel.add(helperLabel);
+        }
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = column;
+        gbc.gridy = row;
+        gbc.gridwidth = width;
+        gbc.weightx = width;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.insets = new Insets(row == 0 ? 0 : 14, column == 0 ? 0 : 10, 0, column + width >= 2 ? 0 : 10);
+        panel.add(fieldPanel, gbc);
+    }
+
+    private JPanel createSectionCard(String step, String titleText, String subtitleText, Color accent, JComponent body) {
+        JPanel card = new JPanel(new BorderLayout(0, 16));
+        DeckersSwing.styleBand(card, accent, new Insets(16, 18, 18, 18));
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+
+        JPanel heading = new JPanel(new BorderLayout(12, 0));
+        heading.setOpaque(false);
+        JLabel stepLabel = new JLabel(step, SwingConstants.CENTER);
+        stepLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
+        stepLabel.setForeground(DeckersPalette.text());
+        stepLabel.setOpaque(true);
+        stepLabel.setBackground(DeckersPalette.tileHover(accent));
+        stepLabel.setBorder(new RoundedBorder(10, DeckersPalette.sectionBorder(accent), 1));
+        stepLabel.setPreferredSize(new Dimension(34, 34));
+        stepLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+
+        JPanel text = new JPanel();
+        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+        text.setOpaque(false);
+        JLabel title = new JLabel(titleText);
+        title.setFont(new Font("SansSerif", Font.BOLD, 17));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel subtitle = new JLabel(subtitleText);
+        subtitle.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        subtitle.setForeground(DeckersPalette.muted());
+        subtitle.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        text.add(title);
+        text.add(Box.createVerticalStrut(3));
+        text.add(subtitle);
+        heading.add(stepLabel, BorderLayout.WEST);
+        heading.add(text, BorderLayout.CENTER);
+        card.add(heading, BorderLayout.NORTH);
+        card.add(body, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JScrollPane createTextAreaScroll(JTextArea area, int height) {
+        area.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        area.setBorder(new EmptyBorder(7, 9, 7, 9));
+        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane.setPreferredSize(new Dimension(300, height));
+        scrollPane.setMinimumSize(new Dimension(120, height));
+        return scrollPane;
+    }
+
+    private JLabel createHelperLabel(String text) {
+        JLabel label = new JLabel(text == null ? "" : text);
+        label.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        label.setForeground(DeckersPalette.muted());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        return label;
+    }
+
+    private void setComfortableControlSize(JComponent component) {
+        if (component instanceof JTextField || component instanceof JComboBox<?> || component instanceof DepartmentSelector
+                || component instanceof VendorSelector) {
+            Dimension preferred = component.getPreferredSize();
+            component.setPreferredSize(new Dimension(Math.max(180, preferred.width), Math.max(34, preferred.height)));
+            component.setMaximumSize(new Dimension(Integer.MAX_VALUE, Math.max(34, preferred.height)));
+        }
+    }
+
+    private JPanel createFooterPanel() {
+        JPanel footer = new JPanel(new BorderLayout(16, 0));
+        footer.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, DeckersPalette.border()),
+                new EmptyBorder(12, 20, 12, 20)
+        ));
+        footer.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        footer.setBackground(DeckersPalette.surface());
+        JLabel hint = createHelperLabel("Search for and select a product before editing its details.");
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
+        DeckersSwing.styleUtilityButton(clearButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(cancelButton, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
+        saveButton.setPreferredSize(new Dimension(145, 40));
+        actions.add(clearButton);
+        actions.add(cancelButton);
+        actions.add(saveButton);
+        footer.add(hint, BorderLayout.WEST);
+        footer.add(actions, BorderLayout.EAST);
+        return footer;
+    }
+
+    private void wireActions() {
+        searchBtn.addActionListener(e -> searchProduct());
+        searchField.addActionListener(e -> searchProduct());
+        saveButton.addActionListener(e -> saveChanges());
+        clearButton.addActionListener(e -> clearSelection());
+        cancelButton.addActionListener(e -> dispose());
         itemTypeBox.addActionListener(e -> {
             selectedProductType = getSelectedProductType();
             updateInventoryFieldsForType();
         });
+        saveButton.setToolTipText("Save changes (Command/Ctrl+S)");
 
-        cancelButton.addActionListener(new ActionListener() {
+        int menuShortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_S, menuShortcut), "saveChanges");
+        getRootPane().getActionMap().put("saveChanges", new AbstractAction() {
             @Override
-            public void actionPerformed(ActionEvent e) {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (saveButton.isEnabled()) {
+                    saveChanges();
+                }
+            }
+        });
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeEditItem");
+        getRootPane().getActionMap().put("closeEditItem", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
                 dispose();
             }
         });
-
-        WindowHelper.showPosWindow(this);
     }
 
     private Integer getCurrentSelectedLocationId() {
@@ -364,176 +428,86 @@ public class EditItem extends JFrame {
     }
 
     private void searchProduct() {
-        Integer selectedLocationId = requireCurrentSelectedLocationId();
-        if (selectedLocationId == null) {
+        if (requireCurrentSelectedLocationId() == null) {
             return;
         }
-
         String searchText = searchField.getText().trim();
-
         if (searchText.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Enter a product name, SKU, or barcode to search.");
+            JOptionPane.showMessageDialog(this,
+                    "Enter a product name, brand, item type, SKU, barcode, department, or shelf to search.");
             return;
         }
 
-        String sql = """
-                SELECT p.product_id,
-                       p.name,
-                       COALESCE(p.size, '') AS size,
-                       p.sku,
-                       p.barcode,
-                       p.description,
-                       p.cost_price,
-                       p.price,
-                       COALESCE(p.product_type, 'INVENTORY') AS product_type,
-                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
-                       COALESCE(i.reorder_level, 0) AS reorder_level,
-                       p.category_id,
-                       c.name AS category_name,
-                       p.vendor_id,
-                       v.name AS vendor_name,
-                       p.image_url
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.category_id
-                LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
-                LEFT JOIN inventory i ON p.product_id = i.product_id AND i.location_id = ?
-                WHERE p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ? OR p.barcode ILIKE ?
-                ORDER BY p.name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, selectedLocationId);
-            ps.setString(2, "%" + searchText + "%");
-            ps.setString(3, "%" + searchText + "%");
-            ps.setString(4, "%" + searchText + "%");
-            ps.setString(5, "%" + searchText + "%");
-
-            ResultSet rs = ps.executeQuery();
-
-            java.util.List<Object[]> rows = new java.util.ArrayList<>();
-            while (rs.next()) {
-                rows.add(new Object[]{
-                        rs.getInt("product_id"),
-                        rs.getString("name"),
-                        rs.getString("size"),
-                        rs.getString("sku"),
-                        rs.getString("barcode"),
-                        rs.getString("description") != null ? rs.getString("description") : "",
-                        rs.getDouble("cost_price"),
-                        rs.getDouble("price"),
-                        rs.getString("product_type"),
-                        rs.getInt("quantity_on_hand"),
-                        rs.getInt("reorder_level"),
-                        rs.getObject("category_id") != null ? rs.getInt("category_id") : "",
-                        rs.getString("category_name") != null ? rs.getString("category_name") : "",
-                        rs.getObject("vendor_id") != null ? rs.getInt("vendor_id") : "",
-                        rs.getString("vendor_name") != null ? rs.getString("vendor_name") : "",
-                        rs.getString("image_url") != null ? rs.getString("image_url") : ""
-                });
-            }
-
-            if (rows.isEmpty()) {
+        try {
+            List<LanApiClient.EditableProduct> products = LanApiClient.searchEditableProducts(searchText);
+            if (products.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No matching products found.");
                 return;
             }
-
-            String[] columns = {"ID", "Name", "Size", "SKU", "Barcode", "Description", "Cost Price", "Price", "Type", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID", "Vendor", "Image URL"};
-            DefaultTableModel model = new DefaultTableModel(rows.toArray(new Object[0][]), columns) {
-                @Override
-                public boolean isCellEditable(int row, int column) {
-                    return false;
-                }
+            String[] columns = {"ID", "Name", "Size", "SKU", "Barcode", "Description", "Cost Price", "Price",
+                    "Classification", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID",
+                    "Vendor", "Image URL", "Item Type", "Brand", "Shelf", "Storage Shelf"};
+            Object[][] rows = products.stream().map(product -> new Object[]{
+                    product.productId(), product.name(), product.size(), product.sku(), product.barcode(),
+                    product.description(), product.costPrice().doubleValue(), product.price().doubleValue(),
+                    product.productType(), product.quantity(), product.reorderLevel(),
+                    product.categoryId() == null ? "" : product.categoryId(), product.categoryName(),
+                    product.vendorId() == null ? "" : product.vendorId(), product.vendorName(), product.imageUrl(),
+                    product.itemTypeName(), product.brandName(), product.shelfName(), product.storageShelfName()
+            }).toArray(Object[][]::new);
+            DefaultTableModel model = new DefaultTableModel(rows, columns) {
+                @Override public boolean isCellEditable(int row, int column) { return false; }
             };
-
             JTable table = new JTable(model);
+            DeckersSwing.styleTable(table, DeckersPalette.PURPLE);
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             table.setRowSelectionInterval(0, 0);
-            hideColumn(table, 15);
-            hideColumn(table, 13);
-            hideColumn(table, 11);
+            table.setAutoCreateRowSorter(true);
+            table.setRowHeight(30);
+            int[] hiddenColumns = {0, 5, 6, 7, 10, 11, 13, 15, 16, 17, 18, 19};
+            for (int columnIndex : hiddenColumns) hideColumn(table, columnIndex);
             JScrollPane scrollPane = new JScrollPane(table);
-            scrollPane.setPreferredSize(new Dimension(550, 200));
-
-            String storeLabel = SessionManager.getCurrentLocationName() != null && !SessionManager.getCurrentLocationName().isBlank()
-                    ? SessionManager.getCurrentLocationName()
-                    : "the currently selected store";
-
-            int result = JOptionPane.showConfirmDialog(
-                    this,
-                    scrollPane,
+            scrollPane.setPreferredSize(new Dimension(900, 300));
+            String storeLabel = SessionManager.getCurrentLocationName() != null
+                    && !SessionManager.getCurrentLocationName().isBlank()
+                    ? SessionManager.getCurrentLocationName() : "the currently selected store";
+            int result = JOptionPane.showConfirmDialog(this, scrollPane,
                     "Select a Product to Edit for " + storeLabel,
-                    JOptionPane.OK_CANCEL_OPTION,
-                    JOptionPane.PLAIN_MESSAGE
-            );
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION || table.getSelectedRow() < 0) return;
 
-            if (result == JOptionPane.OK_OPTION) {
-                int selectedRow = table.getSelectedRow();
-                if (selectedRow == -1) {
-                    JOptionPane.showMessageDialog(this, "Please select a product.");
-                    return;
-                }
-
-                selectedProductId = (int) table.getValueAt(selectedRow, 0);
-                String name = (String) table.getValueAt(selectedRow, 1);
-                String size = (String) table.getValueAt(selectedRow, 2);
-                String sku = (String) table.getValueAt(selectedRow, 3);
-                String barcode = (String) table.getValueAt(selectedRow, 4);
-                String description = (String) table.getValueAt(selectedRow, 5);
-                double costPrice = (double) table.getValueAt(selectedRow, 6);
-                double price = (double) table.getValueAt(selectedRow, 7);
-                Object productType = table.getValueAt(selectedRow, 8);
-                Object quantity = table.getValueAt(selectedRow, 9);
-                Object reorderLevel = table.getValueAt(selectedRow, 10);
-                Object departmentId = table.getValueAt(selectedRow, 11);
-                Object departmentName = table.getValueAt(selectedRow, 12);
-                Object vendorId = table.getValueAt(selectedRow, 13);
-                Object vendorName = table.getValueAt(selectedRow, 14);
-                Object imageUrl = table.getValueAt(selectedRow, 15);
-
-                nameField.setText(name);
-                sizeField.setText(size != null ? size : "");
-                skuField.setText(sku);
-                barcodeField.setText(barcode != null ? barcode : "");
-                descriptionArea.setText(description != null ? description : "");
-                costPriceField.setText(String.valueOf(costPrice));
-                priceField.setText(String.valueOf(price));
-                selectedProductType = normalizeProductType(productType == null ? null : productType.toString());
-                itemTypeBox.setSelectedItem(formatProductType(selectedProductType));
-                quantityField.setText(quantity != null ? quantity.toString() : "0");
-                selectedOriginalQuantity = parseIntOrDefault(quantity, 0);
-                reorderLevelField.setText(reorderLevel != null ? reorderLevel.toString() : "0");
-                Integer selectedDepartmentId = null;
-                if (departmentId instanceof Integer id) {
-                    selectedDepartmentId = id;
-                } else if (departmentId != null && !departmentId.toString().isBlank()) {
-                    selectedDepartmentId = Integer.parseInt(departmentId.toString());
-                }
-                departmentSelector.setSelectedDepartment(
-                        selectedDepartmentId,
-                        departmentName != null ? departmentName.toString() : ""
-                );
-                Integer selectedVendorId = null;
-                if (vendorId instanceof Integer id) {
-                    selectedVendorId = id;
-                } else if (vendorId != null && !vendorId.toString().isBlank()) {
-                    selectedVendorId = Integer.parseInt(vendorId.toString());
-                }
-                vendorSelector.setSelectedVendor(
-                        selectedVendorId,
-                        vendorName != null ? vendorName.toString() : ""
-                );
-                barcodesArea.setText(loadAdditionalBarcodes(selectedProductId));
-                imageSelector.setImageUrl(imageUrl != null ? imageUrl.toString() : "");
-
-                setFormEnabled(true);
-                updateInventoryFieldsForType();
-            }
-
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(this, "Database error: " + ex.getMessage());
+            int productId = ((Number) table.getValueAt(table.getSelectedRow(), 0)).intValue();
+            LanApiClient.EditableProduct product = products.stream()
+                    .filter(candidate -> candidate.productId() == productId).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Selected item is no longer in the search result."));
+            selectedProductId = product.productId();
+            nameField.setText(product.name());
+            sizeField.setText(product.size());
+            skuField.setText(product.sku());
+            barcodeField.setText(product.barcode());
+            descriptionArea.setText(product.description());
+            costPriceField.setText(product.costPrice().toPlainString());
+            priceField.setText(product.price().toPlainString());
+            selectedProductType = normalizeProductType(product.productType());
+            itemTypeBox.setSelectedItem(formatProductType(selectedProductType));
+            quantityField.setText(String.valueOf(product.quantity()));
+            selectedOriginalQuantity = product.quantity();
+            reorderLevelField.setText(String.valueOf(product.reorderLevel()));
+            departmentSelector.setSelectedDepartment(product.categoryId(), product.categoryName());
+            itemDetailsSelector.setValues(product.categoryId(), product.itemTypeName(), product.brandName(),
+                    product.shelfName(), product.storageShelfName());
+            vendorSelector.setSelectedVendor(product.vendorId(), product.vendorName());
+            barcodesArea.setText(String.join("\n",
+                    product.additionalBarcodes() == null ? List.of() : product.additionalBarcodes()));
+            imageSelector.setImageUrl(product.imageUrl());
+            setFormEnabled(true);
+            updateInventoryFieldsForType();
+            selectionStatusLabel.setText("Editing: " + product.name() + "  •  SKU " + product.sku());
+            inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0));
+            nameField.requestFocusInWindow();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Could not load items: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -543,105 +517,7 @@ public class EditItem extends JFrame {
         table.getColumnModel().getColumn(columnIndex).setPreferredWidth(0);
     }
 
-    private String loadAdditionalBarcodes(int productId) {
-        String sql = "SELECT barcode FROM product_barcodes WHERE product_id = ? ORDER BY barcode";
-        List<String> barcodes = new ArrayList<>();
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, productId);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String barcode = rs.getString("barcode");
-                    if (barcode != null && !barcode.isBlank()) {
-                        barcodes.add(barcode);
-                    }
-                }
-            }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(this, "Failed to load additional barcodes: " + ex.getMessage());
-        }
-
-        return String.join("\n", barcodes);
-    }
-
-    private Set<String> loadAdditionalBarcodeSet(Connection conn, int productId) throws SQLException {
-        Set<String> barcodes = new LinkedHashSet<>();
-        String sql = "SELECT barcode FROM product_barcodes WHERE product_id = ? ORDER BY barcode";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, productId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String barcode = rs.getString("barcode");
-                    if (barcode != null && !barcode.isBlank()) {
-                        barcodes.add(barcode);
-                    }
-                }
-            }
-        }
-        return barcodes;
-    }
-
-    private int getCurrentInventoryQuantity(Connection conn, int productId, int locationId) throws SQLException {
-        String sql = "SELECT quantity_on_hand FROM inventory WHERE product_id = ? AND location_id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, productId);
-            ps.setInt(2, locationId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt("quantity_on_hand");
-                }
-            }
-        }
-        return 0;
-    }
-
-    private void logManualInventoryAdjustment(Connection conn, int productId, int locationId, int previousQuantity, int newQuantity) throws SQLException {
-        int quantityChange = newQuantity - previousQuantity;
-        if (quantityChange == 0) {
-            return;
-        }
-
-        String sql = """
-                INSERT INTO inventory_movements (
-                    product_id, location_id, change_qty, reason, note, user_name,
-                    user_id, device_id, device_name
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, productId);
-            ps.setInt(2, locationId);
-            ps.setInt(3, quantityChange);
-            ps.setString(4, "MANUAL_ADJUSTMENT");
-            ps.setString(5, "Manual adjustment from Edit Item");
-            ps.setString(6, SessionManager.getCurrentUserDisplayName());
-            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-            ps.setString(8, DeviceContextService.currentDeviceId());
-            ps.setString(9, DeviceContextService.currentDeviceName());
-            ps.executeUpdate();
-        }
-    }
-
-    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
     private void saveChanges() {
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Product setup");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
         if (selectedProductId == -1) {
             JOptionPane.showMessageDialog(this, "No product selected.");
             return;
@@ -662,19 +538,11 @@ public class EditItem extends JFrame {
         String priceText = priceField.getText().trim();
         String quantityText = quantityField.getText().trim();
         String reorderLevelText = reorderLevelField.getText().trim();
-        String imageUrl;
-        try {
-            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
-            imageSelector.setImageUrl(imageUrl);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage());
-            return;
-        }
 
         List<String> extraBarcodes = new ArrayList<>();
         Set<String> uniqueBarcodes = new LinkedHashSet<>();
         if (!barcodesText.isEmpty()) {
-            String[] barcodeLines = barcodesText.split("\\r?\\n");
+            String[] barcodeLines = barcodesText.split("[\\r\\n,;]+");
             for (String line : barcodeLines) {
                 String extraBarcode = line.trim();
                 if (!extraBarcode.isEmpty()) {
@@ -690,8 +558,32 @@ public class EditItem extends JFrame {
         String productType = getSelectedProductType();
         boolean inventoryItem = "INVENTORY".equals(productType);
 
-        if (name.isEmpty() || sku.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty() || (inventoryItem && canManualAdjustment && quantityText.isEmpty()) || (inventoryItem && reorderLevelText.isEmpty())) {
-            JOptionPane.showMessageDialog(this, "Name, SKU, Barcode, Cost Price, and Price are required. Inventory items also require Quantity and Reorder Quantity.");
+        if (name.isEmpty()) {
+            showValidationError("Enter an item name.", nameField);
+            return;
+        }
+        if (sku.isEmpty()) {
+            showValidationError("Enter the product SKU.", skuField);
+            return;
+        }
+        if (barcode.isEmpty()) {
+            showValidationError("Scan or enter the primary barcode.", barcodeField);
+            return;
+        }
+        if (costPriceText.isEmpty()) {
+            showValidationError("Enter the cost price.", costPriceField);
+            return;
+        }
+        if (priceText.isEmpty()) {
+            showValidationError("Enter the selling price.", priceField);
+            return;
+        }
+        if (inventoryItem && canManualAdjustment && quantityText.isEmpty()) {
+            showValidationError("Enter the current quantity.", quantityField);
+            return;
+        }
+        if (inventoryItem && reorderLevelText.isEmpty()) {
+            showValidationError("Enter the reorder quantity.", reorderLevelField);
             return;
         }
 
@@ -699,7 +591,11 @@ public class EditItem extends JFrame {
         try {
             costPrice = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(costPriceText)).doubleValue();
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Cost price must be a valid number.");
+            showValidationError("Cost price must be a valid number.", costPriceField);
+            return;
+        }
+        if (costPrice < 0) {
+            showValidationError("Cost price cannot be negative.", costPriceField);
             return;
         }
 
@@ -707,7 +603,11 @@ public class EditItem extends JFrame {
         try {
             price = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(priceText)).doubleValue();
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Price must be a valid number.");
+            showValidationError("Selling price must be a valid number.", priceField);
+            return;
+        }
+        if (price < 0) {
+            showValidationError("Selling price cannot be negative.", priceField);
             return;
         }
 
@@ -716,7 +616,7 @@ public class EditItem extends JFrame {
             try {
                 quantity = Integer.parseInt(quantityText);
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Quantity must be a whole number.");
+                showValidationError("Quantity must be a whole number.", quantityField);
                 return;
             }
         }
@@ -726,7 +626,11 @@ public class EditItem extends JFrame {
             try {
                 reorderLevel = Integer.parseInt(reorderLevelText);
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Reorder Quantity must be a whole number.");
+                showValidationError("Reorder quantity must be a whole number.", reorderLevelField);
+                return;
+            }
+            if (reorderLevel < 0) {
+                showValidationError("Reorder quantity cannot be negative.", reorderLevelField);
                 return;
             }
         }
@@ -735,110 +639,78 @@ public class EditItem extends JFrame {
         if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
             return;
         }
+        if (categoryId == null) {
+            showValidationError("Select a department.", departmentSelector);
+            return;
+        }
+        if (itemDetailsSelector.itemTypeName().isBlank()) {
+            showValidationError("Select or enter an item type.", itemDetailsSelector.itemTypeComponent());
+            return;
+        }
+        if (itemDetailsSelector.brandName().isBlank()) {
+            showValidationError("Select or enter a brand.", itemDetailsSelector.brandComponent());
+            return;
+        }
+        if (itemDetailsSelector.shelfName().isBlank()) {
+            showValidationError("Select or enter the sales shelf location.", itemDetailsSelector.shelfComponent());
+            return;
+        }
+        if (imageSelector.getImageUrl().isBlank()) {
+            showValidationError("Choose a product image or enter an image URL.", imageSelector);
+            return;
+        }
         Integer vendorId = vendorSelector.getSelectedVendorId();
         if (vendorId == null && !vendorSelector.getSelectedVendorName().isBlank()) {
             return;
         }
 
-        String updateProductSql = "UPDATE products SET name = ?, size = NULLIF(?, ''), sku = ?, barcode = ?, description = ?, cost_price = ?, price = ?, product_type = ?, category_id = ?, vendor_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?";
-        String upsertInventorySql = """
-                INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (product_id, location_id)
-                DO UPDATE SET
-                    quantity_on_hand = EXCLUDED.quantity_on_hand,
-                    reorder_level = EXCLUDED.reorder_level
-                """;
-        String deleteBarcodesSql = "DELETE FROM product_barcodes WHERE product_id = ? AND barcode = ?";
-        String insertBarcodeSql = """
-                INSERT INTO product_barcodes (product_id, barcode)
-                VALUES (?, ?)
-                ON CONFLICT (barcode)
-                DO UPDATE SET
-                    product_id = EXCLUDED.product_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """;
+        String imageUrl;
+        try {
+            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
+            imageSelector.setImageUrl(imageUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage(), "Image Upload", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try (PreparedStatement updatePs = conn.prepareStatement(updateProductSql);
-                 PreparedStatement inventoryPs = conn.prepareStatement(upsertInventorySql);
-                 PreparedStatement deletePs = conn.prepareStatement(deleteBarcodesSql);
-                 PreparedStatement insertPs = conn.prepareStatement(insertBarcodeSql)) {
-                int previousQuantity = getCurrentInventoryQuantity(conn, selectedProductId, selectedLocationId);
-
-                updatePs.setString(1, name);
-                updatePs.setString(2, size);
-                updatePs.setString(3, sku);
-                updatePs.setString(4, barcode);
-                updatePs.setString(5, description);
-                updatePs.setDouble(6, costPrice);
-                updatePs.setDouble(7, price);
-                updatePs.setString(8, productType);
-
-                if (categoryId != null) {
-                    updatePs.setInt(9, categoryId);
-                } else {
-                    updatePs.setNull(9, java.sql.Types.INTEGER);
-                }
-                if (vendorId != null) {
-                    updatePs.setInt(10, vendorId);
-                } else {
-                    updatePs.setNull(10, java.sql.Types.INTEGER);
-                }
-
-                updatePs.setString(11, imageUrl);
-                updatePs.setInt(12, selectedProductId);
-
-                int rowsUpdated = updatePs.executeUpdate();
-                if (rowsUpdated == 0) {
-                    throw new SQLException("Update failed — product not found.");
-                }
-
-                if (inventoryItem) {
-                    inventoryPs.setInt(1, selectedProductId);
-                    inventoryPs.setInt(2, selectedLocationId);
-                    inventoryPs.setInt(3, quantity);
-                    inventoryPs.setInt(4, reorderLevel);
-                    inventoryPs.executeUpdate();
-                    logManualInventoryAdjustment(conn, selectedProductId, selectedLocationId, previousQuantity, quantity);
-                }
-
-                Set<String> existingBarcodes = loadAdditionalBarcodeSet(conn, selectedProductId);
-                Set<String> removedBarcodes = new LinkedHashSet<>(existingBarcodes);
-                removedBarcodes.removeAll(extraBarcodes);
-                for (String removedBarcode : removedBarcodes) {
-                    ReferenceDataSyncService.recordTombstone(conn, "product_barcodes", Map.of("barcode", removedBarcode));
-                    deletePs.setInt(1, selectedProductId);
-                    deletePs.setString(2, removedBarcode);
-                    deletePs.addBatch();
-                }
-                deletePs.executeBatch();
-
-                for (String extraBarcode : extraBarcodes) {
-                    insertPs.setInt(1, selectedProductId);
-                    insertPs.setString(2, extraBarcode);
-                    insertPs.addBatch();
-                }
-                if (!extraBarcodes.isEmpty()) {
-                    insertPs.executeBatch();
-                }
-
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Item updated successfully.");
-                clearSelection();
-
-            } catch (SQLException ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+        try {
+            LanApiClient.ProductSaveRequest request = new LanApiClient.ProductSaveRequest(
+                    selectedProductId, name, size, sku, barcode, description,
+                    BigDecimal.valueOf(costPrice), BigDecimal.valueOf(price), productType,
+                    categoryId, vendorId, imageUrl, itemDetailsSelector.itemTypeName(),
+                    itemDetailsSelector.brandName(), itemDetailsSelector.shelfName(),
+                    itemDetailsSelector.storageShelfName(), List.copyOf(extraBarcodes),
+                    quantity, reorderLevel, selectedOriginalQuantity,
+                    inventoryItem && canManualAdjustment
+            );
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
+                pendingSaveFingerprint = fingerprint;
+                pendingSaveKey = UUID.randomUUID().toString();
             }
-
-        } catch (SQLException ex) {
-            ex.printStackTrace();
+            LanApiClient.SavedProduct saved = LanApiClient.updateProduct(request, pendingSaveKey);
+            pendingSaveKey = null;
+            pendingSaveFingerprint = null;
+            selectedOriginalQuantity = saved.quantity();
+            JOptionPane.showMessageDialog(this, "Item updated successfully.");
+            clearSelection();
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update item: " + ex.getMessage());
+        }
+    }
+
+    private void showValidationError(String message, JComponent component) {
+        JOptionPane.showMessageDialog(this, message, "Check Item Details", JOptionPane.WARNING_MESSAGE);
+        component.scrollRectToVisible(new Rectangle(component.getSize()));
+        component.requestFocusInWindow();
+        if (component instanceof JTextComponent textComponent) {
+            textComponent.selectAll();
+        } else if (component instanceof JComboBox<?> comboBox && comboBox.isEditable()) {
+            Component editor = comboBox.getEditor().getEditorComponent();
+            editor.requestFocusInWindow();
+            if (editor instanceof JTextComponent textComponent) {
+                textComponent.selectAll();
+            }
         }
     }
 
@@ -858,9 +730,11 @@ public class EditItem extends JFrame {
         quantityField.setText("");
         reorderLevelField.setText("");
         departmentSelector.clearSelection();
+        itemDetailsSelector.clearSelection();
         vendorSelector.clearSelection();
         imageSelector.setImageUrl("");
         searchField.setText("");
+        selectionStatusLabel.setText("No product selected.");
         setFormEnabled(false);
         searchField.requestFocusInWindow();
     }
@@ -877,6 +751,7 @@ public class EditItem extends JFrame {
         itemTypeBox.setEnabled(enabled);
         updateInventoryFieldsForType();
         departmentSelector.setSelectorEnabled(enabled);
+        itemDetailsSelector.setSelectorEnabled(enabled);
         vendorSelector.setSelectorEnabled(enabled);
         imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
@@ -888,6 +763,13 @@ public class EditItem extends JFrame {
         boolean inventoryItem = "INVENTORY".equals(getSelectedProductType());
         quantityField.setEnabled(enabled && inventoryItem && canManualAdjustment);
         reorderLevelField.setEnabled(enabled && inventoryItem);
+        if (quantityHintLabel != null) {
+            quantityHintLabel.setText(!inventoryItem
+                    ? "Not used for services or non-inventory items."
+                    : canManualAdjustment
+                    ? "Current on-hand quantity for the selected store."
+                    : "Read-only. Requires Manual Adjustment permission.");
+        }
         if (!inventoryItem) {
             quantityField.setText("0");
             reorderLevelField.setText("0");
@@ -923,6 +805,111 @@ public class EditItem extends JFrame {
             return Integer.parseInt(String.valueOf(value));
         } catch (NumberFormatException ex) {
             return fallback;
+        }
+    }
+
+    private static class ResponsiveSectionPanel extends JPanel implements Scrollable {
+        private static final int WIDE_LAYOUT_MIN_WIDTH = 1450;
+        private static final int SECTION_GAP = 14;
+
+        private final JComponent itemDetailsSection;
+        private final JComponent pricingSection;
+        private final JComponent organizationSection;
+        private final JComponent imageSection;
+        private boolean layoutInitialized;
+        private boolean wideLayout;
+
+        private ResponsiveSectionPanel(JComponent itemDetailsSection, JComponent pricingSection,
+                                       JComponent organizationSection, JComponent imageSection) {
+            super(new BorderLayout());
+            this.itemDetailsSection = itemDetailsSection;
+            this.pricingSection = pricingSection;
+            this.organizationSection = organizationSection;
+            this.imageSection = imageSection;
+            putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+            setBackground(DeckersPalette.background());
+            setBorder(new EmptyBorder(18, 20, 22, 20));
+            rebuildLayout(false);
+            addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    updateResponsiveLayout();
+                }
+            });
+        }
+
+        private void updateResponsiveLayout() {
+            boolean shouldUseWideLayout = getWidth() >= WIDE_LAYOUT_MIN_WIDTH;
+            if (!layoutInitialized || shouldUseWideLayout != wideLayout) {
+                rebuildLayout(shouldUseWideLayout);
+            }
+        }
+
+        private void rebuildLayout(boolean useWideLayout) {
+            wideLayout = useWideLayout;
+            layoutInitialized = true;
+            removeAll();
+            if (wideLayout) {
+                JPanel columns = new JPanel(new GridLayout(1, 2, SECTION_GAP, 0));
+                columns.setOpaque(false);
+                columns.add(createColumn(itemDetailsSection, pricingSection));
+                columns.add(createColumn(organizationSection, imageSection));
+                add(columns, BorderLayout.CENTER);
+            } else {
+                add(createColumn(itemDetailsSection, pricingSection, organizationSection, imageSection), BorderLayout.CENTER);
+            }
+            revalidate();
+            repaint();
+        }
+
+        private JPanel createColumn(JComponent... sections) {
+            JPanel column = new JPanel(new GridBagLayout());
+            column.setOpaque(false);
+            for (int i = 0; i < sections.length; i++) {
+                GridBagConstraints gbc = new GridBagConstraints();
+                gbc.gridx = 0;
+                gbc.gridy = i;
+                gbc.weightx = 1;
+                gbc.fill = GridBagConstraints.HORIZONTAL;
+                gbc.anchor = GridBagConstraints.NORTHWEST;
+                gbc.insets = new Insets(i == 0 ? 0 : SECTION_GAP, 0, 0, 0);
+                column.add(sections[i], gbc);
+            }
+            GridBagConstraints glue = new GridBagConstraints();
+            glue.gridx = 0;
+            glue.gridy = sections.length;
+            glue.weightx = 1;
+            glue.weighty = 1;
+            glue.fill = GridBagConstraints.BOTH;
+            JPanel spacer = new JPanel();
+            spacer.setOpaque(false);
+            column.add(spacer, glue);
+            return column;
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 18;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return Math.max(visibleRect.height - 36, 18);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
         }
     }
 }

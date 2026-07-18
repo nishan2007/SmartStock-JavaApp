@@ -5,8 +5,6 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 
-import managers.SessionManager;
-
 public final class QuotationInvoiceAuditService {
     private QuotationInvoiceAuditService() {
     }
@@ -73,8 +71,8 @@ public final class QuotationInvoiceAuditService {
         ps.setString(4, valueText(oldValue));
         ps.setString(5, valueText(newValue));
         ps.setString(6, blankToNull(reason));
-        setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-        ps.setString(8, SessionManager.getCurrentUserDisplayName());
+        setNullableInteger(ps, 7, ServerRequestIdentity.userId());
+        ps.setString(8, ServerRequestIdentity.userName());
         ps.setString(9, blankToNull(currentDocumentDeviceId()));
         ps.setString(10, blankToNull(currentDocumentDeviceName()));
     }
@@ -84,18 +82,18 @@ public final class QuotationInvoiceAuditService {
         ps.setString(2, blankToNull(oldStatus));
         ps.setString(3, newStatus);
         ps.setString(4, blankToNull(reason));
-        setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
-        ps.setString(6, SessionManager.getCurrentUserDisplayName());
+        setNullableInteger(ps, 5, ServerRequestIdentity.userId());
+        ps.setString(6, ServerRequestIdentity.userName());
         ps.setString(7, blankToNull(currentDocumentDeviceId()));
         ps.setString(8, blankToNull(currentDocumentDeviceName()));
     }
 
     private static String currentDocumentDeviceId() {
-        return DeviceContextService.currentDeviceId();
+        return ServerRequestIdentity.deviceId();
     }
 
     private static String currentDocumentDeviceName() {
-        return DeviceContextService.currentDeviceName();
+        return ServerRequestIdentity.deviceName();
     }
 
     private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {

@@ -7,6 +7,7 @@ import data.DatabaseMode;
 import services.PostgresRuntimeService;
 import services.CompanyBackupScheduler;
 import services.SyncWorker;
+import services.LanApiClient;
 
 import javax.swing.*;
 import java.io.IOException;
@@ -33,6 +34,7 @@ public class Main {
         }
         try {
             applyModeArgument(args);
+            startSilentLanCredentialMaintenance();
             ensureBackgroundSyncForServerMode();
             CompanyBackupScheduler.start();
             SyncWorker.startIfServerMode();
@@ -67,6 +69,36 @@ public class Main {
                 );
             }
         });
+    }
+
+    private static void startSilentLanCredentialMaintenance() {
+        DatabaseMode mode = DatabaseConfig.load().mode();
+        if (mode != DatabaseMode.CLIENT && mode != DatabaseMode.SERVER) return;
+        Thread maintenance = new Thread(() -> {
+            try {
+                if (mode == DatabaseMode.SERVER && !LanApiClient.isPaired()) {
+                    for (int attempt = 0; attempt < 10 && !LanApiClient.isPaired(); attempt++) {
+                        try {
+                            LanApiClient.ensureLocalServerCredential();
+                        } catch (Exception ex) {
+                            Thread.sleep(1_000L);
+                        }
+                    }
+                    return;
+                }
+                if (!LanApiClient.isPaired()) {
+                    LanApiClient.claimApprovedCredential();
+                } else {
+                    LanApiClient.renewDeviceCredentialIfDue();
+                }
+            } catch (Exception ex) {
+                // Pairing state is deliberately preserved during outages. Employees
+                // receive the normal server-unavailable message from their workflow.
+                System.err.println("LAN credential maintenance will retry later: " + ex.getMessage());
+            }
+        }, "smartstock-lan-credential-maintenance");
+        maintenance.setDaemon(true);
+        maintenance.start();
     }
 
     private static void installStartupDiagnostics() {
@@ -128,7 +160,6 @@ public class Main {
             DatabaseMode mode = switch (arg) {
                 case "--server" -> DatabaseMode.SERVER;
                 case "--client" -> DatabaseMode.CLIENT;
-                case "--cloud-direct" -> DatabaseMode.CLOUD_DIRECT;
                 default -> null;
             };
             if (mode == null) {

@@ -101,6 +101,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
         orderItemBox = new JComboBox<>();
         itemLookupField = new JTextField();
+        itemLookupField.setToolTipText(
+                "Search by item name, department, item type, brand, variant, SKU, or barcode. Words can be entered in any order.");
         JButton itemLookupButton = new JButton("Lookup");
         variantBox = new JComboBox<>();
         linePriceField = new JTextField();

@@ -1,41 +1,46 @@
 package ui.components;
 
-import data.DB;
+import services.LanApiClient;
 
 import javax.swing.*;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public class VendorSelector extends JPanel {
-    private final JComboBox<VendorOption> vendorBox = new JComboBox<>();
+    private final SearchableComboBox vendorBox = new SearchableComboBox();
+    private final Map<String, Integer> idsByName = new LinkedHashMap<>();
+    private final Map<Integer, String> namesById = new LinkedHashMap<>();
     private boolean loading;
 
     public VendorSelector() {
         setLayout(new BorderLayout(6, 0));
-        vendorBox.setEditable(true);
         add(vendorBox, BorderLayout.CENTER);
         loadVendors();
     }
 
     public void loadVendors() {
-        Object selected = vendorBox.getSelectedItem();
-        String selectedText = selected == null ? "" : selected.toString();
+        String selectedText = getSelectedVendorName();
         loading = true;
-        vendorBox.removeAllItems();
-        vendorBox.addItem(new VendorOption(null, ""));
+        idsByName.clear();
+        namesById.clear();
+        List<String> options = new ArrayList<>();
 
-        String sql = "SELECT vendor_id, name FROM vendors WHERE COALESCE(is_active, TRUE) = TRUE ORDER BY name";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                vendorBox.addItem(new VendorOption(rs.getInt("vendor_id"), rs.getString("name")));
+        try {
+            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
+            for (LanApiClient.NamedId vendor : lookups.vendors()) {
+                int id = vendor.id();
+                String name = vendor.name();
+                options.add(name);
+                idsByName.put(normalize(name), id);
+                namesById.put(id, name);
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            vendorBox.setOptions(options);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(), "LAN Service", JOptionPane.ERROR_MESSAGE);
         } finally {
             loading = false;
         }
@@ -46,22 +51,12 @@ public class VendorSelector extends JPanel {
     }
 
     public Integer getSelectedVendorId() {
-        Object selected = vendorBox.getSelectedItem();
-        if (selected instanceof VendorOption option) {
-            return option.id();
-        }
-
         String text = getSelectedVendorName();
-        if (text.isBlank()) {
-            return null;
-        }
-
-        for (int i = 0; i < vendorBox.getItemCount(); i++) {
-            VendorOption option = vendorBox.getItemAt(i);
-            if (option.name().equalsIgnoreCase(text)) {
-                vendorBox.setSelectedItem(option);
-                return option.id();
-            }
+        if (text.isBlank()) return null;
+        Integer id = idsByName.get(normalize(text));
+        if (id != null) {
+            vendorBox.setSelectedItem(namesById.get(id));
+            return id;
         }
 
         JOptionPane.showMessageDialog(this, "Select an existing vendor from the list.");
@@ -69,7 +64,7 @@ public class VendorSelector extends JPanel {
     }
 
     public String getSelectedVendorName() {
-        Object selected = vendorBox.getSelectedItem();
+        Object selected = vendorBox.isEditable() ? vendorBox.getEditor().getItem() : vendorBox.getSelectedItem();
         return selected == null ? "" : selected.toString().trim();
     }
 
@@ -79,16 +74,12 @@ public class VendorSelector extends JPanel {
             return;
         }
 
-        for (int i = 0; i < vendorBox.getItemCount(); i++) {
-            VendorOption option = vendorBox.getItemAt(i);
-            if ((vendorId != null && vendorId.equals(option.id()))
-                    || (vendorName != null && option.name().equalsIgnoreCase(vendorName))) {
-                vendorBox.setSelectedItem(option);
-                return;
-            }
+        String matchedName = vendorId == null ? null : namesById.get(vendorId);
+        if (matchedName == null && vendorName != null) {
+            Integer matchedId = idsByName.get(normalize(vendorName));
+            if (matchedId != null) matchedName = namesById.get(matchedId);
         }
-
-        vendorBox.setSelectedItem(new VendorOption(vendorId, vendorName == null ? "" : vendorName));
+        vendorBox.setSelectedItem(matchedName == null ? (vendorName == null ? "" : vendorName) : matchedName);
     }
 
     public void setSelectedVendorByName(String vendorName) {
@@ -96,27 +87,14 @@ public class VendorSelector extends JPanel {
     }
 
     public void clearSelection() {
-        if (vendorBox.getItemCount() > 0) {
-            vendorBox.setSelectedIndex(0);
-        } else if (!loading) {
-            vendorBox.setSelectedItem("");
-        }
+        vendorBox.setSelectedItem("");
     }
 
     public void setSelectorEnabled(boolean enabled) {
         vendorBox.setEnabled(enabled);
     }
 
-    private record VendorOption(Integer id, String name) {
-        private VendorOption {
-            if (name == null) {
-                name = "";
-            }
-        }
-
-        @Override
-        public String toString() {
-            return name;
-        }
+    private static String normalize(String value) {
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT);
     }
 }

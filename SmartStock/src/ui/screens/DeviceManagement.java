@@ -1,13 +1,12 @@
 package ui.screens;
 
-import data.DB;
+import data.DatabaseConfig;
 import managers.NavigationManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import models.DeviceSessionRecord;
 import models.ManagedDevice;
-import services.DeviceManagementService;
-import services.OfflineWriteGuard;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -17,14 +16,16 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
 import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class DeviceManagement extends JFrame {
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
+    private String pendingMutationKey;
+    private String pendingMutationFingerprint;
 
     private final DefaultTableModel deviceTableModel = new DefaultTableModel(
             new Object[]{"Device", "Status", "Sales", "Orders", "Last User", "Store", "Last Seen", "Sessions"}, 0
@@ -65,6 +66,8 @@ public class DeviceManagement extends JFrame {
     private final JButton saveCodeButton = new JButton("Save Device Code");
     private final JButton blockButton = new JButton("Block Device");
     private final JButton refreshButton = new JButton("Refresh");
+    private final JButton securityStatusButton = new JButton("Security Status");
+    private final JButton rotateCredentialButton = new JButton("Rotate Device Credential");
     private final JButton closeButton = new JButton("Close");
 
     private final List<ManagedDevice> allDevices = new ArrayList<>();
@@ -103,6 +106,7 @@ public class DeviceManagement extends JFrame {
         controlsPanel.add(new JLabel("Filter:"));
         controlsPanel.add(filterCombo);
         controlsPanel.add(refreshButton);
+        controlsPanel.add(securityStatusButton);
 
         headerPanel.add(titleStack, BorderLayout.WEST);
         headerPanel.add(controlsPanel, BorderLayout.EAST);
@@ -196,6 +200,7 @@ public class DeviceManagement extends JFrame {
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         actionPanel.setOpaque(false);
         actionPanel.add(saveApprovalButton);
+        actionPanel.add(rotateCredentialButton);
         actionPanel.add(blockButton);
         actionPanel.add(closeButton);
 
@@ -209,6 +214,8 @@ public class DeviceManagement extends JFrame {
 
         filterCombo.addActionListener(e -> applyFilter());
         refreshButton.addActionListener(e -> loadDevices());
+        securityStatusButton.addActionListener(e -> showSecurityStatus());
+        rotateCredentialButton.addActionListener(e -> rotateSelectedCredential());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveApprovalButton.addActionListener(e -> saveApprovalSetting());
         saveNameButton.addActionListener(e -> saveDeviceName());
@@ -228,8 +235,8 @@ public class DeviceManagement extends JFrame {
 
         allDevices.clear();
 
-        try (Connection conn = DB.getConnection()) {
-            allDevices.addAll(DeviceManagementService.getAllDevices(conn));
+        try {
+            allDevices.addAll(LanApiClient.loadManagedDevices());
             applyFilter();
             restoreSelection(preserveDeviceId);
         } catch (Exception ex) {
@@ -382,8 +389,8 @@ public class DeviceManagement extends JFrame {
     private void loadSessionHistory(String deviceId) {
         sessionTableModel.setRowCount(0);
 
-        try (Connection conn = DB.getConnection()) {
-            List<DeviceSessionRecord> sessions = DeviceManagementService.getDeviceSessionHistory(conn, deviceId, 25);
+        try {
+            List<DeviceSessionRecord> sessions = LanApiClient.loadDeviceSessions(deviceId);
             for (DeviceSessionRecord session : sessions) {
                 sessionTableModel.addRow(new Object[]{
                         formatTimestamp(session.getLoginTime()),
@@ -408,13 +415,6 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Device approval");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
         boolean allowStaySignedIn = staySignedInBox.isSelected();
         boolean allowSales = allowSalesBox.isSelected();
         boolean allowOrders = allowOrdersBox.isSelected();
@@ -435,16 +435,10 @@ public class DeviceManagement extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            DeviceManagementService.updateDeviceApproval(
-                    conn,
-                    selectedDevice.getDeviceId(),
-                    SessionManager.getCurrentUserId(),
-                    allowStaySignedIn,
-                    allowSales,
-                    allowOrders,
-                    notesArea.getText()
-            );
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",selectedDevice.getDeviceId(),allowStaySignedIn,
+                allowSales,allowOrders,notesArea.getText(),null,null);
+        try {
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
             if (selectedDevice.getDeviceId() != null
                     && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())) {
                 if (allowStaySignedIn) {
@@ -488,13 +482,9 @@ public class DeviceManagement extends JFrame {
         boolean isCurrentDevice = selectedDevice.getDeviceId() != null
                 && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId());
 
-        try (Connection conn = DB.getConnection()) {
-            DeviceManagementService.blockDevice(
-                    conn,
-                    selectedDevice.getDeviceId(),
-                    SessionManager.getCurrentUserId(),
-                    notesArea.getText()
-            );
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,notesArea.getText(),null,null);
+        try {
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
 
             if (isCurrentDevice) {
                 SessionManager.clearSessionState();
@@ -526,14 +516,9 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,null,null,receiptCodeField.getText());
         try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Device receipt code");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        try (Connection conn = DB.getConnection()) {
-            DeviceManagementService.updateDeviceReceiptCode(conn, selectedDevice.getDeviceId(), receiptCodeField.getText());
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
             loadDevices();
             JOptionPane.showMessageDialog(this, "Device code saved.");
         } catch (Exception ex) {
@@ -551,14 +536,9 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,null,deviceNameField.getText(),null);
         try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Device name");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        try (Connection conn = DB.getConnection()) {
-            DeviceManagementService.updateDeviceFriendlyName(conn, selectedDevice.getDeviceId(), deviceNameField.getText());
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
             loadDevices();
             JOptionPane.showMessageDialog(this, "Device name saved.");
         } catch (Exception ex) {
@@ -571,6 +551,62 @@ public class DeviceManagement extends JFrame {
             );
         }
     }
+
+    private void rotateSelectedCredential() {
+        if (selectedDevice == null || !selectedDevice.isApproved() || selectedDevice.isBlocked()) return;
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Rotate this register's secure device credential?\n\nThe register will claim it automatically. Its current credential remains valid during the safe overlap window.",
+                "Rotate Device Credential", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) return;
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,null,null,null);
+        try {
+            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();
+            JOptionPane.showMessageDialog(this,
+                    "Rotation queued. The server will issue and the register will claim the replacement automatically.",
+                    "Device Credential", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Could not queue credential rotation.\n\n" + ex.getMessage(),
+                    "Device Credential", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showSecurityStatus() {
+        try {
+            LanApiClient.DeviceSecurityStatus report = LanApiClient.loadDeviceSecurityStatus();
+            StringBuilder text = new StringBuilder();
+            text.append(report.healthy() ? "Security checks passed" : "Security attention required").append("\n\n")
+                    .append("Encrypted database connection: ").append(yesNo(report.tls())).append('\n')
+                    .append("Credential storage: ").append(report.credentialStore()).append('\n')
+                    .append(report.pairingPhrase() == null ? "" : "Administrator pairing phrase (expires within 10 minutes): " + report.pairingPhrase() + "\n")
+                    .append(report.lanCertificateFingerprint() == null ? "" : "LAN certificate fingerprint: " + report.lanCertificateFingerprint() + "\n")
+                    .append("Device credentials: ").append(report.claimedCredentials()).append(" claimed, ")
+                    .append(report.issuedCredentials()).append(" waiting to be claimed, ")
+                    .append(report.pendingCredentials()).append(" pending\n")
+                    .append("Blocked devices: ").append(report.blockedDevices()).append('\n')
+                    .append("Broad authenticated policies: ").append(report.broadAuthenticatedPolicies()).append('\n')
+                    .append("Granted tables without RLS: ").append(report.exposedTablesWithoutRls()).append('\n')
+                    .append("Public privileged functions: ").append(report.publicSecurityDefiners()).append('\n')
+                    .append("Latest security audit: ").append(report.latestAuditEpochMillis()<=0?"Not available":java.time.Instant.ofEpochMilli(report.latestAuditEpochMillis())).append('\n')
+                    .append("Latest local backup: ").append(report.latestBackupEpochMillis()<=0?"Not detected":java.time.Instant.ofEpochMilli(report.latestBackupEpochMillis()));
+            if (!report.warnings().isEmpty()) {
+                text.append("\n\nAttention:\n");
+                for (String warning : report.warnings()) text.append("• ").append(warning).append('\n');
+            }
+            JTextArea area = new JTextArea(text.toString(), 20, 68);
+            area.setEditable(false);
+            area.setLineWrap(true);
+            area.setWrapStyleWord(true);
+            JOptionPane.showMessageDialog(this, new JScrollPane(area), "SmartStock Security Status",
+                    report.healthy() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Could not inspect database security.\n\n" + ex.getMessage(),
+                    "Security Status", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){
+        pendingMutationKey=UUID.randomUUID().toString();pendingMutationFingerprint=fingerprint;}return pendingMutationKey;}
+    private void clearMutationKey(){pendingMutationKey=null;pendingMutationFingerprint=null;}
 
     private void updateSummaryLabel() {
         int pending = 0;
@@ -615,6 +651,7 @@ public class DeviceManagement extends JFrame {
         saveNameButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveCodeButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         blockButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        rotateCredentialButton.setEnabled(hasSelection && selectedDevice.isApproved() && !selectedDevice.isBlocked());
     }
 
     private String formatTimestamp(Timestamp timestamp) {

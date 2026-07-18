@@ -8,6 +8,8 @@ ADD COLUMN IF NOT EXISTS email_sender_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_bcc_address TEXT NOT NULL DEFAULT '';
 ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS balance_sheet_recipient_email TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE;

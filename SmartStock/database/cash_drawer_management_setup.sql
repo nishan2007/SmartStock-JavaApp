@@ -156,12 +156,18 @@ USING (TRUE)
 WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS cash_drawer_sessions_authenticated_all ON cash_drawer_sessions;
-CREATE POLICY cash_drawer_sessions_authenticated_all
-ON cash_drawer_sessions
-FOR ALL
-TO authenticated
-USING (TRUE)
-WITH CHECK (TRUE);
+DROP POLICY IF EXISTS cash_drawer_sessions_location_access ON cash_drawer_sessions;
+DO $$
+BEGIN
+    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+        CREATE POLICY cash_drawer_sessions_location_access ON cash_drawer_sessions FOR ALL TO authenticated
+        USING ((SELECT public.current_app_user_has_location(location_id)))
+        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+    ELSE
+        CREATE POLICY cash_drawer_sessions_authenticated_all ON cash_drawer_sessions FOR ALL TO authenticated
+        USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+END $$;
 
 ALTER TABLE cash_drawer_sessions
 ADD COLUMN IF NOT EXISTS main_cashier_user_id INTEGER REFERENCES users(user_id);
@@ -225,12 +231,18 @@ USING (TRUE)
 WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS cash_drawer_handovers_authenticated_all ON cash_drawer_handovers;
-CREATE POLICY cash_drawer_handovers_authenticated_all
-ON cash_drawer_handovers
-FOR ALL
-TO authenticated
-USING (TRUE)
-WITH CHECK (TRUE);
+DROP POLICY IF EXISTS cash_drawer_handovers_location_access ON cash_drawer_handovers;
+DO $$
+BEGIN
+    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+        CREATE POLICY cash_drawer_handovers_location_access ON cash_drawer_handovers FOR ALL TO authenticated
+        USING ((SELECT public.current_app_user_has_location(location_id)))
+        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+    ELSE
+        CREATE POLICY cash_drawer_handovers_authenticated_all ON cash_drawer_handovers FOR ALL TO authenticated
+        USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS cash_drawer_handovers_session_idx
 ON cash_drawer_handovers(cash_drawer_session_id, handed_over_at DESC);
@@ -305,12 +317,18 @@ USING (TRUE)
 WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS change_basket_updates_authenticated_all ON change_basket_updates;
-CREATE POLICY change_basket_updates_authenticated_all
-ON change_basket_updates
-FOR ALL
-TO authenticated
-USING (TRUE)
-WITH CHECK (TRUE);
+DROP POLICY IF EXISTS change_basket_updates_location_access ON change_basket_updates;
+DO $$
+BEGIN
+    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+        CREATE POLICY change_basket_updates_location_access ON change_basket_updates FOR ALL TO authenticated
+        USING ((SELECT public.current_app_user_has_location(location_id)))
+        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+    ELSE
+        CREATE POLICY change_basket_updates_authenticated_all ON change_basket_updates FOR ALL TO authenticated
+        USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS change_basket_updates_location_updated_idx
 ON change_basket_updates(location_id, updated_at DESC);

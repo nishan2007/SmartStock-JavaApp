@@ -145,7 +145,7 @@ public class PayrollDashboard extends JFrame {
         metricsPanel.add(totalPayCard);
 
         summaryModel = new DefaultTableModel(
-                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Pay Date", "Days Worked", "Total Hours", "Bonus", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
+                new Object[]{"Employee ID", "Employee", "Role", "Pay Period", "Period Type", "Hour Limit", "Pay Date", "Days Worked", "Total Hours", "Regular Hours", "OT Hours", "Regular Pay", "OT Pay", "Bonus", "Total Pay", "Paid Amount", "Amount Due", "Status", "Paid At", "Paid By", "Pay Type", "Records", "Location"},
                 0
         ) {
             @Override
@@ -162,7 +162,7 @@ public class PayrollDashboard extends JFrame {
         summaryTable.setRowSorter(summarySorter);
 
         detailModel = new DefaultTableModel(
-                new Object[]{"Clock ID", "Employee", "Role", "Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Daily Hours", "Pay Period", "Pay Date", "Location"},
+                new Object[]{"Clock ID", "Employee", "Role", "Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Daily Hours", "Regular Hours", "OT Hours", "Regular Pay", "OT Pay", "Total Pay", "Pay Period", "Period Type", "Hour Limit", "Pay Date", "Location", "Clock Review"},
                 0
         ) {
             @Override
@@ -263,13 +263,10 @@ public class PayrollDashboard extends JFrame {
     private void populatePayPeriods() {
         Object selected = payPeriodBox.getSelectedItem();
         String selectedKey = selected instanceof PayPeriodOption option ? option.key() : "DEFAULT";
-        PayPeriodOption defaultPeriod = defaultPayPeriodOption();
         updatingPayPeriodOptions = true;
         payPeriodBox.removeAllItems();
         payPeriodBox.addItem(new PayPeriodOption("ALL", "All Pay Periods", null, null));
-        if (defaultPeriod != null) {
-            payPeriodBox.addItem(defaultPeriod);
-        }
+        payPeriodBox.addItem(new PayPeriodOption("CURRENT", "Current Payroll — All Employee Settings", null, null));
 
         Map<String, PayPeriodOption> options = new LinkedHashMap<>();
         for (PayrollSummary summary : allSummaries) {
@@ -294,38 +291,8 @@ public class PayrollDashboard extends JFrame {
                 return;
             }
         }
-        payPeriodBox.setSelectedIndex(defaultPeriod == null ? 0 : 1);
+        payPeriodBox.setSelectedIndex(1);
         updatingPayPeriodOptions = false;
-    }
-
-    private PayPeriodOption defaultPayPeriodOption() {
-        LocalDate today = StoreTimeZoneHelper.today();
-        PayrollSummary payDateMatch = null;
-        PayrollSummary currentMatch = null;
-
-        for (PayrollSummary summary : allSummaries) {
-            if (today.equals(summary.payDate())) {
-                payDateMatch = summary;
-                break;
-            }
-            if (!today.isBefore(summary.payPeriodStart()) && !today.isAfter(summary.payPeriodEnd())) {
-                currentMatch = summary;
-            }
-        }
-
-        PayrollSummary target = payDateMatch != null ? payDateMatch : currentMatch;
-        if (target == null) {
-            return null;
-        }
-
-        String labelPrefix = payDateMatch != null ? "Pay Date Today" : "Current Pay Period";
-        return new PayPeriodOption(
-                "DEFAULT",
-                labelPrefix + ": " + formatPayPeriod(target.payPeriodStart(), target.payPeriodEnd())
-                        + "  Paid " + target.payDate().format(DATE_FORMAT),
-                target.payPeriodStart(),
-                target.payPeriodEnd()
-        );
     }
 
     private void populateEmployees() {
@@ -382,9 +349,15 @@ public class PayrollDashboard extends JFrame {
                     summary.employeeName(),
                     formatRole(summary.employeeRole()),
                     formatPayPeriod(summary.payPeriodStart(), summary.payPeriodEnd()),
+                    formatPeriodType(summary.payPeriodType()),
+                    formatHours(summary.workHourLimit()),
                     summary.payDate().format(DATE_FORMAT),
                     summary.daysWorked(),
                     formatHours(summary.totalHours()),
+                    formatHours(summary.regularHours()),
+                    formatHours(summary.overtimeHours()),
+                    CURRENCY_FORMAT.format(summary.regularPay()),
+                    CURRENCY_FORMAT.format(summary.overtimePay()),
                     CURRENCY_FORMAT.format(summary.bonusAmount()),
                     CURRENCY_FORMAT.format(summary.totalPay()),
                     CURRENCY_FORMAT.format(summary.paidAmount()),
@@ -415,9 +388,18 @@ public class PayrollDashboard extends JFrame {
                     formatTime(row.lunchEnd()),
                     formatTime(row.clockOut()),
                     formatHours(row.dailyHours()),
+                    formatHours(row.regularHours()),
+                    formatHours(row.overtimeHours()),
+                    CURRENCY_FORMAT.format(row.regularPay()),
+                    CURRENCY_FORMAT.format(row.overtimePay()),
+                    CURRENCY_FORMAT.format(row.totalPay()),
                     formatPayPeriod(row.payPeriodStart(), row.payPeriodEnd()),
+                    formatPeriodType(row.payPeriodType()),
+                    formatHours(row.workHourLimit()),
                     row.payDate().format(DATE_FORMAT),
-                    row.locationName()
+                    row.locationName(),
+                    row.autoClockOut() ? "Auto clock-out — " + (row.autoClockOutReviewStatus() == null
+                            ? "Pending" : row.autoClockOutReviewStatus()) : ""
             });
         }
 
@@ -589,7 +571,7 @@ public class PayrollDashboard extends JFrame {
 
         for (int i = 0; i < payPeriodBox.getItemCount(); i++) {
             PayPeriodOption option = payPeriodBox.getItemAt(i);
-            if ("DEFAULT".equals(option.key())) {
+            if ("CURRENT".equals(option.key())) {
                 payPeriodBox.setSelectedIndex(i);
                 renderTables();
                 tabbedPane.setSelectedIndex(0);
@@ -607,9 +589,13 @@ public class PayrollDashboard extends JFrame {
     }
 
     private boolean matchesPeriod(LocalDate start, LocalDate end, PayPeriodOption selectedPeriod) {
-        return selectedPeriod == null
-                || selectedPeriod.start() == null
-                || (selectedPeriod.start().equals(start) && selectedPeriod.end().equals(end));
+        if (selectedPeriod == null || "ALL".equals(selectedPeriod.key())) return true;
+        if ("CURRENT".equals(selectedPeriod.key())) {
+            LocalDate today = StoreTimeZoneHelper.today();
+            return !today.isBefore(start) && !today.isAfter(end);
+        }
+        return selectedPeriod.start() != null && selectedPeriod.start().equals(start)
+                && selectedPeriod.end().equals(end);
     }
 
     private boolean matchesEmployee(int userId, EmployeeOption selectedEmployee) {
@@ -683,6 +669,11 @@ public class PayrollDashboard extends JFrame {
         return "Hourly";
     }
 
+    private static String formatPeriodType(String periodType) {
+        if ("WEEKLY".equalsIgnoreCase(periodType)) return "Weekly";
+        return "FOUR_MONTH_BLOCKS".equalsIgnoreCase(periodType) ? "Four month blocks" : "Semi-monthly";
+    }
+
     private int totalEmployeeCount() {
         Set<Integer> ids = new HashSet<>();
         for (PayrollSummary summary : allSummaries) {
@@ -730,7 +721,7 @@ public class PayrollDashboard extends JFrame {
             Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             component.setForeground(DeckersPalette.text());
             component.setBackground(isSelected ? DeckersPalette.tilePressed(DeckersPalette.YELLOW) : DeckersPalette.tableBody(DeckersPalette.YELLOW));
-            if (!isSelected && column == 11) {
+            if (!isSelected && column == 17) {
                 String status = value == null ? "" : value.toString();
                 if ("Paid".equals(status)) {
                     component.setBackground(DeckersPalette.tileFill(DeckersPalette.LIME));

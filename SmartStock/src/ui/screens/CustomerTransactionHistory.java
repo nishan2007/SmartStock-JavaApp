@@ -1,8 +1,8 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import data.DB;
-import services.CustomerAccountLedgerService;
+import services.LanApiClient;
+import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 
@@ -11,11 +11,6 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 
@@ -35,6 +30,7 @@ public class CustomerTransactionHistory extends JFrame {
         setTitle("Customer Transaction History");
         setSize(1050, 620);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        setJMenuBar(AppMenuBar.create(this, "CustomerTransactionHistory"));
         setLayout(new BorderLayout(12, 12));
 
         JPanel mainPanel = new JPanel(new BorderLayout(12, 12));
@@ -122,82 +118,21 @@ public class CustomerTransactionHistory extends JFrame {
 
     private void loadTransactions() {
         transactionModel.setRowCount(0);
-        String sql = """
-                SELECT t.transaction_id,
-                       COALESCE(t.payment_id, '') AS payment_id,
-		                       (t.created_at AT TIME ZONE ?) AS local_created_at,
-		                       COALESCE(t.user_name, '') AS user_name,
-	                       COALESCE(t.device_name, t.device_id, '') AS device_name,
-                       COALESCE(t.cash_drawer_name, '') AS cash_drawer_name,
-		                       COALESCE(t.transaction_type, '') AS transaction_type,
-                       COALESCE(t.payment_method, '') AS payment_method,
-                       COALESCE(t.payment_reference, '') AS payment_reference,
-                       t.sale_id,
-	                       t.custom_order_id,
-                       COALESCE(t.amount, 0) AS ledger_amount,
-                       %s AS balance_delta,
-                       CASE
-                           WHEN t.custom_order_id IS NOT NULL
-                                AND COALESCE(t.transaction_type, '') IN ('CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_CREDIT')
-                               THEN COALESCE(co.amount_paid, 0)
-                           ELSE COALESCE(t.amount, 0)
-                       END AS display_amount,
-                       COALESCE(t.note, '') AS note,
-                       COALESCE(s.payment_status, co.payment_status, '') AS payment_status,
-                       COALESCE(s.total_amount, co.total_amount, 0) AS sale_total
-                FROM customer_account_transactions t
-                LEFT JOIN sales s ON t.sale_id = s.sale_id
-                LEFT JOIN custom_orders co ON t.custom_order_id = co.custom_order_id
-                WHERE t.customer_id = ?
-                ORDER BY t.created_at DESC, t.transaction_id DESC
-                """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
-
-        int count = 0;
-        BigDecimal totalCharges = BigDecimal.ZERO;
-        BigDecimal totalPayments = BigDecimal.ZERO;
-
-        try (Connection conn = DB.getConnection()) {
-            CustomerAccountLedgerService.ensureSchema(conn);
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-                ps.setInt(2, customerId);
-                try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    BigDecimal ledgerAmount = defaultZero(rs.getBigDecimal("balance_delta"));
-                    BigDecimal displayAmount = defaultZero(rs.getBigDecimal("display_amount"));
-                    if (ledgerAmount.compareTo(BigDecimal.ZERO) >= 0) {
-                        totalCharges = totalCharges.add(ledgerAmount);
-                    } else {
-                        totalPayments = totalPayments.add(ledgerAmount.abs());
-                    }
-
+        try {
+            LanApiClient.CustomerTransactionResult result=LanApiClient.loadCustomerTransactions(customerId);
+            for(LanApiClient.CustomerTransactionRecord row:result.transactions()){
                     transactionModel.addRow(new Object[]{
-                            rs.getInt("transaction_id"),
-	                            rs.getString("payment_id"),
-	                            formatTimestamp(rs.getTimestamp("local_created_at")),
-		                            rs.getString("user_name"),
-	                            rs.getString("device_name"),
-                            rs.getString("cash_drawer_name"),
-		                            formatType(rs.getString("transaction_type")),
-                            rs.getString("payment_method"),
-                            rs.getString("payment_reference"),
-	                            nullableInt(rs, "sale_id"),
-                            nullableLong(rs, "custom_order_id"),
-                            currencyFormat.format(displayAmount),
-                            formatStatus(rs.getString("payment_status")),
-                            currencyFormat.format(defaultZero(rs.getBigDecimal("sale_total"))),
-                            rs.getString("note")
+                            row.transactionId(),row.paymentId(),formatTimestamp(row.createdAtEpochMillis()),row.userName(),
+                            row.deviceName(),row.cashDrawerName(),formatType(row.transactionType()),row.paymentMethod(),
+                            row.paymentReference(),row.saleId()==null?"":row.saleId(),row.customOrderId()==null?"":row.customOrderId(),
+                            currencyFormat.format(defaultZero(row.amount())),formatStatus(row.paymentStatus()),
+                            currencyFormat.format(defaultZero(row.chargeTotal())),row.note()
                     });
-                    count++;
-                }
-                }
             }
-
-            summaryLabel.setText("Transactions: " + count
-                    + "    Charges: " + currencyFormat.format(totalCharges)
-                    + "    Payments: " + currencyFormat.format(totalPayments));
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load transaction history: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            summaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
+                    +"    Payments: "+currencyFormat.format(result.totalPayments()));
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,"Failed to load transaction history: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -206,21 +141,11 @@ public class CustomerTransactionHistory extends JFrame {
         WindowHelper.showPosWindow(paymentHistory, this);
     }
 
-    private Object nullableInt(ResultSet rs, String column) throws SQLException {
-        int value = rs.getInt(column);
-        return rs.wasNull() ? "" : value;
-    }
-
-    private Object nullableLong(ResultSet rs, String column) throws SQLException {
-        long value = rs.getLong(column);
-        return rs.wasNull() ? "" : value;
-    }
-
-    private String formatTimestamp(Timestamp timestamp) {
-        if (timestamp == null) {
+    private String formatTimestamp(long epochMillis) {
+        if (epochMillis <= 0) {
             return "";
         }
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, dateTimeFormatter);
+        return java.time.Instant.ofEpochMilli(epochMillis).atZone(StoreTimeZoneHelper.getStoreZone()).format(dateTimeFormatter);
     }
 
     private String formatType(String type) {

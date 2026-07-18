@@ -137,6 +137,52 @@ public final class LocalAuthCacheService {
         saveVerifier(conn, user, salt, hash, sql);
     }
 
+    public static boolean hasEmployeePin(Connection conn, int userId) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM users
+                WHERE user_id = ?
+                  AND employee_pin_salt IS NOT NULL
+                  AND employee_pin_hash IS NOT NULL
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    public static boolean verifyEmployeePin(Connection conn, int userId, char[] pin) throws SQLException {
+        String sql = """
+                SELECT employee_pin_salt, employee_pin_hash
+                FROM users
+                WHERE user_id = ?
+                  AND COALESCE(is_active, TRUE) = TRUE
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next()
+                        && matchesStoredSecret(pin, rs.getString("employee_pin_salt"), rs.getString("employee_pin_hash"));
+            }
+        }
+    }
+
+    public static void replaceCachedBadgeId(Connection conn, int userId, String badgeId) throws SQLException {
+        ensureSchema(conn);
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE local_auth_cache
+                SET badge_id = ?,
+                    cached_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """)) {
+            ps.setString(1, badgeId);
+            ps.setInt(2, userId);
+            ps.executeUpdate();
+        }
+    }
+
     private static void saveGlobalEmployeePin(Connection conn, int userId, String salt, String hash) throws SQLException {
         if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
             try (Statement stmt = conn.createStatement()) {
@@ -198,14 +244,20 @@ public final class LocalAuthCacheService {
             ps.setString(3, BadgeCredentialService.normalizeBadge(identifier));
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
-                    return verifyGlobalEmployeePin(conn, identifier, secret, preferredLocationId);
+                    return isBadgeIdentifier(identifier)
+                            ? verifyGlobalEmployeePin(conn, identifier, secret, preferredLocationId)
+                            : null;
                 }
+                boolean badgeIdentifier = BadgeCredentialService.normalizeBadge(identifier)
+                        .equals(BadgeCredentialService.normalizeBadge(rs.getString("badge_id")));
                 boolean passwordMatches = isPasswordCacheFresh(rs)
                         && matchesStoredSecret(secret, rs.getString("password_salt"), rs.getString("password_hash"));
                 boolean pinMatches = matchesStoredSecret(secret, rs.getString("employee_pin_salt"), rs.getString("employee_pin_hash"))
                         || matchesStoredSecret(secret, rs.getString("pin_salt"), rs.getString("pin_hash"));
-                if (!passwordMatches && !pinMatches) {
-                    return verifyGlobalEmployeePin(conn, identifier, secret, preferredLocationId);
+                if (badgeIdentifier ? !pinMatches : !passwordMatches) {
+                    return badgeIdentifier
+                            ? verifyGlobalEmployeePin(conn, identifier, secret, preferredLocationId)
+                            : null;
                 }
                 return new CachedUser(
                         rs.getInt("user_id"),
@@ -283,6 +335,10 @@ public final class LocalAuthCacheService {
                 );
             }
         }
+    }
+
+    private static boolean isBadgeIdentifier(String identifier) {
+        return BadgeCredentialService.looksLikeGeneratedBadge(identifier);
     }
 
     public static boolean hasPasswordVerifier(Connection conn, String identifier) throws SQLException {

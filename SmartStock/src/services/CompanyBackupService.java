@@ -1,6 +1,8 @@
 package services;
 
 import data.DB;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.SupabaseSessionManager;
 
 import java.io.ByteArrayOutputStream;
@@ -58,6 +60,7 @@ public final class CompanyBackupService {
     }
 
     public static BackupSummary exportBackup(Path backupFile) throws SQLException, IOException {
+        requirePhysicalServer();
         try (Connection conn = DB.getConnection()) {
             List<TableInfo> tables = loadBackupTables(conn);
             Map<String, StorageAsset> assets = new LinkedHashMap<>();
@@ -101,6 +104,7 @@ public final class CompanyBackupService {
     }
 
     public static BackupSummary restoreBackup(Path backupFile) throws SQLException, IOException {
+        requirePhysicalServer();
         if (isPackageBackup(backupFile)) {
             return restorePackageBackup(backupFile);
         }
@@ -111,6 +115,12 @@ public final class CompanyBackupService {
         try (Connection conn = DB.getConnection()) {
             int statements = SqlScriptRunner.runScript(conn, backupFile);
             return new BackupSummary(statements, 0, 0, 0);
+        }
+    }
+
+    private static void requirePhysicalServer() {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
+            throw new SecurityException("Company backup and restore are available only on the physical SmartStock server.");
         }
     }
 

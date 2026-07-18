@@ -2,23 +2,21 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import managers.SessionManager;
 import managers.PermissionManager;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
-import data.DB;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.*;
+import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Vector;
 
 public class ViewSales extends JFrame {
 
@@ -29,7 +27,7 @@ public class ViewSales extends JFrame {
     private JTextField toDateField;
     private JLabel summaryLabel;
 
-    private final DateTimeFormatter dbDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final DateTimeFormatter displayDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private final NumberFormat currencyFormat = CurrencyFormatter.create();
 
     public ViewSales() {
@@ -197,213 +195,49 @@ public class ViewSales extends JFrame {
     }
 
     private void loadSales() {
-        salesTableModel.setRowCount(0);
-
-        StringBuilder salesWhere = new StringBuilder("WHERE 1=1 ");
-        Vector<Object> salesParameters = new Vector<>();
-
-        if (SessionManager.getCurrentLocationId() != null) {
-            salesWhere.append("AND s.location_id = ? ");
-            salesParameters.add(SessionManager.getCurrentLocationId());
-        }
-
-        String searchText = searchField.getText().trim();
-        if (!searchText.isEmpty()) {
-            salesWhere.append("AND (CAST(s.sale_id AS TEXT) ILIKE ? OR ")
-                    .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
-                    .append("COALESCE(s.user_name, u.full_name, u.username, '') ILIKE ? OR ")
-                    .append("COALESCE(l.name, '') ILIKE ? OR ")
-                    .append("COALESCE(s.payment_method, '') ILIKE ? OR ")
-                    .append("COALESCE(s.payment_status, 'PAID') ILIKE ?) ");
-            String likeValue = "%" + searchText + "%";
-            for (int i = 0; i < 6; i++) {
-                salesParameters.add(likeValue);
-            }
-        }
-
         LocalDate fromDate = parseDate(fromDateField.getText().trim(), "From Date");
-        if (fromDate == null && !fromDateField.getText().trim().isEmpty()) {
-            return;
-        }
-
+        if (fromDate == null && !fromDateField.getText().trim().isEmpty()) return;
         LocalDate toDate = parseDate(toDateField.getText().trim(), "To Date");
-        if (toDate == null && !toDateField.getText().trim().isEmpty()) {
-            return;
-        }
-
-        if (fromDate != null) {
-            salesWhere.append("AND (s.created_at AT TIME ZONE ?) >= ? ");
-            salesParameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            salesParameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
-        }
-
-        if (toDate != null) {
-            salesWhere.append("AND (s.created_at AT TIME ZONE ?) < ? ");
-            salesParameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            salesParameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
-        }
-
-        StringBuilder returnsWhere = new StringBuilder("WHERE 1=1 ");
-        Vector<Object> returnsParameters = new Vector<>();
-
-        if (SessionManager.getCurrentLocationId() != null) {
-            returnsWhere.append("AND sr.location_id = ? ");
-            returnsParameters.add(SessionManager.getCurrentLocationId());
-        }
-
-        if (!searchText.isEmpty()) {
-            returnsWhere.append("AND (CAST(sr.return_id AS TEXT) ILIKE ? OR ")
-                    .append("CAST(sr.sale_id AS TEXT) ILIKE ? OR ")
-                    .append("COALESCE(s.receipt_number, '') ILIKE ? OR ")
-                    .append("COALESCE(sr.user_name, u.full_name, u.username, '') ILIKE ? OR ")
-                    .append("COALESCE(l.name, '') ILIKE ? OR ")
-                    .append("COALESCE(sr.refund_method, '') ILIKE ? OR ")
-                    .append("'RETURN' ILIKE ?) ");
-            String likeValue = "%" + searchText + "%";
-            for (int i = 0; i < 7; i++) {
-                returnsParameters.add(likeValue);
-            }
-        }
-
-        if (fromDate != null) {
-            returnsWhere.append("AND (sr.created_at AT TIME ZONE ?) >= ? ");
-            returnsParameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            returnsParameters.add(Timestamp.valueOf(fromDate.atStartOfDay()));
-        }
-
-        if (toDate != null) {
-            returnsWhere.append("AND (sr.created_at AT TIME ZONE ?) < ? ");
-            returnsParameters.add(StoreTimeZoneHelper.getStoreZoneId());
-            returnsParameters.add(Timestamp.valueOf(toDate.plusDays(1).atStartOfDay()));
-        }
-
-        String sql = """
-                SELECT *
-                FROM (
-                    SELECT 'SALE' AS transaction_type,
-                           s.sale_id,
-                           NULL::BIGINT AS return_id,
-                           COALESCE(s.receipt_number, '') AS receipt_number,
-                           s.created_at AS sort_created_at,
-                           (s.created_at AT TIME ZONE ?) AS local_created_at,
-                           COALESCE(s.user_name, u.full_name, u.username, 'Unknown') AS cashier_name,
-                           COALESCE(l.name, 'Unknown') AS store_name,
-                           COUNT(si.sale_item_id) AS item_count,
-                           COALESCE(s.payment_method, '') AS payment_method,
-                           COALESCE(s.payment_status, 'PAID') AS payment_status,
-	                           COALESCE(s.amount_paid, 0) AS amount_paid,
-	                           COALESCE(s.returned_amount, 0) AS returned_amount,
-	                           COALESCE(s.discount_amount, 0) AS discount_amount,
-	                           COALESCE(s.total_amount, 0) AS total_amount,
-	                           GREATEST(COALESCE(s.total_amount, 0) - COALESCE(s.returned_amount, 0), 0) AS net_amount
-                    FROM sales s
-                    LEFT JOIN users u ON s.user_id = u.user_id
-                    LEFT JOIN locations l ON s.location_id = l.location_id
-                    LEFT JOIN sale_items si ON s.sale_id = si.sale_id
-                    %s
-                    GROUP BY s.sale_id, s.receipt_number, s.created_at, cashier_name, store_name, s.payment_method, s.payment_status, s.amount_paid, s.returned_amount, s.discount_amount, s.total_amount
-
-                    UNION ALL
-
-                    SELECT 'RETURN' AS transaction_type,
-                           sr.sale_id,
-                           sr.return_id,
-                           COALESCE(s.receipt_number, '') AS receipt_number,
-                           sr.created_at AS sort_created_at,
-                           (sr.created_at AT TIME ZONE ?) AS local_created_at,
-                           COALESCE(sr.user_name, u.full_name, u.username, 'Unknown') AS cashier_name,
-                           COALESCE(l.name, 'Unknown') AS store_name,
-                           COALESCE(SUM(sri.quantity), 0) AS item_count,
-                           COALESCE(sr.refund_method, '') AS payment_method,
-                           'RETURN' AS payment_status,
-	                           -COALESCE(sr.refund_amount, 0) AS amount_paid,
-	                           COALESCE(sr.refund_amount, 0) AS returned_amount,
-	                           0::NUMERIC AS discount_amount,
-	                           -COALESCE(sr.refund_amount, 0) AS total_amount,
-                           -COALESCE(sr.refund_amount, 0) AS net_amount
-                    FROM sale_returns sr
-                    LEFT JOIN sales s ON s.sale_id = sr.sale_id
-                    LEFT JOIN users u ON sr.user_id = u.user_id
-                    LEFT JOIN locations l ON sr.location_id = l.location_id
-                    LEFT JOIN sale_return_items sri ON sri.return_id = sr.return_id
-                    %s
-                    GROUP BY sr.return_id, sr.sale_id, s.receipt_number, sr.created_at, cashier_name, store_name, sr.refund_method, sr.refund_amount
-                ) transactions
-                ORDER BY sort_created_at DESC, transaction_type ASC
-                """.formatted(salesWhere, returnsWhere);
-
-        Vector<Object> parameters = new Vector<>();
-        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-        parameters.addAll(salesParameters);
-        parameters.add(StoreTimeZoneHelper.getStoreZoneId());
-        parameters.addAll(returnsParameters);
-
-        double grossSales = 0;
-        double returnTotal = 0;
-        double netTotal = 0;
+        if (toDate == null && !toDateField.getText().trim().isEmpty()) return;
+        salesTableModel.setRowCount(0);
+        BigDecimal grossSales = BigDecimal.ZERO;
+        BigDecimal returnTotal = BigDecimal.ZERO;
         int transactionCount = 0;
-
-        try (Connection conn = getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            for (int i = 0; i < parameters.size(); i++) {
-                ps.setObject(i + 1, parameters.get(i));
+        try {
+            java.util.List<LanApiClient.SalesHistoryRow> rows = LanApiClient.loadSalesHistory(
+                    searchField.getText().trim(),
+                    fromDate == null ? "" : fromDate.toString(),
+                    toDate == null ? "" : toDate.toString());
+            for (LanApiClient.SalesHistoryRow row : rows) {
+                boolean returnRow = "RETURN".equalsIgnoreCase(row.transactionType());
+                salesTableModel.addRow(new Object[]{
+                        row.saleId(),
+                        returnRow ? row.receiptNumber() + " / Return #" + row.returnId() : row.receiptNumber(),
+                        formatEpoch(row.createdAtEpochMillis()),
+                        row.cashierName(),
+                        row.storeName(),
+                        row.itemCount(),
+                        row.paymentMethod(),
+                        formatPaymentStatus(row.paymentStatus()),
+                        currencyFormat.format(zero(row.amountPaid())),
+                        currencyFormat.format(zero(row.returnedAmount())),
+                        currencyFormat.format(zero(row.discountAmount())),
+                        currencyFormat.format(zero(row.totalAmount())),
+                        currencyFormat.format(zero(row.netAmount()))
+                });
+                if (returnRow) returnTotal = returnTotal.add(zero(row.returnedAmount()));
+                else grossSales = grossSales.add(zero(row.totalAmount()));
+                transactionCount++;
             }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    int saleId = rs.getInt("sale_id");
-                    String transactionType = rs.getString("transaction_type");
-                    long returnId = rs.getLong("return_id");
-                    String receiptNumber = rs.getString("receipt_number");
-                    Timestamp saleTimestamp = rs.getTimestamp("local_created_at");
-                    String cashier = rs.getString("cashier_name");
-                    String store = rs.getString("store_name");
-                    int itemCount = rs.getInt("item_count");
-                    String paymentMethod = rs.getString("payment_method");
-                    String paymentStatus = rs.getString("payment_status");
-                    double amountPaid = rs.getDouble("amount_paid");
-                    double returnedAmount = rs.getDouble("returned_amount");
-                    double discountAmount = rs.getDouble("discount_amount");
-                    double total = rs.getDouble("total_amount");
-                    double net = rs.getDouble("net_amount");
-                    boolean returnRow = "RETURN".equalsIgnoreCase(transactionType);
-
-                    salesTableModel.addRow(new Object[]{
-                            saleId,
-                            returnRow ? receiptNumber + " / Return #" + returnId : receiptNumber,
-                            formatTimestamp(saleTimestamp),
-                            cashier,
-                            store,
-                            itemCount,
-                            paymentMethod,
-                            formatPaymentStatus(paymentStatus),
-                            currencyFormat.format(amountPaid),
-                            currencyFormat.format(returnedAmount),
-                            currencyFormat.format(discountAmount),
-                            currencyFormat.format(total),
-                            currencyFormat.format(net)
-                    });
-
-                    if (returnRow) {
-                        returnTotal += returnedAmount;
-                    } else {
-                        grossSales += total;
-                    }
-                    netTotal += net;
-                    transactionCount++;
-                }
-            }
-
+            BigDecimal netTotal = grossSales.subtract(returnTotal);
             summaryLabel.setText("Transactions: " + transactionCount
                     + "    Gross Sales: " + currencyFormat.format(grossSales)
                     + "    Returns: " + currencyFormat.format(returnTotal)
                     + "    Net: " + currencyFormat.format(netTotal));
-        } catch (SQLException e) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
-                    "Failed to load sales.\n\n" + e.getMessage(),
-                    "Database Error",
-                    JOptionPane.ERROR_MESSAGE);
+                    "Failed to load sales.\n\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -417,7 +251,8 @@ public class ViewSales extends JFrame {
             return;
         }
 
-        int saleId = Integer.parseInt(String.valueOf(salesTableModel.getValueAt(selectedRow, 0)));
+        int modelRow = salesTable.convertRowIndexToModel(selectedRow);
+        int saleId = Integer.parseInt(String.valueOf(salesTableModel.getValueAt(modelRow, 0)));
         showSaleDetailsDialog(saleId);
     }
 
@@ -441,249 +276,90 @@ public class ViewSales extends JFrame {
     }
 
     private void showSaleDetailsDialog(int saleId) {
-        DefaultTableModel detailsModel = new DefaultTableModel(
-                new Object[]{"Product ID", "Item Name", "Qty", "Returned", "Original Unit", "Item Disc %", "Item Discount", "Final Unit", "Line Total"}, 0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
+        DefaultTableModel detailsModel = readOnlyModel(
+                "Product ID", "Item Name", "Qty", "Returned", "Original Unit",
+                "Item Disc %", "Item Discount", "Final Unit", "Line Total");
+        DefaultTableModel returnsModel = readOnlyModel(
+                "Return ID", "Date / Time", "Employee", "Method", "Amount", "Reason");
+        DefaultTableModel returnItemsModel = readOnlyModel(
+                "Return ID", "Product ID", "Item Name", "Qty", "Unit Price", "Line Total");
+        DefaultTableModel overrideAuditModel = readOnlyModel(
+                "Time", "Action", "Scope", "Field", "Old", "New", "Amount", "Qty",
+                "Reason", "Note", "By User", "Device");
 
-        DefaultTableModel returnsModel = new DefaultTableModel(
-                new Object[]{"Return ID", "Date / Time", "Employee", "Method", "Amount", "Reason"}, 0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-
-        DefaultTableModel returnItemsModel = new DefaultTableModel(
-                new Object[]{"Return ID", "Product ID", "Item Name", "Qty", "Unit Price", "Line Total"}, 0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-
-        DefaultTableModel overrideAuditModel = new DefaultTableModel(
-                new Object[]{"Time", "Action", "Scope", "Field", "Old", "New", "Amount", "Qty", "Reason", "Note", "By User", "Device"},
-                0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-
-        String detailsSql = """
-                SELECT COALESCE(p.product_id, 0) AS product_id,
-	                       COALESCE(p.name, 'Deleted Item')
-                               || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
-	                       COALESCE(si.quantity, 0) AS quantity,
-	                       COALESCE(si.original_unit_price, si.unit_price, 0) AS original_unit_price,
-	                       COALESCE(si.discount_percent, 0) AS discount_percent,
-	                       COALESCE(si.discount_amount, 0) AS discount_amount,
-	                       COALESCE(si.unit_price, 0) AS unit_price,
-	                       COALESCE(SUM(sri.quantity), 0) AS returned_qty,
-	                       COALESCE(si.quantity, 0) * COALESCE(si.unit_price, 0) AS line_total
-                FROM sale_items si
-                LEFT JOIN products p ON si.product_id = p.product_id
-                LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
-                WHERE si.sale_id = ?
-	                GROUP BY si.sale_item_id, p.product_id, p.name, p.size, si.quantity, si.original_unit_price, si.discount_percent, si.discount_amount, si.unit_price
-                ORDER BY si.sale_item_id ASC
-                """;
-        String saleSummarySql = """
-                SELECT COALESCE(subtotal_amount, total_amount) AS subtotal_amount,
-                       COALESCE(discount_percent, 0) AS discount_percent,
-                       COALESCE(discount_amount, 0) AS discount_amount,
-                       COALESCE(total_amount, 0) AS total_amount
-                FROM sales
-                WHERE sale_id = ?
-                """;
-        String returnsSql = """
-                SELECT return_id,
-                       (created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(user_name, '') AS user_name,
-                       COALESCE(refund_method, '') AS refund_method,
-                       COALESCE(refund_amount, 0) AS refund_amount,
-                       COALESCE(reason, '') AS reason
-                FROM sale_returns
-                WHERE sale_id = ?
-                ORDER BY created_at DESC, return_id DESC
-                """;
-        String returnItemsSql = """
-                SELECT sri.return_id,
-                       sri.product_id,
-                       COALESCE(p.name, 'Deleted Item')
-                           || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
-                       sri.quantity,
-                       COALESCE(sri.unit_price, 0) AS unit_price,
-                       sri.quantity * COALESCE(sri.unit_price, 0) AS line_total
-                FROM sale_return_items sri
-                LEFT JOIN products p ON p.product_id = sri.product_id
-                JOIN sale_returns sr ON sr.return_id = sri.return_id
-                WHERE sr.sale_id = ?
-                ORDER BY sr.created_at DESC, sri.return_item_id ASC
-                """;
-        String overrideAuditSql = """
-                SELECT (sal.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(sal.action_type, '') AS action_type,
-                       COALESCE(sal.action_scope, '') AS action_scope,
-                       COALESCE(sal.field_name, '') AS field_name,
-                       COALESCE(sal.old_value, '') AS old_value,
-                       COALESCE(sal.new_value, '') AS new_value,
-                       sal.amount,
-                       sal.quantity,
-                       COALESCE(sal.reason, '') AS reason,
-                       COALESCE(sal.note, '') AS note,
-                       COALESCE(sal.user_name, '') AS user_name,
-                       COALESCE(sal.device_name, sal.device_id, '') AS device_name
-                FROM sale_audit_log sal
-                WHERE sal.sale_id = ?
-                  AND (
-                      UPPER(COALESCE(sal.action_type, '')) LIKE '%OVERRIDE%'
-                      OR UPPER(COALESCE(sal.action_type, '')) IN ('SALE_DISCOUNT_APPLIED', 'PRICE_OVERRIDE', 'ITEM_DISCOUNT_APPLIED')
-                  )
-                ORDER BY sal.created_at DESC, sal.sale_audit_id DESC
-                """;
-
-        double total = 0;
-        double recordedSaleTotal = 0;
-        double subtotalAmount = 0;
-        double discountPercent = 0;
-        double discountAmount = 0;
-        double returnedTotal = 0;
-
-        try (Connection conn = getConnection();
-             PreparedStatement ps = conn.prepareStatement(detailsSql);
-             PreparedStatement summaryPs = conn.prepareStatement(saleSummarySql);
-             PreparedStatement returnsPs = conn.prepareStatement(returnsSql);
-             PreparedStatement returnItemsPs = conn.prepareStatement(returnItemsSql);
-             PreparedStatement overrideAuditPs = conn.prepareStatement(overrideAuditSql)) {
-
-            ps.setInt(1, saleId);
-            summaryPs.setInt(1, saleId);
-            try (ResultSet rs = summaryPs.executeQuery()) {
-                if (rs.next()) {
-                    subtotalAmount = rs.getDouble("subtotal_amount");
-                    discountPercent = rs.getDouble("discount_percent");
-                    discountAmount = rs.getDouble("discount_amount");
-                    recordedSaleTotal = rs.getDouble("total_amount");
-                }
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    double lineTotal = rs.getDouble("line_total");
-                    detailsModel.addRow(new Object[]{
-                            rs.getInt("product_id"),
-	                            rs.getString("product_name"),
-	                            rs.getInt("quantity"),
-	                            rs.getInt("returned_qty"),
-	                            currencyFormat.format(rs.getDouble("original_unit_price")),
-	                            String.format("%.2f%%", rs.getDouble("discount_percent")),
-	                            currencyFormat.format(rs.getDouble("discount_amount")),
-	                            currencyFormat.format(rs.getDouble("unit_price")),
-	                            currencyFormat.format(lineTotal)
-	                    });
-                    total += lineTotal;
-                }
-            }
-            if (recordedSaleTotal > 0) {
-                total = recordedSaleTotal;
-            }
-
-            returnsPs.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            returnsPs.setInt(2, saleId);
-            try (ResultSet rs = returnsPs.executeQuery()) {
-                while (rs.next()) {
-                    double amount = rs.getDouble("refund_amount");
-                    returnedTotal += amount;
-                    returnsModel.addRow(new Object[]{
-                            rs.getLong("return_id"),
-                            formatTimestamp(rs.getTimestamp("local_created_at")),
-                            rs.getString("user_name"),
-                            rs.getString("refund_method"),
-                            currencyFormat.format(amount),
-                            rs.getString("reason")
-                    });
-                }
-            }
-
-            returnItemsPs.setInt(1, saleId);
-            try (ResultSet rs = returnItemsPs.executeQuery()) {
-                while (rs.next()) {
-                    returnItemsModel.addRow(new Object[]{
-                            rs.getLong("return_id"),
-                            rs.getInt("product_id"),
-                            rs.getString("product_name"),
-                            rs.getInt("quantity"),
-                            currencyFormat.format(rs.getDouble("unit_price")),
-                            currencyFormat.format(rs.getDouble("line_total"))
-                    });
-                }
-            }
-
-            overrideAuditPs.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            overrideAuditPs.setInt(2, saleId);
-            try (ResultSet rs = overrideAuditPs.executeQuery()) {
-                while (rs.next()) {
-                    Object amountValue = rs.getBigDecimal("amount");
-                    Object qtyValue = rs.getObject("quantity");
-                    overrideAuditModel.addRow(new Object[]{
-                            formatTimestamp(rs.getTimestamp("local_created_at")),
-                            rs.getString("action_type"),
-                            rs.getString("action_scope"),
-                            rs.getString("field_name"),
-                            rs.getString("old_value"),
-                            rs.getString("new_value"),
-                            amountValue == null ? "" : currencyFormat.format(rs.getDouble("amount")),
-                            qtyValue == null ? "" : rs.getInt("quantity"),
-                            rs.getString("reason"),
-                            rs.getString("note"),
-                            rs.getString("user_name"),
-                            rs.getString("device_name")
-                    });
-                }
-            }
-        } catch (SQLException e) {
+        LanApiClient.SaleHistoryDetails details;
+        try {
+            details = LanApiClient.loadSaleHistoryDetails(saleId);
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
-                    "Failed to load sale details.\n\n" + e.getMessage(),
-                    "Database Error",
-                    JOptionPane.ERROR_MESSAGE);
+                    "Failed to load sale details.\n\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
             return;
+        }
+
+        if (details.items() != null) {
+            for (LanApiClient.SaleHistoryItem item : details.items()) {
+                detailsModel.addRow(new Object[]{
+                        item.productId(), item.productName(), item.quantity(), item.returnedQuantity(),
+                        currencyFormat.format(zero(item.originalUnitPrice())),
+                        String.format("%.2f%%", zero(item.discountPercent())),
+                        currencyFormat.format(zero(item.discountAmount())),
+                        currencyFormat.format(zero(item.unitPrice())),
+                        currencyFormat.format(zero(item.lineTotal()))
+                });
+            }
+        }
+        BigDecimal returnedTotal = BigDecimal.ZERO;
+        if (details.returns() != null) {
+            for (LanApiClient.SaleHistoryReturn item : details.returns()) {
+                returnedTotal = returnedTotal.add(zero(item.refundAmount()));
+                returnsModel.addRow(new Object[]{
+                        item.returnId(), formatEpoch(item.createdAtEpochMillis()), item.userName(),
+                        item.refundMethod(), currencyFormat.format(zero(item.refundAmount())), item.reason()
+                });
+            }
+        }
+        if (details.returnItems() != null) {
+            for (LanApiClient.SaleHistoryReturnItem item : details.returnItems()) {
+                returnItemsModel.addRow(new Object[]{
+                        item.returnId(), item.productId(), item.productName(), item.quantity(),
+                        currencyFormat.format(zero(item.unitPrice())),
+                        currencyFormat.format(zero(item.lineTotal()))
+                });
+            }
+        }
+        if (details.overrideAudit() != null) {
+            for (LanApiClient.SaleHistoryAudit item : details.overrideAudit()) {
+                overrideAuditModel.addRow(new Object[]{
+                        formatEpoch(item.createdAtEpochMillis()), item.actionType(), item.actionScope(),
+                        item.fieldName(), item.oldValue(), item.newValue(),
+                        item.amount() == null ? "" : currencyFormat.format(item.amount()),
+                        item.quantity() == null ? "" : item.quantity(), item.reason(), item.note(),
+                        item.userName(), item.deviceName()
+                });
+            }
         }
 
         JTable detailsTable = new JTable(detailsModel);
         detailsTable.setRowHeight(24);
         detailsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         detailsTable.getTableHeader().setReorderingAllowed(false);
-
         JScrollPane scrollPane = new JScrollPane(detailsTable);
         scrollPane.setPreferredSize(new Dimension(850, 300));
 
         JTable returnsTable = new JTable(returnsModel);
         returnsTable.setRowHeight(24);
         returnsTable.getTableHeader().setReorderingAllowed(false);
-
         JTable returnItemsTable = new JTable(returnItemsModel);
         returnItemsTable.setRowHeight(24);
         returnItemsTable.getTableHeader().setReorderingAllowed(false);
-
         JTable overrideAuditTable = new JTable(overrideAuditModel);
         overrideAuditTable.setRowHeight(24);
         overrideAuditTable.getTableHeader().setReorderingAllowed(false);
 
         JPanel returnsPanel = new JPanel(new BorderLayout(8, 8));
-        JSplitPane returnsSplit = new JSplitPane(
-                JSplitPane.VERTICAL_SPLIT,
-                new JScrollPane(returnsTable),
-                new JScrollPane(returnItemsTable)
-        );
+        JSplitPane returnsSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                new JScrollPane(returnsTable), new JScrollPane(returnItemsTable));
         returnsSplit.setResizeWeight(0.45);
         returnsPanel.add(returnsSplit, BorderLayout.CENTER);
 
@@ -691,24 +367,31 @@ public class ViewSales extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Sale Items", scrollPane);
         tabs.addTab("Returns (" + returnsModel.getRowCount() + ")", returnsPanel);
-        tabs.addTab("Override Audit (" + overrideAuditModel.getRowCount() + ")", new JScrollPane(overrideAuditTable));
+        tabs.addTab("Override Audit (" + overrideAuditModel.getRowCount() + ")",
+                new JScrollPane(overrideAuditTable));
         panel.add(tabs, BorderLayout.CENTER);
 
-        JLabel totalLabel = new JLabel("Subtotal: " + currencyFormat.format(subtotalAmount > 0 ? subtotalAmount : total)
-                + "    Discount: " + currencyFormat.format(discountAmount) + " (" + String.format("%.2f", discountPercent) + "%)"
+        BigDecimal total = zero(details.totalAmount());
+        BigDecimal subtotal = zero(details.subtotalAmount());
+        BigDecimal discount = zero(details.discountAmount());
+        BigDecimal net = total.subtract(returnedTotal).max(BigDecimal.ZERO);
+        JLabel totalLabel = new JLabel("Subtotal: " + currencyFormat.format(subtotal)
+                + "    Discount: " + currencyFormat.format(discount) + " ("
+                + String.format("%.2f", zero(details.discountPercent())) + "%)"
                 + "    Sale Total: " + currencyFormat.format(total)
                 + "    Returned: " + currencyFormat.format(returnedTotal)
-                + "    Net: " + currencyFormat.format(Math.max(0, total - returnedTotal)));
+                + "    Net: " + currencyFormat.format(net));
         totalLabel.setBorder(new EmptyBorder(4, 4, 0, 4));
         totalLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         panel.add(totalLabel, BorderLayout.SOUTH);
+        JOptionPane.showMessageDialog(this, panel,
+                "Transaction Details - Sale #" + saleId, JOptionPane.PLAIN_MESSAGE);
+    }
 
-        JOptionPane.showMessageDialog(
-                this,
-                panel,
-                "Transaction Details - Sale #" + saleId,
-                JOptionPane.PLAIN_MESSAGE
-        );
+    private static DefaultTableModel readOnlyModel(Object... columns) {
+        return new DefaultTableModel(columns, 0) {
+            @Override public boolean isCellEditable(int row, int column) { return false; }
+        };
     }
 
     private LocalDate parseDate(String text, String label) {
@@ -727,12 +410,15 @@ public class ViewSales extends JFrame {
         }
     }
 
-    private String formatTimestamp(Timestamp timestamp) {
-        if (timestamp == null) {
-            return "";
-        }
+    private String formatEpoch(long epochMillis) {
+        if (epochMillis <= 0) return "";
+        return Instant.ofEpochMilli(epochMillis)
+                .atZone(StoreTimeZoneHelper.getStoreZone())
+                .format(displayDateTimeFormatter);
+    }
 
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, dbDateTimeFormatter);
+    private static BigDecimal zero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private String formatPaymentStatus(String paymentStatus) {
@@ -744,9 +430,5 @@ public class ViewSales extends JFrame {
             case "PAID" -> "Paid";
             default -> paymentStatus.substring(0, 1).toUpperCase() + paymentStatus.substring(1).toLowerCase();
         };
-    }
-
-    private Connection getConnection() throws SQLException {
-        return DB.getConnection();
     }
 }

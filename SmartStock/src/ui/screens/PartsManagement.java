@@ -1,6 +1,6 @@
 package ui.screens;
 
-import data.DB;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -9,10 +9,10 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 public class PartsManagement extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -37,6 +37,8 @@ public class PartsManagement extends JFrame {
     private final JCheckBox activeBox = new JCheckBox("Active", true);
     private final JTextArea notesArea = new JTextArea(4, 24);
     private Integer selectedPartId;
+    private final List<LanApiClient.MaintenancePart> parts=new ArrayList<>();
+    private String pendingKey,pendingFingerprint;
 
     public PartsManagement() {
         setTitle("Parts List");
@@ -157,40 +159,13 @@ public class PartsManagement extends JFrame {
     private void loadParts() {
         tableModel.setRowCount(0);
         String search = searchField.getText().trim();
-        String sql = """
-                SELECT part_id, part_name, COALESCE(part_number, '') AS part_number,
-                       quantity_on_hand, reorder_point, COALESCE(vendor_name, '') AS vendor_name, is_active
-                FROM maintenance_parts
-                """ + (search.isBlank() ? "" : """
-                WHERE part_name ILIKE ?
-                   OR COALESCE(part_number, '') ILIKE ?
-                   OR COALESCE(category, '') ILIKE ?
-                   OR COALESCE(vendor_name, '') ILIKE ?
-                   OR COALESCE(bin_location, '') ILIKE ?
-                """) + " ORDER BY part_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
-                    ps.setString(i, pattern);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
+        try {parts.clear();parts.addAll(LanApiClient.loadMaintenanceParts(search));
+            for(LanApiClient.MaintenancePart r:parts){
                     tableModel.addRow(new Object[]{
-                            rs.getInt("part_id"),
-                            rs.getString("part_name"),
-                            rs.getString("part_number"),
-                            rs.getBigDecimal("quantity_on_hand"),
-                            rs.getBigDecimal("reorder_point"),
-                            rs.getString("vendor_name"),
-                            rs.getBoolean("is_active") ? "Yes" : "No"
+                            r.partId(),r.name(),r.partNumber(),r.quantity(),r.reorderPoint(),r.vendor(),r.active()?"Yes":"No"
                     });
-                }
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("load parts", ex);
         }
     }
@@ -201,26 +176,13 @@ public class PartsManagement extends JFrame {
             return;
         }
         Integer id = (Integer) tableModel.getValueAt(table.convertRowIndexToModel(row), 0);
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT * FROM maintenance_parts WHERE part_id = ?")) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
+        try {
+            LanApiClient.MaintenancePart r=parts.stream().filter(x->id.equals(x.partId())).findFirst().orElseThrow();
                     selectedPartId = id;
-                    nameField.setText(rs.getString("part_name"));
-                    partNumberField.setText(value(rs.getString("part_number")));
-                    categoryField.setText(value(rs.getString("category")));
-                    quantityField.setText(rs.getBigDecimal("quantity_on_hand").toPlainString());
-                    reorderPointField.setText(rs.getBigDecimal("reorder_point").toPlainString());
-                    reorderQuantityField.setText(rs.getBigDecimal("reorder_quantity").toPlainString());
-                    unitCostField.setText(rs.getBigDecimal("unit_cost").toPlainString());
-                    vendorField.setText(value(rs.getString("vendor_name")));
-                    binLocationField.setText(value(rs.getString("bin_location")));
-                    activeBox.setSelected(rs.getBoolean("is_active"));
-                    notesArea.setText(value(rs.getString("notes")));
-                }
-            }
-        } catch (SQLException ex) {
+                    nameField.setText(r.name());partNumberField.setText(value(r.partNumber()));categoryField.setText(value(r.category()));quantityField.setText(r.quantity().toPlainString());
+                    reorderPointField.setText(r.reorderPoint().toPlainString());reorderQuantityField.setText(r.reorderQuantity().toPlainString());unitCostField.setText(r.unitCost().toPlainString());
+                    vendorField.setText(value(r.vendor()));binLocationField.setText(value(r.binLocation()));activeBox.setSelected(r.active());notesArea.setText(value(r.notes()));
+        } catch (Exception ex) {
             showError("load selected part", ex);
         }
     }
@@ -231,40 +193,13 @@ public class PartsManagement extends JFrame {
             showWarning("Part name is required.");
             return;
         }
-        String insertSql = """
-                INSERT INTO maintenance_parts (
-                    part_name, part_number, category, quantity_on_hand, reorder_point,
-                    reorder_quantity, unit_cost, vendor_name, bin_location, is_active, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_parts
-                SET part_name = ?, part_number = ?, category = ?, quantity_on_hand = ?,
-                    reorder_point = ?, reorder_quantity = ?, unit_cost = ?, vendor_name = ?,
-                    bin_location = ?, is_active = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE part_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedPartId == null ? insertSql : updateSql)) {
-            ps.setString(1, name);
-            ps.setString(2, nullable(partNumberField));
-            ps.setString(3, nullable(categoryField));
-            ps.setBigDecimal(4, decimal(quantityField, "On hand"));
-            ps.setBigDecimal(5, decimal(reorderPointField, "Reorder point"));
-            ps.setBigDecimal(6, decimal(reorderQuantityField, "Reorder quantity"));
-            ps.setBigDecimal(7, moneyDecimal(unitCostField, "Unit cost"));
-            ps.setString(8, nullable(vendorField));
-            ps.setString(9, nullable(binLocationField));
-            ps.setBoolean(10, activeBox.isSelected());
-            ps.setString(11, nullable(notesArea));
-            if (selectedPartId != null) {
-                ps.setInt(12, selectedPartId);
-            }
-            ps.executeUpdate();
+        LanApiClient.MaintenancePart request=new LanApiClient.MaintenancePart(selectedPartId,name,nullable(partNumberField),nullable(categoryField),decimal(quantityField,"On hand"),
+                decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),activeBox.isSelected(),nullable(notesArea));
+        try {
+            LanApiClient.saveMaintenancePart(request,key(request.toString()));clearKey();
             clearEditor();
             loadParts();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showError("save part", ex);
         }
     }
@@ -284,16 +219,15 @@ public class PartsManagement extends JFrame {
         if (result != JOptionPane.YES_OPTION) {
             return;
         }
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM maintenance_parts WHERE part_id = ?")) {
-            ps.setInt(1, selectedPartId);
-            ps.executeUpdate();
+        try {
+            LanApiClient.deleteMaintenancePart(selectedPartId,key("delete|"+selectedPartId));clearKey();
             clearEditor();
             loadParts();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("delete part", ex);
         }
     }
+    private String key(String f){if(pendingKey==null||!f.equals(pendingFingerprint)){pendingKey=UUID.randomUUID().toString();pendingFingerprint=f;}return pendingKey;}private void clearKey(){pendingKey=null;pendingFingerprint=null;}
 
     private void clearEditor() {
         selectedPartId = null;

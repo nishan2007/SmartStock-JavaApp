@@ -1,21 +1,20 @@
 package ui.screens;
 
-import data.DB;
 import managers.PermissionManager;
+import services.LanApiClient;
 import ui.components.CustomerTypeSelector;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.UUID;
 
 public class QuickCustomerAccount extends JFrame {
     private final Runnable afterSave;
     private final boolean canSetCreditLimit;
+    private String pendingSaveKey;
+    private String pendingFingerprint;
 
     private JTextField accountNumberField;
     private JTextField nameField;
@@ -157,35 +156,23 @@ public class QuickCustomerAccount extends JFrame {
             }
         }
 
-        String sql = """
-                INSERT INTO customer_accounts (name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
-                VALUES (?, ?, ?, ?, ?, 0, ?, TRUE, ?)
-                RETURNING account_number
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, name);
-            setNullableInteger(ps, 2, customerTypeId);
-            ps.setString(3, phone.isEmpty() ? null : phone);
-            ps.setString(4, email.isEmpty() ? null : email);
-            ps.setBigDecimal(5, creditLimit);
-            ps.setBoolean(6, businessAccount);
-            ps.setString(7, accountNotes.isEmpty() ? null : accountNotes);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    accountNumberField.setText(rs.getString("account_number"));
-                }
+        try {
+            LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(
+                    null,"",name,customerTypeId,phone,email,creditLimit,businessAccount,true,accountNotes);
+            String fingerprint=request.toString();
+            if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
+                pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();
             }
+            LanApiClient.SavedCustomerAccount saved=LanApiClient.saveCustomerAccount(request,pendingSaveKey);
+            pendingSaveKey=null;pendingFingerprint=null;accountNumberField.setText(saved.accountNumber());
 
             JOptionPane.showMessageDialog(this, "Customer account created.");
             if (afterSave != null) {
                 afterSave.run();
             }
             dispose();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to create customer account: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to create customer account: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -198,11 +185,4 @@ public class QuickCustomerAccount extends JFrame {
         }
     }
 
-    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
 }

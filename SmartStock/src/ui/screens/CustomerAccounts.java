@@ -2,12 +2,8 @@ package ui.screens;
 
 import Receipt.AccountPaymentReceiptBuilder;
 import Receipt.AccountPaymentReceiptData;
-import data.DB;
 import managers.PermissionManager;
-import models.CashDrawerContext;
-import services.CashDrawerService;
-import services.CustomerAccountLedgerService;
-import services.DeviceContextService;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.components.CustomerTypeSelector;
 import ui.helpers.WindowHelper;
@@ -18,11 +14,9 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.regex.Pattern;
+import java.util.UUID;
 
 public class CustomerAccounts extends JFrame {
     private JTable customerTable;
@@ -48,6 +42,10 @@ public class CustomerAccounts extends JFrame {
     private JButton transactionHistoryButton;
     private JButton paymentHistoryButton;
     private Integer selectedCustomerId;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
+    private String pendingAdjustmentKey;
+    private String pendingAdjustmentFingerprint;
 
     public CustomerAccounts() {
         setTitle("Customer Accounts");
@@ -243,50 +241,15 @@ public class CustomerAccounts extends JFrame {
 
     private void loadCustomers() {
         customerModel.setRowCount(0);
-        String sql = """
-                SELECT ca.customer_id,
-                       ca.account_number,
-                       ca.name AS customer_name,
-                       ca.phone AS customer_phone,
-                       ca.email AS customer_email,
-                       ca.credit_limit,
-                       ca.current_balance,
-                       (ca.credit_limit - ca.current_balance) AS available_credit,
-                       COALESCE(ca.is_business, FALSE) AS is_business,
-                       ca.is_active,
-                       COALESCE(ca.account_notes, '') AS account_notes,
-                       ca.customer_type_id,
-                       COALESCE(ct.name, '') AS customer_type_name
-                FROM customer_accounts ca
-                LEFT JOIN customer_types ct ON ct.customer_type_id = ca.customer_type_id
-                ORDER BY ca.name
-                """;
-
-        try (Connection conn = DB.getConnection()) {
-            CustomerAccountLedgerService.repairAllBalances(conn);
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                 ResultSet rs = ps.executeQuery()) {
-
-                while (rs.next()) {
+        try {
+            for (LanApiClient.CustomerAccountRecord row : LanApiClient.loadCustomerAccountRecords()) {
                     customerModel.addRow(new Object[]{
-                            rs.getInt("customer_id"),
-                            rs.getString("account_number"),
-                            rs.getString("customer_name"),
-                            rs.getObject("customer_type_id") == null ? "" : rs.getInt("customer_type_id"),
-                            rs.getString("customer_type_name"),
-                            rs.getString("customer_phone"),
-                            rs.getString("customer_email"),
-                            money(rs.getBigDecimal("credit_limit")),
-                            money(rs.getBigDecimal("current_balance")),
-                            money(rs.getBigDecimal("available_credit")),
-                            rs.getBoolean("is_business") ? "Business" : "Personal",
-                            rs.getBoolean("is_active"),
-                            rs.getString("account_notes")
+                            row.customerId(),row.accountNumber(),row.name(),row.customerTypeId()==null?"":row.customerTypeId(),
+                            row.customerTypeName(),row.phone(),row.email(),money(row.creditLimit()),money(row.currentBalance()),
+                            money(row.availableCredit()),row.business()?"Business":"Personal",row.active(),row.accountNotes()
                     });
-                }
             }
-
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
         }
     }
@@ -389,33 +352,17 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
-        String sql = """
-                INSERT INTO customer_accounts (name, customer_type_id, phone, email, credit_limit, current_balance, is_business, is_active, account_notes)
-                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
-                RETURNING account_number
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, name);
-            setNullableInteger(ps, 2, customerTypeId);
-            ps.setString(3, phone.isEmpty() ? null : phone);
-            ps.setString(4, email.isEmpty() ? null : email);
-            ps.setBigDecimal(5, creditLimit);
-            ps.setBoolean(6, businessAccount);
-            ps.setBoolean(7, activeCheckBox.isSelected());
-            ps.setString(8, accountNotes.isEmpty() ? null : accountNotes);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    accountNumberField.setText(rs.getString("account_number"));
-                }
-            }
-
+        LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(null,null,name,customerTypeId,
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes);
+        String fingerprint=request.toString();
+        try {
+            if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
+            LanApiClient.SavedCustomerAccount saved=LanApiClient.saveCustomerAccount(request,pendingSaveKey);
+            pendingSaveKey=null;pendingSaveFingerprint=null;accountNumberField.setText(saved.accountNumber());
             JOptionPane.showMessageDialog(this, "Customer account added.");
             clearFields();
             loadCustomers();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to add customer account: " + ex.getMessage());
         }
     }
@@ -453,38 +400,15 @@ public class CustomerAccounts extends JFrame {
             return;
         }
 
-        String sql = """
-                UPDATE customer_accounts
-                SET account_number = ?,
-                    name = ?,
-                    customer_type_id = ?,
-                    phone = ?,
-                    email = ?,
-                    credit_limit = ?,
-                    is_business = ?,
-                    is_active = ?,
-                    account_notes = ?
-                WHERE customer_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, accountNumber.isEmpty() ? null : accountNumber);
-            ps.setString(2, name);
-            setNullableInteger(ps, 3, customerTypeId);
-            ps.setString(4, phone.isEmpty() ? null : phone);
-            ps.setString(5, email.isEmpty() ? null : email);
-            ps.setBigDecimal(6, creditLimit);
-            ps.setBoolean(7, businessAccount);
-            ps.setBoolean(8, activeCheckBox.isSelected());
-            ps.setString(9, accountNotes.isEmpty() ? null : accountNotes);
-            ps.setInt(10, selectedCustomerId);
-            ps.executeUpdate();
-
+        LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(selectedCustomerId,accountNumber,name,customerTypeId,
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes);
+        String fingerprint=request.toString();
+        try {
+            if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
+            LanApiClient.saveCustomerAccount(request,pendingSaveKey);pendingSaveKey=null;pendingSaveFingerprint=null;
             JOptionPane.showMessageDialog(this, "Customer account updated.");
             loadCustomers();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update customer account: " + ex.getMessage());
         }
     }
@@ -530,588 +454,19 @@ public class CustomerAccounts extends JFrame {
             }
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                AccountSnapshot account = loadAccountForUpdate(conn, selectedCustomerId);
-                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
-                if (!addCharge && "CASH".equalsIgnoreCase(paymentMethod)) {
-                    try {
-                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
-                    } catch (SQLException ex) {
-                        JOptionPane.showMessageDialog(this, ex.getMessage());
-                        conn.rollback();
-                        return;
-                    }
-                }
-                BigDecimal signedAmount = addCharge ? amount : amount.negate();
-                BigDecimal newBalance = account.balance.add(signedAmount);
-
-                if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
-                    JOptionPane.showMessageDialog(this, "Payment is more than the current balance.");
-                    conn.rollback();
-                    return;
-                }
-                if (addCharge && newBalance.compareTo(account.creditLimit) > 0) {
-                    JOptionPane.showMessageDialog(this, "Charge exceeds the customer's credit limit.");
-                    conn.rollback();
-                    return;
-                }
-
-                updateCustomerBalance(conn, selectedCustomerId, newBalance);
-                AccountTransaction transaction = insertAccountTransaction(
-                        conn,
-                        selectedCustomerId,
-                        signedAmount,
-                        addCharge ? "MANUAL_CHARGE" : "PAYMENT",
-                        addCharge ? "Manual account charge" : "Customer payment",
-                        null,
-                        addCharge ? null : paymentMethod,
-                        addCharge ? null : paymentReference,
-                        cashDrawer
-                );
-                if (!addCharge) {
-                    String allocationNote = applyPaymentToUnpaidAccountCharges(conn, selectedCustomerId, amount, transaction.transactionId(), paymentMethod, paymentReference, cashDrawer);
-                    updateTransactionNote(conn, transaction.transactionId(), allocationNote);
-                }
-                conn.commit();
-                if (addCharge) {
-                    JOptionPane.showMessageDialog(this, "Charge added.");
-                } else {
-                    JOptionPane.showMessageDialog(this, "Payment recorded. Payment ID: " + transaction.paymentId());
-                    openPaymentReceipt(selectedCustomerId, transaction.transactionId());
-                }
-                loadCustomers();
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+        LanApiClient.CustomerAccountAdjustmentRequest request=new LanApiClient.CustomerAccountAdjustmentRequest(selectedCustomerId,amount,
+                addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference);String fingerprint=request.toString();
+        try {
+            if(pendingAdjustmentKey==null||!fingerprint.equals(pendingAdjustmentFingerprint)){pendingAdjustmentKey=UUID.randomUUID().toString();pendingAdjustmentFingerprint=fingerprint;}
+            LanApiClient.CustomerAccountAdjustmentResult result=LanApiClient.adjustCustomerAccount(request,pendingAdjustmentKey);
+            pendingAdjustmentKey=null;pendingAdjustmentFingerprint=null;
+            if(addCharge)JOptionPane.showMessageDialog(this,"Charge added.");else{
+                JOptionPane.showMessageDialog(this,"Payment recorded. Payment ID: "+result.paymentId());
+                openPaymentReceipt(selectedCustomerId,(int)result.transactionId());
             }
+            loadCustomers();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update account balance: " + ex.getMessage());
-        }
-    }
-
-    private String applyPaymentToUnpaidSales(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId) throws SQLException {
-        BigDecimal remainingPayment = paymentAmount;
-        StringBuilder appliedSales = new StringBuilder();
-        String selectSql = """
-                SELECT sale_id,
-                       GREATEST(COALESCE(total_amount, 0) - COALESCE(returned_amount, 0), 0) AS total_amount,
-                       COALESCE(amount_paid, 0) AS amount_paid
-                FROM sales
-                WHERE customer_id = ?
-                  AND payment_method = 'ACCOUNT'
-                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
-                ORDER BY created_at ASC, sale_id ASC
-                FOR UPDATE
-                """;
-        String updateSql = """
-                UPDATE sales
-                SET amount_paid = ?,
-                    payment_status = ?
-                WHERE sale_id = ?
-                """;
-        String allocationSql = """
-                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, sale_id, amount)
-                VALUES (?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
-             PreparedStatement updatePs = conn.prepareStatement(updateSql);
-             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
-
-            selectPs.setInt(1, customerId);
-            try (ResultSet rs = selectPs.executeQuery()) {
-                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-                    int saleId = rs.getInt("sale_id");
-                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal amountDue = totalAmount.subtract(amountPaid);
-
-                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
-                        updateSalePaymentStatus(updatePs, saleId, totalAmount, "PAID");
-                        continue;
-                    }
-
-                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
-                    BigDecimal newAmountPaid = amountPaid.add(appliedAmount);
-                    String paymentStatus = newAmountPaid.compareTo(totalAmount) >= 0 ? "PAID" : "UNPAID";
-                    updateSalePaymentStatus(updatePs, saleId, newAmountPaid, paymentStatus);
-                    insertPaymentAllocation(allocationPs, paymentTransactionId, customerId, saleId, appliedAmount);
-                    if (!appliedSales.isEmpty()) {
-                        appliedSales.append("; ");
-                    }
-                    appliedSales.append("sale #")
-                            .append(saleId)
-                            .append(" ")
-                            .append(money(appliedAmount));
-                    remainingPayment = remainingPayment.subtract(appliedAmount);
-                }
-            }
-        }
-
-        if (appliedSales.isEmpty()) {
-            return "Customer payment. No unpaid account sales were available to apply this payment to.";
-        }
-        if (remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-            appliedSales.append("; unapplied ")
-                    .append(money(remainingPayment));
-        }
-        return "Customer payment applied to " + appliedSales;
-    }
-
-    private String applyPaymentToUnpaidAccountCharges(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId,
-                                                      String paymentMethod, String paymentReference, CashDrawerContext cashDrawer) throws SQLException {
-        BigDecimal remainingPayment = paymentAmount;
-        StringBuilder appliedCharges = new StringBuilder();
-
-        remainingPayment = applyPaymentToUnpaidSales(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges);
-        remainingPayment = applyPaymentToUnpaidCustomOrders(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges, paymentMethod, paymentReference, cashDrawer);
-        remainingPayment = applyPaymentToUnpaidInvoices(conn, customerId, remainingPayment, paymentTransactionId, appliedCharges, paymentMethod, paymentReference, cashDrawer);
-
-        if (appliedCharges.isEmpty()) {
-            return "Customer payment. No unpaid account sales, custom orders, or invoices were available to apply this payment to.";
-        }
-        if (remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-            appliedCharges.append("; unapplied ")
-                    .append(money(remainingPayment));
-        }
-        return "Customer payment applied to " + appliedCharges;
-    }
-
-    private BigDecimal applyPaymentToUnpaidSales(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId, StringBuilder appliedCharges) throws SQLException {
-        BigDecimal remainingPayment = paymentAmount;
-        String selectSql = """
-                SELECT sale_id,
-                       GREATEST(COALESCE(total_amount, 0) - COALESCE(returned_amount, 0), 0) AS total_amount,
-                       COALESCE(amount_paid, 0) AS amount_paid
-                FROM sales
-                WHERE customer_id = ?
-                  AND payment_method = 'ACCOUNT'
-                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
-                ORDER BY created_at ASC, sale_id ASC
-                FOR UPDATE
-                """;
-        String updateSql = """
-                UPDATE sales
-                SET amount_paid = ?,
-                    payment_status = ?
-                WHERE sale_id = ?
-                """;
-        String allocationSql = """
-                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, sale_id, amount)
-                VALUES (?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
-             PreparedStatement updatePs = conn.prepareStatement(updateSql);
-             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
-            selectPs.setInt(1, customerId);
-            try (ResultSet rs = selectPs.executeQuery()) {
-                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-                    int saleId = rs.getInt("sale_id");
-                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal amountDue = totalAmount.subtract(amountPaid);
-
-                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
-                        updateSalePaymentStatus(updatePs, saleId, totalAmount, "PAID");
-                        continue;
-                    }
-
-                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
-                    BigDecimal newAmountPaid = amountPaid.add(appliedAmount);
-                    String paymentStatus = newAmountPaid.compareTo(totalAmount) >= 0 ? "PAID" : "UNPAID";
-                    updateSalePaymentStatus(updatePs, saleId, newAmountPaid, paymentStatus);
-                    insertPaymentAllocation(allocationPs, paymentTransactionId, customerId, saleId, appliedAmount);
-                    appendAppliedCharge(appliedCharges, "sale #" + saleId + " " + money(appliedAmount));
-                    remainingPayment = remainingPayment.subtract(appliedAmount);
-                }
-            }
-        }
-        return remainingPayment;
-    }
-
-    private BigDecimal applyPaymentToUnpaidCustomOrders(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId,
-                                                        StringBuilder appliedCharges, String paymentMethod, String paymentReference,
-                                                        CashDrawerContext cashDrawer) throws SQLException {
-        BigDecimal remainingPayment = paymentAmount;
-        String selectSql = """
-                SELECT custom_order_id, order_number,
-                       COALESCE(total_amount, 0) AS total_amount,
-                       COALESCE(amount_paid, 0) AS amount_paid,
-                       COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) AS balance_due
-                FROM custom_orders
-                WHERE customer_id = ?
-                  AND COALESCE(payment_status, 'PAID') <> 'PAID'
-                  AND COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) > 0
-                ORDER BY created_at ASC, custom_order_id ASC
-                FOR UPDATE
-                """;
-        String updateSql = """
-                UPDATE custom_orders
-                SET amount_paid = COALESCE(amount_paid, 0) + ?,
-                    balance_due = GREATEST(
-                        COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) - ?,
-                        0
-                    ),
-                    payment_status = CASE
-                        WHEN GREATEST(
-                            COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) - ?,
-                            0
-                        ) <= 0 THEN 'PAID'
-                        ELSE 'PARTIAL'
-                    END
-                WHERE custom_order_id = ?
-                """;
-        String markPaidSql = """
-                UPDATE custom_orders
-                SET amount_paid = COALESCE(total_amount, amount_paid, 0),
-                    balance_due = 0,
-                    payment_status = 'PAID'
-                WHERE custom_order_id = ?
-                """;
-        String paymentSql = """
-                INSERT INTO custom_order_payments (
-                    custom_order_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, payment_action, device_id, device_name,
-                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?)
-                """;
-        String allocationSql = """
-                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, custom_order_id, amount)
-                VALUES (?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
-             PreparedStatement updatePs = conn.prepareStatement(updateSql);
-             PreparedStatement markPaidPs = conn.prepareStatement(markPaidSql);
-             PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
-             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
-            selectPs.setInt(1, customerId);
-            try (ResultSet rs = selectPs.executeQuery()) {
-                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-                    long orderId = rs.getLong("custom_order_id");
-                    String orderNumber = rs.getString("order_number");
-                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
-                    BigDecimal amountDue = balanceDue.compareTo(BigDecimal.ZERO) > 0 ? balanceDue : totalAmount.subtract(amountPaid);
-
-                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
-                        markCustomOrderPaid(markPaidPs, orderId);
-                        continue;
-                    }
-
-                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
-                    applyCustomOrderPayment(updatePs, orderId, appliedAmount);
-                    insertCustomOrderAccountPayment(paymentPs, orderId, appliedAmount, paymentTransactionId, paymentMethod, paymentReference, cashDrawer);
-                    insertCustomOrderPaymentAllocation(allocationPs, paymentTransactionId, customerId, orderId, appliedAmount);
-                    appendAppliedCharge(appliedCharges, "custom order " + orderNumber + " " + money(appliedAmount));
-                    remainingPayment = remainingPayment.subtract(appliedAmount);
-                }
-            }
-        }
-        return remainingPayment;
-    }
-
-    private BigDecimal applyPaymentToUnpaidInvoices(Connection conn, int customerId, BigDecimal paymentAmount, int paymentTransactionId,
-                                                       StringBuilder appliedCharges, String paymentMethod, String paymentReference,
-                                                       CashDrawerContext cashDrawer) throws SQLException {
-        BigDecimal remainingPayment = paymentAmount;
-        String selectSql = """
-                SELECT invoice_id, invoice_number,
-                       COALESCE(total_amount, 0) AS total_amount,
-                       COALESCE(amount_paid, 0) AS amount_paid,
-                       COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) AS balance_due
-                FROM invoices
-                WHERE customer_id = ?
-                  AND COALESCE(payment_status, 'UNPAID') <> 'PAID'
-                  AND COALESCE(balance_due, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0)) > 0
-                ORDER BY created_at ASC, invoice_id ASC
-                FOR UPDATE
-                """;
-        String updateSql = """
-                UPDATE invoices
-                SET amount_paid = LEAST(COALESCE(total_amount, 0), COALESCE(amount_paid, 0) + ?),
-                    balance_due = GREATEST(
-                        COALESCE(total_amount, 0) - LEAST(COALESCE(total_amount, 0), COALESCE(amount_paid, 0) + ?),
-                        0
-                    ),
-                    payment_status = CASE
-                        WHEN GREATEST(
-                            COALESCE(total_amount, 0) - LEAST(COALESCE(total_amount, 0), COALESCE(amount_paid, 0) + ?),
-                            0
-                        ) <= 0 THEN 'PAID'
-                        WHEN LEAST(COALESCE(total_amount, 0), COALESCE(amount_paid, 0) + ?) > 0 THEN 'PARTIAL'
-                        ELSE 'UNPAID'
-                    END,
-                    payment_method = ?,
-                    payment_reference = COALESCE(NULLIF(?, ''), payment_reference)
-                WHERE invoice_id = ?
-                """;
-        String markPaidSql = """
-                UPDATE invoices
-                SET amount_paid = COALESCE(total_amount, amount_paid, 0),
-                    balance_due = 0,
-                    payment_status = 'PAID'
-                WHERE invoice_id = ?
-                """;
-        String paymentSql = """
-                INSERT INTO invoice_payments (
-                    invoice_id, customer_id, payment_amount, payment_method, payment_reference,
-                    taken_by_user_id, taken_by_name, location_id, device_id, device_name,
-                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
-                )
-                SELECT invoice_id, customer_id, ?, ?, ?, ?, ?, location_id, ?, ?, ?, ?, ?
-                FROM invoices
-                WHERE invoice_id = ?
-                """;
-        String allocationSql = """
-                INSERT INTO customer_account_payment_allocations (payment_transaction_id, customer_id, invoice_id, amount)
-                VALUES (?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement selectPs = conn.prepareStatement(selectSql);
-             PreparedStatement updatePs = conn.prepareStatement(updateSql);
-             PreparedStatement markPaidPs = conn.prepareStatement(markPaidSql);
-             PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
-             PreparedStatement allocationPs = conn.prepareStatement(allocationSql)) {
-            selectPs.setInt(1, customerId);
-            try (ResultSet rs = selectPs.executeQuery()) {
-                while (rs.next() && remainingPayment.compareTo(BigDecimal.ZERO) > 0) {
-                    long invoiceId = rs.getLong("invoice_id");
-                    String invoiceNumber = rs.getString("invoice_number");
-                    BigDecimal totalAmount = defaultZero(rs.getBigDecimal("total_amount"));
-                    BigDecimal amountPaid = defaultZero(rs.getBigDecimal("amount_paid"));
-                    BigDecimal balanceDue = defaultZero(rs.getBigDecimal("balance_due"));
-                    BigDecimal amountDue = balanceDue.compareTo(BigDecimal.ZERO) > 0 ? balanceDue : totalAmount.subtract(amountPaid);
-
-                    if (amountDue.compareTo(BigDecimal.ZERO) <= 0) {
-                        markInvoicePaid(markPaidPs, invoiceId);
-                        continue;
-                    }
-
-                    BigDecimal appliedAmount = remainingPayment.min(amountDue);
-                    applyInvoicePayment(updatePs, invoiceId, appliedAmount, paymentMethod, paymentReference);
-                    insertInvoiceAccountPayment(paymentPs, invoiceId, appliedAmount, paymentTransactionId, paymentMethod, paymentReference, cashDrawer);
-                    insertInvoicePaymentAllocation(allocationPs, paymentTransactionId, customerId, invoiceId, appliedAmount);
-                    appendAppliedCharge(appliedCharges, "invoice " + invoiceNumber + " " + money(appliedAmount));
-                    remainingPayment = remainingPayment.subtract(appliedAmount);
-                }
-            }
-        }
-        return remainingPayment;
-    }
-
-    private void applyInvoicePayment(PreparedStatement ps, long invoiceId, BigDecimal amount,
-                                        String paymentMethod, String paymentReference) throws SQLException {
-        ps.setBigDecimal(1, amount);
-        ps.setBigDecimal(2, amount);
-        ps.setBigDecimal(3, amount);
-        ps.setBigDecimal(4, amount);
-        ps.setString(5, paymentMethod);
-        ps.setString(6, paymentReference == null ? "" : paymentReference);
-        ps.setLong(7, invoiceId);
-        ps.executeUpdate();
-    }
-
-    private void markInvoicePaid(PreparedStatement ps, long invoiceId) throws SQLException {
-        ps.setLong(1, invoiceId);
-        ps.executeUpdate();
-    }
-
-    private void insertInvoiceAccountPayment(PreparedStatement ps, long invoiceId, BigDecimal amount, int paymentTransactionId,
-                                                String paymentMethod, String paymentReference, CashDrawerContext cashDrawer) throws SQLException {
-        ps.setBigDecimal(1, amount);
-        ps.setString(2, paymentMethod);
-        ps.setString(3, paymentReference == null || paymentReference.isBlank()
-                ? "Account payment transaction #" + paymentTransactionId
-                : "Account payment transaction #" + paymentTransactionId + " / " + paymentReference);
-        setNullableInteger(ps, 4, managers.SessionManager.getCurrentUserId());
-        ps.setString(5, managers.SessionManager.getCurrentUserDisplayName());
-        ps.setString(6, blankToNull(DeviceContextService.currentDeviceId()));
-        ps.setString(7, blankToNull(DeviceContextService.currentDeviceName()));
-        setNullableLong(ps, 8, cashDrawer == null ? null : cashDrawer.cashDrawerId());
-        ps.setString(9, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
-        setNullableLong(ps, 10, cashDrawer == null ? null : cashDrawer.sessionId());
-        ps.setLong(11, invoiceId);
-        ps.executeUpdate();
-    }
-
-    private void insertInvoicePaymentAllocation(PreparedStatement ps, int paymentTransactionId, int customerId, long invoiceId, BigDecimal amount) throws SQLException {
-        ps.setInt(1, paymentTransactionId);
-        ps.setInt(2, customerId);
-        ps.setLong(3, invoiceId);
-        ps.setBigDecimal(4, amount);
-        ps.executeUpdate();
-    }
-
-    private void applyCustomOrderPayment(PreparedStatement ps, long orderId, BigDecimal amount) throws SQLException {
-        ps.setBigDecimal(1, amount);
-        ps.setBigDecimal(2, amount);
-        ps.setBigDecimal(3, amount);
-        ps.setLong(4, orderId);
-        ps.executeUpdate();
-    }
-
-    private void markCustomOrderPaid(PreparedStatement ps, long orderId) throws SQLException {
-        ps.setLong(1, orderId);
-        ps.executeUpdate();
-    }
-
-    private void insertCustomOrderAccountPayment(PreparedStatement ps, long orderId, BigDecimal amount, int paymentTransactionId,
-                                                 String paymentMethod, String paymentReference, CashDrawerContext cashDrawer) throws SQLException {
-        ps.setLong(1, orderId);
-        ps.setBigDecimal(2, amount);
-        ps.setString(3, paymentMethod);
-        ps.setString(4, paymentReference == null || paymentReference.isBlank()
-                ? "Account payment transaction #" + paymentTransactionId
-                : "Account payment transaction #" + paymentTransactionId + " / " + paymentReference);
-        setNullableInteger(ps, 5, managers.SessionManager.getCurrentUserId());
-        ps.setString(6, managers.SessionManager.getCurrentUserDisplayName());
-        ps.setString(7, blankToNull(DeviceContextService.currentDeviceId()));
-        ps.setString(8, blankToNull(DeviceContextService.currentDeviceName()));
-        setNullableLong(ps, 9, cashDrawer == null ? null : cashDrawer.cashDrawerId());
-        ps.setString(10, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
-        setNullableLong(ps, 11, cashDrawer == null ? null : cashDrawer.sessionId());
-        ps.executeUpdate();
-    }
-
-    private void insertCustomOrderPaymentAllocation(PreparedStatement ps, int paymentTransactionId, int customerId, long orderId, BigDecimal amount) throws SQLException {
-        ps.setInt(1, paymentTransactionId);
-        ps.setInt(2, customerId);
-        ps.setLong(3, orderId);
-        ps.setBigDecimal(4, amount);
-        ps.executeUpdate();
-    }
-
-    private void appendAppliedCharge(StringBuilder appliedCharges, String text) {
-        if (!appliedCharges.isEmpty()) {
-            appliedCharges.append("; ");
-        }
-        appliedCharges.append(text);
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
-    }
-
-    private void updateSalePaymentStatus(PreparedStatement ps, int saleId, BigDecimal amountPaid, String paymentStatus) throws SQLException {
-        ps.setBigDecimal(1, amountPaid);
-        ps.setString(2, paymentStatus);
-        ps.setInt(3, saleId);
-        ps.executeUpdate();
-    }
-
-    private void insertPaymentAllocation(PreparedStatement ps, int paymentTransactionId, int customerId, int saleId, BigDecimal amount) throws SQLException {
-        ps.setInt(1, paymentTransactionId);
-        ps.setInt(2, customerId);
-        ps.setInt(3, saleId);
-        ps.setBigDecimal(4, amount);
-        ps.executeUpdate();
-    }
-
-    private void updateTransactionNote(Connection conn, int transactionId, String note) throws SQLException {
-        String sql = "UPDATE customer_account_transactions SET note = ? WHERE transaction_id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, note);
-            ps.setInt(2, transactionId);
-            ps.executeUpdate();
-        }
-    }
-
-    private AccountSnapshot loadAccountForUpdate(Connection conn, int customerId) throws SQLException {
-        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
-        String sql = """
-                SELECT current_balance, credit_limit, is_active
-                FROM customer_accounts
-                WHERE customer_id = ?
-                FOR UPDATE
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Customer account was not found.");
-                }
-                return new AccountSnapshot(
-                        rs.getBigDecimal("current_balance"),
-                        rs.getBigDecimal("credit_limit"),
-                        rs.getBoolean("is_active")
-                );
-            }
-        }
-    }
-
-    private void updateCustomerBalance(Connection conn, int customerId, BigDecimal newBalance) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
-            ps.setBigDecimal(1, newBalance);
-            ps.setInt(2, customerId);
-            ps.executeUpdate();
-        }
-    }
-
-    private AccountTransaction insertAccountTransaction(Connection conn, int customerId, BigDecimal amount, String type, String note,
-                                                        Integer saleId, String paymentMethod, String paymentReference,
-                                                        CashDrawerContext cashDrawer) throws SQLException {
-        String sql = """
-                INSERT INTO customer_account_transactions (
-                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name,
-                    payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
-            ps.setInt(1, customerId);
-            if (saleId == null) {
-                ps.setNull(2, java.sql.Types.INTEGER);
-            } else {
-                ps.setInt(2, saleId);
-            }
-            setNullableInteger(ps, 3, managers.SessionManager.getCurrentLocationId());
-            ps.setBigDecimal(4, amount);
-            ps.setString(5, type);
-            ps.setString(6, note);
-            ps.setString(7, managers.SessionManager.getCurrentUserDisplayName());
-            ps.setString(8, blankToNull(DeviceContextService.currentDeviceId()));
-            ps.setString(9, blankToNull(DeviceContextService.currentDeviceName()));
-            ps.setString(10, blankToNull(paymentMethod));
-            ps.setString(11, blankToNull(paymentReference));
-            setNullableLong(ps, 12, cashDrawer == null ? null : cashDrawer.cashDrawerId());
-            ps.setString(13, cashDrawer == null ? null : blankToNull(cashDrawer.drawerName()));
-            setNullableLong(ps, 14, cashDrawer == null ? null : cashDrawer.sessionId());
-            ps.executeUpdate();
-
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                if (rs.next()) {
-                    int transactionId = rs.getInt(1);
-                    String paymentId = null;
-                    if ("PAYMENT".equals(type)) {
-                        paymentId = generatePaymentId(transactionId);
-                        updateTransactionPaymentId(conn, transactionId, paymentId);
-                    }
-                    return new AccountTransaction(transactionId, paymentId);
-                }
-            }
-        }
-
-        throw new SQLException("Failed to create account transaction.");
-    }
-
-    private String generatePaymentId(int transactionId) {
-        return String.format("PAY-%06d", transactionId);
-    }
-
-    private void updateTransactionPaymentId(Connection conn, int transactionId, String paymentId) throws SQLException {
-        String sql = "UPDATE customer_account_transactions SET payment_id = ? WHERE transaction_id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, paymentId);
-            ps.setInt(2, transactionId);
-            ps.executeUpdate();
         }
     }
 
@@ -1165,22 +520,6 @@ public class CustomerAccounts extends JFrame {
         }
     }
 
-    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
-    private void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
-    }
-
     private String promptForPaymentMethod() {
         String[] options = {"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"};
         Object selected = JOptionPane.showInputDialog(
@@ -1224,12 +563,6 @@ public class CustomerAccounts extends JFrame {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid amount.");
             return null;
         }
-    }
-
-    private record AccountSnapshot(BigDecimal balance, BigDecimal creditLimit, boolean active) {
-    }
-
-    private record AccountTransaction(int transactionId, String paymentId) {
     }
 
     private record CustomerSelection(int customerId, String accountLabel) {

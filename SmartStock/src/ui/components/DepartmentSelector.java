@@ -1,41 +1,51 @@
 package ui.components;
 
-import data.DB;
+import services.LanApiClient;
 
 import javax.swing.*;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 
 public class DepartmentSelector extends JPanel {
-    private final JComboBox<DepartmentOption> departmentBox = new JComboBox<>();
+    private final SearchableComboBox departmentBox = new SearchableComboBox();
+    private final Map<String, Integer> idsByName = new LinkedHashMap<>();
+    private final Map<Integer, String> namesById = new LinkedHashMap<>();
+    private final List<ActionListener> selectionListeners = new ArrayList<>();
     private boolean loading;
+    private Integer lastNotifiedDepartmentId;
 
     public DepartmentSelector() {
         setLayout(new BorderLayout(6, 0));
-        departmentBox.setEditable(true);
         add(departmentBox, BorderLayout.CENTER);
+        departmentBox.addActionListener(this::handleSelectionChange);
         loadDepartments();
     }
 
     public void loadDepartments() {
-        Object selected = departmentBox.getSelectedItem();
-        String selectedText = selected == null ? "" : selected.toString();
+        String selectedText = getSelectedDepartmentName();
         loading = true;
-        departmentBox.removeAllItems();
-        departmentBox.addItem(new DepartmentOption(null, ""));
+        idsByName.clear();
+        namesById.clear();
+        List<String> options = new ArrayList<>();
 
-        String sql = "SELECT category_id, name FROM categories ORDER BY name";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                departmentBox.addItem(new DepartmentOption(rs.getInt("category_id"), rs.getString("name")));
+        try {
+            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
+            for (LanApiClient.NamedId department : lookups.departments()) {
+                int id = department.id();
+                String name = department.name();
+                options.add(name);
+                idsByName.put(normalize(name), id);
+                namesById.put(id, name);
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+            departmentBox.setOptions(options);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(), "LAN Service", JOptionPane.ERROR_MESSAGE);
         } finally {
             loading = false;
         }
@@ -46,22 +56,12 @@ public class DepartmentSelector extends JPanel {
     }
 
     public Integer getSelectedDepartmentId() {
-        Object selected = departmentBox.getSelectedItem();
-        if (selected instanceof DepartmentOption option) {
-            return option.id();
-        }
-
         String text = getSelectedDepartmentName();
-        if (text.isBlank()) {
-            return null;
-        }
-
-        for (int i = 0; i < departmentBox.getItemCount(); i++) {
-            DepartmentOption option = departmentBox.getItemAt(i);
-            if (option.name().equalsIgnoreCase(text)) {
-                departmentBox.setSelectedItem(option);
-                return option.id();
-            }
+        if (text.isBlank()) return null;
+        Integer id = idsByName.get(normalize(text));
+        if (id != null) {
+            departmentBox.setSelectedItem(namesById.get(id));
+            return id;
         }
 
         JOptionPane.showMessageDialog(this, "Select an existing department from the list.");
@@ -69,7 +69,7 @@ public class DepartmentSelector extends JPanel {
     }
 
     public String getSelectedDepartmentName() {
-        Object selected = departmentBox.getSelectedItem();
+        Object selected = departmentBox.isEditable() ? departmentBox.getEditor().getItem() : departmentBox.getSelectedItem();
         return selected == null ? "" : selected.toString().trim();
     }
 
@@ -79,16 +79,12 @@ public class DepartmentSelector extends JPanel {
             return;
         }
 
-        for (int i = 0; i < departmentBox.getItemCount(); i++) {
-            DepartmentOption option = departmentBox.getItemAt(i);
-            if ((departmentId != null && departmentId.equals(option.id()))
-                    || (departmentName != null && option.name().equalsIgnoreCase(departmentName))) {
-                departmentBox.setSelectedItem(option);
-                return;
-            }
+        String matchedName = departmentId == null ? null : namesById.get(departmentId);
+        if (matchedName == null && departmentName != null) {
+            Integer matchedId = idsByName.get(normalize(departmentName));
+            if (matchedId != null) matchedName = namesById.get(matchedId);
         }
-
-        departmentBox.setSelectedItem(new DepartmentOption(departmentId, departmentName == null ? "" : departmentName));
+        departmentBox.setSelectedItem(matchedName == null ? (departmentName == null ? "" : departmentName) : matchedName);
     }
 
     public void setSelectedDepartmentByName(String departmentName) {
@@ -96,27 +92,30 @@ public class DepartmentSelector extends JPanel {
     }
 
     public void clearSelection() {
-        if (departmentBox.getItemCount() > 0) {
-            departmentBox.setSelectedIndex(0);
-        } else if (!loading) {
-            departmentBox.setSelectedItem("");
-        }
+        departmentBox.setSelectedItem("");
     }
 
     public void setSelectorEnabled(boolean enabled) {
         departmentBox.setEnabled(enabled);
     }
 
-    private record DepartmentOption(Integer id, String name) {
-        private DepartmentOption {
-            if (name == null) {
-                name = "";
-            }
-        }
+    public void addSelectionListener(ActionListener listener) {
+        selectionListeners.add(listener);
+    }
 
-        @Override
-        public String toString() {
-            return name;
+    private void handleSelectionChange(java.awt.event.ActionEvent event) {
+        if (loading) return;
+        String text = getSelectedDepartmentName();
+        Integer resolvedId = text.isBlank() ? null : idsByName.get(normalize(text));
+        if (!text.isBlank() && resolvedId == null) return;
+        if (Objects.equals(lastNotifiedDepartmentId, resolvedId)) return;
+        lastNotifiedDepartmentId = resolvedId;
+        for (ActionListener listener : List.copyOf(selectionListeners)) {
+            listener.actionPerformed(event);
         }
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT);
     }
 }

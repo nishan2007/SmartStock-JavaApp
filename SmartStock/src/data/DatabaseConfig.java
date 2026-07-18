@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 import utils.SecureFilePermissions;
+import utils.SecureCredentialStore;
 
 public record DatabaseConfig(
         DatabaseMode mode,
@@ -21,6 +22,10 @@ public record DatabaseConfig(
         String cloudDbPassword,
         int syncIntervalSeconds
 ) {
+    public static final String PRIMARY_DB_USER_SECRET = "primary-db-user";
+    public static final String PRIMARY_DB_PASSWORD_SECRET = "primary-db-password";
+    public static final String CLOUD_DB_USER_SECRET = "cloud-db-user";
+    public static final String CLOUD_DB_PASSWORD_SECRET = "cloud-db-password";
     public static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "database.properties");
 
     public static boolean hasConfigFile() {
@@ -51,35 +56,36 @@ public record DatabaseConfig(
                 props.getProperty("jdbc.url")
         );
 
-        if (isBlank(jdbcUrl)) {
-            if (mode == DatabaseMode.CLOUD_DIRECT) {
-                jdbcUrl = firstNonBlank(
-                        System.getenv("SMARTSTOCK_CLOUD_DB_URL"),
-                        props.getProperty("cloud.jdbc.url")
-                );
-            } else {
-                jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
-            }
+        if (mode == DatabaseMode.CLIENT) {
+            // Registers connect only to the SmartStock HTTPS service. Keeping a
+            // JDBC URL here would make accidental database fallback possible.
+            jdbcUrl = "";
+        } else if (isBlank(jdbcUrl)) {
+            jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
         }
 
         String user = firstNonBlank(
                 System.getProperty("smartstock.db.user"),
                 System.getenv("SMARTSTOCK_DB_USER"),
+                SecureCredentialStore.read(PRIMARY_DB_USER_SECRET),
                 props.getProperty("db.user")
         );
         String password = firstNonBlank(
                 System.getProperty("smartstock.db.password"),
                 System.getenv("SMARTSTOCK_DB_PASSWORD"),
+                SecureCredentialStore.read(PRIMARY_DB_PASSWORD_SECRET),
                 props.getProperty("db.password")
         );
-        if (mode == DatabaseMode.CLOUD_DIRECT) {
-            user = firstNonBlank(user, System.getenv("SMARTSTOCK_CLOUD_DB_USER"), props.getProperty("cloud.db.user"));
-            password = firstNonBlank(password, System.getenv("SMARTSTOCK_CLOUD_DB_PASSWORD"), props.getProperty("cloud.db.password"));
+        if (mode == DatabaseMode.CLIENT) {
+            user = "";
+            password = "";
         }
 
         String cloudUrl = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_URL"), props.getProperty("cloud.jdbc.url"));
-        String cloudUser = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_USER"), props.getProperty("cloud.db.user"));
-        String cloudPassword = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_PASSWORD"), props.getProperty("cloud.db.password"));
+        String cloudUser = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_USER"),
+                SecureCredentialStore.read(CLOUD_DB_USER_SECRET), props.getProperty("cloud.db.user"));
+        String cloudPassword = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_PASSWORD"),
+                SecureCredentialStore.read(CLOUD_DB_PASSWORD_SECRET), props.getProperty("cloud.db.password"));
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
 
         return new DatabaseConfig(
@@ -129,25 +135,33 @@ public record DatabaseConfig(
     }
 
     public void save() throws IOException {
+        if (mode != DatabaseMode.CLIENT) {
+            storeSecret(PRIMARY_DB_USER_SECRET, dbUser);
+            storeSecret(PRIMARY_DB_PASSWORD_SECRET, dbPassword);
+            storeSecret(CLOUD_DB_USER_SECRET, cloudDbUser);
+            storeSecret(CLOUD_DB_PASSWORD_SECRET, cloudDbPassword);
+        }
         Properties props = new Properties();
         props.setProperty("mode", mode.name());
         props.setProperty("server.host", serverHost);
         props.setProperty("server.port", String.valueOf(serverPort));
-        props.setProperty("database.name", databaseNameFromUrl(jdbcUrl));
-        props.setProperty("jdbc.url", jdbcUrl == null ? "" : jdbcUrl);
-        props.setProperty("db.user", dbUser == null ? "" : dbUser);
-        props.setProperty("db.password", dbPassword == null ? "" : dbPassword);
+        if (mode != DatabaseMode.CLIENT) {
+            props.setProperty("database.name", databaseNameFromUrl(jdbcUrl));
+            props.setProperty("jdbc.url", jdbcUrl == null ? "" : jdbcUrl);
+            props.setProperty("db.user", isBlank(dbUser) ? "" : "${SMARTSTOCK_SECURE_DB_USER}");
+            props.setProperty("db.password", isBlank(dbPassword) ? "" : "${SMARTSTOCK_SECURE_DB_PASSWORD}");
+        }
         if (locationId != null) {
             props.setProperty("location.id", String.valueOf(locationId));
         }
-        if (!isBlank(cloudJdbcUrl)) {
+        if (mode != DatabaseMode.CLIENT && !isBlank(cloudJdbcUrl)) {
             props.setProperty("cloud.jdbc.url", cloudJdbcUrl);
         }
-        if (!isBlank(cloudDbUser)) {
-            props.setProperty("cloud.db.user", cloudDbUser);
+        if (mode != DatabaseMode.CLIENT && !isBlank(cloudDbUser)) {
+            props.setProperty("cloud.db.user", "${SMARTSTOCK_SECURE_CLOUD_DB_USER}");
         }
-        if (!isBlank(cloudDbPassword)) {
-            props.setProperty("cloud.db.password", cloudDbPassword);
+        if (mode != DatabaseMode.CLIENT && !isBlank(cloudDbPassword)) {
+            props.setProperty("cloud.db.password", "${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}");
         }
         props.setProperty("sync.interval.seconds", String.valueOf(syncIntervalSeconds));
         Files.createDirectories(CONFIG_PATH.getParent());
@@ -156,6 +170,12 @@ public record DatabaseConfig(
             props.store(output, "SmartStock database mode and sync configuration");
         }
         SecureFilePermissions.restrictFileToOwner(CONFIG_PATH);
+    }
+
+    private static void storeSecret(String key, String value) throws IOException {
+        if (!isBlank(value) && !value.trim().startsWith("${SMARTSTOCK_SECURE_")) {
+            SecureCredentialStore.write(key, value.trim());
+        }
     }
 
     public DatabaseConfig withMode(DatabaseMode newMode) {
@@ -167,17 +187,18 @@ public record DatabaseConfig(
                                           String serverHost, int serverPort, Integer locationId,
                                           String cloudJdbcUrl, String cloudDbUser, String cloudDbPassword,
                                           int syncIntervalSeconds) {
-        DatabaseMode cleanMode = mode == null ? DatabaseMode.CLOUD_DIRECT : mode;
+        DatabaseMode cleanMode = mode == null ? DatabaseMode.CLIENT : mode;
         String cleanHost = firstNonBlank(serverHost, "127.0.0.1");
         int cleanPort = serverPort <= 0 ? 5432 : serverPort;
         String cleanCloudUrl = firstNonBlank(cloudJdbcUrl, "");
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
         String cleanJdbcUrl = firstNonBlank(jdbcUrl, "");
-        if (isBlank(cleanJdbcUrl) && cleanMode != DatabaseMode.CLOUD_DIRECT) {
-            cleanJdbcUrl = "jdbc:postgresql://" + cleanHost + ":" + cleanPort + "/smartstock";
+        if (cleanMode == DatabaseMode.CLIENT) {
+            return new DatabaseConfig(DatabaseMode.CLIENT, "", "", "", cleanHost, cleanPort, locationId,
+                    "", "", "", syncIntervalSeconds <= 0 ? 60 : syncIntervalSeconds);
         }
-        if (isBlank(cleanJdbcUrl) && cleanMode == DatabaseMode.CLOUD_DIRECT) {
-            cleanJdbcUrl = cleanCloudUrl;
+        if (isBlank(cleanJdbcUrl)) {
+            cleanJdbcUrl = "jdbc:postgresql://" + cleanHost + ":" + cleanPort + "/smartstock";
         }
         return new DatabaseConfig(cleanMode, firstNonBlank(cleanJdbcUrl, ""), firstNonBlank(savedCredentials.resolve(dbUser), ""),
                 firstNonBlank(savedCredentials.resolve(dbPassword), ""), cleanHost, cleanPort, locationId,

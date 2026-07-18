@@ -1,6 +1,7 @@
 package ui.screens;
 
-import data.DB;
+import services.LanApiClient;
+import services.LanMachineService;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -8,11 +9,6 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 
@@ -243,43 +239,10 @@ public class MachineManagement extends JFrame {
 
     private void loadMachines() {
         tableModel.setRowCount(0);
-        String search = searchField.getText().trim();
-        String sql = """
-                SELECT machine_id, machine_name, COALESCE(asset_tag, '') AS asset_tag,
-                       COALESCE(machine_type, '') AS machine_type, status,
-                       COALESCE(l.name, mm.location_name, '') AS location_name, next_service_date
-                FROM maintenance_machines mm
-                LEFT JOIN locations l ON l.location_id = mm.location_id
-                """ + (search.isBlank() ? "" : """
-                WHERE machine_name ILIKE ?
-                   OR COALESCE(asset_tag, '') ILIKE ?
-                   OR COALESCE(serial_number, '') ILIKE ?
-                   OR COALESCE(machine_type, '') ILIKE ?
-                   OR COALESCE(l.name, mm.location_name, '') ILIKE ?
-                """) + " ORDER BY machine_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
-                    ps.setString(i, pattern);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    tableModel.addRow(new Object[]{
-                            rs.getInt("machine_id"),
-                            rs.getString("machine_name"),
-                            rs.getString("asset_tag"),
-                            rs.getString("machine_type"),
-                            rs.getString("status"),
-                            rs.getString("location_name"),
-                            formatDate(rs.getDate("next_service_date"))
-                    });
-                }
-            }
-        } catch (SQLException ex) {
+        try {
+            LanMachineService.State state=LanApiClient.loadMachineState(searchField.getText().trim());
+            for(var row:state.machines())tableModel.addRow(new Object[]{row.id(),row.name(),row.assetTag(),row.type(),row.status(),row.location(),row.nextServiceDate()==null?"":row.nextServiceDate().toString()});
+        } catch (Exception ex) {
             showError("load machines", ex);
         }
     }
@@ -290,40 +253,9 @@ public class MachineManagement extends JFrame {
             return;
         }
         Integer id = (Integer) tableModel.getValueAt(table.convertRowIndexToModel(row), 0);
-        String sql = """
-                SELECT mm.*, COALESCE(l.name, mm.location_name, '') AS resolved_location_name
-                FROM maintenance_machines mm
-                LEFT JOIN locations l ON l.location_id = mm.location_id
-                WHERE mm.machine_id = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    selectedMachineId = id;
-                    nameField.setText(rs.getString("machine_name"));
-                    assetTagField.setText(value(rs.getString("asset_tag")));
-                    serialNumberField.setText(value(rs.getString("serial_number")));
-                    manufacturerField.setText(value(rs.getString("manufacturer")));
-                    modelField.setText(value(rs.getString("model")));
-                    typeField.setText(value(rs.getString("machine_type")));
-                    int locationId = rs.getInt("location_id");
-                    if (rs.wasNull()) {
-                        selectLocationByName(rs.getString("resolved_location_name"));
-                    } else {
-                        selectLocation(locationId);
-                    }
-                    statusBox.setSelectedItem(rs.getString("status"));
-                    purchaseDateField.setText(formatDate(rs.getDate("purchase_date")));
-                    warrantyDateField.setText(formatDate(rs.getDate("warranty_expiration_date")));
-                    lastServiceDateField.setText(formatDate(rs.getDate("last_service_date")));
-                    nextServiceDateField.setText(formatDate(rs.getDate("next_service_date")));
-                    notesArea.setText(value(rs.getString("notes")));
-                    loadAssociatedParts();
-                }
-            }
-        } catch (SQLException ex) {
+        try {
+            LanMachineService.Detail detail=LanApiClient.loadMachineDetail(id);LanMachineService.Machine machine=detail.machine();selectedMachineId=id;nameField.setText(machine.name());assetTagField.setText(value(machine.assetTag()));serialNumberField.setText(value(machine.serialNumber()));manufacturerField.setText(value(machine.manufacturer()));modelField.setText(value(machine.model()));typeField.setText(value(machine.type()));if(machine.locationId()==null)selectLocationByName(machine.locationName());else selectLocation(machine.locationId());statusBox.setSelectedItem(machine.status());purchaseDateField.setText(dateText(machine.purchaseDate()));warrantyDateField.setText(dateText(machine.warrantyDate()));lastServiceDateField.setText(dateText(machine.lastServiceDate()));nextServiceDateField.setText(dateText(machine.nextServiceDate()));notesArea.setText(value(machine.notes()));populateAssociatedParts(detail.parts());
+        } catch (Exception ex) {
             showError("load selected machine", ex);
         }
     }
@@ -334,46 +266,12 @@ public class MachineManagement extends JFrame {
             showWarning("Machine name is required.");
             return;
         }
-        String insertSql = """
-                INSERT INTO maintenance_machines (
-                    machine_name, asset_tag, serial_number, manufacturer, model, machine_type,
-                    location_id, location_name, status, purchase_date, warranty_expiration_date,
-                    last_service_date, next_service_date, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSql = """
-                UPDATE maintenance_machines
-                SET machine_name = ?, asset_tag = ?, serial_number = ?, manufacturer = ?, model = ?,
-                    machine_type = ?, location_id = ?, location_name = ?, status = ?, purchase_date = ?,
-                    warranty_expiration_date = ?, last_service_date = ?, next_service_date = ?,
-                    notes = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE machine_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(selectedMachineId == null ? insertSql : updateSql)) {
-            ps.setString(1, name);
-            ps.setString(2, nullable(assetTagField));
-            ps.setString(3, nullable(serialNumberField));
-            ps.setString(4, nullable(manufacturerField));
-            ps.setString(5, nullable(modelField));
-            ps.setString(6, nullable(typeField));
+        try {
             LocationOption location = (LocationOption) locationBox.getSelectedItem();
-            setLocationId(ps, 7, location);
-            ps.setString(8, location == null || location.id == null ? null : location.name);
-            ps.setString(9, String.valueOf(statusBox.getSelectedItem()));
-            setDate(ps, 10, purchaseDateField);
-            setDate(ps, 11, warrantyDateField);
-            setDate(ps, 12, lastServiceDateField);
-            setDate(ps, 13, nextServiceDateField);
-            ps.setString(14, nullable(notesArea));
-            if (selectedMachineId != null) {
-                ps.setInt(15, selectedMachineId);
-            }
-            ps.executeUpdate();
+            LanApiClient.saveMachine(new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(typeField),location==null?null:location.id,location==null?null:location.name,String.valueOf(statusBox.getSelectedItem()),parseDate(purchaseDateField),parseDate(warrantyDateField),parseDate(lastServiceDateField),parseDate(nextServiceDateField),nullable(notesArea)),java.util.UUID.randomUUID().toString());
             clearEditor();
             loadMachines();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showError("save machine", ex);
         }
     }
@@ -393,13 +291,11 @@ public class MachineManagement extends JFrame {
         if (result != JOptionPane.YES_OPTION) {
             return;
         }
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM maintenance_machines WHERE machine_id = ?")) {
-            ps.setInt(1, selectedMachineId);
-            ps.executeUpdate();
+        try {
+            LanApiClient.updateMachineLink("DELETE",selectedMachineId,null,null,null,java.util.UUID.randomUUID().toString());
             clearEditor();
             loadMachines();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("delete machine", ex);
         }
     }
@@ -428,24 +324,8 @@ public class MachineManagement extends JFrame {
 
     private void loadPartOptions() {
         partBox.removeAllItems();
-        String sql = """
-                SELECT part_id, part_name, COALESCE(part_number, '') AS part_number
-                FROM maintenance_parts
-                WHERE is_active = TRUE
-                ORDER BY part_name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                partBox.addItem(new PartOption(
-                        rs.getInt("part_id"),
-                        rs.getString("part_name"),
-                        rs.getString("part_number")
-                ));
-            }
-        } catch (SQLException ex) {
+        try {for(var part:LanApiClient.loadMachineState("").parts())partBox.addItem(new PartOption(part.id(),part.name(),part.partNumber()));}
+        catch (Exception ex) {
             showError("load parts", ex);
         }
     }
@@ -454,14 +334,8 @@ public class MachineManagement extends JFrame {
         locationBox.removeAllItems();
         locationBox.addItem(new LocationOption(null, "Unassigned"));
 
-        String sql = "SELECT location_id, name FROM locations ORDER BY name";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                locationBox.addItem(new LocationOption(rs.getInt("location_id"), rs.getString("name")));
-            }
-        } catch (SQLException ex) {
+        try {for(var location:LanApiClient.loadMachineState("").locations())locationBox.addItem(new LocationOption(location.id(),location.name()));}
+        catch (Exception ex) {
             showError("load stores", ex);
         }
     }
@@ -472,31 +346,8 @@ public class MachineManagement extends JFrame {
             return;
         }
 
-        String sql = """
-                SELECT mp.machine_part_id,
-                       p.part_name,
-                       COALESCE(p.part_number, '') AS part_number,
-                       COALESCE(mp.notes, '') AS notes
-                FROM maintenance_machine_parts mp
-                JOIN maintenance_parts p ON p.part_id = mp.part_id
-                WHERE mp.machine_id = ?
-                ORDER BY p.part_name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, selectedMachineId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    associatedPartsModel.addRow(new Object[]{
-                            rs.getLong("machine_part_id"),
-                            rs.getString("part_name"),
-                            rs.getString("part_number"),
-                            rs.getString("notes")
-                    });
-                }
-            }
-        } catch (SQLException ex) {
+        try {populateAssociatedParts(LanApiClient.loadMachineDetail(selectedMachineId).parts());}
+        catch (Exception ex) {
             showError("load associated parts", ex);
         }
     }
@@ -512,23 +363,11 @@ public class MachineManagement extends JFrame {
             return;
         }
 
-        String sql = """
-                INSERT INTO maintenance_machine_parts (machine_id, part_id, notes)
-                VALUES (?, ?, ?)
-                ON CONFLICT (machine_id, part_id)
-                DO UPDATE SET notes = EXCLUDED.notes,
-                              updated_at = CURRENT_TIMESTAMP
-                """;
-
-        try (Connection conn = DB.getConnection();
-            PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, selectedMachineId);
-            ps.setInt(2, selectedPart.id);
-            ps.setString(3, nullable(partNotesField));
-            ps.executeUpdate();
+        try {
+            LanApiClient.updateMachineLink("LINK",selectedMachineId,selectedPart.id,null,nullable(partNotesField),java.util.UUID.randomUUID().toString());
             partNotesField.setText("");
             loadAssociatedParts();
-        } catch (SQLException | IllegalArgumentException ex) {
+        } catch (Exception ex) {
             showError("associate part", ex);
         }
     }
@@ -542,12 +381,10 @@ public class MachineManagement extends JFrame {
         int modelRow = associatedPartsTable.convertRowIndexToModel(row);
         Long machinePartId = ((Number) associatedPartsModel.getValueAt(modelRow, 0)).longValue();
 
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM maintenance_machine_parts WHERE machine_part_id = ?")) {
-            ps.setLong(1, machinePartId);
-            ps.executeUpdate();
+        try {
+            LanApiClient.updateMachineLink("UNLINK",null,null,machinePartId,null,java.util.UUID.randomUUID().toString());
             loadAssociatedParts();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("remove associated part", ex);
         }
     }
@@ -592,26 +429,17 @@ public class MachineManagement extends JFrame {
         return value.isEmpty() ? null : value;
     }
 
-    private static void setDate(PreparedStatement ps, int index, JTextField field) throws SQLException {
+    private static LocalDate parseDate(JTextField field) {
         String value = field.getText().trim();
-        if (value.isBlank()) {
-            ps.setNull(index, java.sql.Types.DATE);
-            return;
-        }
+        if (value.isBlank()) return null;
         try {
-            ps.setDate(index, Date.valueOf(LocalDate.parse(value)));
+            return LocalDate.parse(value);
         } catch (DateTimeParseException ex) {
             throw new IllegalArgumentException("Dates must use YYYY-MM-DD.");
         }
     }
-
-    private static void setLocationId(PreparedStatement ps, int index, LocationOption location) throws SQLException {
-        if (location == null || location.id == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, location.id);
-        }
-    }
+    private void populateAssociatedParts(java.util.List<LanMachineService.PartLink> parts){associatedPartsModel.setRowCount(0);for(var p:parts)associatedPartsModel.addRow(new Object[]{p.linkId(),p.name(),p.partNumber(),p.notes()});}
+    private static String dateText(LocalDate date){return date==null?"":date.toString();}
 
     private void selectLocation(int locationId) {
         for (int i = 0; i < locationBox.getItemCount(); i++) {
@@ -639,10 +467,6 @@ public class MachineManagement extends JFrame {
 
     private static String value(String text) {
         return text == null ? "" : text;
-    }
-
-    private static String formatDate(Date date) {
-        return date == null ? "" : date.toLocalDate().toString();
     }
 
     private void showWarning(String message) {

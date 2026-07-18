@@ -1,6 +1,6 @@
 package ui.screens;
 
-import data.DB;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -8,10 +8,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.UUID;
 
 public class CustomerTypeList extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -21,6 +18,8 @@ public class CustomerTypeList extends JFrame {
     private final DefaultTableModel tableModel;
     private final JTable typeTable;
     private Integer selectedTypeId;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
 
     public CustomerTypeList() {
         setTitle("Customer Types");
@@ -162,35 +161,15 @@ public class CustomerTypeList extends JFrame {
 
     private void loadCustomerTypes() {
         tableModel.setRowCount(0);
-        String search = searchField.getText().trim();
-        String sql = """
-                SELECT customer_type_id, name, COALESCE(description, '') AS description, COALESCE(is_active, TRUE) AS is_active
-                FROM customer_types
-                """;
-        if (!search.isBlank()) {
-            sql += " WHERE name ILIKE ? OR COALESCE(description, '') ILIKE ?";
-        }
-        sql += " ORDER BY name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                ps.setString(1, pattern);
-                ps.setString(2, pattern);
+        try {
+            for (LanApiClient.CustomerTypeRecord type :
+                    LanApiClient.loadCustomerTypes(searchField.getText().trim(), false)) {
+                tableModel.addRow(new Object[]{type.customerTypeId(), type.name(),
+                        type.description(), type.active()});
             }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    tableModel.addRow(new Object[]{
-                            rs.getInt("customer_type_id"),
-                            rs.getString("name"),
-                            rs.getString("description"),
-                            rs.getBoolean("is_active")
-                    });
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -214,24 +193,23 @@ public class CustomerTypeList extends JFrame {
             return;
         }
 
-        String sql = selectedTypeId == null
-                ? "INSERT INTO customer_types (name, description, is_active) VALUES (?, ?, ?)"
-                : "UPDATE customer_types SET name = ?, description = ?, is_active = ? WHERE customer_type_id = ?";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, name);
-            ps.setString(2, description.isBlank() ? null : description);
-            ps.setBoolean(3, activeBox.isSelected());
-            if (selectedTypeId != null) {
-                ps.setInt(4, selectedTypeId);
+        try {
+            LanApiClient.CustomerTypeSaveRequest request = new LanApiClient.CustomerTypeSaveRequest(
+                    selectedTypeId, name, description, activeBox.isSelected());
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
+                pendingSaveFingerprint = fingerprint;
+                pendingSaveKey = UUID.randomUUID().toString();
             }
-            ps.executeUpdate();
+            LanApiClient.saveCustomerType(request, pendingSaveKey);
+            pendingSaveKey = null;
+            pendingSaveFingerprint = null;
             clearEditor();
             loadCustomerTypes();
             JOptionPane.showMessageDialog(this, "Customer type saved.");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save customer type: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save customer type: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

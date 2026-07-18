@@ -1,11 +1,8 @@
 package ui.screens;
 
-import data.DB;
 import managers.PermissionManager;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
-import services.DeviceContextService;
-import services.SyncOutboxService;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -14,16 +11,11 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.UUID;
 
 public class StoreTransfer extends JFrame {
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
@@ -41,6 +33,10 @@ public class StoreTransfer extends JFrame {
     private final JTable incomingTable;
     private final DefaultTableModel incomingItemsModel;
     private final JTable incomingItemsTable;
+    private String pendingCreateKey;
+    private String pendingCreateFingerprint;
+    private Long pendingReceiveTransferId;
+    private String pendingReceiveKey;
 
     public StoreTransfer() {
         setTitle("Store Transfer");
@@ -249,21 +245,12 @@ public class StoreTransfer extends JFrame {
 
     private void loadLocations() {
         destinationBox.removeAllItems();
-        Integer sourceLocationId = SessionManager.getCurrentLocationId();
-        String sql = "SELECT location_id, name FROM locations ORDER BY name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                int locationId = rs.getInt("location_id");
-                if (sourceLocationId != null && locationId == sourceLocationId) {
-                    continue;
-                }
-                destinationBox.addItem(new LocationOption(locationId, rs.getString("name")));
+        try {
+            for (LanApiClient.TransferLocation location : LanApiClient.loadTransferDestinations()) {
+                destinationBox.addItem(new LocationOption(location.locationId(), location.name()));
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -274,46 +261,13 @@ public class StoreTransfer extends JFrame {
             return;
         }
 
-        String search = searchField.getText().trim();
-        StringBuilder sql = new StringBuilder("""
-                SELECT p.product_id,
-                       p.sku,
-                       p.name || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS name,
-                       COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-                FROM products p
-                JOIN inventory i ON i.product_id = p.product_id
-                WHERE i.location_id = ?
-                  AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
-                """);
-        boolean hasSearch = !search.isBlank();
-        if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ?)");
-        }
-        sql.append(" ORDER BY p.name ASC LIMIT 100");
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            ps.setInt(1, sourceLocationId);
-            if (hasSearch) {
-                String pattern = "%" + search + "%";
-                ps.setString(2, pattern);
-                ps.setString(3, pattern);
-                ps.setString(4, pattern);
-                ps.setString(5, pattern);
+        try {
+            for (LanApiClient.TransferProduct product : LanApiClient.searchTransferProducts(searchField.getText().trim())) {
+                productListModel.addElement(new ProductOption(product.productId(), product.sku(), product.name(),
+                        product.availableQuantity()));
             }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    productListModel.addElement(new ProductOption(
-                            rs.getInt("product_id"),
-                            rs.getString("sku"),
-                            rs.getString("name"),
-                            rs.getInt("quantity_on_hand")
-                    ));
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load products: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load products: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -325,20 +279,11 @@ public class StoreTransfer extends JFrame {
         }
 
         int qty = (Integer) quantitySpinner.getValue();
-        if (qty > product.availableQuantity()) {
-            JOptionPane.showMessageDialog(this, "Transfer quantity cannot be higher than the available stock.");
-            return;
-        }
-
         for (int i = 0; i < transferModel.getRowCount(); i++) {
             int existingProductId = Integer.parseInt(String.valueOf(transferModel.getValueAt(i, 0)));
             if (existingProductId == product.productId()) {
                 int currentQty = parseInt(transferModel.getValueAt(i, 4), 0);
                 int newQty = currentQty + qty;
-                if (newQty > product.availableQuantity()) {
-                    JOptionPane.showMessageDialog(this, "Total transfer quantity cannot be higher than the available stock.");
-                    return;
-                }
                 transferModel.setValueAt(newQty, i, 4);
                 return;
             }
@@ -384,181 +329,65 @@ public class StoreTransfer extends JFrame {
             return;
         }
 
-        List<TransferItem> items = new ArrayList<>();
+        List<LanApiClient.TransferLine> items = new ArrayList<>();
         for (int i = 0; i < transferModel.getRowCount(); i++) {
             int productId = Integer.parseInt(String.valueOf(transferModel.getValueAt(i, 0)));
             int available = parseInt(transferModel.getValueAt(i, 3), 0);
-            int qty = parseInt(transferModel.getValueAt(i, 4), 0);
-            if (qty <= 0) {
+            int quantity = parseInt(transferModel.getValueAt(i, 4), 0);
+            if (quantity <= 0) {
                 JOptionPane.showMessageDialog(this, "Transfer quantity must be greater than zero.");
                 return;
             }
-            if (qty > available) {
-                JOptionPane.showMessageDialog(this, "Transfer quantity cannot be higher than available stock for product " + productId + ".");
-                return;
-            }
-            items.add(new TransferItem(productId, qty));
+            items.add(new LanApiClient.TransferLine(productId, quantity));
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                long transferId = createTransfer(conn, sourceLocationId, destination, items);
-                SyncOutboxService.recordEvent(conn, "STORE_TRANSFER_CREATED", Map.of(
-                        "transfer_id", transferId,
-                        "source_location_id", sourceLocationId,
-                        "destination_location_id", destination.locationId,
-                        "line_count", items.size(),
-                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
-                ));
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Transfer sent successfully.\nTransfer ID: " + transferId + "\nThe receiving store must verify it before stock is added.");
-                transferModel.setRowCount(0);
-                noteArea.setText("");
-                loadProducts();
-                loadIncomingTransfers();
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+        try {
+            LanApiClient.CreateTransferRequest request = new LanApiClient.CreateTransferRequest(
+                    destination.locationId(), noteArea.getText().trim(), List.copyOf(items));
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingCreateFingerprint) || pendingCreateKey == null) {
+                pendingCreateFingerprint = fingerprint;
+                pendingCreateKey = UUID.randomUUID().toString();
             }
+            LanApiClient.CreateTransferResult result =
+                    LanApiClient.createTransfer(request, pendingCreateKey);
+            pendingCreateKey = null;
+            pendingCreateFingerprint = null;
+
+            JOptionPane.showMessageDialog(this,
+                    "Transfer sent successfully.\nTransfer ID: " + result.transferId()
+                            + "\nThe receiving store must verify it before stock is added.");
+            transferModel.setRowCount(0);
+            noteArea.setText("");
+            loadProducts();
+            loadIncomingTransfers();
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Transfer failed: " + ex.getMessage(), "Transfer Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Transfer failed: " + ex.getMessage(),
+                    "Transfer Error", JOptionPane.ERROR_MESSAGE);
         }
-    }
-
-    private long createTransfer(Connection conn, int sourceLocationId, LocationOption destination, List<TransferItem> items) throws SQLException {
-        String insertTransferSql = """
-                INSERT INTO store_transfers (
-                    from_location_id,
-                    to_location_id,
-                    user_id,
-                    user_name,
-                    note
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """;
-        String insertTransferItemSql = "INSERT INTO store_transfer_items (transfer_id, product_id, quantity) VALUES (?, ?, ?)";
-        String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-        String subtractInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ? AND quantity_on_hand >= ?";
-        String insertMovementSql = """
-                INSERT INTO inventory_movements (
-                    product_id, location_id, change_qty, reason, note, user_name,
-                    user_id, device_id, device_name
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-
-        long transferId;
-        try (PreparedStatement transferStmt = conn.prepareStatement(insertTransferSql, Statement.RETURN_GENERATED_KEYS)) {
-            transferStmt.setInt(1, sourceLocationId);
-            transferStmt.setInt(2, destination.locationId());
-            setNullableInteger(transferStmt, 3, SessionManager.getCurrentUserId());
-            transferStmt.setString(4, SessionManager.getCurrentUserDisplayName());
-            transferStmt.setString(5, noteArea.getText().trim());
-            transferStmt.executeUpdate();
-
-            try (ResultSet keys = transferStmt.getGeneratedKeys()) {
-                if (!keys.next()) {
-                    throw new SQLException("Failed to create transfer record.");
-                }
-                transferId = keys.getLong(1);
-            }
-        }
-
-        try (PreparedStatement itemStmt = conn.prepareStatement(insertTransferItemSql);
-             PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
-             PreparedStatement subtractStmt = conn.prepareStatement(subtractInventorySql);
-             PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
-
-            for (TransferItem item : items) {
-                ensureInventoryStmt.setInt(1, item.productId());
-                ensureInventoryStmt.setInt(2, sourceLocationId);
-                ensureInventoryStmt.addBatch();
-            }
-            ensureInventoryStmt.executeBatch();
-
-            for (TransferItem item : items) {
-                subtractStmt.setInt(1, item.quantity());
-                subtractStmt.setInt(2, item.productId());
-                subtractStmt.setInt(3, sourceLocationId);
-                subtractStmt.setInt(4, item.quantity());
-                int updated = subtractStmt.executeUpdate();
-                if (updated == 0) {
-                    throw new SQLException("Not enough stock to transfer product " + item.productId() + ".");
-                }
-
-                itemStmt.setLong(1, transferId);
-                itemStmt.setInt(2, item.productId());
-                itemStmt.setInt(3, item.quantity());
-                itemStmt.addBatch();
-
-                String note = "transfer_id=" + transferId + "; from_location_id=" + sourceLocationId + "; to_location_id=" + destination.locationId();
-                movementStmt.setInt(1, item.productId());
-                movementStmt.setInt(2, sourceLocationId);
-                movementStmt.setInt(3, -item.quantity());
-                movementStmt.setString(4, "TRANSFER_OUT");
-                movementStmt.setString(5, note);
-                movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                setNullableInteger(movementStmt, 7, SessionManager.getCurrentUserId());
-                movementStmt.setString(8, DeviceContextService.currentDeviceId());
-                movementStmt.setString(9, DeviceContextService.currentDeviceName());
-                movementStmt.addBatch();
-
-            }
-
-            itemStmt.executeBatch();
-            movementStmt.executeBatch();
-        }
-
-        return transferId;
     }
 
     private void loadIncomingTransfers() {
         incomingModel.setRowCount(0);
         incomingItemsModel.setRowCount(0);
-        Integer currentLocationId = SessionManager.getCurrentLocationId();
-        if (currentLocationId == null) {
+        if (SessionManager.getCurrentLocationId() == null) {
             return;
         }
-
-        String sql = """
-                SELECT st.transfer_id,
-                       COALESCE(l.name, 'Unknown') AS from_store,
-                       (st.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(st.user_name, '') AS sent_by,
-                       COALESCE(st.note, '') AS note,
-                       COUNT(sti.transfer_item_id) AS item_count,
-                       COALESCE(SUM(sti.quantity), 0) AS unit_count
-                FROM store_transfers st
-                LEFT JOIN store_transfer_items sti ON sti.transfer_id = st.transfer_id
-                LEFT JOIN locations l ON l.location_id = st.from_location_id
-                WHERE st.to_location_id = ?
-                  AND UPPER(COALESCE(st.status, 'PENDING')) = 'PENDING'
-                GROUP BY st.transfer_id, l.name, st.created_at, st.user_name, st.note
-                ORDER BY st.created_at ASC, st.transfer_id ASC
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, currentLocationId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    incomingModel.addRow(new Object[]{
-                            rs.getLong("transfer_id"),
-                            rs.getString("from_store"),
-                            formatLocalTimestamp(rs.getTimestamp("local_created_at")),
-                            rs.getInt("item_count"),
-                            rs.getInt("unit_count"),
-                            rs.getString("sent_by"),
-                            rs.getString("note")
-                    });
-                }
+        try {
+            for (LanApiClient.IncomingTransfer transfer : LanApiClient.loadIncomingTransfers()) {
+                incomingModel.addRow(new Object[]{
+                        transfer.transferId(),
+                        transfer.fromStore(),
+                        formatLocalTimestamp(transfer.createdAtEpochMillis()),
+                        transfer.itemCount(),
+                        transfer.unitCount(),
+                        transfer.sentBy(),
+                        transfer.note()
+                });
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load incoming transfers: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load incoming transfers: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -576,33 +405,15 @@ public class StoreTransfer extends JFrame {
         if (transferId == null) {
             return;
         }
-
-        String sql = """
-                SELECT sti.product_id,
-                       COALESCE(p.sku, '') AS sku,
-                       COALESCE(p.name, 'Unknown') AS product_name,
-                       sti.quantity
-                FROM store_transfer_items sti
-                LEFT JOIN products p ON p.product_id = sti.product_id
-                WHERE sti.transfer_id = ?
-                ORDER BY p.name ASC, sti.product_id ASC
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, transferId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    incomingItemsModel.addRow(new Object[]{
-                            rs.getInt("product_id"),
-                            rs.getString("sku"),
-                            rs.getString("product_name"),
-                            rs.getInt("quantity")
-                    });
-                }
+        try {
+            for (LanApiClient.TransferDetailItem item : LanApiClient.loadTransferItems(transferId)) {
+                incomingItemsModel.addRow(new Object[]{
+                        item.productId(), item.sku(), item.name(), item.quantity()
+                });
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load transfer items: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load transfer items: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -628,43 +439,30 @@ public class StoreTransfer extends JFrame {
         if (result != JOptionPane.YES_OPTION) {
             return;
         }
-
-        Integer locationId = SessionManager.getCurrentLocationId();
-        if (locationId == null) {
+        if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No receiving store is selected.");
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                String receiveId = receiveTransfer(conn, transferId, locationId);
-                SyncOutboxService.recordEvent(conn, "INVENTORY_RECEIVED", Map.of(
-                        "source", "STORE_TRANSFER",
-                        "transfer_id", transferId,
-                        "receive_id", receiveId,
-                        "location_id", locationId,
-                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
-                ));
-                SyncOutboxService.recordEvent(conn, "INVENTORY_MOVEMENT_CREATED", Map.of(
-                        "source", "STORE_TRANSFER_RECEIVE",
-                        "transfer_id", transferId,
-                        "receive_id", receiveId,
-                        "location_id", locationId
-                ));
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Transfer received successfully.\nReceive ID: " + receiveId);
-                loadIncomingTransfers();
-                incomingItemsModel.setRowCount(0);
-                loadProducts();
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+        try {
+            if (pendingReceiveTransferId == null || pendingReceiveTransferId != transferId
+                    || pendingReceiveKey == null) {
+                pendingReceiveTransferId = transferId;
+                pendingReceiveKey = UUID.randomUUID().toString();
             }
+            LanApiClient.ReceiveTransferResult response =
+                    LanApiClient.receiveTransfer(transferId, pendingReceiveKey);
+            pendingReceiveTransferId = null;
+            pendingReceiveKey = null;
+
+            JOptionPane.showMessageDialog(this,
+                    "Transfer received successfully.\nReceive ID: " + response.receiveId());
+            loadIncomingTransfers();
+            incomingItemsModel.setRowCount(0);
+            loadProducts();
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to receive transfer: " + ex.getMessage(), "Transfer Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to receive transfer: " + ex.getMessage(),
+                    "Transfer Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -691,148 +489,6 @@ public class StoreTransfer extends JFrame {
         return message.toString();
     }
 
-    private String receiveTransfer(Connection conn, long transferId, int receivingLocationId) throws Exception {
-        ReceiptNumberManager.ReceiveNumber receive = ReceiptNumberManager.nextReceive(receivingLocationId);
-        String lockTransferSql = """
-                SELECT transfer_id, from_location_id, to_location_id, status
-                FROM store_transfers
-                WHERE transfer_id = ?
-                FOR UPDATE
-                """;
-        int fromLocationId;
-        try (PreparedStatement ps = conn.prepareStatement(lockTransferSql)) {
-            ps.setLong(1, transferId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Transfer not found.");
-                }
-                if (rs.getInt("to_location_id") != receivingLocationId) {
-                    throw new SQLException("This transfer belongs to a different receiving store.");
-                }
-                if (!"PENDING".equalsIgnoreCase(rs.getString("status"))) {
-                    throw new SQLException("This transfer has already been received.");
-                }
-                fromLocationId = rs.getInt("from_location_id");
-            }
-        }
-
-        String insertReceivingBatchSql = """
-                INSERT INTO receiving_batches (
-                    receive_id,
-                    location_id,
-                    user_id,
-                    user_name,
-                    receive_device_id,
-                    receive_sequence
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """;
-        String selectItemsSql = "SELECT product_id, quantity FROM store_transfer_items WHERE transfer_id = ?";
-        String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-        String addInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
-        String insertMovementSql = """
-                INSERT INTO inventory_movements (
-                    product_id,
-                    location_id,
-                    change_qty,
-                    reason,
-                    note,
-                    user_name,
-                    user_id,
-                    device_id,
-                    device_name,
-                    receive_id,
-                    receive_device_id,
-                    receive_sequence
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateTransferSql = """
-                UPDATE store_transfers
-                SET status = 'RECEIVED',
-                    received_at = CURRENT_TIMESTAMP,
-                    received_by_user_id = ?,
-                    received_by_name = ?,
-                    receive_id = ?
-                WHERE transfer_id = ?
-                """;
-
-        List<TransferItem> items = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(selectItemsSql)) {
-            ps.setLong(1, transferId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    items.add(new TransferItem(rs.getInt("product_id"), rs.getInt("quantity")));
-                }
-            }
-        }
-        if (items.isEmpty()) {
-            throw new SQLException("Transfer has no items.");
-        }
-
-        try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
-             PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
-             PreparedStatement addInventoryStmt = conn.prepareStatement(addInventorySql);
-             PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
-             PreparedStatement updateTransferStmt = conn.prepareStatement(updateTransferSql)) {
-
-            receivingBatchStmt.setString(1, receive.receiveId());
-            receivingBatchStmt.setInt(2, receivingLocationId);
-            setNullableInteger(receivingBatchStmt, 3, SessionManager.getCurrentUserId());
-            receivingBatchStmt.setString(4, SessionManager.getCurrentUserDisplayName());
-            receivingBatchStmt.setString(5, receive.deviceId());
-            receivingBatchStmt.setInt(6, receive.sequence());
-            receivingBatchStmt.executeUpdate();
-
-            for (TransferItem item : items) {
-                ensureInventoryStmt.setInt(1, item.productId());
-                ensureInventoryStmt.setInt(2, receivingLocationId);
-                ensureInventoryStmt.addBatch();
-            }
-            ensureInventoryStmt.executeBatch();
-
-            for (TransferItem item : items) {
-                addInventoryStmt.setInt(1, item.quantity());
-                addInventoryStmt.setInt(2, item.productId());
-                addInventoryStmt.setInt(3, receivingLocationId);
-                addInventoryStmt.addBatch();
-
-                movementStmt.setInt(1, item.productId());
-                movementStmt.setInt(2, receivingLocationId);
-                movementStmt.setInt(3, item.quantity());
-                movementStmt.setString(4, "INVENTORY_ENTRY");
-                movementStmt.setString(5, "transfer_id=" + transferId + "; from_location_id=" + fromLocationId + "; received_by_user_id=" + SessionManager.getCurrentUserId());
-                movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                setNullableInteger(movementStmt, 7, SessionManager.getCurrentUserId());
-                movementStmt.setString(8, DeviceContextService.currentDeviceId());
-                movementStmt.setString(9, DeviceContextService.currentDeviceName());
-                movementStmt.setString(10, receive.receiveId());
-                movementStmt.setString(11, receive.deviceId());
-                movementStmt.setInt(12, receive.sequence());
-                movementStmt.addBatch();
-            }
-
-            addInventoryStmt.executeBatch();
-            movementStmt.executeBatch();
-
-            setNullableInteger(updateTransferStmt, 1, SessionManager.getCurrentUserId());
-            updateTransferStmt.setString(2, SessionManager.getCurrentUserDisplayName());
-            updateTransferStmt.setString(3, receive.receiveId());
-            updateTransferStmt.setLong(4, transferId);
-            updateTransferStmt.executeUpdate();
-        }
-
-        return receive.receiveId();
-    }
-
-    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
     private static int parseInt(Object value, int fallback) {
         try {
             return Integer.parseInt(String.valueOf(value).trim());
@@ -845,8 +501,13 @@ public class StoreTransfer extends JFrame {
         return value == null ? "" : value;
     }
 
-    private static String formatLocalTimestamp(Timestamp timestamp) {
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, DATE_TIME_FORMAT);
+    private static String formatLocalTimestamp(long epochMillis) {
+        if (epochMillis <= 0) {
+            return "";
+        }
+        return Instant.ofEpochMilli(epochMillis)
+                .atZone(StoreTimeZoneHelper.getStoreZone())
+                .format(DATE_TIME_FORMAT);
     }
 
     private record LocationOption(int locationId, String name) {
@@ -863,6 +524,4 @@ public class StoreTransfer extends JFrame {
         }
     }
 
-    private record TransferItem(int productId, int quantity) {
-    }
 }

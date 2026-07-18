@@ -2,28 +2,33 @@ package ui.screens;
 
 import ui.screens.customorders.NewCustomItem;
 
-import data.DB;
 import managers.SessionManager;
-import services.DeviceContextService;
-import services.OfflineWriteGuard;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
+import ui.components.ItemDetailsSelector;
 import ui.components.RoundedBorder;
 import ui.components.VendorSelector;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 public class NewItem extends JFrame {
 
@@ -37,13 +42,18 @@ public class NewItem extends JFrame {
     private JTextField priceField;
     private JComboBox<String> itemTypeBox;
     private DepartmentSelector departmentSelector;
+    private ItemDetailsSelector itemDetailsSelector;
     private VendorSelector vendorSelector;
     private JTextField quantityField;
     private ProductImageHelper.ImageSelector imageSelector;
     private JButton saveButton;
     private JButton clearButton;
     private JButton cancelButton;
+    private JLabel quantityHintLabel;
+    private JScrollPane inventoryScrollPane;
     private final int selectedLocationId;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
 
     public NewItem() {
         this(1);
@@ -52,38 +62,30 @@ public class NewItem extends JFrame {
     public NewItem(int selectedLocationId) {
         this.selectedLocationId = selectedLocationId;
         setTitle("Add New Item");
-        setSize(980, 620);
+        setSize(1120, 800);
+        setMinimumSize(new Dimension(900, 650));
         setLocationRelativeTo(null);
-        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this,"NewItem"));
+        initializeFields();
 
-        JPanel panel = new JPanel(new BorderLayout(10, 10));
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createEmptyBorder(5, 5, 5, 5),
-                BorderFactory.createTitledBorder(
-                        new RoundedBorder(12, Color.GRAY, 1), // 👈 control radius here
-                        "New Item",
-                        javax.swing.border.TitledBorder.LEFT,
-                        javax.swing.border.TitledBorder.TOP,
-                        panel.getFont().deriveFont(Font.BOLD)
-                )
-        ));
+        JTabbedPane itemTypeTabs = new JTabbedPane();
+        itemTypeTabs.setFont(new Font("SansSerif", Font.BOLD, 13));
+        itemTypeTabs.addTab("Inventory Item", createInventoryItemPanel());
+        itemTypeTabs.addTab("Custom Item", new NewCustomItem(this));
+        add(itemTypeTabs);
 
-        JPanel formPanel = new JPanel(new GridLayout(1, 2, 20, 0));
+        wireActions();
+        updateQuantityEnabledForType();
 
-        JPanel leftColumn = new JPanel(new GridBagLayout());
-        JPanel rightColumn = new JPanel(new GridBagLayout());
+        WindowHelper.showPosWindow(this);
+        SwingUtilities.invokeLater(() -> {
+            nameField.requestFocusInWindow();
+            SwingUtilities.invokeLater(() -> inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0)));
+        });
+    }
 
-        GridBagConstraints leftGbc = new GridBagConstraints();
-        leftGbc.insets = new Insets(5, 5, 5, 5);
-        leftGbc.fill = GridBagConstraints.HORIZONTAL;
-        leftGbc.anchor = GridBagConstraints.NORTHWEST;
-
-        GridBagConstraints rightGbc = new GridBagConstraints();
-        rightGbc.insets = new Insets(5, 5, 5, 5);
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-
+    private void initializeFields() {
         nameField = new JTextField();
         sizeField = new JTextField();
         skuField = new JTextField();
@@ -98,205 +100,273 @@ public class NewItem extends JFrame {
         priceField = new JTextField();
         itemTypeBox = new JComboBox<>(new String[]{"Inventory", "Service", "Non Inventory"});
         departmentSelector = new DepartmentSelector();
+        itemDetailsSelector = new ItemDetailsSelector(departmentSelector, selectedLocationId);
         vendorSelector = new VendorSelector();
         quantityField = new JTextField("0");
-        imageSelector = ProductImageHelper.createImageSelector(this);
-
-        JScrollPane barcodeScrollPane = new JScrollPane(barcodesArea);
-        barcodeScrollPane.setPreferredSize(new Dimension(220, 75));
-        JScrollPane descriptionScrollPane = new JScrollPane(descriptionArea);
-        descriptionScrollPane.setPreferredSize(new Dimension(240, 120));
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 0;
-        leftGbc.weightx = 0;
-        leftGbc.weighty = 0;
-        leftColumn.add(new JLabel("Item Name:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(nameField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 1;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Size:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(sizeField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 2;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("SKU (auto if blank):"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(skuField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 3;
-        leftGbc.weightx = 0;
-        leftGbc.anchor = GridBagConstraints.NORTHWEST;
-        leftColumn.add(new JLabel("Description:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftGbc.weighty = 1;
-        leftGbc.fill = GridBagConstraints.BOTH;
-        leftColumn.add(descriptionScrollPane, leftGbc);
-
-        leftGbc.fill = GridBagConstraints.HORIZONTAL;
-        leftGbc.weighty = 0;
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 4;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Barcode:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(barcodeField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 5;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Price:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(priceField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 6;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Item Type:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(itemTypeBox, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 7;
-        leftGbc.weightx = 0;
-        leftColumn.add(new JLabel("Starting Quantity:"), leftGbc);
-
-        leftGbc.gridx = 1;
-        leftGbc.weightx = 1;
-        leftColumn.add(quantityField, leftGbc);
-
-        leftGbc.gridx = 0;
-        leftGbc.gridy = 8;
-        leftGbc.weightx = 0;
-        leftGbc.weighty = 1;
-        leftColumn.add(Box.createVerticalGlue(), leftGbc);
-
-
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 0;
-        rightGbc.weightx = 0;
-        rightGbc.weighty = 0;
-        rightColumn.add(new JLabel("Cost Price:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(costPriceField, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 1;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Department:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(departmentSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 2;
-        rightGbc.weightx = 0;
-        rightColumn.add(new JLabel("Vendor:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightColumn.add(vendorSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 3;
-        rightGbc.weightx = 0;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-        rightColumn.add(new JLabel("Additional Barcodes:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightGbc.weighty = 0;
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightColumn.add(barcodeScrollPane, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 4;
-        rightGbc.weightx = 0;
-        rightGbc.anchor = GridBagConstraints.NORTHWEST;
-        rightColumn.add(new JLabel("Image URL / Path:"), rightGbc);
-
-        rightGbc.gridx = 1;
-        rightGbc.weightx = 1;
-        rightGbc.weighty = 0;
-        rightGbc.fill = GridBagConstraints.HORIZONTAL;
-        rightColumn.add(imageSelector, rightGbc);
-
-        rightGbc.gridx = 0;
-        rightGbc.gridy = 5;
-        rightGbc.weightx = 0;
-        rightGbc.weighty = 1;
-        rightColumn.add(Box.createVerticalGlue(), rightGbc);
-
-        formPanel.add(leftColumn);
-        formPanel.add(rightColumn);
-
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-
+        imageSelector = ProductImageHelper.createSimpleImageSelector(this);
+        quantityHintLabel = createHelperLabel("Initial on-hand quantity for this location.");
         saveButton = new JButton("Save Item");
-        clearButton = new JButton("Clear");
-        cancelButton = new JButton("Close");
+        clearButton = new JButton("Clear Form");
+        cancelButton = new JButton("Cancel");
+    }
 
-        buttonPanel.add(saveButton);
-        buttonPanel.add(clearButton);
-        buttonPanel.add(cancelButton);
+    private JPanel createInventoryItemPanel() {
+        JPanel root = DeckersSwing.panel();
+        root.setLayout(new BorderLayout());
+        root.add(createHeaderPanel(), BorderLayout.NORTH);
 
-        panel.add(formPanel, BorderLayout.CENTER);
-        panel.setPreferredSize(new Dimension(780, 360));
-        panel.add(buttonPanel, BorderLayout.SOUTH);
+        ResponsiveSectionPanel form = new ResponsiveSectionPanel(
+                createItemDetailsSection(),
+                createPricingSection(),
+                createOrganizationSection(),
+                createOptionalSection()
+        );
 
-        JTabbedPane itemTypeTabs = new JTabbedPane();
-        itemTypeTabs.addTab("Inventory Item", panel);
-        itemTypeTabs.addTab("Custom Item", new NewCustomItem(this));
-        add(itemTypeTabs);
+        inventoryScrollPane = new JScrollPane(form);
+        inventoryScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        inventoryScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        inventoryScrollPane.getVerticalScrollBar().setUnitIncrement(18);
+        root.add(inventoryScrollPane, BorderLayout.CENTER);
+        root.add(createFooterPanel(), BorderLayout.SOUTH);
+        return root;
+    }
 
-        saveButton.addActionListener(new ActionListener() {
+    private JPanel createHeaderPanel() {
+        JPanel header = new JPanel(new BorderLayout(18, 0));
+        header.setBorder(new EmptyBorder(20, 26, 18, 26));
+        header.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        header.setBackground(DeckersPalette.sectionFill(DeckersPalette.ORANGE));
+
+        JPanel copy = new JPanel();
+        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+        copy.setOpaque(false);
+        JLabel title = new JLabel("Add an inventory item");
+        title.setFont(new Font("SansSerif", Font.BOLD, 24));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel subtitle = new JLabel("Start with the required details, then add any optional information you have.");
+        subtitle.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        subtitle.setForeground(DeckersPalette.muted());
+        subtitle.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        copy.add(title);
+        copy.add(Box.createVerticalStrut(5));
+        copy.add(subtitle);
+
+        JLabel required = new JLabel("* Required");
+        required.setFont(new Font("SansSerif", Font.BOLD, 12));
+        required.setForeground(DeckersPalette.ORANGE);
+        required.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        header.add(copy, BorderLayout.CENTER);
+        header.add(required, BorderLayout.EAST);
+        return header;
+    }
+
+    private JPanel createItemDetailsSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Item name", nameField, "Shown in sales and inventory search.", true, 1);
+        addField(fields, 1, 0, "Primary barcode", barcodeField, "Scan or enter the main barcode.", true, 1);
+        addField(fields, 0, 1, "Size", sizeField, "Optional, such as Small, 10 mm, or 5 lb.", false, 1);
+        addField(fields, 1, 1, "SKU", skuField, "Leave blank to generate one automatically.", false, 1);
+
+        JScrollPane descriptionScroll = createTextAreaScroll(descriptionArea, 76);
+        addField(fields, 0, 2, "Description", descriptionScroll, "Optional product notes or customer-facing details.", false, 2);
+        return createSectionCard("1", "Item details", "Identify the product so staff can find and scan it quickly.", DeckersPalette.ORANGE, fields);
+    }
+
+    private JPanel createPricingSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Cost price", costPriceField, "What the business pays for one item.", true, 1);
+        addField(fields, 1, 0, "Selling price", priceField, "The price charged to the customer.", true, 1);
+        addField(fields, 0, 1, "Product classification", itemTypeBox, "Choose Inventory, Service, or Non Inventory.", false, 1);
+        addField(fields, 1, 1, "Starting quantity", quantityField, quantityHintLabel, false, 1);
+        return createSectionCard("2", "Pricing and stock", "Set how the item is sold and its opening quantity.", DeckersPalette.LIME, fields);
+    }
+
+    private JPanel createOrganizationSection() {
+        JPanel fields = createFieldGrid();
+        addField(fields, 0, 0, "Department", departmentSelector, "Select the business department first.", true, 1);
+        addField(fields, 1, 0, "Item type", itemDetailsSelector.itemTypeComponent(), "Filtered by the selected department.", true, 1);
+        addField(fields, 0, 1, "Brand", itemDetailsSelector.brandComponent(), "Choose an existing brand or enter a new one.", true, 1);
+        addField(fields, 1, 1, "Vendor", vendorSelector, "Optional preferred supplier.", false, 1);
+        addField(fields, 0, 2, "Sales shelf", itemDetailsSelector.shelfComponent(), "Where staff find it on the sales floor.", true, 1);
+        addField(fields, 1, 2, "Storage shelf", itemDetailsSelector.storageShelfComponent(), "Optional location for reserve stock.", false, 1);
+        return createSectionCard("3", "Organization", "Choose where the product belongs and where it is stored.", DeckersPalette.MAGENTA, fields);
+    }
+
+    private JPanel createOptionalSection() {
+        JPanel fields = createFieldGrid();
+        JScrollPane barcodeScroll = createTextAreaScroll(barcodesArea, 112);
+        imageSelector.setPreferredSize(new Dimension(380, 112));
+        imageSelector.setMinimumSize(new Dimension(300, 112));
+        addField(fields, 0, 0, "Additional barcodes", barcodeScroll, "Optional. Enter one per line, or separate them with commas.", false, 1);
+        addField(fields, 1, 0, "Product image", imageSelector, "A clear product image is required.", true, 1);
+        return createSectionCard("4", "Barcodes and image", "Add the required product image and any additional barcodes.", DeckersPalette.PURPLE, fields);
+    }
+
+    private JPanel createFieldGrid() {
+        JPanel fields = new JPanel(new GridBagLayout());
+        fields.setOpaque(false);
+        return fields;
+    }
+
+    private void addField(JPanel panel, int column, int row, String labelText, JComponent component,
+                          String helperText, boolean required, int width) {
+        addField(panel, column, row, labelText, component, createHelperLabel(helperText), required, width);
+    }
+
+    private void addField(JPanel panel, int column, int row, String labelText, JComponent component,
+                          JLabel helperLabel, boolean required, int width) {
+        JPanel fieldPanel = new JPanel();
+        fieldPanel.setLayout(new BoxLayout(fieldPanel, BoxLayout.Y_AXIS));
+        fieldPanel.setOpaque(false);
+
+        JLabel label = new JLabel(labelText + (required ? " *" : ""));
+        label.setFont(new Font("SansSerif", Font.BOLD, 13));
+        label.setForeground(DeckersPalette.text());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        setComfortableControlSize(component);
+        helperLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        fieldPanel.add(label);
+        fieldPanel.add(Box.createVerticalStrut(6));
+        fieldPanel.add(component);
+        if (!helperLabel.getText().isBlank()) {
+            fieldPanel.add(Box.createVerticalStrut(5));
+            fieldPanel.add(helperLabel);
+        }
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = column;
+        gbc.gridy = row;
+        gbc.gridwidth = width;
+        gbc.weightx = width;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.insets = new Insets(row == 0 ? 0 : 14, column == 0 ? 0 : 10, 0, column + width >= 2 ? 0 : 10);
+        panel.add(fieldPanel, gbc);
+    }
+
+    private JPanel createSectionCard(String step, String titleText, String subtitleText, Color accent, JComponent body) {
+        JPanel card = new JPanel(new BorderLayout(0, 16));
+        DeckersSwing.styleBand(card, accent, new Insets(16, 18, 18, 18));
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+
+        JPanel heading = new JPanel(new BorderLayout(12, 0));
+        heading.setOpaque(false);
+        JLabel stepLabel = new JLabel(step, SwingConstants.CENTER);
+        stepLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
+        stepLabel.setForeground(DeckersPalette.text());
+        stepLabel.setOpaque(true);
+        stepLabel.setBackground(DeckersPalette.tileHover(accent));
+        stepLabel.setBorder(new RoundedBorder(10, DeckersPalette.sectionBorder(accent), 1));
+        stepLabel.setPreferredSize(new Dimension(34, 34));
+        stepLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+
+        JPanel text = new JPanel();
+        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+        text.setOpaque(false);
+        JLabel title = new JLabel(titleText);
+        title.setFont(new Font("SansSerif", Font.BOLD, 17));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel subtitle = new JLabel(subtitleText);
+        subtitle.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        subtitle.setForeground(DeckersPalette.muted());
+        subtitle.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        text.add(title);
+        text.add(Box.createVerticalStrut(3));
+        text.add(subtitle);
+        heading.add(stepLabel, BorderLayout.WEST);
+        heading.add(text, BorderLayout.CENTER);
+
+        card.add(heading, BorderLayout.NORTH);
+        card.add(body, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JScrollPane createTextAreaScroll(JTextArea area, int height) {
+        area.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        area.setBorder(new EmptyBorder(7, 9, 7, 9));
+        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane.setPreferredSize(new Dimension(300, height));
+        scrollPane.setMinimumSize(new Dimension(120, height));
+        return scrollPane;
+    }
+
+    private JLabel createHelperLabel(String text) {
+        JLabel label = new JLabel(text == null ? "" : text);
+        label.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        label.setForeground(DeckersPalette.muted());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        return label;
+    }
+
+    private void setComfortableControlSize(JComponent component) {
+        if (component instanceof JTextField || component instanceof JComboBox<?> || component instanceof DepartmentSelector
+                || component instanceof VendorSelector) {
+            Dimension preferred = component.getPreferredSize();
+            component.setPreferredSize(new Dimension(Math.max(180, preferred.width), Math.max(34, preferred.height)));
+            component.setMaximumSize(new Dimension(Integer.MAX_VALUE, Math.max(34, preferred.height)));
+        }
+    }
+
+    private JPanel createFooterPanel() {
+        JPanel footer = new JPanel(new BorderLayout(16, 0));
+        footer.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, DeckersPalette.border()),
+                new EmptyBorder(12, 20, 12, 20)
+        ));
+        footer.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        footer.setBackground(DeckersPalette.surface());
+
+        JLabel hint = createHelperLabel("Tip: leave SKU blank and SmartStock will generate it for you.");
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
+        DeckersSwing.styleUtilityButton(clearButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(cancelButton, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
+        saveButton.setPreferredSize(new Dimension(130, 40));
+        actions.add(clearButton);
+        actions.add(cancelButton);
+        actions.add(saveButton);
+        footer.add(hint, BorderLayout.WEST);
+        footer.add(actions, BorderLayout.EAST);
+        return footer;
+    }
+
+    private void wireActions() {
+        saveButton.addActionListener(e -> saveItem());
+        clearButton.addActionListener(e -> clearFields(true));
+        cancelButton.addActionListener(e -> confirmClose());
+        itemTypeBox.addActionListener(e -> updateQuantityEnabledForType());
+        saveButton.setToolTipText("Save item (Command/Ctrl+S)");
+
+        int menuShortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_S, menuShortcut), "saveItem");
+        getRootPane().getActionMap().put("saveItem", new AbstractAction() {
             @Override
-            public void actionPerformed(ActionEvent e) {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
                 saveItem();
             }
         });
-
-        clearButton.addActionListener(new ActionListener() {
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeItemForm");
+        getRootPane().getActionMap().put("closeItemForm", new AbstractAction() {
             @Override
-            public void actionPerformed(ActionEvent e) {
-                clearFields();
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                confirmClose();
             }
         });
-
-        cancelButton.addActionListener(new ActionListener() {
+        addWindowListener(new WindowAdapter() {
             @Override
-            public void actionPerformed(ActionEvent e) {
-                dispose();
+            public void windowClosing(WindowEvent e) {
+                confirmClose();
             }
         });
-        itemTypeBox.addActionListener(e -> updateQuantityEnabledForType());
-        updateQuantityEnabledForType();
-
-        WindowHelper.showPosWindow(this);
     }
 
     private void updateQuantityEnabledForType() {
@@ -304,6 +374,11 @@ public class NewItem extends JFrame {
         quantityField.setEnabled(inventoryItem);
         if (!inventoryItem) {
             quantityField.setText("0");
+        }
+        if (quantityHintLabel != null) {
+            quantityHintLabel.setText(inventoryItem
+                    ? "Initial on-hand quantity for this location."
+                    : "Not used for services or non-inventory items.");
         }
     }
 
@@ -317,12 +392,6 @@ public class NewItem extends JFrame {
     }
 
     private void saveItem() {
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Product setup");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
         String name = nameField.getText().trim();
         String size = sizeField.getText().trim();
         String sku = skuField.getText().trim();
@@ -334,18 +403,10 @@ public class NewItem extends JFrame {
         String quantityText = quantityField.getText().trim();
         String productType = getSelectedProductType();
         boolean inventoryItem = "INVENTORY".equals(productType);
-        String imageUrl;
-        try {
-            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
-            imageSelector.setImageUrl(imageUrl);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage());
-            return;
-        }
         List<String> extraBarcodes = new ArrayList<>();
         Set<String> uniqueBarcodes = new LinkedHashSet<>();
         if (!barcodesText.isEmpty()) {
-            String[] barcodeLines = barcodesText.split("\\r?\\n");
+            String[] barcodeLines = barcodesText.split("[\\r\\n,;]+");
 
             for (String line : barcodeLines) {
                 String extraBarcode = line.trim();
@@ -359,8 +420,20 @@ public class NewItem extends JFrame {
         uniqueBarcodes.remove(barcode);
         extraBarcodes.addAll(uniqueBarcodes);
 
-        if (name.isEmpty() || barcode.isEmpty() || costPriceText.isEmpty() || priceText.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Name, Barcode, Cost Price, and Price are required. Leave SKU blank to auto-generate it.");
+        if (name.isEmpty()) {
+            showValidationError("Enter an item name.", nameField);
+            return;
+        }
+        if (barcode.isEmpty()) {
+            showValidationError("Scan or enter the primary barcode.", barcodeField);
+            return;
+        }
+        if (costPriceText.isEmpty()) {
+            showValidationError("Enter the cost price.", costPriceField);
+            return;
+        }
+        if (priceText.isEmpty()) {
+            showValidationError("Enter the selling price.", priceField);
             return;
         }
 
@@ -368,23 +441,31 @@ public class NewItem extends JFrame {
         try {
             costPrice = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(costPriceText)).doubleValue();
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Cost price must be a valid number.");
+            showValidationError("Cost price must be a valid number.", costPriceField);
+            return;
+        }
+        if (costPrice < 0) {
+            showValidationError("Cost price cannot be negative.", costPriceField);
             return;
         }
         double price;
         try {
             price = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(priceText)).doubleValue();
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Price must be a valid number.");
+            showValidationError("Selling price must be a valid number.", priceField);
+            return;
+        }
+        if (price < 0) {
+            showValidationError("Selling price cannot be negative.", priceField);
             return;
         }
 
         int quantity = 0;
         if (inventoryItem) {
             try {
-                quantity = Integer.parseInt(quantityText);
+                quantity = quantityText.isBlank() ? 0 : Integer.parseInt(quantityText);
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Starting quantity must be a whole number.");
+                showValidationError("Starting quantity must be a whole number.", quantityField);
                 return;
             }
         }
@@ -393,143 +474,92 @@ public class NewItem extends JFrame {
         if (categoryId == null && !departmentSelector.getSelectedDepartmentName().isBlank()) {
             return;
         }
+        if (categoryId == null) {
+            showValidationError("Select a department.", departmentSelector);
+            return;
+        }
+        if (itemDetailsSelector.itemTypeName().isBlank()) {
+            showValidationError("Select or enter an item type.", itemDetailsSelector.itemTypeComponent());
+            return;
+        }
+        if (itemDetailsSelector.brandName().isBlank()) {
+            showValidationError("Select or enter a brand.", itemDetailsSelector.brandComponent());
+            return;
+        }
+        if (itemDetailsSelector.shelfName().isBlank()) {
+            showValidationError("Select or enter the sales shelf location.", itemDetailsSelector.shelfComponent());
+            return;
+        }
+        if (imageSelector.getImageUrl().isBlank()) {
+            showValidationError("Choose a product image or enter an image URL.", imageSelector);
+            return;
+        }
         Integer vendorId = vendorSelector.getSelectedVendorId();
         if (vendorId == null && !vendorSelector.getSelectedVendorName().isBlank()) {
             return;
         }
 
-        String sql = """
-                INSERT INTO products (name, size, sku, barcode, description, cost_price, price, product_type, category_id, vendor_id, image_url, created_by_user_id, created_by_name)
-                VALUES (?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                RETURNING product_id, sku
-                """;
+        String imageUrl;
+        try {
+            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
+            imageSelector.setImageUrl(imageUrl);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage(), "Image Upload", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
-        String upsertInventorySql = """
-                INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level)
-                VALUES (?, ?, ?, 0)
-                ON CONFLICT (product_id, location_id)
-                DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand
-                """;
-        String insertBarcodeSql = """
-                INSERT INTO product_barcodes (product_id, barcode)
-                VALUES (?, ?)
-                ON CONFLICT (barcode)
-                DO UPDATE SET
-                    product_id = EXCLUDED.product_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """;
-        String insertMovementSql = """
-                INSERT INTO inventory_movements (
-                    product_id, location_id, change_qty, reason, note, user_name,
-                    user_id, device_id, device_name
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                 PreparedStatement inventoryPs = conn.prepareStatement(upsertInventorySql);
-                 PreparedStatement barcodePs = conn.prepareStatement(insertBarcodeSql);
-                 PreparedStatement movementPs = conn.prepareStatement(insertMovementSql)) {
-                ps.setString(1, name);
-                ps.setString(2, size);
-                ps.setString(3, sku);
-                ps.setString(4, barcode);
-                ps.setString(5, description);
-                ps.setDouble(6, costPrice);
-                ps.setDouble(7, price);
-
-                ps.setString(8, productType);
-
-                if (categoryId == null) {
-                    ps.setNull(9, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(9, categoryId);
-                }
-                if (vendorId == null) {
-                    ps.setNull(10, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(10, vendorId);
-                }
-                ps.setString(11, imageUrl);
-                setCurrentUserAuditParameters(ps, 12, 13);
-
-                int productId;
-                try (java.sql.ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        throw new SQLException("Failed to get new product ID and SKU.");
-                    }
-                    productId = rs.getInt("product_id");
-                    sku = rs.getString("sku");
-                    extraBarcodes.remove(sku);
-                }
-
-                if (inventoryItem) {
-                    inventoryPs.setInt(1, productId);
-                    inventoryPs.setInt(2, selectedLocationId);
-                    inventoryPs.setInt(3, quantity);
-                    inventoryPs.executeUpdate();
-                }
-
-                if (inventoryItem && quantity != 0) {
-                    movementPs.setInt(1, productId);
-                    movementPs.setInt(2, selectedLocationId);
-                    movementPs.setInt(3, quantity);
-                    movementPs.setString(4, "NEW_ITEM");
-                    movementPs.setString(5, "Starting quantity for new item");
-                    movementPs.setString(6, SessionManager.getCurrentUserDisplayName());
-                    setCurrentUserDeviceMovementParameters(movementPs, 7, 8, 9);
-                    movementPs.executeUpdate();
-                }
-
-                for (String extraBarcode : extraBarcodes) {
-                    barcodePs.setInt(1, productId);
-                    barcodePs.setString(2, extraBarcode);
-                    barcodePs.addBatch();
-                }
-                if (!extraBarcodes.isEmpty()) {
-                    barcodePs.executeBatch();
-                }
-
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Item added successfully. SKU: " + sku);
-                clearFields();
-
-            } catch (SQLException ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+        try {
+            LanApiClient.ProductSaveRequest request = new LanApiClient.ProductSaveRequest(
+                    null, name, size, sku, barcode, description,
+                    BigDecimal.valueOf(costPrice), BigDecimal.valueOf(price), productType,
+                    categoryId, vendorId, imageUrl, itemDetailsSelector.itemTypeName(),
+                    itemDetailsSelector.brandName(), itemDetailsSelector.shelfName(),
+                    itemDetailsSelector.storageShelfName(), List.copyOf(extraBarcodes),
+                    quantity, 0, null, true
+            );
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
+                pendingSaveFingerprint = fingerprint;
+                pendingSaveKey = UUID.randomUUID().toString();
             }
-
-        } catch (SQLException ex) {
+            LanApiClient.SavedProduct saved = LanApiClient.createProduct(request, pendingSaveKey);
+            pendingSaveKey = null;
+            pendingSaveFingerprint = null;
+            JOptionPane.showMessageDialog(this, "Item added successfully. SKU: " + saved.sku());
+            clearFields(false);
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
     }
 
-    private void setCurrentUserAuditParameters(PreparedStatement ps, int userIdParameter, int userNameParameter) throws SQLException {
-        if (SessionManager.getCurrentUserId() == null) {
-            ps.setNull(userIdParameter, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(userIdParameter, SessionManager.getCurrentUserId());
+    private void showValidationError(String message, JComponent component) {
+        JOptionPane.showMessageDialog(this, message, "Check Item Details", JOptionPane.WARNING_MESSAGE);
+        component.scrollRectToVisible(new Rectangle(component.getSize()));
+        component.requestFocusInWindow();
+        if (component instanceof JTextComponent textComponent) {
+            textComponent.selectAll();
+        } else if (component instanceof JComboBox<?> comboBox && comboBox.isEditable()) {
+            Component editor = comboBox.getEditor().getEditorComponent();
+            editor.requestFocusInWindow();
+            if (editor instanceof JTextComponent textComponent) {
+                textComponent.selectAll();
+            }
         }
-        ps.setString(userNameParameter, SessionManager.getCurrentUserDisplayName());
     }
 
-    private void setCurrentUserDeviceMovementParameters(PreparedStatement ps, int userIdParameter,
-                                                        int deviceIdParameter, int deviceNameParameter) throws SQLException {
-        if (SessionManager.getCurrentUserId() == null) {
-            ps.setNull(userIdParameter, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(userIdParameter, SessionManager.getCurrentUserId());
+    private void clearFields(boolean confirm) {
+        if (confirm && isFormDirty()) {
+            int choice = JOptionPane.showConfirmDialog(
+                    this,
+                    "Clear everything entered on this form?",
+                    "Clear Item Form",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (choice != JOptionPane.YES_OPTION) {
+                return;
+            }
         }
-        ps.setString(deviceIdParameter, DeviceContextService.currentDeviceId());
-        ps.setString(deviceNameParameter, DeviceContextService.currentDeviceName());
-    }
-
-    private void clearFields() {
         nameField.setText("");
         sizeField.setText("");
         skuField.setText("");
@@ -540,9 +570,154 @@ public class NewItem extends JFrame {
         priceField.setText("");
         itemTypeBox.setSelectedItem("Inventory");
         departmentSelector.clearSelection();
+        itemDetailsSelector.clearSelection();
         vendorSelector.clearSelection();
         quantityField.setText("0");
         imageSelector.setImageUrl("");
         nameField.requestFocusInWindow();
+    }
+
+    private void confirmClose() {
+        if (isFormDirty()) {
+            int choice = JOptionPane.showConfirmDialog(
+                    this,
+                    "Discard this unsaved item and close?",
+                    "Unsaved Item",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (choice != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+        dispose();
+    }
+
+    private boolean isFormDirty() {
+        return !nameField.getText().isBlank()
+                || !sizeField.getText().isBlank()
+                || !skuField.getText().isBlank()
+                || !barcodeField.getText().isBlank()
+                || !descriptionArea.getText().isBlank()
+                || !barcodesArea.getText().isBlank()
+                || !costPriceField.getText().isBlank()
+                || !priceField.getText().isBlank()
+                || !"INVENTORY".equals(getSelectedProductType())
+                || !quantityField.getText().isBlank() && !"0".equals(quantityField.getText().trim())
+                || !departmentSelector.getSelectedDepartmentName().isBlank()
+                || !itemDetailsSelector.itemTypeName().isBlank()
+                || !itemDetailsSelector.brandName().isBlank()
+                || !itemDetailsSelector.shelfName().isBlank()
+                || !itemDetailsSelector.storageShelfName().isBlank()
+                || !vendorSelector.getSelectedVendorName().isBlank()
+                || !imageSelector.getImageUrl().isBlank();
+    }
+
+    private static class ResponsiveSectionPanel extends JPanel implements Scrollable {
+        private static final int WIDE_LAYOUT_MIN_WIDTH = 1450;
+        private static final int SECTION_GAP = 14;
+
+        private final JComponent itemDetailsSection;
+        private final JComponent pricingSection;
+        private final JComponent organizationSection;
+        private final JComponent optionalSection;
+        private boolean layoutInitialized;
+        private boolean wideLayout;
+
+        private ResponsiveSectionPanel(JComponent itemDetailsSection, JComponent pricingSection,
+                                       JComponent organizationSection, JComponent optionalSection) {
+            super(new BorderLayout());
+            this.itemDetailsSection = itemDetailsSection;
+            this.pricingSection = pricingSection;
+            this.organizationSection = organizationSection;
+            this.optionalSection = optionalSection;
+            putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+            setBackground(DeckersPalette.background());
+            setBorder(new EmptyBorder(18, 20, 22, 20));
+            rebuildLayout(false);
+            addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    updateResponsiveLayout();
+                }
+            });
+        }
+
+        private void updateResponsiveLayout() {
+            boolean shouldUseWideLayout = getWidth() >= WIDE_LAYOUT_MIN_WIDTH;
+            if (!layoutInitialized || shouldUseWideLayout != wideLayout) {
+                rebuildLayout(shouldUseWideLayout);
+            }
+        }
+
+        private void rebuildLayout(boolean useWideLayout) {
+            wideLayout = useWideLayout;
+            layoutInitialized = true;
+            removeAll();
+
+            if (wideLayout) {
+                JPanel columns = new JPanel(new GridLayout(1, 2, SECTION_GAP, 0));
+                columns.setOpaque(false);
+                columns.add(createColumn(itemDetailsSection, pricingSection));
+                columns.add(createColumn(organizationSection, optionalSection));
+                add(columns, BorderLayout.CENTER);
+            } else {
+                add(createColumn(itemDetailsSection, pricingSection, organizationSection, optionalSection), BorderLayout.CENTER);
+            }
+
+            revalidate();
+            repaint();
+        }
+
+        private JPanel createColumn(JComponent... sections) {
+            JPanel column = new JPanel(new GridBagLayout());
+            column.setOpaque(false);
+            for (int i = 0; i < sections.length; i++) {
+                GridBagConstraints gbc = new GridBagConstraints();
+                gbc.gridx = 0;
+                gbc.gridy = i;
+                gbc.weightx = 1;
+                gbc.fill = GridBagConstraints.HORIZONTAL;
+                gbc.anchor = GridBagConstraints.NORTHWEST;
+                gbc.insets = new Insets(i == 0 ? 0 : SECTION_GAP, 0, 0, 0);
+                column.add(sections[i], gbc);
+            }
+
+            GridBagConstraints glue = new GridBagConstraints();
+            glue.gridx = 0;
+            glue.gridy = sections.length;
+            glue.weightx = 1;
+            glue.weighty = 1;
+            glue.fill = GridBagConstraints.BOTH;
+            JPanel spacer = new JPanel();
+            spacer.setOpaque(false);
+            column.add(spacer, glue);
+            return column;
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 18;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return Math.max(visibleRect.height - 36, 18);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
     }
 }

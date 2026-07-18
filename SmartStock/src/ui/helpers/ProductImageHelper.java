@@ -29,7 +29,11 @@ public final class ProductImageHelper {
     }
 
     public static ImageSelector createImageSelector(Component parent) {
-        return new ImageSelector(parent);
+        return new ImageSelector(parent, false);
+    }
+
+    public static ImageSelector createSimpleImageSelector(Component parent) {
+        return new ImageSelector(parent, true);
     }
 
     public static JLabel createImagePreview(String imageUrl, int width, int height) {
@@ -111,13 +115,18 @@ public final class ProductImageHelper {
         private final JTextField imageUrlField;
         private final JLabel previewLabel;
 
-        private ImageSelector(Component parent) {
+        private ImageSelector(Component parent, boolean simplePresentation) {
             super(new BorderLayout(8, 8));
             this.parent = parent;
             setOpaque(false);
 
             previewLabel = createImagePreview("", 150, 110);
             imageUrlField = new JTextField();
+
+            if (simplePresentation) {
+                buildSimplePresentation();
+                return;
+            }
 
             JButton browseButton = new JButton("Browse");
             JButton previewButton = new JButton("Preview");
@@ -151,6 +160,33 @@ public final class ProductImageHelper {
             imageUrlField.addActionListener(e -> refreshPreview());
         }
 
+        private void buildSimplePresentation() {
+            JLabel guidanceLabel = new JLabel("<html><b>Product photo</b><br>Choose a file or paste an image URL. It uploads when the item is saved.</html>");
+            guidanceLabel.setVerticalAlignment(SwingConstants.TOP);
+
+            JButton chooseButton = new JButton("Choose Image");
+            JButton urlButton = new JButton("Use URL...");
+            JButton removeButton = new JButton("Remove");
+
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            buttonPanel.setOpaque(false);
+            buttonPanel.add(chooseButton);
+            buttonPanel.add(urlButton);
+            buttonPanel.add(removeButton);
+
+            JPanel actionsPanel = new JPanel(new BorderLayout(0, 10));
+            actionsPanel.setOpaque(false);
+            actionsPanel.add(guidanceLabel, BorderLayout.NORTH);
+            actionsPanel.add(buttonPanel, BorderLayout.CENTER);
+
+            add(previewLabel, BorderLayout.WEST);
+            add(actionsPanel, BorderLayout.CENTER);
+
+            chooseButton.addActionListener(e -> chooseLocalImage());
+            urlButton.addActionListener(e -> promptForImageUrl());
+            removeButton.addActionListener(e -> setImageUrl(""));
+        }
+
         public String getImageUrl() {
             return imageUrlField.getText().trim();
         }
@@ -179,6 +215,14 @@ public final class ProductImageHelper {
             int result = chooser.showOpenDialog(parent);
             if (result == JFileChooser.APPROVE_OPTION) {
                 setImageUrl(chooser.getSelectedFile().getAbsolutePath());
+            }
+        }
+
+        private void promptForImageUrl() {
+            String currentValue = isRemoteImageUrl(getImageUrl()) ? getImageUrl() : "";
+            String imageUrl = JOptionPane.showInputDialog(parent, "Paste the product image URL:", currentValue);
+            if (imageUrl != null) {
+                setImageUrl(imageUrl.trim());
             }
         }
 

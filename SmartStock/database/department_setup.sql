@@ -25,6 +25,12 @@ CHECK (vat_rate_percent >= 0 AND vat_rate_percent <= 100);
 CREATE UNIQUE INDEX IF NOT EXISTS categories_name_unique_idx
 ON categories(LOWER(name));
 
+INSERT INTO categories (name, description)
+SELECT 'Custom', 'Default department for custom items'
+WHERE NOT EXISTS (
+    SELECT 1 FROM categories WHERE UPPER(BTRIM(name)) = 'CUSTOM'
+);
+
 INSERT INTO permissions (permission_key, permission_name)
 SELECT 'DEPARTMENT_MANAGEMENT', 'Department Management'
 WHERE NOT EXISTS (

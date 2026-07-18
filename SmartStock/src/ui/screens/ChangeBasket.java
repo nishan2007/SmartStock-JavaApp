@@ -1,12 +1,10 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import data.DB;
-import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
-import services.CashDrawerService;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -17,11 +15,11 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
 import java.text.NumberFormat;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 public class ChangeBasket extends JFrame {
     private static final int[] DENOMINATIONS = {5000, 2000, 1000, 500, 100, 50, 20};
@@ -42,6 +40,8 @@ public class ChangeBasket extends JFrame {
     private BigDecimal targetAmount = BigDecimal.ZERO;
     private BigDecimal countedAmount = BigDecimal.ZERO;
     private boolean updatingTable;
+    private String pendingUpdateKey;
+    private String pendingUpdateFingerprint;
 
     public ChangeBasket() {
         setTitle("Change Basket");
@@ -168,13 +168,11 @@ public class ChangeBasket extends JFrame {
             return;
         }
 
-        targetAmount = CompanyCustomizationManager.loadChangeBasketTargetAmount();
-        storeLabel.setText(displayStore());
-        targetLabel.setText(CURRENCY.format(targetAmount));
-        statusLabel.setText("Count every bill in the change basket. The total should match the configured target.");
-        updateButton.setEnabled(true);
-        clearButton.setEnabled(true);
-        resetTable();
+        try{LanApiClient.ChangeBasketState state=LanApiClient.loadChangeBasketState();targetAmount=state.targetAmount()==null?BigDecimal.ZERO:state.targetAmount();
+            storeLabel.setText(state.storeName());targetLabel.setText(CURRENCY.format(targetAmount));statusLabel.setText("Count every bill in the change basket. The total should match the configured target.");
+            updateButton.setEnabled(true);clearButton.setEnabled(true);resetTable();}
+        catch(Exception ex){statusLabel.setText("SmartStock server unavailable");updateButton.setEnabled(false);clearButton.setEnabled(false);resetTable();
+            JOptionPane.showMessageDialog(this,"Failed to load change basket: "+ex.getMessage(),"Change Basket",JOptionPane.ERROR_MESSAGE);}
     }
 
     private void resetTable() {
@@ -253,15 +251,10 @@ public class ChangeBasket extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            long updateId = CashDrawerService.recordChangeBasketUpdate(
-                    conn,
-                    locationId,
-                    displayStore(),
-                    targetAmount,
-                    denominationCounts(),
-                    null
-            );
+        try {
+            Map<Integer,Integer>counts=denominationCounts();String fingerprint=counts.toString()+"|"+targetAmount;
+            if(pendingUpdateKey==null||!fingerprint.equals(pendingUpdateFingerprint)){pendingUpdateFingerprint=fingerprint;pendingUpdateKey=UUID.randomUUID().toString();}
+            long updateId=LanApiClient.updateChangeBasket(counts,pendingUpdateKey);pendingUpdateKey=null;pendingUpdateFingerprint=null;
             JOptionPane.showMessageDialog(
                     this,
                     "Change basket update saved.\nUpdate ID: " + updateId

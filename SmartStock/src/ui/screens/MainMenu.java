@@ -5,9 +5,7 @@ import managers.PermissionManager;
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
 import models.AppNotification;
-import models.CashDrawerContext;
-import services.CashDrawerService;
-import services.DeviceService;
+import services.LanApiClient;
 import services.NotificationService;
 import ui.components.AppMenuBar;
 import ui.design.DeckersLogoManager;
@@ -15,7 +13,6 @@ import ui.design.DeckersPalette;
 import ui.helpers.WindowHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WelcomeGreetingHelper;
-import data.DB;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -27,10 +24,6 @@ import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
 import java.awt.image.BufferedImage;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -129,7 +122,7 @@ public class MainMenu extends JFrame {
         changeBasketButton = createMenuButton("Change Basket", "Count the store change basket against its target", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
         balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/MainMenuBalanceSheet.png"));
         ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/MainMenuOrdersDashboard.png"));
-        reportsButton = createMenuButton("Reports", "Review sales, orders, and invoice totals", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
+        reportsButton = createMenuButton("Reports", "Analyze sales, products, employees, cash flow, and expenses", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
         enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/MainMenuReceivingInventory.png"));
         receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/MainMenuReceivingHistory.png"));
         storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/MainMenuStoreTransfer.png"));
@@ -140,7 +133,7 @@ public class MainMenu extends JFrame {
         customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
         customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
         invoicesButton = createMenuButton("Quotations & Invoices", "Create quotes, take payments, and post deliveries", loadIcon("src/ICONS/MainMenuInvoices.png"));
-        customOrdersButton = createMenuButton("Custom Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
+        customOrdersButton = createMenuButton("Customer Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
         ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
         viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
         priceTagPrintingButton = createMenuButton("Price Tag Printing", "Select normal or custom items and print sticker tags", loadIcon("src/ICONS/MainMenuViewInventory.png"));
@@ -263,20 +256,15 @@ public class MainMenu extends JFrame {
         logoutButton = new JButton("Logout");
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
         logoutButton.setFocusPainted(false);
-        logoutButton.setPreferredSize(new Dimension(130, 42));
+        logoutButton.setPreferredSize(new Dimension(130, 34));
         logoutButton.setBackground(dark ? new Color(45, 45, 45) : surfaceColor);
         logoutButton.setForeground(textColor);
-
-        JLabel footerSmartStockLogoLabel = createLogoLabel("SmartStock");
-        JPanel footerSmartStockLogoPanel = createLogoPanel(footerSmartStockLogoLabel, "SmartStock Logo", 220, 74);
-        setSmartStockLogo(footerSmartStockLogoLabel);
 
         JPanel footerPanel = new JPanel(new BorderLayout());
         footerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         footerPanel.setBackground(backgroundColor);
-        footerPanel.add(footerSmartStockLogoPanel, BorderLayout.WEST);
 
-        JPanel footerActionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 16));
+        JPanel footerActionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         footerActionPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         footerActionPanel.setBackground(backgroundColor);
         footerActionPanel.add(logoutButton);
@@ -398,15 +386,6 @@ public class MainMenu extends JFrame {
         panel.getAccessibleContext().setAccessibleName(accessibleName);
         panel.add(logoLabel, BorderLayout.CENTER);
         return panel;
-    }
-
-    private void setSmartStockLogo(JLabel smartStockLogoLabel) {
-        ImageIcon centerLogoIcon = DeckersLogoManager.loadSmartStockLogoIcon(getClass());
-        if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
-            setLogoImage(smartStockLogoLabel, centerLogoIcon.getImage(), 204, 72);
-            return;
-        }
-        smartStockLogoLabel.setText("SmartStock");
     }
 
     private void setDeckersLogo(JLabel companyLogoLabel) {
@@ -1306,7 +1285,7 @@ public class MainMenu extends JFrame {
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Custom Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Customer Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             NavigationManager.openCustomOrders(this);
@@ -1413,6 +1392,7 @@ public class MainMenu extends JFrame {
 
         logoutButton.addActionListener(e -> {
             endSessionSafely();
+            services.LanApiClient.logout();
             SessionManager.clearSessionState();
             SupabaseSessionManager.clearSession();
             SupabaseSessionManager.clearPersistedSession();
@@ -1500,7 +1480,7 @@ public class MainMenu extends JFrame {
                     NotificationService.markRead(notification.notificationKey());
                     refreshNotifications(false);
                 }
-            } catch (SQLException ex) {
+            } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
             }
             return;
@@ -1600,15 +1580,15 @@ public class MainMenu extends JFrame {
             return;
         }
 
-        CashDrawerContext drawer;
-        try (Connection conn = DB.getConnection()) {
-            drawer = CashDrawerService.resolveCurrentDrawer(conn);
+        LanApiClient.CashDrawerStatus drawer;
+        try {
+            drawer = LanApiClient.currentCashDrawer();
         } catch (Exception ex) {
             System.err.println("Failed to check cash draw startup status: " + ex.getMessage());
             return;
         }
 
-        if (!drawer.isAssigned() || drawer.hasActiveSession()) {
+        if (!drawer.assigned() || drawer.activeSession()) {
             return;
         }
 
@@ -1631,11 +1611,7 @@ public class MainMenu extends JFrame {
     }
 
     private void endSessionSafely() {
-        try (Connection conn = DB.getConnection()) {
-            DeviceService.endCurrentSession(conn);
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
+        LanApiClient.logout();
     }
 
     private void openCustomerTransactionHistory() {
@@ -1710,37 +1686,24 @@ public class MainMenu extends JFrame {
 
     private void loadCustomerHistoryOptions(DefaultListModel<CustomerHistoryOption> model, String search) {
         model.clear();
-        String sql = """
-                SELECT customer_id, account_number, name, phone
-                FROM customer_accounts
-                WHERE is_active = TRUE
-                  AND (? = ''
-                       OR LOWER(COALESCE(account_number, '')) LIKE LOWER(?)
-                       OR LOWER(name) LIKE LOWER(?)
-                       OR COALESCE(phone, '') LIKE ?)
-                ORDER BY name
-                LIMIT 100
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            String pattern = "%" + search + "%";
-            ps.setString(1, search);
-            ps.setString(2, pattern);
-            ps.setString(3, pattern);
-            ps.setString(4, pattern);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    model.addElement(new CustomerHistoryOption(
-                            rs.getInt("customer_id"),
-                            rs.getString("account_number"),
-                            rs.getString("name"),
-                            rs.getString("phone")
-                    ));
-                }
+        try {
+            String token = search == null ? "" : search.trim().toLowerCase();
+            int count = 0;
+            for (LanApiClient.CustomerAccount account : LanApiClient.loadCustomerAccounts()) {
+                if (!token.isEmpty() && !(safe(account.accountNumber()).toLowerCase().contains(token)
+                        || safe(account.customerName()).toLowerCase().contains(token)
+                        || safe(account.phone()).toLowerCase().contains(token))) continue;
+                model.addElement(new CustomerHistoryOption(account.customerId(), account.accountNumber(),
+                        account.customerName(), account.phone()));
+                if (++count >= 100) break;
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Server Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private JButton createMenuButton(String title, String description, Icon icon) {

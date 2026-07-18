@@ -1,6 +1,10 @@
 
 package managers;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 public final class SessionManager {
 
     private static Integer currentUserId;
@@ -14,6 +18,7 @@ public final class SessionManager {
     private static String currentRefreshToken;
     private static String currentDeviceId;
     private static Long currentDeviceSessionId;
+    private static Set<String> currentPermissions = Set.of();
 
     private SessionManager() {
     }
@@ -109,6 +114,20 @@ public final class SessionManager {
         SessionManager.currentDeviceSessionId = currentDeviceSessionId;
     }
 
+    public static Set<String> getCurrentPermissions() {
+        return currentPermissions;
+    }
+
+    public static void setCurrentPermissions(String[] permissions) {
+        Set<String> normalized = new HashSet<>();
+        if (permissions != null) {
+            for (String permission : permissions) {
+                if (permission != null && !permission.isBlank()) normalized.add(permission.trim().toUpperCase());
+            }
+        }
+        currentPermissions = Collections.unmodifiableSet(normalized);
+    }
+
     public static void clearSessionState() {
         currentUserId = null;
         currentUsername = null;
@@ -121,5 +140,6 @@ public final class SessionManager {
         currentRefreshToken = null;
         currentDeviceId = null;
         currentDeviceSessionId = null;
+        currentPermissions = Set.of();
     }
 }

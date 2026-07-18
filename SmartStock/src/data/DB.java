@@ -3,9 +3,13 @@ package data;
 import services.SyncSchemaInstaller;
 import services.BaseSchemaInstaller;
 import services.QuotationInvoiceSchemaInstaller;
-import services.WorkflowSyncIdentitySchemaInstaller;
 import services.AppUpdateSchemaInstaller;
 import services.EmailSchemaInstaller;
+import services.EmployeePayrollSettingsService;
+import services.TimeClockAutoCloseService;
+import services.BadgeAccessSchemaInstaller;
+import services.DeviceCredentialSchemaInstaller;
+import services.LanApiSchemaInstaller;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -27,22 +31,39 @@ public class DB {
 
     public static Connection getConnection() throws SQLException {
         DatabaseConfig config = DatabaseConfig.load();
+        if (config.mode() == DatabaseMode.CLIENT) {
+            throw new SQLException("Direct database access is disabled on this register. SmartStock must use the authenticated LAN service.", "28000");
+        }
+        if (config.mode() == DatabaseMode.SERVER && !isLoopbackJdbcUrl(config.jdbcUrl())) {
+            throw new SQLException("The SmartStock Server Service database URL must use localhost. Registers connect through HTTPS port 8443.", "28000");
+        }
         if (!config.hasPrimaryConnection()) {
             throw new SQLException(config.missingPrimaryConnectionMessage());
         }
         if (config.hasUnresolvedCredentialPlaceholders()) {
             throw new SQLException(config.missingPrimaryConnectionMessage());
         }
-        try {
-            Connection conn = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword());
-            if (config.mode() == DatabaseMode.SERVER) {
-                ensureSchemaOnce(conn, config);
+        SQLException last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                Connection conn = DriverManager.getConnection(withPrimarySecurity(config), config.dbUser(), config.dbPassword());
+                if (config.mode() == DatabaseMode.SERVER) {
+                    ensureSchemaOnce(conn, config);
+                }
+                return conn;
+            } catch (SQLException ex) {
+                last = ex;
+                if (attempt == 3 || !isTransientConnectionFailure(ex)) break;
+                try {
+                    Thread.sleep(500L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw ex;
+                }
             }
-            return conn;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            throw e;
         }
+        if (last != null) last.printStackTrace();
+        throw last == null ? new SQLException("Database connection failed.") : last;
     }
 
     public static Connection getCloudConnection() throws SQLException {
@@ -69,7 +90,30 @@ public class DB {
         url = withJdbcParam(url, "connectTimeout", "10");
         url = withJdbcParam(url, "socketTimeout", "30");
         url = withJdbcParam(url, "tcpKeepAlive", "true");
+        if (!isLoopbackJdbcUrl(url)) {
+            url = withJdbcParam(url, "sslmode", "require");
+        }
         return url;
+    }
+
+    private static String withPrimarySecurity(DatabaseConfig config) {
+        String url = config.jdbcUrl() == null ? "" : config.jdbcUrl();
+        url = withJdbcParam(url, "connectTimeout", "10");
+        url = withJdbcParam(url, "socketTimeout", "30");
+        url = withJdbcParam(url, "tcpKeepAlive", "true");
+        return url;
+    }
+
+    private static boolean isLoopbackJdbcUrl(String url) {
+        String lower = url == null ? "" : url.toLowerCase();
+        return lower.startsWith("jdbc:postgresql://127.0.0.1:")
+                || lower.startsWith("jdbc:postgresql://localhost:")
+                || lower.startsWith("jdbc:postgresql://[::1]:");
+    }
+
+    private static boolean isTransientConnectionFailure(SQLException ex) {
+        String state = ex.getSQLState();
+        return state == null || state.startsWith("08") || "57P01".equals(state) || "57P02".equals(state);
     }
 
     private static String withJdbcParam(String jdbcUrl, String key, String value) {
@@ -90,9 +134,13 @@ public class DB {
                 return;
             }
             BaseSchemaInstaller.ensureSchema(conn);
+            DeviceCredentialSchemaInstaller.ensureSchema(conn);
+            LanApiSchemaInstaller.ensureSchema(conn);
+            BadgeAccessSchemaInstaller.ensureSchema(conn);
+            EmployeePayrollSettingsService.ensureSchema(conn);
+            TimeClockAutoCloseService.ensureSchema(conn);
             SyncSchemaInstaller.ensureSchema(conn);
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
-            WorkflowSyncIdentitySchemaInstaller.ensureSchema(conn);
             AppUpdateSchemaInstaller.ensureSchema(conn);
             EmailSchemaInstaller.ensureSchema(conn);
             ENSURED_SCHEMA_KEYS.add(key);

@@ -1,6 +1,5 @@
 package services;
 
-import data.DB;
 import managers.SessionManager;
 
 import java.io.IOException;
@@ -36,16 +35,6 @@ public final class QuotationInvoiceNumberManager {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Math.max(rs.getInt("days"), 1) : 30;
             }
-        }
-    }
-
-    public static String previewQuotationNumber(int locationId) throws SQLException, IOException {
-        try (Connection conn = DB.getConnection()) {
-            ensureCounterRow(conn, locationId);
-            String storeCode = storeCode(conn, locationId);
-            String deviceCode = deviceCode(locationId);
-            int counter = currentCounter(conn, locationId, "next_quotation_counter");
-            return format("Q", storeCode, deviceCode, counter);
         }
     }
 

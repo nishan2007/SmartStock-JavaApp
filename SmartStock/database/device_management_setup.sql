@@ -59,6 +59,106 @@ ADD COLUMN IF NOT EXISTS session_count BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS pairing_public_key TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS credential_status TEXT NOT NULL DEFAULT 'PENDING';
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS credential_issued_at TIMESTAMPTZ;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS credential_claimed_at TIMESTAMPTZ;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'devices_credential_status_check'
+          AND conrelid = 'public.devices'::regclass
+    ) THEN
+        ALTER TABLE public.devices ADD CONSTRAINT devices_credential_status_check
+            CHECK (credential_status IN ('PENDING', 'ISSUED', 'CLAIMED', 'ROTATION_PENDING', 'REVOKED'));
+    END IF;
+END $$;
+
+DROP INDEX IF EXISTS devices_credential_role_name_idx;
+ALTER TABLE devices DROP COLUMN IF EXISTS credential_role_name;
+ALTER TABLE devices DROP COLUMN IF EXISTS previous_credential_role_name;
+ALTER TABLE devices DROP COLUMN IF EXISTS credential_envelope;
+
+CREATE TABLE IF NOT EXISTS security_audit_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    device_id UUID REFERENCES devices(device_id) ON DELETE SET NULL,
+    actor_user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+    details TEXT,
+    source_address INET DEFAULT inet_client_addr(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS security_audit_events_created_idx
+ON security_audit_events(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS security_audit_events_device_idx
+ON security_audit_events(device_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS login_security_state (
+    identifier_hash TEXT PRIMARY KEY,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    window_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    locked_until TIMESTAMPTZ,
+    last_failed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE login_security_state ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE login_security_state FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION reject_security_audit_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+    RAISE EXCEPTION 'SmartStock security audit events are immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS security_audit_events_immutable ON security_audit_events;
+CREATE TRIGGER security_audit_events_immutable
+BEFORE UPDATE OR DELETE ON security_audit_events
+FOR EACH ROW EXECUTE FUNCTION reject_security_audit_mutation();
+
+ALTER TABLE security_audit_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE security_audit_events FROM PUBLIC;
+REVOKE ALL ON SEQUENCE security_audit_events_event_id_seq FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON TABLE security_audit_events FROM anon;
+        REVOKE ALL ON SEQUENCE security_audit_events_event_id_seq FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON TABLE security_audit_events FROM authenticated;
+        REVOKE ALL ON SEQUENCE security_audit_events_event_id_seq FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT ON TABLE security_audit_events TO service_role;
+        GRANT USAGE, SELECT ON SEQUENCE security_audit_events_event_id_seq TO service_role;
+        DROP POLICY IF EXISTS security_audit_events_service_role_access ON security_audit_events;
+        CREATE POLICY security_audit_events_service_role_access ON security_audit_events
+            FOR ALL TO service_role USING (true) WITH CHECK (true);
+    END IF;
+    IF to_regprocedure('auth.uid()') IS NULL
+       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        DROP POLICY IF EXISTS security_audit_events_local_app_access ON security_audit_events;
+        CREATE POLICY security_audit_events_local_app_access ON security_audit_events
+            FOR SELECT TO authenticated USING (true);
+        DROP POLICY IF EXISTS security_audit_events_local_app_insert ON security_audit_events;
+        CREATE POLICY security_audit_events_local_app_insert ON security_audit_events
+            FOR INSERT TO authenticated WITH CHECK (true);
+        DROP POLICY IF EXISTS login_security_state_local_app_access ON login_security_state;
+        CREATE POLICY login_security_state_local_app_access ON login_security_state
+            FOR ALL TO authenticated USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+
 ALTER TABLE devices
 ALTER COLUMN is_approved SET DEFAULT FALSE;
 
@@ -124,33 +224,43 @@ FROM (
 ) session_totals
 WHERE session_totals.device_id = d.device_id;
 
-CREATE OR REPLACE FUNCTION refresh_device_session_count()
-RETURNS TRIGGER AS $$
+DO $outer$
 BEGIN
-    IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        UPDATE devices
-        SET session_count = (
-            SELECT COUNT(*)::BIGINT
-            FROM device_sessions
-            WHERE device_id = NEW.device_id
-        )
-        WHERE device_id = NEW.device_id;
-    END IF;
+    IF to_regprocedure('public.refresh_device_session_count()') IS NULL THEN
+        EXECUTE $function$
+            CREATE FUNCTION public.refresh_device_session_count()
+            RETURNS TRIGGER
+            LANGUAGE plpgsql
+            AS $body$
+            BEGIN
+                IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                    UPDATE public.devices
+                    SET session_count = (
+                        SELECT COUNT(*)::BIGINT
+                        FROM public.device_sessions
+                        WHERE device_id = NEW.device_id
+                    )
+                    WHERE device_id = NEW.device_id;
+                END IF;
 
-    IF TG_OP IN ('DELETE', 'UPDATE')
-       AND (TG_OP = 'DELETE' OR OLD.device_id IS DISTINCT FROM NEW.device_id) THEN
-        UPDATE devices
-        SET session_count = (
-            SELECT COUNT(*)::BIGINT
-            FROM device_sessions
-            WHERE device_id = OLD.device_id
-        )
-        WHERE device_id = OLD.device_id;
-    END IF;
+                IF TG_OP IN ('DELETE', 'UPDATE')
+                   AND (TG_OP = 'DELETE' OR OLD.device_id IS DISTINCT FROM NEW.device_id) THEN
+                    UPDATE public.devices
+                    SET session_count = (
+                        SELECT COUNT(*)::BIGINT
+                        FROM public.device_sessions
+                        WHERE device_id = OLD.device_id
+                    )
+                    WHERE device_id = OLD.device_id;
+                END IF;
 
-    RETURN COALESCE(NEW, OLD);
+                RETURN COALESCE(NEW, OLD);
+            END;
+            $body$
+        $function$;
+    END IF;
 END;
-$$ LANGUAGE plpgsql;
+$outer$;
 
 DROP TRIGGER IF EXISTS device_sessions_refresh_count ON device_sessions;
 CREATE TRIGGER device_sessions_refresh_count

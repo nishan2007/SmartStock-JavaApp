@@ -16,7 +16,11 @@ public class BadgeTemplatePanel extends JPanel {
             JTextField magStripeTrack1Field,
             JTextField magStripeTrack2Field,
             JTextField magStripeTrack3Field,
-            JTextField magStripeCommandField
+            JTextField magStripeCommandField,
+            JCheckBox nfcEnabledBox,
+            JTextField nfcPayloadField,
+            JTextField nfcWriterCommandField,
+            JTextField nfcVerifyCommandField
     ) {
         setLayout(new BorderLayout(0, 14));
         setOpaque(false);
@@ -60,6 +64,22 @@ public class BadgeTemplatePanel extends JPanel {
         row = addRow(form, gbc, row, "Track 2 template:", magStripeTrack2Field);
         row = addRow(form, gbc, row, "Track 3 template:", magStripeTrack3Field);
         row = addRow(form, gbc, row, "Writer command:", magStripeCommandField);
+
+        JLabel nfcLabel = new JLabel("RFID / NFC");
+        nfcLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
+        gbc.insets = new Insets(16, 0, 4, 10);
+        form.add(nfcLabel, gbc);
+        gbc.gridwidth = 1;
+        gbc.insets = new Insets(6, 0, 6, 10);
+        gbc.gridx = 1;
+        gbc.gridy = row++;
+        form.add(nfcEnabledBox, gbc);
+        row = addRow(form, gbc, row, "Payload template:", nfcPayloadField);
+        row = addRow(form, gbc, row, "Writer command:", nfcWriterCommandField);
+        row = addRow(form, gbc, row, "Verification command:", nfcVerifyCommandField);
 
         JTextArea help = new JTextArea("Placeholders: {badge_id}, {employee_id}, {full_name}, {first_name}, {last_name}, {role}, {company}, {issued_date}, {track1}, {track2}, {track3}.");
         help.setEditable(false);

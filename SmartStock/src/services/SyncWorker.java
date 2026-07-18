@@ -66,13 +66,18 @@ public final class SyncWorker {
 
     public static SyncStatus latestStatus() {
         try (Connection conn = DB.getConnection()) {
-            return latestStatus
-                    .withCounts(countPending(conn), countFailed(conn), countConflicts(conn))
-                    .withLock(SyncLockService.currentLock(conn))
-                    .withServiceInfo(SyncServiceStatusService.current(conn));
+            return latestStatus(conn);
         } catch (Exception ex) {
             return latestStatus.withFailure(ex.getMessage());
         }
+    }
+
+    /** Server-side variant used by the LAN API without opening a second connection. */
+    static SyncStatus latestStatus(Connection conn) throws SQLException {
+        return latestStatus
+                .withCounts(countPending(conn), countFailed(conn), countConflicts(conn))
+                .withLock(SyncLockService.currentLock(conn))
+                .withServiceInfo(SyncServiceStatusService.current(conn));
     }
 
     private static void runOnce(String ownerLabel) throws SQLException {
@@ -96,19 +101,28 @@ public final class SyncWorker {
                 return;
             }
             try (SyncLockService.SyncLease ignored = lease.get()) {
+                int automaticClosures = TimeClockAutoCloseService.processExpiredOpenPunches(local);
                 try (Connection cloud = DB.getCloudConnection()) {
                     SyncSchemaInstaller.ensureSchema(cloud);
                     EmailSchemaInstaller.ensureSchema(cloud);
+                    ignored.heartbeat();
+                    int timeClockSafetyPushes = ReferenceDataSyncService.pushTimeClockSafetyChanges(local, cloud);
+                    ignored.heartbeat();
+                    int holidaySyncChanges = ReferenceDataSyncService.syncScheduleHolidayChanges(local, cloud);
                     ignored.heartbeat();
                     int devicePushes = ReferenceDataSyncService.syncDevicesByUpdatedAt(local, cloud);
                     ignored.heartbeat();
                     int rowPushes = ReferenceDataSyncService.pushLocalOperationalChanges(local, cloud);
                     ignored.heartbeat();
                     int eventPushes = pushBatch(local, cloud);
-                    int pushed = rowPushes + devicePushes + eventPushes;
+                    int pushed = rowPushes + devicePushes + timeClockSafetyPushes
+                            + holidaySyncChanges + eventPushes;
                     ImageCacheWarmupService.warmLocalCache(local);
                     SyncServiceStatusService.mark(local, "Running", "Cloud reachable");
-                    latestStatus = new SyncStatus(true, "Cloud reachable", Instant.now(), pushed,
+                    String message = automaticClosures == 0 ? "Cloud reachable"
+                            : "Cloud reachable; automatically closed " + automaticClosures + " stale time clock record"
+                            + (automaticClosures == 1 ? "" : "s") + ".";
+                    latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
                             countPending(local), countFailed(local), countConflicts(local), null,
                             SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));
                 }

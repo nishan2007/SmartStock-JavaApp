@@ -37,7 +37,8 @@ FROM (VALUES
     ('CUSTOM_ORDER_EXCEPTION_NOTIFICATIONS', 'Allows receiving custom-order exception notifications such as recent refunds.'),
     ('SYNC_NOTIFICATIONS', 'Allows receiving sync health notifications for offline cloud, failed events, conflicts, and backlogs.'),
     ('VIEW_EMPLOYEE_SCHEDULE', 'Allows viewing who is scheduled to work each day.'),
-    ('EDIT_EMPLOYEE_SCHEDULE', 'Allows adding and removing employees from the weekly schedule.')
+    ('EDIT_EMPLOYEE_SCHEDULE', 'Allows adding and removing employees from the weekly schedule.'),
+    ('SCHEDULE_OTHER_STORES', 'Allows viewing and scheduling employees at stores other than the selected login store.')
 ) AS v(permission_key, description)
 WHERE UPPER(p.permission_key) = UPPER(v.permission_key);
 
@@ -79,7 +80,7 @@ SET permission_group = CASE
     ) THEN 'Maintenance'
     WHEN UPPER(permission_key) IN (
         'EMPLOYEE_MANAGEMENT','TIME_CLOCK','TIME_CLOCK_MANAGEMENT','PAYROLL_DASHBOARD',
-        'VIEW_EMPLOYEE_SCHEDULE','EDIT_EMPLOYEE_SCHEDULE'
+        'VIEW_EMPLOYEE_SCHEDULE','EDIT_EMPLOYEE_SCHEDULE','SCHEDULE_OTHER_STORES'
     ) THEN 'People'
     WHEN UPPER(permission_key) IN (
         'CUSTOMER_ACCOUNTS','SET_CREDIT_LIMIT','EDIT_ACCOUNT_NUMBER'
@@ -116,6 +117,7 @@ FROM (VALUES
     ('APP_UPDATES', 'Operations')
     ,('VIEW_EMPLOYEE_SCHEDULE', 'People')
     ,('EDIT_EMPLOYEE_SCHEDULE', 'People')
+    ,('SCHEDULE_OTHER_STORES', 'People')
 ) AS v(permission_key, permission_group)
 WHERE UPPER(p.permission_key) = UPPER(v.permission_key);
 
@@ -198,6 +200,7 @@ FROM (VALUES
     ('PAYROLL_DASHBOARD', 'Payroll'),
     ('VIEW_EMPLOYEE_SCHEDULE', 'Scheduling'),
     ('EDIT_EMPLOYEE_SCHEDULE', 'Scheduling'),
+    ('SCHEDULE_OTHER_STORES', 'Scheduling'),
     ('ROLE_MANAGEMENT', 'Roles & Security'),
     ('LOCATION_MANAGEMENT', 'Locations'),
     ('COMPANY_PREFERENCES', 'Company Setup'),

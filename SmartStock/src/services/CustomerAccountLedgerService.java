@@ -38,6 +38,7 @@ public final class CustomerAccountLedgerService {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS location_id INTEGER");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
+                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS sales_order_id BIGINT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_method TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT");
@@ -59,6 +60,7 @@ public final class CustomerAccountLedgerService {
                 stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_account_transactions_payment_id ON customer_account_transactions(payment_id) WHERE payment_id IS NOT NULL");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_customer_created_idx ON customer_account_transactions(customer_id, created_at DESC)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_location_created_idx ON customer_account_transactions(location_id, created_at DESC)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_sales_order_idx ON customer_account_transactions(sales_order_id)");
                 stmt.executeUpdate("DROP INDEX IF EXISTS customer_account_transactions_payment_id_idx");
                 stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_account_transactions_location_created");
                 backfillTransactionLocations(stmt);
@@ -66,11 +68,13 @@ public final class CustomerAccountLedgerService {
             if (tableExists(conn, "customer_account_payment_allocations")) {
                 stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
                 stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
+                stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS sales_order_id BIGINT");
                 ensureUpdatedAtTableSchema(stmt, "customer_account_payment_allocations");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_payment_idx ON customer_account_payment_allocations(payment_transaction_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sale_idx ON customer_account_payment_allocations(sale_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_custom_order_idx ON customer_account_payment_allocations(custom_order_id)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_invoice_idx ON customer_account_payment_allocations(invoice_id)");
+                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sales_order_idx ON customer_account_payment_allocations(sales_order_id)");
                 stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_payment");
                 stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_sale");
             }

@@ -1,12 +1,9 @@
 package services;
 
-import data.DB;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
 import utils.DeviceUtils;
 import models.DeviceInfo;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -22,19 +19,9 @@ public final class DeviceContextService {
     }
 
     public static String currentDeviceName() {
-        String managedDeviceName = currentManagedDeviceName();
-        if (managedDeviceName != null) {
-            return managedDeviceName;
-        }
-
         String localDeviceName = currentLocalDeviceName();
         if (localDeviceName != null) {
             return localDeviceName;
-        }
-
-        String receiptDeviceName = currentReceiptDeviceName();
-        if (receiptDeviceName != null) {
-            return receiptDeviceName;
         }
 
         return currentDeviceId();
@@ -46,46 +33,6 @@ public final class DeviceContextService {
 
     public static void requireOrdersAllowed(Connection conn) throws SQLException {
         requireCapability(conn, "allow_orders", "This device is not allowed to create orders. Enable Allow Orders in Device Management.");
-    }
-
-    private static String currentReceiptDeviceName() {
-        Integer locationId = SessionManager.getCurrentLocationId();
-        if (locationId == null) {
-            return null;
-        }
-        try {
-            return blankToNull(ReceiptNumberManager.getDeviceReceiptSettings(locationId).deviceId());
-        } catch (IOException ex) {
-            return null;
-        }
-    }
-
-    private static String currentManagedDeviceName() {
-        String deviceId = currentDeviceId();
-        if (deviceId == null) {
-            return null;
-        }
-        String sql = """
-                SELECT COALESCE(
-                           NULLIF(TRIM(NULLIF(device_name, device_id::text)), ''),
-                           NULLIF(TRIM(hostname), ''),
-                           NULLIF(TRIM(local_username), '')
-                       ) AS device_name
-                FROM devices
-                WHERE device_id = ?::uuid
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, deviceId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return blankToNull(rs.getString("device_name"));
-                }
-            }
-        } catch (SQLException ex) {
-            return null;
-        }
-        return null;
     }
 
     private static String currentLocalDeviceName() {

@@ -27,9 +27,6 @@ public final class StoreHydrationService {
 
     private static HydrationResult hydrate(Connection local, Integer locationId, boolean includeHistory) throws SQLException {
         DatabaseConfig config = DatabaseConfig.load();
-        if (config.mode() == DatabaseMode.CLOUD_DIRECT) {
-            return HydrationResult.skipped("Already connected directly to cloud.");
-        }
         if (!config.hasCloudConnection()) {
             return HydrationResult.skipped("Cloud database connection is not configured.");
         }

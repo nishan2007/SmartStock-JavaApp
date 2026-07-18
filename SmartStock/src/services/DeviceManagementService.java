@@ -253,6 +253,7 @@ public final class DeviceManagementService {
                 "allow_sales", false,
                 "allow_orders", false
         ));
+        DeviceCredentialService.revokeCredential(conn, deviceId, actingUserId);
     }
 
     public static void updateDeviceReceiptCode(Connection conn, String deviceId, String receiptCode) throws SQLException {

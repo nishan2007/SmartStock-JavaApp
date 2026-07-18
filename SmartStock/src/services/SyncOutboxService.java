@@ -1,7 +1,5 @@
 package services;
 
-import managers.SessionManager;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -12,6 +10,12 @@ public final class SyncOutboxService {
     }
 
     public static void recordEvent(Connection conn, String eventType, Map<String, ?> payload) throws SQLException {
+        recordEvent(conn, eventType, payload, ServerRequestIdentity.locationId(),
+                ServerRequestIdentity.deviceId(), ServerRequestIdentity.userId());
+    }
+
+    public static void recordEvent(Connection conn, String eventType, Map<String, ?> payload,
+                                   Integer locationId, String deviceId, Integer userId) throws SQLException {
         if (eventType == null || eventType.isBlank()) {
             return;
         }
@@ -22,9 +26,6 @@ public final class SyncOutboxService {
                 )
                 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
                 """;
-        Integer locationId = SessionManager.getCurrentLocationId();
-        String deviceId = SessionManager.getCurrentDeviceId();
-        Integer userId = SessionManager.getCurrentUserId();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, eventType);
             setNullableInteger(ps, 2, locationId);

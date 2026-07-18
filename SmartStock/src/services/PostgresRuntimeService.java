@@ -1,11 +1,14 @@
 package services;
 
+import data.DatabaseConfig;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public final class PostgresRuntimeService {
@@ -55,14 +58,42 @@ public final class PostgresRuntimeService {
         return runShell("command -v psql && psql --version && brew services list | grep -E 'postgresql|Name' || true", Duration.ofSeconds(30));
     }
 
-    public static CommandResult ensureLanServerAccess(int port) throws Exception {
+    public static CommandResult ensureServiceOnlyDatabaseAccess(DatabaseConfig config) throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
-            return new CommandResult(false,
-                    "Automatic PostgreSQL LAN configuration is not implemented for Windows yet. "
-                            + "Configure postgresql.conf listen_addresses and pg_hba.conf manually on the server.");
+            String script = """
+                    $ErrorActionPreference = 'Stop'
+                    $env:PGPASSWORD = $env:SMARTSTOCK_RUNTIME_DB_PASSWORD
+                    $Port = %d
+                    $User = $env:SMARTSTOCK_RUNTIME_DB_USER
+                    $HbaFile = (& psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show hba_file').Trim()
+                    if ($LASTEXITCODE -ne 0 -or -not $HbaFile) { throw 'Could not locate pg_hba.conf.' }
+                    $Stamp = Get-Date -Format 'yyyyMMddHHmmss'
+                    Copy-Item -LiteralPath $HbaFile -Destination ($HbaFile + '.smartstock-service-only-backup-' + $Stamp)
+                    $Lines = Get-Content -LiteralPath $HbaFile
+                    $Lines = $Lines | ForEach-Object {
+                      if ($_ -match '^\\s*host(?:ssl|nossl)?\\s+smartstock\\s+\\S+\\s+samenet\\s+' -or
+                          $_ -match '^\\s*host(?:ssl|nossl)?\\s+\\S+\\s+smartstock_(?:client|device_)') {
+                        '# disabled by SmartStock HTTPS single cutover: ' + $_
+                      } else { $_ }
+                    }
+                    Set-Content -LiteralPath $HbaFile -Value $Lines -Encoding ASCII
+                    & psql -h 127.0.0.1 -p $Port -U $User -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
+                    if ($LASTEXITCODE -ne 0) { throw 'Could not bind PostgreSQL to localhost.' }
+                    $Services = Get-Service 'postgresql*' -ErrorAction SilentlyContinue
+                    if (-not $Services) { throw 'PostgreSQL Windows service was not found.' }
+                    $Services | Restart-Service -Force
+                    Start-Sleep -Seconds 2
+                    $Listen = (& psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show listen_addresses').Trim()
+                    if ($Listen -ne 'localhost') { throw "PostgreSQL is still listening on: $Listen" }
+                    Write-Output 'PostgreSQL is bound to localhost; registers use HTTPS port 8443.'
+                    """.formatted(config.serverPort() <= 0 ? 5432 : config.serverPort());
+            return runPowerShell(script, Duration.ofMinutes(2), Map.of(
+                    "SMARTSTOCK_RUNTIME_DB_USER", config.dbUser(),
+                    "SMARTSTOCK_RUNTIME_DB_PASSWORD", config.dbPassword()
+            ));
         }
-        int cleanPort = port <= 0 ? 5432 : port;
+        int cleanPort = config.serverPort() <= 0 ? 5432 : config.serverPort();
         String script = """
                 set -e
                 find_pg_formula() {
@@ -72,30 +103,53 @@ public final class PostgresRuntimeService {
                 if [ -z "$formula" ]; then formula="postgresql"; fi
                 brew services start "$formula" >/dev/null 2>&1 || brew services restart "$formula" >/dev/null 2>&1 || true
 
-                CONFIG_FILE="$(psql -h 127.0.0.1 -p %d -d postgres -Atc 'show config_file')"
-                HBA_FILE="$(psql -h 127.0.0.1 -p %d -d postgres -Atc 'show hba_file')"
+                if psql -d postgres -Atc 'select 1' >/dev/null 2>&1; then
+                  PSQL_ADMIN=(psql -d postgres)
+                else
+                  PSQL_ADMIN=(psql -h 127.0.0.1 -p %d -U "$SMARTSTOCK_RUNTIME_DB_USER" -d postgres)
+                fi
+                CONFIG_FILE="$("${PSQL_ADMIN[@]}" -Atc 'show config_file')"
+                HBA_FILE="$("${PSQL_ADMIN[@]}" -Atc 'show hba_file')"
+                DATA_DIR="$("${PSQL_ADMIN[@]}" -Atc 'show data_directory')"
                 TS="$(date +%%Y%%m%%d%%H%%M%%S)"
-                cp "$CONFIG_FILE" "$CONFIG_FILE.smartstock-lan-backup-$TS"
-                cp "$HBA_FILE" "$HBA_FILE.smartstock-lan-backup-$TS"
+                cp "$CONFIG_FILE" "$CONFIG_FILE.smartstock-service-only-backup-$TS"
+                cp "$HBA_FILE" "$HBA_FILE.smartstock-service-only-backup-$TS"
 
                 if grep -Eq "^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=" "$CONFIG_FILE"; then
-                  perl -0pi -e "s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*$/listen_addresses = '*'\\t\\t# SmartStock LAN server/m" "$CONFIG_FILE"
+                  perl -0pi -e "s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*$/listen_addresses = 'localhost'\\t\\t# SmartStock Server Service only/m" "$CONFIG_FILE"
                 else
-                  printf "\\nlisten_addresses = '*'\\t\\t# SmartStock LAN server\\n" >> "$CONFIG_FILE"
+                  printf "\\nlisten_addresses = 'localhost'\\t\\t# SmartStock Server Service only\\n" >> "$CONFIG_FILE"
                 fi
 
-                if ! grep -Eq "^[[:space:]]*host[[:space:]]+smartstock[[:space:]]+all[[:space:]]+samenet[[:space:]]+scram-sha-256" "$HBA_FILE"; then
-                  cat >> "$HBA_FILE" <<'EOF'
-
-# SmartStock LAN clients on directly connected local networks. Password authentication is required.
-host    smartstock      all             samenet                 scram-sha-256
-EOF
+                CERT_FILE="$DATA_DIR/smartstock-server.crt"
+                KEY_FILE="$DATA_DIR/smartstock-server.key"
+                if [ ! -s "$CERT_FILE" ] || [ ! -s "$KEY_FILE" ]; then
+                  umask 077
+                  openssl req -new -x509 -nodes -newkey rsa:3072 -days 825 -subj "/CN=SmartStock LAN Server" -keyout "$KEY_FILE" -out "$CERT_FILE"
+                  chmod 600 "$KEY_FILE"
+                  chmod 644 "$CERT_FILE"
                 fi
+                if grep -Eq "^[[:space:]]*#?[[:space:]]*ssl[[:space:]]*=" "$CONFIG_FILE"; then
+                  perl -0pi -e "s/^[[:space:]]*#?[[:space:]]*ssl[[:space:]]*=.*$/ssl = on\\t\\t# SmartStock encrypted LAN/m" "$CONFIG_FILE"
+                else
+                  printf "\\nssl = on\\t\\t# SmartStock encrypted LAN\\n" >> "$CONFIG_FILE"
+                fi
+                printf "\\nssl_cert_file = 'smartstock-server.crt'\\nssl_key_file = 'smartstock-server.key'\\n" >> "$CONFIG_FILE"
+
+                perl -0pi -e "s/^([[:space:]]*host(?:ssl|nossl)?[[:space:]]+smartstock[[:space:]]+[^[:space:]]+[[:space:]]+samenet[[:space:]]+.*)$/# disabled by SmartStock HTTPS single cutover: $1/mg" "$HBA_FILE"
+                perl -0pi -e "s/^([[:space:]]*host(?:ssl|nossl)?[[:space:]]+[^[:space:]]+[[:space:]]+smartstock_(?:client|device_)[^[:space:]]*[[:space:]]+.*)$/# disabled by SmartStock HTTPS single cutover: $1/mg" "$HBA_FILE"
 
                 brew services restart "$formula"
-                psql -h 127.0.0.1 -p %d -d postgres -Atc 'show listen_addresses'
-                """.formatted(cleanPort, cleanPort, cleanPort);
-        return runShell(script, Duration.ofMinutes(2));
+                for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                  if pg_isready -q; then break; fi
+                  sleep 1
+                done
+                "${PSQL_ADMIN[@]}" -Atc 'show listen_addresses; show ssl'
+                """.formatted(cleanPort);
+        return runShell(script, Duration.ofMinutes(2), Map.of(
+                "SMARTSTOCK_RUNTIME_DB_USER", config.dbUser(),
+                "PGPASSWORD", config.dbPassword()
+        ));
     }
 
     public static CommandResult installSyncService() throws Exception {
@@ -119,7 +173,7 @@ EOF
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
             return runShell("""
-                    schtasks /Query /TN SmartStockBackgroundSync /FO LIST 2>&1 || exit 0
+                    schtasks /Query /TN SmartStockServerService /FO LIST 2>&1 || schtasks /Query /TN SmartStockBackgroundSync /FO LIST 2>&1 || exit 0
                     """, Duration.ofSeconds(30));
         }
         return runShell("""
@@ -133,7 +187,8 @@ EOF
             return false;
         }
         String lower = statusOutput.toLowerCase(Locale.ROOT);
-        return lower.contains("com.smartstock.sync")
+                return lower.contains("com.smartstock.sync")
+                || lower.contains("taskname:") && lower.contains("smartstockserverservice")
                 || lower.contains("taskname:") && lower.contains("smartstockbackgroundsync")
                 || lower.contains("task to run:") && lower.contains("run-smartstock-sync-service");
     }
@@ -229,15 +284,21 @@ EOF
                   'cd /d "' + $ServiceAppDir + '"',
                   'java -jar ' + $JarName + ' --sync-service'
                 )
-                schtasks /Create /TN SmartStockBackgroundSync /TR "`"$Cmd`"" /SC ONSTART /F
-                schtasks /Run /TN SmartStockBackgroundSync
-                schtasks /Query /TN SmartStockBackgroundSync /FO LIST
+                schtasks /Delete /TN SmartStockBackgroundSync /F 2>$null
+                schtasks /Create /TN SmartStockServerService /TR "`"$Cmd`"" /SC ONSTART /F
+                schtasks /Run /TN SmartStockServerService
+                schtasks /Query /TN SmartStockServerService /FO LIST
                 """.formatted(powerShellSingleQuoted(appDir.toString()));
         return runPowerShell(script, Duration.ofMinutes(2));
     }
 
     private static CommandResult runShell(String script, Duration timeout) throws Exception {
+        return runShell(script, timeout, Map.of());
+    }
+
+    private static CommandResult runShell(String script, Duration timeout, Map<String, String> environment) throws Exception {
         ProcessBuilder builder = new ProcessBuilder("/bin/bash", "-lc", script);
+        builder.environment().putAll(environment);
         builder.redirectErrorStream(true);
         Process process = builder.start();
         StringBuilder output = new StringBuilder();
@@ -256,7 +317,12 @@ EOF
     }
 
     private static CommandResult runPowerShell(String script, Duration timeout) throws Exception {
+        return runPowerShell(script, timeout, Map.of());
+    }
+
+    private static CommandResult runPowerShell(String script, Duration timeout, Map<String, String> environment) throws Exception {
         ProcessBuilder builder = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script);
+        builder.environment().putAll(environment);
         builder.redirectErrorStream(true);
         Process process = builder.start();
         StringBuilder output = new StringBuilder();

@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -21,6 +22,8 @@ public final class SupabaseSessionManager {
     private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
     private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
     private static final Path SESSION_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "session.properties");
+    // Refresh shortly before expiry so callers never send a known-expired JWT to /auth/v1/user.
+    private static final long ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .build();
@@ -122,31 +125,49 @@ public final class SupabaseSessionManager {
     public static synchronized String getValidAccessToken() throws IOException, InterruptedException {
         ensureConfig();
 
-        if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
-            throw new IllegalStateException("No active Supabase session. Please log in again.");
+        restorePersistedSessionForCurrentUserIfNeeded();
+
+        String accessToken = SessionManager.getCurrentAccessToken();
+        if (accessToken == null || accessToken.isBlank() || isAccessTokenExpiredOrExpiring(accessToken)) {
+            return refreshAccessToken();
         }
 
         try {
-            validateAccessToken(SessionManager.getCurrentAccessToken());
-            return SessionManager.getCurrentAccessToken();
+            validateAccessToken(accessToken);
+            return accessToken;
         } catch (IllegalStateException ex) {
-            if (SessionManager.getCurrentRefreshToken() == null || SessionManager.getCurrentRefreshToken().isBlank()) {
-                clearSession();
-                throw new IllegalStateException("Session expired. Please log in again.");
-            }
+            // A token can still be revoked before its exp claim. Refresh once after that
+            // server-side rejection, but never use /auth/v1/user as the expiry check.
+            return refreshAccessToken();
+        }
+    }
 
-            refreshSessionNow();
-
-            if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
-                throw new IllegalStateException("Session refresh failed. Please log in again.");
-            }
-
-            return SessionManager.getCurrentAccessToken();
+    private static void restorePersistedSessionForCurrentUserIfNeeded() {
+        if (SessionManager.getCurrentRefreshToken() != null
+                && !SessionManager.getCurrentRefreshToken().isBlank()) {
+            return;
+        }
+        Integer currentUserId = SessionManager.getCurrentUserId();
+        Integer currentLocationId = SessionManager.getCurrentLocationId();
+        PersistedSession persisted = loadPersistedSession();
+        if (persisted != null
+                && persisted.userId().equals(currentUserId)
+                && persisted.locationId().equals(currentLocationId)) {
+            setSession(persisted.accessToken(), persisted.refreshToken());
         }
     }
 
     public static synchronized String forceRefreshSession() throws IOException, InterruptedException {
         ensureConfig();
+        return refreshAccessToken();
+    }
+
+    private static String refreshAccessToken() throws IOException, InterruptedException {
+        if (SessionManager.getCurrentRefreshToken() == null || SessionManager.getCurrentRefreshToken().isBlank()) {
+            clearSession();
+            throw new IllegalStateException("Session expired. Please log in again.");
+        }
+
         refreshSessionNow();
         if (SessionManager.getCurrentAccessToken() == null || SessionManager.getCurrentAccessToken().isBlank()) {
             throw new IllegalStateException("Session refresh failed. Please log in again.");
@@ -285,6 +306,32 @@ public final class SupabaseSessionManager {
         try {
             String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
             return extractJsonString(payload, claimName);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static boolean isAccessTokenExpiredOrExpiring(String accessToken) {
+        Long expiresAt = extractJwtLongClaim(accessToken, "exp");
+        return expiresAt != null
+                && Instant.now().getEpochSecond() >= expiresAt - ACCESS_TOKEN_REFRESH_SKEW_SECONDS;
+    }
+
+    private static Long extractJwtLongClaim(String jwt, String claimName) {
+        if (jwt == null || jwt.isBlank()) {
+            return null;
+        }
+
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) {
+            return null;
+        }
+
+        try {
+            String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+            Pattern pattern = Pattern.compile("\\\"" + Pattern.quote(claimName) + "\\\"\\s*:\\s*(\\d+)");
+            Matcher matcher = pattern.matcher(payload);
+            return matcher.find() ? Long.parseLong(matcher.group(1)) : null;
         } catch (IllegalArgumentException ex) {
             return null;
         }

@@ -1,7 +1,6 @@
 package ui.screens;
 
-import data.DB;
-import managers.CompanyCustomizationManager;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -9,10 +8,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.UUID;
 
 public class DepartmentList extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -22,9 +18,9 @@ public class DepartmentList extends JFrame {
     private final DefaultTableModel tableModel;
     private final JTable departmentTable;
     private Integer selectedDepartmentId;
-    private boolean hasDescriptionColumn;
-    private boolean hasVatColumn;
     private boolean departmentVatEditable;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
 
     public DepartmentList() {
         setTitle("Department List");
@@ -165,58 +161,19 @@ public class DepartmentList extends JFrame {
 
     private void loadDepartments() {
         tableModel.setRowCount(0);
-        hasDescriptionColumn = hasColumn("categories", "description");
-        hasVatColumn = hasColumn("categories", "vat_rate_percent");
-        updateVatEditState();
-        String search = searchField.getText().trim();
-        String sql = "SELECT category_id, name"
-                + (hasVatColumn ? ", COALESCE(vat_rate_percent, 0) AS vat_rate_percent" : ", 0 AS vat_rate_percent")
-                + (hasDescriptionColumn ? ", COALESCE(description, '') AS description" : ", '' AS description")
-                + " FROM categories"
-                + (search.isBlank() ? "" : hasDescriptionColumn ? " WHERE name ILIKE ? OR COALESCE(description, '') ILIKE ?" : " WHERE name ILIKE ?")
-                + " ORDER BY name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                ps.setString(1, pattern);
-                if (hasDescriptionColumn) {
-                    ps.setString(2, pattern);
-                }
+        try {
+            LanApiClient.DepartmentListResult result = LanApiClient.loadDepartments(searchField.getText().trim());
+            departmentVatEditable = result.vatEditable();
+            updateVatEditState();
+            for (LanApiClient.DepartmentRecord department : result.departments()) {
+                tableModel.addRow(new Object[]{department.categoryId(), department.name(),
+                        department.vatRatePercent(), department.description()});
             }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    tableModel.addRow(new Object[]{
-                            rs.getInt("category_id"),
-                            rs.getString("name"),
-                            rs.getBigDecimal("vat_rate_percent"),
-                            rs.getString("description")
-                    });
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private boolean hasColumn(String tableName, String columnName) {
-        String sql = """
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = ?
-                  AND column_name = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tableName);
-            ps.setString(2, columnName);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException ex) {
-            return false;
+        } catch (Exception ex) {
+            departmentVatEditable = false;
+            updateVatEditState();
+            JOptionPane.showMessageDialog(this, "Failed to load departments: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -247,56 +204,23 @@ public class DepartmentList extends JFrame {
             return;
         }
 
-        String sql;
-        if (selectedDepartmentId == null) {
-            sql = hasVatColumn && hasDescriptionColumn
-                    ? "INSERT INTO categories (name, vat_rate_percent, description) VALUES (?, ?, ?)"
-                    : hasVatColumn
-                    ? "INSERT INTO categories (name, vat_rate_percent) VALUES (?, ?)"
-                    : hasDescriptionColumn
-                    ? "INSERT INTO categories (name, description) VALUES (?, ?)"
-                    : "INSERT INTO categories (name) VALUES (?)";
-        } else {
-            sql = hasVatColumn && hasDescriptionColumn
-                    ? "UPDATE categories SET name = ?, vat_rate_percent = ?, description = ? WHERE category_id = ?"
-                    : hasVatColumn
-                    ? "UPDATE categories SET name = ?, vat_rate_percent = ? WHERE category_id = ?"
-                    : hasDescriptionColumn
-                    ? "UPDATE categories SET name = ?, description = ? WHERE category_id = ?"
-                    : "UPDATE categories SET name = ? WHERE category_id = ?";
-        }
-
-        try (Connection conn = DB.getConnection();
-            PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, name);
-            if (selectedDepartmentId == null) {
-                if (hasVatColumn && hasDescriptionColumn) {
-                    ps.setBigDecimal(2, vatRatePercent);
-                    ps.setString(3, description);
-                } else if (hasVatColumn) {
-                    ps.setBigDecimal(2, vatRatePercent);
-                } else if (hasDescriptionColumn) {
-                    ps.setString(2, description);
-                }
-            } else if (hasVatColumn && hasDescriptionColumn) {
-                ps.setBigDecimal(2, vatRatePercent);
-                ps.setString(3, description);
-                ps.setInt(4, selectedDepartmentId);
-            } else if (hasVatColumn) {
-                ps.setBigDecimal(2, vatRatePercent);
-                ps.setInt(3, selectedDepartmentId);
-            } else if (hasDescriptionColumn) {
-                ps.setString(2, description);
-                ps.setInt(3, selectedDepartmentId);
-            } else {
-                ps.setInt(2, selectedDepartmentId);
+        try {
+            LanApiClient.DepartmentSaveRequest request = new LanApiClient.DepartmentSaveRequest(
+                    selectedDepartmentId, name, vatRatePercent, description);
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
+                pendingSaveFingerprint = fingerprint;
+                pendingSaveKey = UUID.randomUUID().toString();
             }
-            ps.executeUpdate();
+            LanApiClient.saveDepartment(request, pendingSaveKey);
+            pendingSaveKey = null;
+            pendingSaveFingerprint = null;
             clearEditor();
             loadDepartments();
             JOptionPane.showMessageDialog(this, "Department saved.");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save department: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save department: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -310,16 +234,8 @@ public class DepartmentList extends JFrame {
     }
 
     private void updateVatEditState() {
-        boolean enabled = false;
-        try {
-            CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
-            enabled = settings.vatEnabled() && settings.vatUseDepartmentRates();
-        } catch (Exception ignored) {
-            enabled = false;
-        }
-        departmentVatEditable = enabled;
-        vatRatePercentField.setEnabled(enabled);
-        vatRatePercentField.setToolTipText(enabled
+        vatRatePercentField.setEnabled(departmentVatEditable);
+        vatRatePercentField.setToolTipText(departmentVatEditable
                 ? "Department VAT is enabled in Company Preferences."
                 : "Enable VAT and select department VAT rates in Company Preferences to edit this value.");
     }

@@ -1,6 +1,6 @@
 package ui.screens;
 
-import data.DB;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -8,10 +8,8 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.List;
+import java.util.UUID;
 
 public class VendorList extends JFrame {
     private final JTextField searchField = new JTextField();
@@ -25,6 +23,9 @@ public class VendorList extends JFrame {
     private final DefaultTableModel tableModel;
     private final JTable vendorTable;
     private Integer selectedVendorId;
+    private List<LanApiClient.VendorRecord> loadedVendors = List.of();
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
 
     public VendorList() {
         setTitle("Vendor List");
@@ -170,47 +171,16 @@ public class VendorList extends JFrame {
 
     private void loadVendors() {
         tableModel.setRowCount(0);
-        String search = searchField.getText().trim();
-        String sql = """
-                SELECT vendor_id,
-                       name,
-                       COALESCE(contact_name, '') AS contact_name,
-                       COALESCE(phone, '') AS phone,
-                       COALESCE(email, '') AS email,
-                       COALESCE(address, '') AS address,
-                       COALESCE(notes, '') AS notes,
-                       COALESCE(is_active, TRUE) AS is_active
-                FROM vendors
-                """ + (search.isBlank() ? "" : """
-                WHERE name ILIKE ?
-                   OR COALESCE(contact_name, '') ILIKE ?
-                   OR COALESCE(phone, '') ILIKE ?
-                   OR COALESCE(email, '') ILIKE ?
-                   OR COALESCE(notes, '') ILIKE ?
-                """) + " ORDER BY name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                for (int i = 1; i <= 5; i++) {
-                    ps.setString(i, pattern);
-                }
+        try {
+            loadedVendors = LanApiClient.loadVendors(searchField.getText().trim());
+            for (LanApiClient.VendorRecord vendor : loadedVendors) {
+                tableModel.addRow(new Object[]{vendor.vendorId(), vendor.name(), vendor.contactName(),
+                        vendor.phone(), vendor.email(), vendor.active() ? "Yes" : "No"});
             }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    tableModel.addRow(new Object[]{
-                            rs.getInt("vendor_id"),
-                            rs.getString("name"),
-                            rs.getString("contact_name"),
-                            rs.getString("phone"),
-                            rs.getString("email"),
-                            rs.getBoolean("is_active") ? "Yes" : "No"
-                    });
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            loadedVendors = List.of();
+            JOptionPane.showMessageDialog(this, "Failed to load vendors: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -222,34 +192,15 @@ public class VendorList extends JFrame {
         int modelRow = vendorTable.convertRowIndexToModel(row);
         selectedVendorId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, 0)));
 
-        String sql = """
-                SELECT name,
-                       COALESCE(contact_name, '') AS contact_name,
-                       COALESCE(phone, '') AS phone,
-                       COALESCE(email, '') AS email,
-                       COALESCE(address, '') AS address,
-                       COALESCE(notes, '') AS notes,
-                       COALESCE(is_active, TRUE) AS is_active
-                FROM vendors
-                WHERE vendor_id = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, selectedVendorId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    nameField.setText(rs.getString("name"));
-                    contactField.setText(rs.getString("contact_name"));
-                    phoneField.setText(rs.getString("phone"));
-                    emailField.setText(rs.getString("email"));
-                    addressArea.setText(rs.getString("address"));
-                    notesArea.setText(rs.getString("notes"));
-                    activeCheckBox.setSelected(rs.getBoolean("is_active"));
-                }
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load vendor details: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
+        loadedVendors.stream().filter(vendor -> vendor.vendorId() == selectedVendorId).findFirst().ifPresent(vendor -> {
+            nameField.setText(vendor.name());
+            contactField.setText(vendor.contactName());
+            phoneField.setText(vendor.phone());
+            emailField.setText(vendor.email());
+            addressArea.setText(vendor.address());
+            notesArea.setText(vendor.notes());
+            activeCheckBox.setSelected(vendor.active());
+        });
     }
 
     private void saveVendor() {
@@ -259,28 +210,25 @@ public class VendorList extends JFrame {
             return;
         }
 
-        String sql = selectedVendorId == null
-                ? "INSERT INTO vendors (name, contact_name, phone, email, address, notes, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
-                : "UPDATE vendors SET name = ?, contact_name = ?, phone = ?, email = ?, address = ?, notes = ?, is_active = ? WHERE vendor_id = ?";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, name);
-            ps.setString(2, emptyToNull(contactField.getText()));
-            ps.setString(3, emptyToNull(phoneField.getText()));
-            ps.setString(4, emptyToNull(emailField.getText()));
-            ps.setString(5, emptyToNull(addressArea.getText()));
-            ps.setString(6, emptyToNull(notesArea.getText()));
-            ps.setBoolean(7, activeCheckBox.isSelected());
-            if (selectedVendorId != null) {
-                ps.setInt(8, selectedVendorId);
+        try {
+            LanApiClient.VendorSaveRequest request = new LanApiClient.VendorSaveRequest(
+                    selectedVendorId, name, emptyToNull(contactField.getText()), emptyToNull(phoneField.getText()),
+                    emptyToNull(emailField.getText()), emptyToNull(addressArea.getText()),
+                    emptyToNull(notesArea.getText()), activeCheckBox.isSelected());
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
+                pendingSaveFingerprint = fingerprint;
+                pendingSaveKey = UUID.randomUUID().toString();
             }
-            ps.executeUpdate();
+            LanApiClient.saveVendor(request, pendingSaveKey);
+            pendingSaveKey = null;
+            pendingSaveFingerprint = null;
             clearEditor();
             loadVendors();
             JOptionPane.showMessageDialog(this, "Vendor saved.");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save vendor: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save vendor: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

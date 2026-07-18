@@ -589,6 +589,7 @@ DECLARE
     target_sequence TEXT;
     has_authenticated BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
     has_service_role BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role');
+    is_supabase BOOLEAN := to_regprocedure('auth.uid()') IS NOT NULL;
 BEGIN
     FOREACH target_table IN ARRAY ARRAY[
         'quotations',
@@ -606,7 +607,7 @@ BEGIN
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
         EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC', target_table);
-        IF has_authenticated THEN
+        IF has_authenticated AND NOT is_supabase THEN
             EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', target_table || '_authenticated_all', target_table);
             EXECUTE format(
                 'CREATE POLICY %I ON public.%I FOR ALL TO authenticated USING (true) WITH CHECK (true)',
@@ -614,6 +615,8 @@ BEGIN
                 target_table
             );
             EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated', target_table);
+        ELSIF has_authenticated THEN
+            EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', target_table || '_authenticated_all', target_table);
         END IF;
         IF has_service_role THEN
             EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', target_table || '_service_role_all', target_table);

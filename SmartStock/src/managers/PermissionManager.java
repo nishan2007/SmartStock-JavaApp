@@ -1,14 +1,9 @@
 package managers;
 
-import data.DB;
 import ui.components.AppMenuBar;
 
 import javax.swing.*;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -51,31 +46,7 @@ public class PermissionManager {
     }
 
     private static void reloadPermissionsFromDatabase(String role) {
-        Set<String> permissions = new HashSet<>();
-
-        String sql = """
-                SELECT UPPER(p.permission_key) AS permission_key
-                FROM roles r
-                JOIN role_permissions rp ON r.role_id = rp.role_id
-                JOIN permissions p ON rp.permission_id = p.permission_id
-                WHERE UPPER(r.role_name) = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, role.trim().toUpperCase());
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    permissions.add(rs.getString("permission_key"));
-                }
-            }
-
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-        }
-
+        Set<String> permissions = new HashSet<>(SessionManager.getCurrentPermissions());
         cachedRole = role.trim().toUpperCase();
         cachedPermissions = permissions;
     }

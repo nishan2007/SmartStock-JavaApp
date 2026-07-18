@@ -2,18 +2,11 @@ package ui.screens;
 
 import Receipt.ReceiptBuilder;
 import Receipt.ReceiptData;
-import managers.CompanyCustomizationManager;
 import managers.PermissionManager;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
-import data.DB;
-import models.CashDrawerContext;
-import services.CashDrawerService;
-import services.CustomerAccountLedgerService;
-import services.DeviceContextService;
 import services.ManagerApprovalService;
-import services.SaleAuditService;
-import services.SyncOutboxService;
+import services.LanApiClient;
+import services.ProductSearchHelper;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
@@ -35,10 +28,11 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.*;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import java.util.UUID;
 
 
 public class MakeASale extends JFrame {
@@ -120,6 +114,15 @@ public class MakeASale extends JFrame {
     private final java.util.Map<Integer, PendingDiscountApproval> pendingItemDiscountApprovals = new java.util.HashMap<>();
     private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
     private boolean updatingCustomerAccountFilter = false;
+    private LanApiClient.SalesSettings salesSettings = new LanApiClient.SalesSettings(
+            false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), java.util.List.of());
+    private boolean salesSettingsLoaded;
+    private String pendingCheckoutKey;
+    private String pendingCheckoutFingerprint;
+    private String pendingHoldKey;
+    private String pendingHoldFingerprint;
+    private Integer pendingResumeHeldCartId;
+    private String pendingResumeKey;
 
    public MakeASale() {
 
@@ -546,6 +549,7 @@ public class MakeASale extends JFrame {
        });
        updateSelectedStoreLabel(); //displays the current store
        updateCurrentUserLabel(); //displays the current user
+	       loadSalesSettings(false);
 	       loadCustomerAccounts();
 	       updateCustomerAccountEnabled();
        loadCompanyBranding();
@@ -1161,49 +1165,12 @@ public class MakeASale extends JFrame {
                 if (cachedRows != null) {
                     return cachedRows;
                 }
-                String sql = """
-                    SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
-                           COALESCE(p.product_type, 'INVENTORY') AS product_type,
-                           p.category_id,
-                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-                    FROM products p
-                    LEFT JOIN inventory i
-                        ON p.product_id = i.product_id
-                       AND i.location_id = ?
-                    WHERE (? = '' OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
-                    ORDER BY p.name
-                    LIMIT 250
-                    """;
-
-                try (Connection conn = DB.getConnection();
-                     PreparedStatement ps = conn.prepareStatement(sql)) {
-                    ps.setInt(1, locationId);
-                    ps.setString(2, searchText);
-                    ps.setString(3, "%" + searchText + "%");
-                    ps.setString(4, "%" + searchText + "%");
-                    ps.setString(5, "%" + searchText + "%");
-
-                    java.util.List<Object[]> rows = new java.util.ArrayList<>();
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            if (isCancelled()) {
-                                return rows;
-                            }
-                            rows.add(new Object[]{
-                                    rs.getInt("product_id"),
-                                    rs.getString("name"),
-                                    rs.getString("size"),
-                                    rs.getString("description"),
-                                    rs.getString("sku"),
-                                    rs.getDouble("price"),
-                                    rs.getString("product_type"),
-                                    rs.getObject("category_id"),
-                                    rs.getInt("quantity_on_hand")
-                            });
-                        }
-                    }
-                    return rows;
+                java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                for (LanApiClient.CatalogProduct product : LanApiClient.searchCatalog(searchText)) {
+                    if (isCancelled()) return rows;
+                    rows.add(catalogRow(product));
                 }
+                return rows;
             }
 
             @Override
@@ -1234,24 +1201,16 @@ public class MakeASale extends JFrame {
         if (cachedProductLocationId != locationId || productSearchCache.isEmpty()) {
             return null;
         }
-        String normalized = searchText == null ? "" : searchText.trim().toLowerCase();
         java.util.List<Object[]> rows = new java.util.ArrayList<>();
         for (Object[] row : productSearchCache) {
             if (rows.size() >= 250) {
                 break;
             }
-            if (normalized.isEmpty() || cachedRowMatches(row, normalized)) {
+            if (ProductSearchHelper.textMatches(rowValue(row, 9), searchText)) {
                 rows.add(row);
             }
         }
         return rows;
-    }
-
-    private boolean cachedRowMatches(Object[] row, String normalized) {
-        String name = rowValue(row, 1);
-        String size = rowValue(row, 2);
-        String sku = rowValue(row, 4);
-        return name.contains(normalized) || size.contains(normalized) || sku.contains(normalized);
     }
 
     private String rowValue(Object[] row, int index) {
@@ -1277,42 +1236,12 @@ public class MakeASale extends JFrame {
         productCacheWorker = new SwingWorker<>() {
             @Override
             protected java.util.List<Object[]> doInBackground() throws Exception {
-                String sql = """
-                    SELECT p.product_id, p.name, COALESCE(p.size, '') AS size, p.description, p.sku, p.price,
-                           COALESCE(p.product_type, 'INVENTORY') AS product_type,
-                           p.category_id,
-                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-                    FROM products p
-                    LEFT JOIN inventory i
-                        ON p.product_id = i.product_id
-                       AND i.location_id = ?
-                    ORDER BY p.name
-                    """;
-
-                try (Connection conn = DB.getConnection();
-                     PreparedStatement ps = conn.prepareStatement(sql)) {
-                    ps.setInt(1, loadLocationId);
-                    java.util.List<Object[]> rows = new java.util.ArrayList<>();
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            if (isCancelled()) {
-                                return rows;
-                            }
-                            rows.add(new Object[]{
-                                    rs.getInt("product_id"),
-                                    rs.getString("name"),
-                                    rs.getString("size"),
-                                    rs.getString("description"),
-                                    rs.getString("sku"),
-                                    rs.getDouble("price"),
-                                    rs.getString("product_type"),
-                                    rs.getObject("category_id"),
-                                    rs.getInt("quantity_on_hand")
-                            });
-                        }
-                    }
-                    return rows;
+                java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                for (LanApiClient.CatalogProduct product : LanApiClient.searchCatalog("")) {
+                    if (isCancelled()) return rows;
+                    rows.add(catalogRow(product));
                 }
+                return rows;
             }
 
             @Override
@@ -1329,6 +1258,12 @@ public class MakeASale extends JFrame {
             }
         };
         productCacheWorker.execute();
+    }
+
+    private static Object[] catalogRow(LanApiClient.CatalogProduct product) {
+        return new Object[]{product.productId(), product.name(), product.size(), product.description(),
+                product.sku(), product.price(), product.productType(), product.categoryId(),
+                product.quantityOnHand(), product.searchableText()};
     }
 
 
@@ -1706,17 +1641,9 @@ public class MakeASale extends JFrame {
     }
 
     private BigDecimal getFinalTotalAmount() {
-        try (Connection conn = DB.getConnection()) {
-            return getFinalTotalAmount(conn);
-        } catch (SQLException ex) {
-            return utils.CurrencyFormatter.normalize(getPreVatSaleTotal(getDiscountPercent()));
-        }
-    }
-
-    private BigDecimal getFinalTotalAmount(Connection conn) throws SQLException {
         BigDecimal discountPercent = getDiscountPercent();
         BigDecimal preVatTotal = getPreVatSaleTotal(discountPercent);
-        return utils.CurrencyFormatter.normalize(preVatTotal.add(calculateVat(conn, discountPercent).amount()));
+        return utils.CurrencyFormatter.normalize(preVatTotal.add(calculateVat(discountPercent).amount()));
     }
 
     private BigDecimal getPreVatSaleTotal(BigDecimal discountPercent) {
@@ -1727,75 +1654,48 @@ public class MakeASale extends JFrame {
         return utils.CurrencyFormatter.normalize(subtotal.subtract(discountAmount).max(BigDecimal.ZERO));
     }
 
-    private VatCalculation calculateVat(Connection conn, BigDecimal saleDiscountPercent) throws SQLException {
-        CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
-        if (!settings.vatEnabled()) {
+    private VatCalculation calculateVat(BigDecimal saleDiscountPercent) {
+        LanApiClient.SalesSettings settings = salesSettings;
+        if (settings == null || !settings.vatEnabled()) {
             return new VatCalculation(BigDecimal.ZERO, BigDecimal.ZERO, "");
         }
         BigDecimal preVatTotal = getPreVatSaleTotal(saleDiscountPercent);
         if (preVatTotal.compareTo(BigDecimal.ZERO) <= 0) {
-            return new VatCalculation(BigDecimal.ZERO, BigDecimal.ZERO, settings.vatUseDepartmentRates() ? "DEPARTMENT" : "FIXED");
+            return new VatCalculation(BigDecimal.ZERO, BigDecimal.ZERO,
+                    settings.departmentVat() ? "DEPARTMENT" : "FIXED");
         }
-        if (!settings.vatUseDepartmentRates()) {
-            BigDecimal amount = preVatTotal.multiply(settings.vatFixedRatePercent())
+        if (!settings.departmentVat()) {
+            BigDecimal rate = settings.fixedVatRate() == null ? BigDecimal.ZERO : settings.fixedVatRate();
+            BigDecimal amount = preVatTotal.multiply(rate)
                     .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-            return new VatCalculation(amount, settings.vatFixedRatePercent(), "FIXED");
+            return new VatCalculation(amount, rate, "FIXED");
         }
 
-        Map<Integer, BigDecimal> departmentRates = loadDepartmentVatRates(conn);
+        Map<Integer, BigDecimal> departmentRates = new java.util.HashMap<>();
+        if (settings.departmentRates() != null) {
+            for (LanApiClient.DepartmentVatRate rate : settings.departmentRates()) {
+                departmentRates.put(rate.categoryId(),
+                        rate.ratePercent() == null ? BigDecimal.ZERO : rate.ratePercent());
+            }
+        }
         BigDecimal saleDiscountMultiplier = BigDecimal.ONE.subtract(
                 (saleDiscountPercent == null ? BigDecimal.ZERO : saleDiscountPercent)
-                        .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
-        );
+                        .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP));
         BigDecimal vatAmount = BigDecimal.ZERO;
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             Integer departmentId = parseNullableInt(cartModel.getValueAt(i, CART_COL_DEPARTMENT_ID));
-            BigDecimal rate = departmentId == null ? BigDecimal.ZERO : departmentRates.getOrDefault(departmentId, BigDecimal.ZERO);
-            if (rate.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-            BigDecimal lineAfterItemDiscount = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_LINE_TOTAL));
-            BigDecimal taxableLine = utils.CurrencyFormatter.normalize(lineAfterItemDiscount.multiply(saleDiscountMultiplier).max(BigDecimal.ZERO));
-            vatAmount = vatAmount.add(taxableLine.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
+            BigDecimal rate = departmentId == null ? BigDecimal.ZERO
+                    : departmentRates.getOrDefault(departmentId, BigDecimal.ZERO);
+            if (rate.compareTo(BigDecimal.ZERO) <= 0) continue;
+            BigDecimal taxableLine = utils.CurrencyFormatter.normalize(
+                    parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_LINE_TOTAL))
+                            .multiply(saleDiscountMultiplier).max(BigDecimal.ZERO));
+            vatAmount = vatAmount.add(taxableLine.multiply(rate)
+                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
         }
-        BigDecimal effectiveRate = preVatTotal.compareTo(BigDecimal.ZERO) == 0
-                ? BigDecimal.ZERO
-                : vatAmount.multiply(BigDecimal.valueOf(100)).divide(preVatTotal, 2, RoundingMode.HALF_UP);
-        return new VatCalculation(utils.CurrencyFormatter.normalize(vatAmount), effectiveRate, "DEPARTMENT");
-    }
-
-    private Map<Integer, BigDecimal> loadDepartmentVatRates(Connection conn) throws SQLException {
-        java.util.Map<Integer, BigDecimal> rates = new java.util.HashMap<>();
-        if (!hasColumn(conn, "categories", "vat_rate_percent")) {
-            return rates;
-        }
-        try (PreparedStatement ps = conn.prepareStatement("SELECT category_id, COALESCE(vat_rate_percent, 0) AS vat_rate_percent FROM categories")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    rates.put(rs.getInt("category_id"), rs.getBigDecimal("vat_rate_percent"));
-                }
-            }
-        }
-        return rates;
-    }
-
-    private boolean hasColumn(Connection conn, String tableName, String columnName) {
-        String sql = """
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = ?
-                  AND column_name = ?
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tableName);
-            ps.setString(2, columnName);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException ex) {
-            return false;
-        }
+        BigDecimal effectiveRate = vatAmount.multiply(BigDecimal.valueOf(100))
+                .divide(preVatTotal, 2, RoundingMode.HALF_UP);
+        return new VatCalculation(vatAmount, effectiveRate, "DEPARTMENT");
     }
 
     private BigDecimal getDiscountPercent() {
@@ -1956,6 +1856,24 @@ public class MakeASale extends JFrame {
         }
     }
 
+    private boolean loadSalesSettings(boolean showError) {
+        try {
+            salesSettings = LanApiClient.loadSalesSettings();
+            salesSettingsLoaded = true;
+        } catch (Exception ex) {
+            salesSettingsLoaded = false;
+            salesSettings = new LanApiClient.SalesSettings(
+                    false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), java.util.List.of());
+            if (showError) {
+                JOptionPane.showMessageDialog(this,
+                        "SmartStock could not load the store's sales settings. Check the LAN server and retry.",
+                        "LAN Service Unavailable", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+        updateOverallTotal();
+        return salesSettingsLoaded;
+    }
+
     private void loadCustomerAccounts() {
         if (customerAccountBox == null) {
             return;
@@ -1965,44 +1883,17 @@ public class MakeASale extends JFrame {
         customerAccountOptions = new java.util.ArrayList<>();
         customerAccountBox.removeAllItems();
 
-        String sql = """
-                SELECT ca.customer_id,
-                       ca.account_number,
-                       ca.name AS customer_name,
-                       ca.credit_limit,
-                       ca.current_balance,
-                       (ca.credit_limit - ca.current_balance) AS available_credit,
-                       COALESCE(ca.is_business, FALSE) AS is_business,
-                       COALESCE(ct.name, '') AS customer_type_name
-                FROM customer_accounts ca
-                LEFT JOIN customer_types ct ON ct.customer_type_id = ca.customer_type_id
-                WHERE ca.is_active = TRUE
-                ORDER BY ca.name
-                """;
-
-        try (Connection conn = DB.getConnection()) {
-            CustomerAccountLedgerService.repairAllBalances(conn);
-            try (PreparedStatement ps = conn.prepareStatement(sql);
-                 ResultSet rs = ps.executeQuery()) {
-
-                while (rs.next()) {
-                    customerAccountOptions.add(new CustomerAccountOption(
-                            rs.getInt("customer_id"),
-                            rs.getString("account_number"),
-                            rs.getString("customer_name"),
-                            rs.getBigDecimal("credit_limit"),
-                            rs.getBigDecimal("current_balance"),
-                            rs.getBigDecimal("available_credit"),
-                            rs.getBoolean("is_business"),
-                            rs.getString("customer_type_name")
-                    ));
-                }
+        try {
+            for (LanApiClient.CustomerAccount account : LanApiClient.loadCustomerAccounts()) {
+                customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),
+                        account.customerName(), account.creditLimit(), account.currentBalance(),
+                        account.availableCredit(), account.business(), account.customerTypeName()));
             }
             applyCustomerAccountFilter("", false);
             if (selectedBeforeReload != null) {
                 selectCustomerById(selectedBeforeReload.customerId);
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load customer accounts: " + ex.getMessage());
         }
     }
@@ -2121,6 +2012,7 @@ public class MakeASale extends JFrame {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
         }
+        if (!salesSettingsLoaded && !loadSalesSettings(true)) return;
 
         BigDecimal discountPercent = parseDiscountPercentOrShowError();
         if (discountPercent == null) {
@@ -2132,12 +2024,11 @@ public class MakeASale extends JFrame {
             updateOverallTotal();
             return;
         }
-        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
-        BigDecimal discountLimit = saleSafetySettings.discountLimitPercent() == null
+        BigDecimal discountLimit = salesSettings == null || salesSettings.discountLimit() == null
                 ? BigDecimal.valueOf(5)
-                : saleSafetySettings.discountLimitPercent();
+                : salesSettings.discountLimit();
         String saleDiscountOverrideReason = null;
-        Integer saleDiscountOverrideByUserId = null;
+        String saleDiscountApprovalToken = null;
         String saleDiscountOverrideByName = null;
         if (discountPercent.compareTo(discountLimit) > 0) {
             ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
@@ -2150,7 +2041,7 @@ public class MakeASale extends JFrame {
                 return;
             }
             saleDiscountOverrideReason = approval.reason();
-            saleDiscountOverrideByUserId = approval.approvedByUserId();
+            saleDiscountApprovalToken = approval.lanApprovalToken();
             saleDiscountOverrideByName = approval.approvedByName();
             if (overrideStatusLabel != null) {
                 overrideStatusLabel.setText("Discount override approved by: " + saleDiscountOverrideByName);
@@ -2186,463 +2077,72 @@ public class MakeASale extends JFrame {
             }
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
+        checkoutThroughLanApi(showReceiptPreview, paymentMethod, paymentReference, selectedCustomer,
+                discountPercent, cashCollected, saleDiscountApprovalToken, saleDiscountOverrideReason);
+    }
 
-            if (SessionManager.getCurrentLocationId() == null) {
-                conn.setAutoCommit(true);
-                JOptionPane.showMessageDialog(this, "No store is selected for this session.");
-                return;
+    private void checkoutThroughLanApi(boolean showReceiptPreview, String paymentMethod,
+                                       String paymentReference, CustomerAccountOption customer,
+                                       BigDecimal saleDiscountPercent, BigDecimal cashCollected,
+                                       String saleApprovalToken, String saleApprovalReason) {
+        java.util.List<LanApiClient.CheckoutLine> lines = new java.util.ArrayList<>();
+        for (int row = 0; row < cartModel.getRowCount(); row++) {
+            int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+            PendingPriceApproval priceApproval = pendingPriceOverrideApprovals.get(productId);
+            PendingDiscountApproval discountApproval = pendingItemDiscountApprovals.get(productId);
+            lines.add(new LanApiClient.CheckoutLine(
+                    productId,
+                    parseIntOrDefault(cartModel.getValueAt(row, CART_COL_QTY), 0),
+                    parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_PRICE)),
+                    parsePercentOrZero(cartModel.getValueAt(row, CART_COL_ITEM_DISCOUNT)),
+                    priceApproval == null ? null : priceApproval.approval().lanApprovalToken(),
+                    priceApproval == null ? null : priceApproval.approval().reason(),
+                    discountApproval == null ? null : discountApproval.approval().lanApprovalToken(),
+                    discountApproval == null ? null : discountApproval.approval().reason()
+            ));
+        }
+        LanApiClient.CheckoutRequest request = new LanApiClient.CheckoutRequest(
+                paymentMethod, paymentReference, customer == null ? null : customer.customerId,
+                saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason, lines);
+        String requestFingerprint = request.toString();
+        if (pendingCheckoutKey == null || !requestFingerprint.equals(pendingCheckoutFingerprint)) {
+            pendingCheckoutKey = UUID.randomUUID().toString();
+            pendingCheckoutFingerprint = requestFingerprint;
+        }
+        try {
+            LanApiClient.CheckoutResult result = LanApiClient.checkout(request, pendingCheckoutKey);
+            pendingCheckoutKey = null;
+            pendingCheckoutFingerprint = null;
+            String message = "Sale completed successfully.\nReceipt #: " + result.receiptNumber()
+                    + "\nSale ID: " + result.saleId();
+            if (result.cashDrawerName() != null && !result.cashDrawerName().isBlank()) {
+                message += "\nCash Drawer: " + result.cashDrawerName();
             }
-            if (SessionManager.getCurrentUserId() == null) {
-                conn.setAutoCommit(true);
-                JOptionPane.showMessageDialog(this, "No cashier is logged in for this session.");
-                return;
+            if ("CASH".equals(paymentMethod)) {
+                message += "\nCash Collected: " + utils.CurrencyFormatter.format(result.cashCollected())
+                        + "\nChange Due: " + utils.CurrencyFormatter.format(result.changeDue());
             }
-
-            int locationId = SessionManager.getCurrentLocationId();
-
-            try {
+            if (showReceiptPreview) {
                 try {
-                    DeviceContextService.requireSalesAllowed(conn);
-                } catch (SQLException ex) {
-                    conn.setAutoCommit(true);
-                    JOptionPane.showMessageDialog(
-                            this,
-                            ex.getMessage(),
-                            "Device Access Required",
-                            JOptionPane.WARNING_MESSAGE
-                    );
-                    return;
+                    ReceiptData receiptData = ReceiptBuilder.loadSaleReceipt(result.saleId(),
+                            "CASH".equals(paymentMethod) ? result.cashCollected() : null,
+                            "CASH".equals(paymentMethod) ? result.changeDue() : null);
+                    WindowHelper.showPosWindow(new ReceiptPreview(receiptData), this);
+                } catch (Exception receiptError) {
+                    message += "\n\nReceipt preview failed: " + receiptError.getMessage();
                 }
-
-                CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
-                if (cashPayment) {
-                    try {
-                        cashDrawer = CashDrawerService.requireActiveCashSession(conn);
-                    } catch (SQLException ex) {
-                        conn.setAutoCommit(true);
-                        JOptionPane.showMessageDialog(
-                                this,
-                                ex.getMessage(),
-                                "Cash Drawer Required",
-                                JOptionPane.WARNING_MESSAGE
-                        );
-                        return;
-                    }
-                }
-
-                BigDecimal subtotalAmount = getCartGrossSubtotal();
-                BigDecimal itemDiscountTotal = getItemDiscountTotal();
-                BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal saleLevelDiscountAmount = lineSubtotalAfterItemDiscounts.multiply(discountPercent)
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                BigDecimal preVatSaleTotal = lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
-                VatCalculation vat = calculateVat(conn, discountPercent);
-                BigDecimal saleTotal = utils.CurrencyFormatter.normalize(preVatSaleTotal.add(vat.amount()));
-                BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
-                if (saleTotal.compareTo(BigDecimal.ZERO) <= 0) {
-                    JOptionPane.showMessageDialog(this, "Sale total must be greater than zero.");
-                    return;
-                }
-                BigDecimal saleDiscountMultiplier = BigDecimal.ONE.subtract(
-                        discountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
-                );
-                if (chargeCustomerAccount) {
-                    validateAndChargeCustomerAccount(conn, selectedCustomer.customerId, saleTotal);
-                }
-
-                ReceiptNumberManager.ReceiptNumber receipt = ReceiptNumberManager.nextReceipt(locationId);
-                String paymentStatus = chargeCustomerAccount ? "UNPAID" : "PAID";
-                BigDecimal amountPaid = chargeCustomerAccount ? BigDecimal.ZERO : saleTotal;
-                repairSalesSequence(conn);
-                String insertSaleSql = """
-                        INSERT INTO sales (
-                            location_id,
-                            user_id,
-                            customer_id,
-                            total_amount,
-                            status,
-                            payment_method,
-	                            payment_status,
-	                            amount_paid,
-	                            user_name,
-	                            receipt_number,
-	                            receipt_device_id,
-	                            receipt_sequence,
-	                            subtotal_amount,
-	                            discount_percent,
-	                            discount_amount,
-                                vat_amount,
-                                vat_rate_percent,
-                                vat_mode,
-                                payment_reference,
-	                            transaction_source,
-                                device_id,
-                                cash_drawer_id,
-                                cash_drawer_name,
-                                cash_drawer_session_id,
-                                discount_override_reason,
-                                discount_override_by_user_id,
-                                discount_override_by_name,
-                                completed_at
-	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	                        """;
-                int saleId;
-
-                try (PreparedStatement saleStmt = conn.prepareStatement(insertSaleSql, Statement.RETURN_GENERATED_KEYS)) {
-                    saleStmt.setInt(1, locationId);
-                    saleStmt.setInt(2, SessionManager.getCurrentUserId());
-                    if (selectedCustomer == null) {
-                        saleStmt.setNull(3, java.sql.Types.INTEGER);
-                    } else {
-                        saleStmt.setInt(3, selectedCustomer.customerId);
-                    }
-                    saleStmt.setBigDecimal(4, saleTotal);
-                    saleStmt.setString(5, "COMPLETED");
-                    saleStmt.setString(6, paymentMethod);
-	                    saleStmt.setString(7, paymentStatus);
-	                    saleStmt.setBigDecimal(8, amountPaid);
-	                    saleStmt.setString(9, SessionManager.getCurrentUserDisplayName());
-		                    saleStmt.setString(10, receipt.receiptNumber());
-		                    saleStmt.setString(11, receipt.deviceId());
-		                    saleStmt.setInt(12, receipt.sequence());
-		                    saleStmt.setBigDecimal(13, subtotalAmount);
-		                    saleStmt.setBigDecimal(14, discountPercent);
-		                    saleStmt.setBigDecimal(15, discountAmount);
-                            saleStmt.setBigDecimal(16, vat.amount());
-                            saleStmt.setBigDecimal(17, vat.ratePercent());
-                            saleStmt.setString(18, vat.mode());
-                            saleStmt.setString(19, paymentReference.isBlank() ? null : paymentReference);
-	                    saleStmt.setString(20, "Java_app");
-                            saleStmt.setString(21, DeviceContextService.currentDeviceId());
-                            setNullableLong(saleStmt, 22, cashDrawer.cashDrawerId());
-                            saleStmt.setString(23, cashDrawer.drawerName());
-                            setNullableLong(saleStmt, 24, cashDrawer.sessionId());
-                            saleStmt.setString(25, saleDiscountOverrideReason);
-                            setNullableInteger(saleStmt, 26, saleDiscountOverrideByUserId);
-                            saleStmt.setString(27, saleDiscountOverrideByName);
-	                    saleStmt.executeUpdate();
-
-                    try (ResultSet generatedKeys = saleStmt.getGeneratedKeys()) {
-                        if (!generatedKeys.next()) {
-                            throw new SQLException("Failed to create sale.");
-                        }
-                        saleId = generatedKeys.getInt(1);
-                    }
-                }
-
-                SaleAuditService.recordSale(
-                        conn,
-                        saleId,
-                        selectedCustomer == null ? null : selectedCustomer.customerId,
-                        locationId,
-                        "SALE_CREATED",
-                        saleTotal,
-                        "receipt=" + receipt.receiptNumber()
-                                + "; payment_method=" + paymentMethod
-                                + "; payment_status=" + paymentStatus
-                                + (cashDrawer.drawerName() == null ? "" : "; cash_drawer=" + cashDrawer.drawerName())
-                                + "; subtotal=" + subtotalAmount
-                                + "; discount=" + discountAmount
-                                + "; vat=" + vat.amount()
-                                + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
-                );
-                if (discountPercent.compareTo(BigDecimal.ZERO) > 0 || discountAmount.compareTo(BigDecimal.ZERO) > 0) {
-                    SaleAuditService.record(
-                            conn, saleId, null, null, null,
-                            selectedCustomer == null ? null : selectedCustomer.customerId,
-                            null, locationId,
-                            "SALE_DISCOUNT_APPLIED", "SALE", "discount_percent",
-                            BigDecimal.ZERO, discountPercent, discountAmount, null,
-                            null, "Sale-level discount applied during checkout."
-                    );
-                }
-
-                if (selectedCustomer != null) {
-                    insertCustomerAccountTransaction(
-                            conn,
-                            selectedCustomer.customerId,
-                            saleId,
-                            chargeCustomerAccount ? saleTotal : BigDecimal.ZERO,
-                            chargeCustomerAccount ? "SALE_CREDIT" : "SALE_PAID",
-                            chargeCustomerAccount
-                                    ? "Charged to account. sale_id=" + saleId
-                                    : "Paid by " + paymentMethod + ". sale_id=" + saleId
-                    );
-                }
-                SaleAuditService.recordSale(
-                        conn,
-                        saleId,
-                        selectedCustomer == null ? null : selectedCustomer.customerId,
-                        locationId,
-                        chargeCustomerAccount ? "ACCOUNT_CHARGE_RECORDED" : "PAYMENT_RECORDED",
-                        saleTotal,
-                        chargeCustomerAccount
-                                ? "Customer account charged. customer_id=" + selectedCustomer.customerId
-                                : "Payment method=" + paymentMethod + (paymentReference.isBlank() ? "" : "; reference=" + paymentReference)
-                );
-
-                String insertItemSql = """
-                        INSERT INTO sale_items (
-                            sale_id,
-                            product_id,
-                            quantity,
-                            unit_price,
-                            original_unit_price,
-                            discount_percent,
-                            discount_amount,
-                            price_override_reason,
-                            price_override_by_user_id,
-                            price_override_by_name,
-                            product_type
-                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	                        """;
-	                String insertMovementSql = """
-                            INSERT INTO inventory_movements (
-                                product_id, location_id, change_qty, reason, note, user_name,
-                                sale_id, sale_item_id, device_id, device_name, user_id
-                            )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """;
-                String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand - ? WHERE product_id = ? AND location_id = ?";
-
-                try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql, Statement.RETURN_GENERATED_KEYS);
-                     PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql);
-                     PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
-                     PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql)) {
-                    java.util.List<String> lineOverrideApprovals = new java.util.ArrayList<>();
-
-	                    for (int i = 0; i < cartModel.getRowCount(); i++) {
-                        int productId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
-                        int qty = Integer.parseInt(cartModel.getValueAt(i, CART_COL_QTY).toString());
-                        if (qty <= 0) {
-                            throw new SQLException("Quantity must be greater than zero for product " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
-                        }
-                        String productType = getCartProductType(i);
-                            BigDecimal catalogPrice = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
-	                        BigDecimal enteredPrice = parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE));
-		                        BigDecimal itemDiscountPercent = parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT));
-		                        BigDecimal itemDiscountMultiplier = BigDecimal.ONE.subtract(
-		                                itemDiscountPercent.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
-		                        );
-		                        BigDecimal itemDiscountedPrice = enteredPrice.multiply(itemDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
-		                        BigDecimal chargedPrice = itemDiscountedPrice.multiply(saleDiscountMultiplier).setScale(2, RoundingMode.HALF_UP);
-                            BigDecimal itemDiscountAmount = enteredPrice
-		                                .multiply(BigDecimal.valueOf(qty))
-		                                .multiply(itemDiscountPercent)
-		                                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-
-                            boolean priceOverridden = enteredPrice.compareTo(catalogPrice) != 0;
-                            String priceOverrideReason = null;
-                            Integer priceOverrideByUserId = null;
-                            String priceOverrideByName = null;
-                            boolean priceOverrideApproved = false;
-                            if (priceOverridden) {
-                                if (!canChangeSaleItemPrice()) {
-                                    PendingPriceApproval pendingApproval = pendingPriceOverrideApprovals.get(productId);
-                                    if (pendingApproval == null || pendingApproval.approvedPrice().compareTo(enteredPrice) != 0) {
-                                        throw new SQLException("Price override approval is required in cart for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
-                                    }
-                                    ManagerApprovalService.ApprovalResult approval = pendingApproval.approval();
-                                    priceOverrideReason = approval.reason();
-                                    priceOverrideByUserId = approval.approvedByUserId();
-                                    priceOverrideByName = approval.approvedByName();
-                                    priceOverrideApproved = true;
-                                    lineOverrideApprovals.add(cartModel.getValueAt(i, CART_COL_NAME) + " by " + priceOverrideByName);
-                                }
-                            }
-
-		                        itemStmt.setInt(1, saleId);
-		                        itemStmt.setInt(2, productId);
-		                        itemStmt.setInt(3, qty);
-		                        itemStmt.setBigDecimal(4, chargedPrice);
-		                        itemStmt.setBigDecimal(5, catalogPrice);
-		                        itemStmt.setBigDecimal(6, itemDiscountPercent);
-		                        itemStmt.setBigDecimal(7, itemDiscountAmount);
-		                        itemStmt.setString(8, priceOverrideReason);
-                                setNullableInteger(itemStmt, 9, priceOverrideByUserId);
-                                itemStmt.setString(10, priceOverrideByName);
-		                        itemStmt.setString(11, productType);
-		                        itemStmt.executeUpdate();
-                            int saleItemId;
-                            try (ResultSet itemKeys = itemStmt.getGeneratedKeys()) {
-                                if (!itemKeys.next()) {
-                                    throw new SQLException("Failed to create sale item audit reference.");
-                                }
-                                saleItemId = itemKeys.getInt(1);
-                            }
-
-                            BigDecimal lineAmount = chargedPrice.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
-                            SaleAuditService.recordLine(
-                                    conn,
-                                    saleId,
-                                    saleItemId,
-                                    productId,
-                                    locationId,
-                                    "SALE_ITEM_ADDED",
-                                    lineAmount,
-                                    qty,
-                                    "product=" + cartModel.getValueAt(i, CART_COL_NAME)
-                                            + "; sku=" + cartModel.getValueAt(i, CART_COL_SKU)
-                                            + "; product_type=" + productType
-                            );
-                            if (enteredPrice.compareTo(catalogPrice) != 0) {
-                                SaleAuditService.record(
-                                        conn, saleId, saleItemId, null, null, null, productId, locationId,
-                                        "PRICE_OVERRIDE", "SALE_ITEM", "unit_price",
-                                        catalogPrice, enteredPrice,
-                                        enteredPrice.subtract(catalogPrice).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP),
-                                        qty,
-                                        null,
-                                        "Manual line price change during sale."
-                                );
-                                if (priceOverrideApproved) {
-                                    SaleAuditService.record(
-                                            conn, saleId, saleItemId, null, null, null, productId, locationId,
-                                            "PRICE_OVERRIDE_APPROVED", "SALE_ITEM", "price_override_by",
-                                            null, priceOverrideByName,
-                                            enteredPrice.subtract(catalogPrice).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP),
-                                            qty,
-                                            priceOverrideReason,
-                                            "Price override approval captured."
-                                    );
-                                }
-                            }
-                            if (itemDiscountPercent.compareTo(BigDecimal.ZERO) > 0 || itemDiscountAmount.compareTo(BigDecimal.ZERO) > 0) {
-                                if (!canApplySaleDiscount()) {
-                                    PendingDiscountApproval discountApproval = pendingItemDiscountApprovals.get(productId);
-                                    if (discountApproval == null || discountApproval.approvedDiscountPercent().compareTo(itemDiscountPercent) != 0) {
-                                        throw new SQLException("Item discount approval is required in cart for " + cartModel.getValueAt(i, CART_COL_NAME) + ".");
-                                    }
-                                }
-                                SaleAuditService.record(
-                                        conn, saleId, saleItemId, null, null, null, productId, locationId,
-                                        "ITEM_DISCOUNT_APPLIED", "SALE_ITEM", "discount_percent",
-                                        BigDecimal.ZERO, itemDiscountPercent,
-                                        itemDiscountAmount, qty,
-                                        null,
-                                        "Line item discount applied during sale."
-                                );
-                            }
-
-                        if (isInventoryProduct(productType)) {
-                            ensureInventoryStmt.setInt(1, productId);
-                            ensureInventoryStmt.setInt(2, locationId);
-                            ensureInventoryStmt.executeUpdate();
-
-                            updateInventoryStmt.setInt(1, qty);
-                            updateInventoryStmt.setInt(2, productId);
-                            updateInventoryStmt.setInt(3, locationId);
-                            updateInventoryStmt.executeUpdate();
-
-                            movementStmt.setInt(1, productId);
-                            movementStmt.setInt(2, locationId);
-                            movementStmt.setInt(3, -qty);
-                            movementStmt.setString(4, "SALE");
-                            movementStmt.setString(5, "sale_id=" + saleId);
-                            movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                            movementStmt.setInt(7, saleId);
-                            movementStmt.setInt(8, saleItemId);
-                            movementStmt.setString(9, DeviceContextService.currentDeviceId());
-                            movementStmt.setString(10, DeviceContextService.currentDeviceName());
-                            setNullableInteger(movementStmt, 11, SessionManager.getCurrentUserId());
-                            movementStmt.executeUpdate();
-                            SaleAuditService.recordLine(
-                                    conn,
-                                    saleId,
-                                    saleItemId,
-                                    productId,
-                                    locationId,
-                                    "INVENTORY_DEDUCTED",
-                                    null,
-                                    -qty,
-                                    "Inventory deducted for sale."
-                            );
-                        }
-                    }
-                    if (!lineOverrideApprovals.isEmpty() && overrideStatusLabel != null) {
-                        overrideStatusLabel.setText("Price override approvals: " + String.join("; ", lineOverrideApprovals));
-                    }
-                }
-
-                if (saleDiscountOverrideReason != null) {
-                    SaleAuditService.record(
-                            conn, saleId, null, null, null,
-                            selectedCustomer == null ? null : selectedCustomer.customerId,
-                            null, locationId,
-                            "SALE_DISCOUNT_OVERRIDE", "SALE", "discount_override_by",
-                            null, saleDiscountOverrideByName,
-                            discountAmount, null,
-                            saleDiscountOverrideReason,
-                            "Discount override approval captured."
-                    );
-                }
-
-                SyncOutboxService.recordEvent(conn, "SALE_COMPLETED", Map.of(
-                        "sale_id", saleId,
-                        "receipt_number", receipt.receiptNumber(),
-                        "location_id", locationId,
-                        "user_id", SessionManager.getCurrentUserId(),
-                        "device_id", String.valueOf(DeviceContextService.currentDeviceId()),
-                        "payment_method", paymentMethod,
-                        "payment_status", paymentStatus,
-                        "total_amount", saleTotal,
-                        "cash_drawer_session_id", cashDrawer.sessionId() == null ? "" : cashDrawer.sessionId()
-                ));
-                conn.commit();
-	                String successMessage = "Sale completed successfully.\nReceipt #: " + receipt.receiptNumber() + "\nSale ID: " + saleId;
-                    if (cashDrawer.drawerName() != null && !cashDrawer.drawerName().isBlank()) {
-                        successMessage += "\nCash Drawer: " + cashDrawer.drawerName();
-                    }
-	                BigDecimal changeDue = BigDecimal.ZERO;
-	                if (cashPayment) {
-                    changeDue = utils.CurrencyFormatter.normalize(cashCollected.subtract(saleTotal).max(BigDecimal.ZERO));
-	                    successMessage += "\nCash Collected: " + utils.CurrencyFormatter.format(cashCollected)
-	                            + "\nChange Due: " + utils.CurrencyFormatter.format(changeDue);
-	                }
-	                if (showReceiptPreview) {
-	                    try {
-	                        ReceiptData receiptData = ReceiptBuilder.loadSaleReceipt(
-	                                saleId,
-	                                cashPayment ? cashCollected : null,
-	                                cashPayment ? changeDue : null
-	                        );
-	                        WindowHelper.showPosWindow(new ReceiptPreview(receiptData), this);
-	                    } catch (SQLException receiptEx) {
-	                        JOptionPane.showMessageDialog(
-	                                this,
-	                                successMessage + "\n\nReceipt preview failed: " + receiptEx.getMessage(),
-	                                "Receipt Preview",
-	                                JOptionPane.WARNING_MESSAGE
-	                        );
-	                    }
-	                } else {
-	                    JOptionPane.showMessageDialog(this, successMessage);
-	                }
-		                cartModel.setRowCount(0);
-                        pendingPriceOverrideApprovals.clear();
-                        pendingItemDiscountApprovals.clear();
-		                discountPercentField.setText("0");
-		                clearHeldCartSelection();
-                    if (paymentReferenceField != null) {
-                        paymentReferenceField.setText("");
-                    }
-                configureCartTableColumns();
-                searchField.setText("");
-                loadCustomerAccounts();
-                updateOverallTotal();
-
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
             }
-
+            JOptionPane.showMessageDialog(this, message);
+            cartModel.setRowCount(0);
+            pendingPriceOverrideApprovals.clear();
+            pendingItemDiscountApprovals.clear();
+            discountPercentField.setText("0");
+            clearHeldCartSelection();
+            if (paymentReferenceField != null) paymentReferenceField.setText("");
+            configureCartTableColumns();
+            searchField.setText("");
+            loadCustomerAccounts();
+            updateOverallTotal();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Checkout failed: " + ex.getMessage());
         }
@@ -2657,137 +2157,48 @@ public class MakeASale extends JFrame {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
             return;
         }
-        if (SessionManager.getCurrentLocationId() == null) {
-            JOptionPane.showMessageDialog(this, "No store is selected for this session.");
-            return;
+        String holdName = JOptionPane.showInputDialog(this, "Hold name / note:", "Hold Cart",
+                JOptionPane.PLAIN_MESSAGE);
+        if (holdName == null) return;
+        CustomerAccountOption customer = getSelectedCustomerAccount();
+        BigDecimal saleDiscount = parseDiscountPercentOrShowError();
+        if (saleDiscount == null) return;
+
+        java.util.List<LanApiClient.HeldCartCreateLine> lines = new java.util.ArrayList<>();
+        for (int row = 0; row < cartModel.getRowCount(); row++) {
+            int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+            PendingDiscountApproval approval = pendingItemDiscountApprovals.get(productId);
+            lines.add(new LanApiClient.HeldCartCreateLine(
+                    productId,
+                    parseIntOrDefault(cartModel.getValueAt(row, CART_COL_QTY), 0),
+                    parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_PRICE)),
+                    parsePercentOrZero(cartModel.getValueAt(row, CART_COL_ITEM_DISCOUNT)),
+                    approval == null ? null : approval.approval().lanApprovalToken(),
+                    approval == null ? null : approval.approval().reason()));
         }
-
-        String holdName = JOptionPane.showInputDialog(this, "Hold name / note:", "Held Cart");
-        if (holdName == null) {
-            return;
+        LanApiClient.HeldCartCreateRequest request = new LanApiClient.HeldCartCreateRequest(
+                holdName.trim(), selectedPaymentMethod, customer == null ? null : customer.customerId,
+                saleDiscount, lines);
+        String fingerprint = request.toString();
+        if (pendingHoldKey == null || !fingerprint.equals(pendingHoldFingerprint)) {
+            pendingHoldKey = UUID.randomUUID().toString();
+            pendingHoldFingerprint = fingerprint;
         }
-        holdName = holdName.trim();
-        if (holdName.isBlank()) {
-            JOptionPane.showMessageDialog(this, "Hold name is required.");
-            return;
-        }
-
-	        CustomerAccountOption selectedCustomer = getSelectedCustomerAccount();
-        BigDecimal subtotalAmount = getCartGrossSubtotal();
-        BigDecimal lineSubtotalAfterItemDiscounts = BigDecimal.valueOf(getCartSubtotal()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal itemDiscountTotal = getItemDiscountTotal();
-        BigDecimal discountPercent = parseDiscountPercentOrShowError();
-        if (discountPercent == null) {
-            return;
-        }
-        BigDecimal saleLevelDiscountAmount = lineSubtotalAfterItemDiscounts.multiply(discountPercent)
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal discountAmount = itemDiscountTotal.add(saleLevelDiscountAmount).setScale(2, RoundingMode.HALF_UP);
-	        String insertHoldSql = """
-	                INSERT INTO held_carts (
-	                    location_id,
-                    user_id,
-                    user_name,
-	                    customer_id,
-	                    hold_name,
-	                    payment_method,
-	                    subtotal_amount,
-	                    discount_percent,
-	                    discount_amount,
-	                    total_amount,
-	                    status
-	                )
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
-	                RETURNING held_cart_id
-	                """;
-        String insertItemSql = """
-                INSERT INTO held_cart_items (
-                    held_cart_id,
-                    product_id,
-                    product_name,
-                    description,
-	                    sku,
-	                    unit_price,
-	                    quantity,
-	                    discount_percent,
-	                    product_type
-	                )
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	                """;
-
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                int heldCartId;
-                try (PreparedStatement holdStmt = conn.prepareStatement(insertHoldSql)) {
-                    holdStmt.setInt(1, SessionManager.getCurrentLocationId());
-                    setNullableInteger(holdStmt, 2, SessionManager.getCurrentUserId());
-                    holdStmt.setString(3, SessionManager.getCurrentUserDisplayName());
-                    if (selectedCustomer == null) {
-                        holdStmt.setNull(4, java.sql.Types.INTEGER);
-                    } else {
-                        holdStmt.setInt(4, selectedCustomer.customerId);
-	                    }
-                    holdStmt.setString(5, holdName);
-	                    holdStmt.setString(6, selectedPaymentMethod == null ? "" : selectedPaymentMethod);
-	                    holdStmt.setBigDecimal(7, subtotalAmount);
-	                    holdStmt.setBigDecimal(8, discountPercent);
-	                    holdStmt.setBigDecimal(9, discountAmount);
-		                    holdStmt.setBigDecimal(10, lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO));
-	                    try (ResultSet rs = holdStmt.executeQuery()) {
-                        if (!rs.next()) {
-                            throw new SQLException("Failed to create held cart.");
-                        }
-                        heldCartId = rs.getInt("held_cart_id");
-                    }
-                }
-
-                try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql)) {
-                    for (int i = 0; i < cartModel.getRowCount(); i++) {
-                        itemStmt.setInt(1, heldCartId);
-	                        itemStmt.setInt(2, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, CART_COL_ID))));
-	                        itemStmt.setString(3, String.valueOf(cartModel.getValueAt(i, CART_COL_NAME)));
-	                        itemStmt.setString(4, String.valueOf(cartModel.getValueAt(i, CART_COL_DESCRIPTION)));
-	                        itemStmt.setString(5, String.valueOf(cartModel.getValueAt(i, CART_COL_SKU)));
-	                        BigDecimal heldUnitPrice = canChangeSaleItemPrice()
-	                                ? parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_PRICE))
-	                                : parseMoneyOrZero(cartModel.getValueAt(i, CART_COL_ORIGINAL_PRICE));
-	                        itemStmt.setBigDecimal(6, heldUnitPrice);
-	                        itemStmt.setInt(7, Integer.parseInt(String.valueOf(cartModel.getValueAt(i, CART_COL_QTY))));
-	                        itemStmt.setBigDecimal(8, parsePercentOrZero(cartModel.getValueAt(i, CART_COL_ITEM_DISCOUNT)));
-	                        itemStmt.setString(9, getCartProductType(i));
-	                        itemStmt.addBatch();
-                    }
-                    itemStmt.executeBatch();
-                }
-                SaleAuditService.recordHeldCart(
-                        conn,
-                        SessionManager.getCurrentLocationId(),
-                        "HELD_CART_CREATED",
-                        cartModel.getRowCount(),
-                        lineSubtotalAfterItemDiscounts.subtract(saleLevelDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP),
-                        "held_cart_id=" + heldCartId
-                                + "; hold_name=" + holdName.trim()
-                                + "; payment_method=" + (selectedPaymentMethod == null ? "" : selectedPaymentMethod)
-                                + "; customer_id=" + (selectedCustomer == null ? "" : selectedCustomer.customerId)
-                );
-
-                conn.commit();
-	                JOptionPane.showMessageDialog(this, "Cart held successfully. Hold ID: " + heldCartId);
-		                cartModel.setRowCount(0);
-                        pendingPriceOverrideApprovals.clear();
-                        pendingItemDiscountApprovals.clear();
-		                clearHeldCartSelection();
-                configureCartTableColumns();
-                updateOverallTotal();
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
-            }
+        try {
+            LanApiClient.HeldCartCreated result = LanApiClient.createHeldCart(request, pendingHoldKey);
+            pendingHoldKey = null;
+            pendingHoldFingerprint = null;
+            JOptionPane.showMessageDialog(this,
+                    "Cart held successfully. Hold ID: " + result.heldCartId());
+            cartModel.setRowCount(0);
+            pendingPriceOverrideApprovals.clear();
+            pendingItemDiscountApprovals.clear();
+            clearHeldCartSelection();
+            configureCartTableColumns();
+            updateOverallTotal();
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to hold cart: " + ex.getMessage(), "Hold Cart", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to hold cart: " + ex.getMessage(),
+                    "Hold Cart", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -2796,233 +2207,94 @@ public class MakeASale extends JFrame {
             refreshPermissionButtons();
             return;
         }
-        if (SessionManager.getCurrentLocationId() == null) {
-            JOptionPane.showMessageDialog(this, "No store is selected for this session.");
-            return;
-        }
         if (cartModel.getRowCount() > 0) {
-            int result = JOptionPane.showConfirmDialog(
-                    this,
-                    "Replace the current cart with a held cart?",
-                    "Resume Held Cart",
-                    JOptionPane.YES_NO_OPTION
-            );
-            if (result != JOptionPane.YES_OPTION) {
-                return;
-            }
+            int result = JOptionPane.showConfirmDialog(this,
+                    "Replace the current cart with a held cart?", "Resume Held Cart",
+                    JOptionPane.YES_NO_OPTION);
+            if (result != JOptionPane.YES_OPTION) return;
         }
-
-        HeldCartOption selectedHold = selectHeldCart();
-        if (selectedHold == null) {
-            return;
+        HeldCartOption selected = pendingResumeHeldCartId == null
+                ? selectHeldCart() : new HeldCartOption(pendingResumeHeldCartId);
+        if (selected == null) return;
+        if (pendingResumeHeldCartId == null || pendingResumeHeldCartId != selected.heldCartId()) {
+            pendingResumeHeldCartId = selected.heldCartId();
+            pendingResumeKey = UUID.randomUUID().toString();
         }
-
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                loadHeldCartIntoCurrentCart(conn, selectedHold.heldCartId());
-                SaleAuditService.recordHeldCart(
-                        conn,
-                        SessionManager.getCurrentLocationId(),
-                        "HELD_CART_RESUMED",
-                        cartModel.getRowCount(),
-                        BigDecimal.valueOf(getOverallTotal()).setScale(2, RoundingMode.HALF_UP),
-                        "held_cart_id=" + selectedHold.heldCartId()
-                );
-                deleteHeldCart(conn, selectedHold.heldCartId());
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Held cart resumed.");
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
-            }
+        try {
+            LanApiClient.HeldCartPayload held = LanApiClient.resumeHeldCart(
+                    selected.heldCartId(), pendingResumeKey);
+            loadHeldCartIntoCurrentCart(held);
+            pendingResumeHeldCartId = null;
+            pendingResumeKey = null;
+            JOptionPane.showMessageDialog(this, "Held cart resumed.");
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to resume held cart: " + ex.getMessage(), "Resume Held Cart", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to resume held cart: " + ex.getMessage(),
+                    "Resume Held Cart", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private HeldCartOption selectHeldCart() {
         DefaultTableModel model = new DefaultTableModel(
-                new Object[]{"Hold ID", "Held At", "Hold Name", "Cashier", "Customer", "Items", "Total"},
-                0
-        ) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+                new Object[]{"Hold ID", "Held At", "Hold Name", "Cashier", "Customer", "Items", "Total"}, 0) {
+            @Override public boolean isCellEditable(int row, int column) { return false; }
         };
-
-        String sql = """
-                SELECT hc.held_cart_id,
-                       (hc.created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(hc.hold_name, '') AS hold_name,
-                       COALESCE(hc.user_name, '') AS user_name,
-                       COALESCE(ca.name, '') AS customer_name,
-                       COUNT(hci.held_cart_item_id) AS item_count,
-                       COALESCE(hc.total_amount, 0) AS total_amount
-                FROM held_carts hc
-                LEFT JOIN held_cart_items hci ON hci.held_cart_id = hc.held_cart_id
-                LEFT JOIN customer_accounts ca ON ca.customer_id = hc.customer_id
-                WHERE hc.location_id = ?
-                  AND UPPER(COALESCE(hc.status, 'OPEN')) = 'OPEN'
-                GROUP BY hc.held_cart_id, hc.created_at, hc.hold_name, hc.user_name, ca.name, hc.total_amount
-                ORDER BY hc.created_at DESC
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, SessionManager.getCurrentLocationId());
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    model.addRow(new Object[]{
-                            rs.getInt("held_cart_id"),
-                            StoreTimeZoneHelper.formatLocalTimestamp(
-                                    rs.getTimestamp("local_created_at"),
-                                    DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a")
-                            ),
-                            rs.getString("hold_name"),
-                            rs.getString("user_name"),
-                            rs.getString("customer_name"),
-                            rs.getInt("item_count"),
-                            "$" + rs.getBigDecimal("total_amount")
-                    });
-                }
+        try {
+            for (LanApiClient.HeldCartSummary held : LanApiClient.listHeldCarts()) {
+                String heldAt = Instant.ofEpochMilli(held.createdAtEpochMillis())
+                        .atZone(StoreTimeZoneHelper.getStoreZone())
+                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
+                model.addRow(new Object[]{held.heldCartId(), heldAt, held.holdName(), held.userName(),
+                        held.customerName(), held.itemCount(), utils.CurrencyFormatter.format(held.total())});
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load held carts: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load held carts: " + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
             return null;
         }
-
         if (model.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "There are no held carts for this store.");
             return null;
         }
-
         JTable table = new JTable(model);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setRowSelectionInterval(0, 0);
         JScrollPane scrollPane = new JScrollPane(table);
         scrollPane.setPreferredSize(new Dimension(780, 280));
-
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                scrollPane,
-                "Select Held Cart",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
-        if (result != JOptionPane.OK_OPTION || table.getSelectedRow() < 0) {
-            return null;
-        }
-
-        int modelRow = table.convertRowIndexToModel(table.getSelectedRow());
-        return new HeldCartOption(Integer.parseInt(String.valueOf(model.getValueAt(modelRow, 0))));
+        int result = JOptionPane.showConfirmDialog(this, scrollPane, "Select Held Cart",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION || table.getSelectedRow() < 0) return null;
+        int row = table.convertRowIndexToModel(table.getSelectedRow());
+        return new HeldCartOption(Integer.parseInt(String.valueOf(model.getValueAt(row, 0))));
     }
 
-    private void loadHeldCartIntoCurrentCart(Connection conn, int heldCartId) throws SQLException {
-        String holdSql = "SELECT customer_id, payment_method, COALESCE(discount_percent, 0) AS discount_percent FROM held_carts WHERE held_cart_id = ? AND location_id = ? AND UPPER(COALESCE(status, 'OPEN')) = 'OPEN' FOR UPDATE";
-        Integer customerId = null;
-        String paymentMethod = null;
-        BigDecimal discountPercent = BigDecimal.ZERO;
-        try (PreparedStatement ps = conn.prepareStatement(holdSql)) {
-            ps.setInt(1, heldCartId);
-            ps.setInt(2, SessionManager.getCurrentLocationId());
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Held cart is no longer available.");
-                }
-                int loadedCustomerId = rs.getInt("customer_id");
-                if (!rs.wasNull()) {
-                    customerId = loadedCustomerId;
-	                }
-	                paymentMethod = rs.getString("payment_method");
-	                discountPercent = rs.getBigDecimal("discount_percent");
-	            }
-	        }
-
-        String itemsSql = """
-                SELECT hci.product_id,
-                       hci.product_name,
-                       hci.description,
-                       hci.sku,
-                       hci.unit_price,
-                       hci.quantity,
-                       COALESCE(discount_percent, 0) AS discount_percent,
-                       COALESCE(hci.product_type, 'INVENTORY') AS product_type,
-                       p.category_id
-                FROM held_cart_items hci
-                LEFT JOIN products p ON p.product_id = hci.product_id
-                WHERE hci.held_cart_id = ?
-                ORDER BY hci.held_cart_item_id
-                """;
-
-        cartModel.setRowCount(0);
-        try (PreparedStatement ps = conn.prepareStatement(itemsSql)) {
-            ps.setInt(1, heldCartId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-	                    double price = rs.getBigDecimal("unit_price").doubleValue();
-	                    int qty = rs.getInt("quantity");
-	                    BigDecimal itemDiscountPercent = rs.getBigDecimal("discount_percent");
-	                    BigDecimal lineGross = BigDecimal.valueOf(price).multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
-	                    BigDecimal lineDiscount = lineGross.multiply(itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent)
-	                            .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-	                    cartModel.addRow(new Object[]{
-	                            rs.getInt("product_id"),
-	                            rs.getString("product_name"),
-	                            rs.getString("description"),
-	                            rs.getString("sku"),
-	                            price,
-	                            qty,
-	                            itemDiscountPercent == null ? BigDecimal.ZERO : itemDiscountPercent,
-	                            lineGross.subtract(lineDiscount).max(BigDecimal.ZERO),
-	                            BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP),
-	                            normalizeProductType(rs.getString("product_type")),
-                                rs.getObject("category_id")
-	                    });
-                }
+    private void loadHeldCartIntoCurrentCart(LanApiClient.HeldCartPayload held) {
+        pendingPriceOverrideApprovals.clear();
+        pendingItemDiscountApprovals.clear();
+        updatingCart = true;
+        try {
+            cartModel.setRowCount(0);
+            for (LanApiClient.HeldCartItem item : held.items()) {
+                BigDecimal price = utils.CurrencyFormatter.normalize(item.unitPrice());
+                BigDecimal discount = canApplySaleDiscount() && item.discountPercent() != null
+                        ? item.discountPercent() : BigDecimal.ZERO;
+                BigDecimal gross = price.multiply(BigDecimal.valueOf(item.quantity()));
+                BigDecimal lineTotal = gross.subtract(gross.multiply(discount)
+                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)).max(BigDecimal.ZERO);
+                cartModel.addRow(new Object[]{item.productId(), item.productName(), item.description(), item.sku(),
+                        price, item.quantity(), discount, lineTotal, price,
+                        normalizeProductType(item.productType()), item.categoryId()});
             }
+        } finally {
+            updatingCart = false;
         }
-
-        if (cartModel.getRowCount() == 0) {
-            throw new SQLException("Held cart has no items.");
+        if (held.paymentMethod() != null && !held.paymentMethod().isBlank()) {
+            selectPaymentMethod(held.paymentMethod());
         }
-
-	        if (paymentMethod != null && !paymentMethod.isBlank()) {
-	            selectPaymentMethod(paymentMethod);
-	        }
-	        if (discountPercentField != null) {
-	            discountPercentField.setText(discountPercent == null ? "0" : discountPercent.stripTrailingZeros().toPlainString());
-	        }
-	        selectCustomerById(customerId);
+        setDiscountFieldValue(canApplySaleDiscount() && held.saleDiscountPercent() != null
+                ? held.saleDiscountPercent().stripTrailingZeros().toPlainString() : "0");
+        selectCustomerById(held.customerId());
         configureCartTableColumns();
         updateOverallTotal();
-    }
-
-    private void deleteHeldCart(Connection conn, int heldCartId) throws SQLException {
-        String sql = """
-                UPDATE held_carts
-                SET status = 'RESUMED',
-                    resumed_at = CURRENT_TIMESTAMP,
-                    resumed_by_user_id = ?,
-                    resumed_by_name = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE held_cart_id = ?
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            Integer userId = SessionManager.getCurrentUserId();
-            if (userId == null) {
-                ps.setNull(1, java.sql.Types.INTEGER);
-            } else {
-                ps.setInt(1, userId);
-            }
-            ps.setString(2, SessionManager.getCurrentUserDisplayName());
-            ps.setInt(3, heldCartId);
-            ps.executeUpdate();
-        }
     }
 
     private void selectCustomerById(Integer customerId) {
@@ -3063,118 +2335,16 @@ public class MakeASale extends JFrame {
         }
     }
 
-    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
-    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
-    }
-
-    private void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal saleTotal) throws SQLException {
-        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
-        String lockSql = """
-                SELECT current_balance, credit_limit, is_active
-                FROM customer_accounts
-                WHERE customer_id = ?
-                FOR UPDATE
-                """;
-
-        BigDecimal currentBalance;
-        BigDecimal creditLimit;
-        boolean active;
-
-        try (PreparedStatement ps = conn.prepareStatement(lockSql)) {
-            ps.setInt(1, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Customer account was not found.");
-                }
-                currentBalance = rs.getBigDecimal("current_balance");
-                creditLimit = rs.getBigDecimal("credit_limit");
-                active = rs.getBoolean("is_active");
-            }
-        }
-
-        if (!active) {
-            throw new SQLException("Customer account is inactive.");
-        }
-
-        BigDecimal newBalance = currentBalance.add(saleTotal);
-        if (newBalance.compareTo(creditLimit) > 0) {
-            throw new SQLException("Account payment exceeds customer credit limit. Available credit: $" + creditLimit.subtract(currentBalance));
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
-            ps.setBigDecimal(1, newBalance);
-            ps.setInt(2, customerId);
-            ps.executeUpdate();
-        }
-    }
-
-    private void insertCustomerAccountTransaction(Connection conn, int customerId, int saleId, BigDecimal amount, String type, String note) throws SQLException {
-        String sql = """
-	                INSERT INTO customer_account_transactions (
-	                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name
-	                )
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, customerId);
-            ps.setInt(2, saleId);
-            setNullableInteger(ps, 3, SessionManager.getCurrentLocationId());
-	            ps.setBigDecimal(4, amount);
-	            ps.setString(5, type);
-	            ps.setString(6, note);
-	            ps.setString(7, SessionManager.getCurrentUserDisplayName());
-                ps.setString(8, DeviceContextService.currentDeviceId());
-                ps.setString(9, DeviceContextService.currentDeviceName());
-	            ps.executeUpdate();
-        }
-        SaleAuditService.record(
-                conn, saleId, null, null, null, customerId, null, SessionManager.getCurrentLocationId(),
-                "CUSTOMER_ACCOUNT_TRANSACTION", "CUSTOMER_ACCOUNT", "amount",
-                null, amount, amount, null, null,
-                "type=" + type + "; " + note
-        );
-    }
-
-    private void repairSalesSequence(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT setval(
-                    pg_get_serial_sequence('sales', 'sale_id'),
-                    COALESCE((SELECT MAX(sale_id) FROM sales), 1),
-                    COALESCE((SELECT MAX(sale_id) FROM sales), 0) > 0
-                )
-                """)) {
-            ps.executeQuery();
-        }
-    }
-
     private void updateOverallTotal() {
         BigDecimal subtotal = getCartGrossSubtotal();
         BigDecimal afterItemDiscounts = utils.CurrencyFormatter.normalize(BigDecimal.valueOf(getCartSubtotal()));
         BigDecimal itemDiscountAmount = getItemDiscountTotal();
         BigDecimal saleDiscountAmount = getDiscountAmount(afterItemDiscounts);
         BigDecimal discountAmount = utils.CurrencyFormatter.normalize(itemDiscountAmount.add(saleDiscountAmount));
-        BigDecimal vatAmount = BigDecimal.ZERO;
-        BigDecimal total = subtotal.subtract(discountAmount).max(BigDecimal.ZERO);
-        try (Connection conn = DB.getConnection()) {
-            VatCalculation vat = calculateVat(conn, getDiscountPercent());
-            vatAmount = vat.amount();
-            total = utils.CurrencyFormatter.normalize(total.add(vatAmount));
-        } catch (SQLException ex) {
-            total = utils.CurrencyFormatter.normalize(total);
-        }
+        VatCalculation vat = calculateVat(getDiscountPercent());
+        BigDecimal vatAmount = vat.amount();
+        BigDecimal total = utils.CurrencyFormatter.normalize(
+                subtotal.subtract(discountAmount).max(BigDecimal.ZERO).add(vatAmount));
 
         if (subtotalLabel != null) {
             subtotalLabel.setText("Subtotal: " + utils.CurrencyFormatter.format(subtotal));

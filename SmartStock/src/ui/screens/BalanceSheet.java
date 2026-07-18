@@ -427,9 +427,18 @@ public class BalanceSheet extends JFrame {
 
         try {
             long submissionId = BalanceSheetService.submitBalanceSheet(from, to, StoreTimeZoneHelper.getStoreZoneId(), notesArea.getText(), matchedDrawerSessionIds);
+            services.EmailOutboxService.QueueResult emailResult;
+            try {
+                emailResult = services.EmailOutboxService.queueBalanceSheetSubmission(submissionId);
+            } catch (Exception emailEx) {
+                emailResult = services.EmailOutboxService.QueueResult.skipped("The email copy could not be queued: " + emailEx.getMessage());
+            }
             loadSubmissionHistory();
             loadSubmissionById(submissionId);
-            JOptionPane.showMessageDialog(this, "Balance sheet submitted.", "Balance Sheet", JOptionPane.INFORMATION_MESSAGE);
+            String message = emailResult.queued()
+                    ? "Balance sheet submitted and the email copy was queued."
+                    : "Balance sheet submitted.\n\nEmail copy not sent: " + emailResult.message();
+            JOptionPane.showMessageDialog(this, message, "Balance Sheet", JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to submit balance sheet: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }

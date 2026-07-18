@@ -4,7 +4,6 @@ import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.oned.Code128Writer;
-import data.DB;
 import managers.CompanyCustomizationManager;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -94,6 +93,11 @@ public final class BadgePrintService {
     }
 
     public static EmployeeBadgeData loadEmployeeBadgeData(int userId) throws Exception {
+        return LanApiClient.loadEmployeeBadgeData(userId);
+    }
+
+    public static EmployeeBadgeData loadEmployeeBadgeData(Connection conn, int userId,
+                                                          int locationId) throws Exception {
         String sql = """
                 SELECT u.user_id,
                        u.username,
@@ -112,13 +116,13 @@ public final class BadgePrintService {
                 LEFT JOIN roles r ON u.role_id = r.role_id
                 LEFT JOIN user_locations ul ON ul.user_id = u.user_id
                 LEFT JOIN locations l ON l.location_id = ul.location_id
-                WHERE u.user_id = ?
+                WHERE u.user_id = ? AND ul.location_id = ?
                 ORDER BY l.name NULLS LAST
                 LIMIT 1
                 """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, userId);
+            ps.setInt(2, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
                     throw new IllegalArgumentException("Employee was not found.");
@@ -690,16 +694,22 @@ public final class BadgePrintService {
     }
 
     public static void incrementBadgePrintCount(int userId) throws Exception {
+        LanApiClient.incrementEmployeeBadgePrintCount(userId, java.util.UUID.randomUUID().toString());
+    }
+
+    public static void incrementBadgePrintCount(Connection conn, int userId, int locationId) throws Exception {
         String sql = """
                 UPDATE users
                 SET badge_print_count = COALESCE(badge_print_count, 0) + 1,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
+                WHERE user_id = ? AND EXISTS (
+                    SELECT 1 FROM user_locations ul WHERE ul.user_id = users.user_id AND ul.location_id = ?
+                )
                 """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, userId);
-            ps.executeUpdate();
+            ps.setInt(2, locationId);
+            if (ps.executeUpdate() != 1) throw new IllegalArgumentException("Employee was not found in this store.");
         }
     }
 
@@ -778,7 +788,7 @@ public final class BadgePrintService {
                 .replace("{track2}", track2)
                 .replace("{track3}", track3);
 
-        List<String> args = splitCommand(command);
+        List<String> args = splitWriterCommand(command);
         if (args.isEmpty()) {
             throw new IllegalStateException("Magnetic stripe writer command is empty.");
         }
@@ -1827,7 +1837,7 @@ public final class BadgePrintService {
         return image;
     }
 
-    private static List<String> splitCommand(String command) {
+    public static List<String> splitWriterCommand(String command) {
         List<String> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inQuote = false;

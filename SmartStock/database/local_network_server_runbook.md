@@ -1,4 +1,8 @@
-# SmartStock Local Network DB Server Runbook
+# SmartStock LAN Service Runbook
+
+Registers connect only to the HTTPS SmartStock Server Service on port `8443`,
+never to PostgreSQL. This pre-launch release has no compatibility database role
+or mixed-client mode.
 
 ## Store Server
 
@@ -9,14 +13,16 @@ Use one always-on mini PC per store.
 
 ```sql
 CREATE DATABASE smartstock;
-CREATE ROLE smartstock_server LOGIN PASSWORD 'replace-with-server-password';
-CREATE ROLE smartstock_client LOGIN PASSWORD 'SmartStockClientLan2026!';
+CREATE ROLE smartstock_server LOGIN PASSWORD 'replace-with-a-unique-generated-server-password';
 GRANT ALL PRIVILEGES ON DATABASE smartstock TO smartstock_server;
 ```
 
 3. Open SmartStock, choose **Database Setup**, fill in the server settings, then click **Provision Server**.
 
-Provision Server will create the configured local database when PostgreSQL is reachable, create or repair the built-in `smartstock_client` role, grant it local app-table access, configure PostgreSQL for LAN clients, install the local sync and employee credential tables, verify cloud sync tables when cloud credentials are present, save the config, and start the in-app sync worker.
+Provision Server creates the local database, installs the LAN service/session
+schema, verifies cloud sync tables when configured, saves server-only database
+credentials, restricts PostgreSQL to the server machine, disables any legacy
+register roles it finds, and installs the SmartStock Server Service.
 
 If you use the macOS installer, it also saves the generated database credentials here:
 
@@ -25,7 +31,8 @@ If you use the macOS installer, it also saves the generated database credentials
 ```
 
 The server app uses `SMARTSTOCK_DB_USER` / `SMARTSTOCK_DB_PASSWORD`.
-Register clients use the built-in SmartStock client credentials automatically.
+Registers store only the pinned LAN certificate fingerprint and their unique,
+revocable API credential in Keychain or Windows Credential Manager.
 
 To repair an older local install that saved placeholder labels such as `SMARTSTOCK_DB_USER`, rerun:
 
@@ -63,18 +70,43 @@ java -cp target/classes:target/dependency/* app.Main --server
 
 ## Register Clients
 
-Each register connects only to the store server.
+Each register connects only to the store's HTTPS SmartStock Server Service.
 
-1. Open SmartStock, choose **Database Setup**, and set:
+1. Start SmartStock in `CLIENT` mode. It discovers the server automatically when
+   UDP broadcast is available; otherwise enter the server hostname during installation.
 
 - Mode: `CLIENT`
 - Server IP / Hostname: `<store-server-hostname>.local`
-- Local DB User/Password: filled automatically by SmartStock
+- LAN service port: `8443`
 - Leave cloud credentials blank
 
-2. Test the local connection.
-3. First employee login must happen while cloud auth is reachable; that successful login caches the employee's password verifier on the local server for offline use.
-4. After successful online login, optionally create the employee PIN when prompted.
+2. An administrator chooses **Pair This Register** and enters the temporary
+   phrase shown under **Device Management > Security Status** on the server.
+3. Approve the displayed register name and store once. The register claims and
+   rotates its credential silently; employees never enter the phrase.
+4. First employee login must happen while cloud auth is reachable; that successful login caches the employee's password verifier on the local server for offline use.
+5. After successful online login, optionally create the employee PIN when prompted.
+
+## Lockdown Verification
+
+From the repository root on the physical macOS server:
+
+```bash
+SmartStock/tools/lan-api-cutover-check.sh
+SmartStock/tools/activate-lan-api-cutover.sh --confirm
+```
+
+The activation command is an idempotent physical-server verification and
+lockdown step. It refuses to proceed while any register-callable JDBC path
+remains, disables any legacy database roles left by development installs, binds
+PostgreSQL to loopback, removes obsolete register DB secrets, and sets
+`lan.api.enforced=true`.
+
+Emergency physical-server recovery is intentionally explicit:
+
+```bash
+SmartStock/tools/recover-lan-api-cutover.sh --physical-server-confirm
+```
 
 ## Operational Checks
 

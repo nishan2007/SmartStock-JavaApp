@@ -5,7 +5,7 @@ import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 import managers.PermissionManager;
 import managers.SessionManager;
-import data.DB;
+import services.LanApiClient;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -15,9 +15,6 @@ import javax.swing.table.JTableHeader;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -29,6 +26,12 @@ public class ViewInventory extends JFrame {
     private DefaultTableModel tableModel;
     private JTextField searchField;
     private JComboBox<String> stockFilterCombo;
+    private JComboBox<String> departmentFilterCombo;
+    private JComboBox<String> itemTypeFilterCombo;
+    private JComboBox<String> brandFilterCombo;
+    private JComboBox<String> shelfFilterCombo;
+    private JComboBox<String> storageShelfFilterCombo;
+    private boolean loadingDetailFilters;
     private JLabel totalItemsLabel;
     private JLabel totalProductsLabel;
     private JLabel locationLabel;
@@ -39,7 +42,7 @@ public class ViewInventory extends JFrame {
 
     public ViewInventory() {
         setTitle("View Inventory");
-        setSize(1100, 650);
+        setSize(1450, 720);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
@@ -55,6 +58,7 @@ public class ViewInventory extends JFrame {
         mainPanel.add(buildTablePanel(), BorderLayout.CENTER);
         mainPanel.add(buildFooterPanel(), BorderLayout.SOUTH);
 
+        loadDetailFilters();
         loadInventory(null, "All");
         WindowHelper.configurePosWindow(this);
     }
@@ -92,6 +96,25 @@ public class ViewInventory extends JFrame {
         stockFilterCombo = new JComboBox<>(new String[]{"All", "In Stock", "Low Stock", "Out of Stock"});
         rightPanel.add(stockFilterCombo);
 
+        departmentFilterCombo = new JComboBox<>(new String[]{"All Departments"});
+        itemTypeFilterCombo = new JComboBox<>(new String[]{"All Item Types"});
+        brandFilterCombo = new JComboBox<>(new String[]{"All Brands"});
+        shelfFilterCombo = new JComboBox<>(new String[]{"All Shelves"});
+        storageShelfFilterCombo = new JComboBox<>(new String[]{"All Storage Shelves"});
+
+        JPanel detailFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        detailFilterPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        detailFilterPanel.add(new JLabel("Department:"));
+        detailFilterPanel.add(departmentFilterCombo);
+        detailFilterPanel.add(new JLabel("Item Type:"));
+        detailFilterPanel.add(itemTypeFilterCombo);
+        detailFilterPanel.add(new JLabel("Brand:"));
+        detailFilterPanel.add(brandFilterCombo);
+        detailFilterPanel.add(new JLabel("Shelf:"));
+        detailFilterPanel.add(shelfFilterCombo);
+        detailFilterPanel.add(new JLabel("Storage Shelf:"));
+        detailFilterPanel.add(storageShelfFilterCombo);
+
         filterPanel.add(leftPanel, BorderLayout.WEST);
         filterPanel.add(rightPanel, BorderLayout.EAST);
 
@@ -99,15 +122,40 @@ public class ViewInventory extends JFrame {
         refreshButton.addActionListener(e -> {
             searchField.setText("");
             stockFilterCombo.setSelectedIndex(0);
+            departmentFilterCombo.setSelectedIndex(0);
+            brandFilterCombo.setSelectedIndex(0);
+            shelfFilterCombo.setSelectedIndex(0);
+            storageShelfFilterCombo.setSelectedIndex(0);
+            loadingDetailFilters = true;
+            try {
+                loadItemTypeFilter();
+            } finally {
+                loadingDetailFilters = false;
+            }
             loadInventory(null, "All");
         });
         stockFilterCombo.addActionListener(e -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
         searchField.addActionListener(e -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
+        departmentFilterCombo.addActionListener(e -> {
+            if (loadingDetailFilters) return;
+            loadingDetailFilters = true;
+            try {
+                loadItemTypeFilter();
+            } finally {
+                loadingDetailFilters = false;
+            }
+            loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem());
+        });
+        itemTypeFilterCombo.addActionListener(e -> reloadForDetailFilter());
+        brandFilterCombo.addActionListener(e -> reloadForDetailFilter());
+        shelfFilterCombo.addActionListener(e -> reloadForDetailFilter());
+        storageShelfFilterCombo.addActionListener(e -> reloadForDetailFilter());
 
         wrapper.add(titleLabel);
         wrapper.add(Box.createVerticalStrut(5));
         wrapper.add(locationLabel);
         wrapper.add(filterPanel);
+        wrapper.add(detailFilterPanel);
 
         return wrapper;
     }
@@ -121,6 +169,10 @@ public class ViewInventory extends JFrame {
         columns.add("Description");
         columns.add("Type");
         columns.add("Category");
+        columns.add("Item Type");
+        columns.add("Brand");
+        columns.add("Shelf");
+        columns.add("Storage Shelf");
         if (canViewVendor) {
             columns.add("Vendor");
         }
@@ -174,6 +226,10 @@ public class ViewInventory extends JFrame {
         setColumnWidth(columnModel, "Description", 240);
         setColumnWidth(columnModel, "Type", 115);
         setColumnWidth(columnModel, "Category", 120);
+        setColumnWidth(columnModel, "Item Type", 130);
+        setColumnWidth(columnModel, "Brand", 130);
+        setColumnWidth(columnModel, "Shelf", 120);
+        setColumnWidth(columnModel, "Storage Shelf", 140);
         setColumnWidth(columnModel, "Vendor", 160);
         setColumnWidth(columnModel, "Cost Price", 90);
         setColumnWidth(columnModel, "Price", 90);
@@ -318,139 +374,101 @@ public class ViewInventory extends JFrame {
         }
     }
 
+    private void loadDetailFilters() {
+        loadingDetailFilters = true;
+        try {
+            LanApiClient.InventoryLookups lookups = LanApiClient.loadInventoryLookups(null);
+            replaceOptions(departmentFilterCombo, "All Departments",
+                    lookups.departments().stream().map(LanApiClient.NamedId::name).toList());
+            replaceOptions(brandFilterCombo, "All Brands", lookups.brands());
+            replaceOptions(shelfFilterCombo, "All Shelves", lookups.shelves());
+            replaceOptions(storageShelfFilterCombo, "All Storage Shelves", lookups.shelves());
+            loadItemTypeFilter();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load inventory filters.\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            loadingDetailFilters = false;
+        }
+    }
+
+    private void reloadForDetailFilter() {
+        if (!loadingDetailFilters) loadInventory(searchField.getText().trim(),
+                (String) stockFilterCombo.getSelectedItem());
+    }
+
+    private void loadItemTypeFilter() {
+        try {
+            String department = selectedFilter(departmentFilterCombo, "All Departments");
+            LanApiClient.InventoryLookups all = LanApiClient.loadInventoryLookups(null);
+            Integer categoryId = null;
+            if (department != null) {
+                categoryId = all.departments().stream().filter(item -> item.name().equals(department))
+                        .map(LanApiClient.NamedId::id).findFirst().orElse(null);
+            }
+            LanApiClient.InventoryLookups filtered = categoryId == null
+                    ? all : LanApiClient.loadInventoryLookups(categoryId);
+            replaceOptions(itemTypeFilterCombo, "All Item Types", filtered.itemTypes());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load item types.\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void replaceOptions(JComboBox<String> box, String allLabel, List<String> values) {
+        Object selected = box.getSelectedItem();
+        box.removeAllItems();
+        box.addItem(allLabel);
+        if (values != null) values.forEach(box::addItem);
+        if (selected != null) {
+            for (int i = 0; i < box.getItemCount(); i++) {
+                if (box.getItemAt(i).equals(selected.toString())) {
+                    box.setSelectedIndex(i);
+                    return;
+                }
+            }
+        }
+        box.setSelectedIndex(0);
+    }
+
+    private String selectedFilter(JComboBox<String> box, String allLabel) {
+        if (box == null || box.getSelectedItem() == null || allLabel.equals(box.getSelectedItem())) return null;
+        return box.getSelectedItem().toString();
+    }
+
     private void loadInventory(String searchText, String stockFilter) {
         tableModel.setRowCount(0);
-
-        StringBuilder sql = new StringBuilder();
-        sql.append("SELECT p.product_id, ");
-        sql.append("p.sku, ");
-        sql.append("p.name, ");
-        sql.append("COALESCE(p.size, '') AS size, ");
-        sql.append("COALESCE(p.description, '') AS description, ");
-        sql.append("COALESCE(p.product_type, 'INVENTORY') AS product_type, ");
-        sql.append("COALESCE(c.name, '') AS category_name, ");
-        sql.append(canViewVendor ? "COALESCE(v.name, '') AS vendor_name, " : "'' AS vendor_name, ");
-        sql.append(canViewCostPrice ? "COALESCE(p.cost_price, 0) AS cost_price, " : "0 AS cost_price, ");
-        sql.append("COALESCE(p.price, 0) AS price, ");
-        sql.append("COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand, ");
-        sql.append("COALESCE(i.reorder_level, 0) AS reorder_level, ");
-        sql.append(canViewCreatedBy ? "COALESCE(p.created_by_name, '') AS created_by_name " : "'' AS created_by_name ");
-        sql.append("FROM products p ");
-        sql.append("LEFT JOIN inventory i ON p.product_id = i.product_id ");
-        sql.append("LEFT JOIN categories c ON p.category_id = c.category_id ");
-        if (canViewVendor) {
-            sql.append("LEFT JOIN vendors v ON p.vendor_id = v.vendor_id ");
-        }
-        sql.append("WHERE 1 = 1");
-
-        Integer currentLocationId = getCurrentLocationId();
-        if (currentLocationId != null) {
-            sql.append(" AND (i.location_id = ? OR i.location_id IS NULL)");
-        }
-
-        boolean hasSearch = searchText != null && !searchText.isBlank();
-        if (hasSearch) {
-            sql.append(" AND (CAST(p.product_id AS TEXT) ILIKE ? OR p.sku ILIKE ? OR p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR COALESCE(p.description, '') ILIKE ?");
-            if (canViewCreatedBy) {
-                sql.append(" OR COALESCE(p.created_by_name, '') ILIKE ?");
+        LanApiClient.InventoryRequest request = new LanApiClient.InventoryRequest(
+                searchText, stockFilter,
+                selectedFilter(departmentFilterCombo, "All Departments"),
+                selectedFilter(itemTypeFilterCombo, "All Item Types"),
+                selectedFilter(brandFilterCombo, "All Brands"),
+                selectedFilter(shelfFilterCombo, "All Shelves"),
+                selectedFilter(storageShelfFilterCombo, "All Storage Shelves"));
+        try {
+            LanApiClient.InventoryResult result = LanApiClient.loadInventory(request);
+            for (LanApiClient.InventoryProduct product : result.products()) {
+                String productType = normalizeProductType(product.productType());
+                Vector<Object> row = new Vector<>();
+                row.add(product.productId()); row.add(product.sku()); row.add(product.name());
+                row.add(product.size()); row.add(product.description()); row.add(formatProductType(productType));
+                row.add(product.department()); row.add(product.itemType()); row.add(product.brand());
+                row.add(product.shelf()); row.add(product.storageShelf());
+                if (canViewVendor) row.add(product.vendor());
+                if (canViewCostPrice) row.add(utils.CurrencyFormatter.format(product.costPrice()));
+                row.add(utils.CurrencyFormatter.format(product.price()));
+                row.add(product.quantityOnHand()); row.add(product.reorderLevel());
+                row.add(isInventoryProduct(productType)
+                        ? getStockStatus(product.quantityOnHand(), product.reorderLevel())
+                        : formatProductType(productType));
+                if (canViewCreatedBy) row.add(product.createdBy());
+                tableModel.addRow(row);
             }
-            if (canViewVendor) {
-                sql.append(" OR COALESCE(v.name, '') ILIKE ?");
-            }
-            sql.append(")");
-        }
-
-        if ("In Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) > 0");
-        } else if ("Low Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) <= COALESCE(i.reorder_level, 0) AND COALESCE(i.quantity_on_hand, 0) > 0");
-        } else if ("Out of Stock".equals(stockFilter)) {
-            sql.append(" AND COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(i.quantity_on_hand, 0) <= 0");
-        }
-
-        sql.append(" ORDER BY p.name ASC");
-
-        int totalProducts = 0;
-        int totalUnits = 0;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-
-            int paramIndex = 1;
-            if (currentLocationId != null) {
-                ps.setInt(paramIndex++, currentLocationId);
-            }
-
-            if (hasSearch) {
-                String pattern = "%" + searchText + "%";
-                ps.setString(paramIndex++, pattern);
-                ps.setString(paramIndex++, pattern);
-                ps.setString(paramIndex++, pattern);
-                ps.setString(paramIndex++, pattern);
-                ps.setString(paramIndex++, pattern);
-                if (canViewCreatedBy) {
-                    ps.setString(paramIndex++, pattern);
-                }
-                if (canViewVendor) {
-                    ps.setString(paramIndex++, pattern);
-                }
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    int productId = rs.getInt("product_id");
-                    String sku = rs.getString("sku");
-                    String name = rs.getString("name");
-                    String size = rs.getString("size");
-                    String description = rs.getString("description");
-                    String productType = normalizeProductType(rs.getString("product_type"));
-                    String category = rs.getString("category_name");
-                    String vendor = rs.getString("vendor_name");
-                    double costPrice = rs.getDouble("cost_price");
-                    double price = rs.getDouble("price");
-                    int quantity = rs.getInt("quantity_on_hand");
-                    int reorderLevel = rs.getInt("reorder_level");
-                    String createdBy = rs.getString("created_by_name");
-                    String status = isInventoryProduct(productType) ? getStockStatus(quantity, reorderLevel) : formatProductType(productType);
-
-                    Vector<Object> row = new Vector<>();
-                    row.add(productId);
-                    row.add(sku);
-                    row.add(name);
-                    row.add(size);
-                    row.add(description);
-                    row.add(formatProductType(productType));
-                    row.add(category);
-                    if (canViewVendor) {
-                        row.add(vendor);
-                    }
-                    if (canViewCostPrice) {
-                        row.add(utils.CurrencyFormatter.format(costPrice));
-                    }
-                    row.add(utils.CurrencyFormatter.format(price));
-                    row.add(quantity);
-                    row.add(reorderLevel);
-                    row.add(status);
-                    if (canViewCreatedBy) {
-                        row.add(createdBy);
-                    }
-                    tableModel.addRow(row);
-
-                    totalProducts++;
-                    if (isInventoryProduct(productType)) {
-                        totalUnits += quantity;
-                    }
-                }
-            }
-
-            totalProductsLabel.setText("Products: " + totalProducts);
-            totalItemsLabel.setText("Units in Stock: " + totalUnits);
-
+            totalProductsLabel.setText("Products: " + result.totalProducts());
+            totalItemsLabel.setText("Units in Stock: " + result.totalUnits());
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this,
-                    "Failed to load inventory.\n" + ex.getMessage(),
-                    "Database Error",
-                    JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Failed to load inventory.\n" + ex.getMessage(),
+                    "LAN Service", JOptionPane.ERROR_MESSAGE);
         }
     }
 

@@ -1,6 +1,6 @@
 param(
     [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [string]$TaskName = "SmartStockBackgroundSync"
+    [string]$TaskName = "SmartStockServerService"
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,5 +35,6 @@ schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /F | Out-Host
 schtasks /Run /TN $TaskName | Out-Host
 schtasks /Query /TN $TaskName /FO LIST | Out-Host
 
-Write-Host "SmartStock background sync task installed: $TaskName"
+Write-Host "SmartStock Server Service task installed: $TaskName"
+Write-Host "The service provides the HTTPS LAN API on port 8443 and background cloud sync."
 Write-Host "Runner: $runner"

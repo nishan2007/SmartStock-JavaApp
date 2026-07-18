@@ -325,12 +325,16 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerSession getActiveSessionForCurrentDevice(Connection conn) throws SQLException {
-        ensureSchema(conn);
         Integer locationId = SessionManager.getCurrentLocationId();
         String deviceId = DeviceContextService.currentDeviceId();
         if (locationId == null || deviceId == null || deviceId.isBlank()) {
             return null;
         }
+        return getActiveSessionForDevice(conn, locationId, deviceId);
+    }
+
+    public static CashDrawerSession getActiveSessionForDevice(Connection conn, int locationId, String deviceId) throws SQLException {
+        ensureSchema(conn);
         String sql = """
                 SELECT cds.*
                 FROM cash_drawer_sessions cds
@@ -345,16 +349,7 @@ public final class CashDrawerService {
             ps.setString(2, deviceId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    CashDrawerSession opened = mapSession(rs);
-                    SyncOutboxService.recordEvent(conn, "CASH_DRAWER_SESSION_OPENED", Map.of(
-                            "cash_drawer_session_id", opened.sessionId(),
-                            "cash_drawer_id", opened.cashDrawerId(),
-                            "location_id", opened.locationId(),
-                            "device_id", String.valueOf(opened.deviceId()),
-                            "opened_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId(),
-                            "opening_cash", opened.openingCash()
-                    ));
-                    return opened;
+                    return mapSession(rs);
                 }
             }
         }
@@ -362,7 +357,6 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerSession openSessionForCurrentDevice(Connection conn, String notes) throws SQLException {
-        ensureSchema(conn);
         Integer locationId = SessionManager.getCurrentLocationId();
         String deviceId = DeviceContextService.currentDeviceId();
         if (locationId == null) {
@@ -371,12 +365,19 @@ public final class CashDrawerService {
         if (deviceId == null || deviceId.isBlank()) {
             throw new SQLException("This register does not have a device ID.");
         }
+        return openSessionForDevice(conn,locationId,deviceId,DeviceContextService.currentDeviceName(),
+                SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName(),notes);
+    }
+
+    public static CashDrawerSession openSessionForDevice(Connection conn,int locationId,String deviceId,String deviceName,
+                                                         Integer userId,String userName,String notes)throws SQLException{
+        ensureSchema(conn);
         CashDrawerContext drawer = resolveDrawerForDevice(conn, locationId, deviceId);
         if (!drawer.isAssigned()) {
             throw new SQLException("This device is not assigned to an active cash drawer.");
         }
         if (drawer.hasActiveSession()) {
-            CashDrawerSession existing = getActiveSessionForCurrentDevice(conn);
+            CashDrawerSession existing = getActiveSessionForDevice(conn,locationId,deviceId);
             if (existing != null) {
                 return existing;
             }
@@ -398,18 +399,22 @@ public final class CashDrawerService {
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, deviceId);
-            ps.setString(2, blankToNull(DeviceContextService.currentDeviceName()));
-            setNullableInteger(ps, 3, SessionManager.getCurrentUserId());
-            ps.setString(4, blankToNull(SessionManager.getCurrentUserDisplayName()));
-            setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
-            ps.setString(6, blankToNull(SessionManager.getCurrentUserDisplayName()));
-            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-            ps.setString(8, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            ps.setString(2, blankToNull(deviceName));
+            setNullableInteger(ps, 3, userId);
+            ps.setString(4, blankToNull(userName));
+            setNullableInteger(ps, 5, userId);
+            ps.setString(6, blankToNull(userName));
+            setNullableInteger(ps, 7, userId);
+            ps.setString(8, blankToNull(userName));
             ps.setString(9, blankToNull(notes));
             ps.setLong(10, drawer.cashDrawerId());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return mapSession(rs);
+                    CashDrawerSession opened=mapSession(rs);
+                    SyncOutboxService.recordEvent(conn,"CASH_DRAWER_SESSION_OPENED",Map.of(
+                            "cash_drawer_session_id",opened.sessionId(),"cash_drawer_id",opened.cashDrawerId(),"location_id",opened.locationId(),
+                            "device_id",String.valueOf(opened.deviceId()),"opened_by_user_id",userId==null?"":userId,"opening_cash",opened.openingCash()));
+                    return opened;
                 }
             }
         }
@@ -417,6 +422,10 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerHandover recordHandover(Connection conn, long sessionId, BigDecimal countedCash, String notes) throws SQLException {
+        return recordHandover(conn,sessionId,countedCash,notes,SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName());
+    }
+
+    public static CashDrawerHandover recordHandover(Connection conn,long sessionId,BigDecimal countedCash,String notes,Integer userId,String userName)throws SQLException{
         ensureSchema(conn);
         CashDrawerSession session = getSessionForUpdate(conn, sessionId);
         if (session == null) {
@@ -446,8 +455,8 @@ public final class CashDrawerService {
             ps.setString(4, session.deviceId());
             setNullableInteger(ps, 5, session.currentCashierUserId());
             ps.setString(6, blankToNull(session.currentCashierName()));
-            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-            ps.setString(8, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            setNullableInteger(ps, 7, userId);
+            ps.setString(8, blankToNull(userName));
             ps.setBigDecimal(9, expectedCash);
             ps.setBigDecimal(10, cleanCountedCash);
             ps.setBigDecimal(11, variance);
@@ -467,8 +476,8 @@ public final class CashDrawerService {
                 WHERE cash_drawer_session_id = ?
                 """;
         try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
-            setNullableInteger(ps, 1, SessionManager.getCurrentUserId());
-            ps.setString(2, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            setNullableInteger(ps, 1, userId);
+            ps.setString(2, blankToNull(userName));
             ps.setLong(3, sessionId);
             ps.executeUpdate();
         }
@@ -487,6 +496,10 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerSession closeSession(Connection conn, long sessionId, BigDecimal countedCash, String notes) throws SQLException {
+        return closeSession(conn,sessionId,countedCash,notes,SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName());
+    }
+
+    public static CashDrawerSession closeSession(Connection conn,long sessionId,BigDecimal countedCash,String notes,Integer userId,String userName)throws SQLException{
         ensureSchema(conn);
         CashDrawerSession session = getSessionForUpdate(conn, sessionId);
         if (session == null) {
@@ -527,12 +540,12 @@ public final class CashDrawerService {
             ps.setBigDecimal(2, cleanCountedCash);
             ps.setBigDecimal(3, cashToRemove);
             ps.setBigDecimal(4, variance);
-            setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
-            ps.setString(6, blankToNull(SessionManager.getCurrentUserDisplayName()));
-            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-            ps.setString(8, blankToNull(SessionManager.getCurrentUserDisplayName()));
-            setNullableInteger(ps, 9, SessionManager.getCurrentUserId());
-            ps.setString(10, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            setNullableInteger(ps, 5, userId);
+            ps.setString(6, blankToNull(userName));
+            setNullableInteger(ps, 7, userId);
+            ps.setString(8, blankToNull(userName));
+            setNullableInteger(ps, 9, userId);
+            ps.setString(10, blankToNull(userName));
             ps.setString(11, closingReport);
             ps.setString(12, blankToNull(notes));
             ps.setLong(13, sessionId);
@@ -548,7 +561,7 @@ public final class CashDrawerService {
                             "counted_cash", cleanCountedCash,
                             "cash_to_remove", cashToRemove,
                             "variance", variance,
-                            "closed_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                            "closed_by_user_id", userId == null ? "" : userId
                     ));
                     return closed;
                 }
@@ -558,6 +571,10 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerSession reviseClosedSessionCount(Connection conn, long sessionId, BigDecimal countedCash, String notes) throws SQLException {
+        return reviseClosedSessionCount(conn,sessionId,countedCash,notes,SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName());
+    }
+
+    public static CashDrawerSession reviseClosedSessionCount(Connection conn,long sessionId,BigDecimal countedCash,String notes,Integer userId,String userName)throws SQLException{
         ensureSchema(conn);
         CashDrawerSession session = getSessionForUpdate(conn, sessionId);
         if (session == null) {
@@ -599,8 +616,8 @@ public final class CashDrawerService {
             ps.setBigDecimal(2, cleanCountedCash);
             ps.setBigDecimal(3, cashToRemove);
             ps.setBigDecimal(4, variance);
-            setNullableInteger(ps, 5, SessionManager.getCurrentUserId());
-            ps.setString(6, blankToNull(SessionManager.getCurrentUserDisplayName()));
+            setNullableInteger(ps, 5, userId);
+            ps.setString(6, blankToNull(userName));
             ps.setString(7, closingReport);
             ps.setString(8, blankToNull(correctionNotes));
             ps.setLong(9, sessionId);
@@ -616,7 +633,7 @@ public final class CashDrawerService {
                             "counted_cash", cleanCountedCash,
                             "cash_to_remove", cashToRemove,
                             "variance", variance,
-                            "balanced_by_user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
+                            "balanced_by_user_id", userId == null ? "" : userId
                     ));
                             return revised;
                         }
@@ -630,7 +647,11 @@ public final class CashDrawerService {
                                                 String storeName,
                                                 BigDecimal targetAmount,
                                                 Map<Integer, Integer> denominationCounts,
-                                                String notes) throws SQLException {
+                                                String notes,
+                                                int userId,
+                                                String userName,
+                                                java.util.UUID deviceId,
+                                                String deviceName) throws SQLException {
         ensureSchema(conn);
         Map<Integer, Integer> cleanCounts = cleanDenominationCounts(denominationCounts);
         BigDecimal cleanTarget = defaultZero(targetAmount);
@@ -661,15 +682,10 @@ public final class CashDrawerService {
             ps.setBigDecimal(4, countedAmount);
             ps.setBigDecimal(5, variance);
             ps.setString(6, denominationCountsToJson(cleanCounts));
-            setNullableInteger(ps, 7, SessionManager.getCurrentUserId());
-            ps.setString(8, blankToNull(SessionManager.getCurrentUserDisplayName()));
-            String deviceId = DeviceContextService.currentDeviceId();
-            if (deviceId == null || deviceId.isBlank()) {
-                ps.setNull(9, Types.OTHER);
-            } else {
-                ps.setString(9, deviceId);
-            }
-            ps.setString(10, blankToNull(DeviceContextService.currentDeviceName()));
+            ps.setInt(7, userId);
+            ps.setString(8, blankToNull(userName));
+            ps.setObject(9, deviceId);
+            ps.setString(10, blankToNull(deviceName));
             ps.setString(11, blankToNull(notes));
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -1037,7 +1053,13 @@ public final class CashDrawerService {
                         WITH CHECK (TRUE)
                         """);
                 stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_sessions_authenticated_all ON cash_drawer_sessions");
-                stmt.executeUpdate("""
+                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_sessions_location_access ON cash_drawer_sessions");
+                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
+                        CREATE POLICY cash_drawer_sessions_location_access
+                        ON cash_drawer_sessions FOR ALL TO authenticated
+                        USING ((SELECT public.current_app_user_has_location(location_id)))
+                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
+                        """ : """
                         CREATE POLICY cash_drawer_sessions_authenticated_all
                         ON cash_drawer_sessions
                         FOR ALL
@@ -1096,7 +1118,13 @@ public final class CashDrawerService {
                         WITH CHECK (TRUE)
                         """);
                 stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_handovers_authenticated_all ON cash_drawer_handovers");
-                stmt.executeUpdate("""
+                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_handovers_location_access ON cash_drawer_handovers");
+                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
+                        CREATE POLICY cash_drawer_handovers_location_access
+                        ON cash_drawer_handovers FOR ALL TO authenticated
+                        USING ((SELECT public.current_app_user_has_location(location_id)))
+                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
+                        """ : """
                         CREATE POLICY cash_drawer_handovers_authenticated_all
                         ON cash_drawer_handovers
                         FOR ALL
@@ -1151,7 +1179,13 @@ public final class CashDrawerService {
                         WITH CHECK (TRUE)
                         """);
                 stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_authenticated_all ON change_basket_updates");
-                stmt.executeUpdate("""
+                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_location_access ON change_basket_updates");
+                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
+                        CREATE POLICY change_basket_updates_location_access
+                        ON change_basket_updates FOR ALL TO authenticated
+                        USING ((SELECT public.current_app_user_has_location(location_id)))
+                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
+                        """ : """
                         CREATE POLICY change_basket_updates_authenticated_all
                         ON change_basket_updates
                         FOR ALL
@@ -1565,6 +1599,13 @@ public final class CashDrawerService {
     private static boolean tableExists(Connection conn, String table) throws SQLException {
         try (ResultSet rs = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"})) {
             return rs.next();
+        }
+    }
+
+    private static boolean hasLocationAuthorization(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL")) {
+            return rs.next() && rs.getBoolean(1);
         }
     }
 

@@ -1,7 +1,5 @@
 package managers;
 
-import data.DB;
-import services.DeviceService;
 import ui.screens.BalanceDraw;
 import ui.screens.BalanceSheet;
 import ui.screens.ChangeBasket;
@@ -43,8 +41,6 @@ import javax.swing.*;
 import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.sql.Connection;
-import java.sql.SQLException;
 
 public final class NavigationManager {
 
@@ -479,11 +475,7 @@ public final class NavigationManager {
     public static void closeApplication(JFrame currentScreen) {
         transitionInProgress = true;
 
-        try (Connection conn = DB.getConnection()) {
-            DeviceService.endCurrentSession(conn);
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-        }
+        services.LanApiClient.logout();
 
         for (Window window : Window.getWindows()) {
             if (!(window instanceof JFrame frame)) {

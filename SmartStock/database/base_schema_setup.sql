@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS locations (
     email_sender_address TEXT NOT NULL DEFAULT '',
     email_sender_name TEXT NOT NULL DEFAULT '',
     email_bcc_address TEXT NOT NULL DEFAULT '',
+    balance_sheet_recipient_email TEXT NOT NULL DEFAULT '',
     email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     email_quotes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS locations (
     email_delivery_bills_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     email_connected_at TIMESTAMPTZ,
     email_last_tested_at TIMESTAMPTZ,
-    receipt_store_code TEXT,
+    receipt_store_code TEXT NOT NULL DEFAULT '0001',
     timezone TEXT NOT NULL DEFAULT 'America/New_York',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -109,18 +110,22 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT,
     middle_name TEXT,
     last_name TEXT,
-    full_name TEXT,
+    full_name TEXT NOT NULL,
     email TEXT,
     phone TEXT,
     employee_photo_url TEXT,
     employee_id_card_document_url TEXT,
     date_of_birth DATE,
+    hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
     badge_id TEXT,
     badge_secret_salt TEXT,
     badge_secret_hash TEXT,
     badge_generated_at TIMESTAMPTZ,
     badge_print_count INTEGER NOT NULL DEFAULT 0,
-    compensation_type TEXT,
+    badge_rotated_at TIMESTAMPTZ,
+    badge_rotated_by_user_id INTEGER,
+    badge_rotated_by_name TEXT,
+    compensation_type TEXT NOT NULL DEFAULT 'HOURLY',
     salary NUMERIC(12,2) NOT NULL DEFAULT 0,
     role_id INTEGER REFERENCES roles(role_id),
     auth_user_id UUID,
@@ -143,23 +148,217 @@ CREATE TABLE IF NOT EXISTS user_locations (
     PRIMARY KEY (user_id, location_id)
 );
 
+UPDATE users SET full_name = COALESCE(NULLIF(BTRIM(full_name), ''), username)
+WHERE full_name IS NULL OR BTRIM(full_name) = '';
+UPDATE users SET compensation_type = 'HOURLY' WHERE compensation_type IS NULL;
+UPDATE users SET salary = 0 WHERE salary IS NULL;
+UPDATE users SET is_active = TRUE WHERE is_active IS NULL;
+ALTER TABLE users ALTER COLUMN full_name SET NOT NULL;
+ALTER TABLE users ALTER COLUMN compensation_type SET DEFAULT 'HOURLY';
+ALTER TABLE users ALTER COLUMN compensation_type SET NOT NULL;
+ALTER TABLE users ALTER COLUMN salary SET DEFAULT 0;
+ALTER TABLE users ALTER COLUMN salary SET NOT NULL;
+ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
+ALTER TABLE users ALTER COLUMN is_active SET NOT NULL;
+
+UPDATE locations SET receipt_store_code = '0001'
+WHERE receipt_store_code IS NULL OR BTRIM(receipt_store_code) = '';
+ALTER TABLE locations ALTER COLUMN receipt_store_code SET DEFAULT '0001';
+ALTER TABLE locations ALTER COLUMN receipt_store_code SET NOT NULL;
+
+
+CREATE TABLE IF NOT EXISTS employee_payroll_settings (
+    setting_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    period_type TEXT NOT NULL DEFAULT 'SEMI_MONTHLY',
+    work_hour_limit NUMERIC(8,2) NOT NULL DEFAULT 80.00,
+    effective_from DATE NOT NULL,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT employee_payroll_settings_period_type_chk
+        CHECK (period_type IN ('SEMI_MONTHLY', 'WEEKLY', 'FOUR_MONTH_BLOCKS')),
+    CONSTRAINT employee_payroll_settings_hour_limit_chk CHECK (work_hour_limit > 0),
+    CONSTRAINT employee_payroll_settings_user_effective_key UNIQUE (user_id, effective_from)
+);
+
+CREATE INDEX IF NOT EXISTS employee_payroll_settings_user_effective_idx
+ON employee_payroll_settings(user_id, effective_from DESC);
+
+CREATE OR REPLACE FUNCTION set_employee_payroll_settings_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS employee_payroll_settings_set_updated_at ON employee_payroll_settings;
+CREATE TRIGGER employee_payroll_settings_set_updated_at
+BEFORE UPDATE ON employee_payroll_settings
+FOR EACH ROW EXECUTE FUNCTION set_employee_payroll_settings_updated_at();
+
+INSERT INTO employee_payroll_settings (
+    setting_id, user_id, period_type, work_hour_limit, effective_from, created_by_name
+)
+SELECT (
+    SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 1, 8) || '-' ||
+    SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 9, 4) || '-' ||
+    SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 13, 4) || '-' ||
+    SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 17, 4) || '-' ||
+    SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 21, 12)
+)::uuid,
+u.user_id, 'SEMI_MONTHLY', 80.00, DATE '1900-01-01', 'System default'
+FROM users u
+WHERE NOT EXISTS (
+    SELECT 1 FROM employee_payroll_settings existing WHERE existing.user_id = u.user_id
+);
+
+
+DO $$
+BEGIN
+    ALTER TABLE public.employee_payroll_settings ENABLE ROW LEVEL SECURITY;
+    REVOKE ALL ON TABLE public.employee_payroll_settings FROM PUBLIC;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON TABLE public.employee_payroll_settings FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON TABLE public.employee_payroll_settings FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT ALL ON TABLE public.employee_payroll_settings TO service_role;
+        DROP POLICY IF EXISTS employee_payroll_settings_service_role_all ON public.employee_payroll_settings;
+        CREATE POLICY employee_payroll_settings_service_role_all
+            ON public.employee_payroll_settings FOR ALL TO service_role
+            USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+
+
+
+CREATE TABLE IF NOT EXISTS employee_schedule_shifts (
+    shift_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+    shift_name TEXT NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    updated_by_user_id INTEGER REFERENCES users(user_id),
+    updated_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT employee_schedule_shifts_daytime_check CHECK (end_time > start_time),
+    CONSTRAINT employee_schedule_shifts_location_identity UNIQUE (location_id, shift_id)
+);
+
+ALTER TABLE employee_schedule_shifts ADD COLUMN IF NOT EXISTS updated_by_user_id INTEGER REFERENCES users(user_id);
+ALTER TABLE employee_schedule_shifts ADD COLUMN IF NOT EXISTS updated_by_name TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS employee_schedule_shifts_location_name_idx
+ON employee_schedule_shifts(location_id, LOWER(TRIM(shift_name)));
+
+CREATE INDEX IF NOT EXISTS employee_schedule_shifts_location_order_idx
+ON employee_schedule_shifts(location_id, is_active DESC, display_order, start_time);
+
+ALTER TABLE employee_schedule_shifts ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION set_employee_schedule_shifts_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
+    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS employee_schedule_shifts_set_updated_at ON employee_schedule_shifts;
+CREATE TRIGGER employee_schedule_shifts_set_updated_at
+BEFORE INSERT OR UPDATE ON employee_schedule_shifts
+FOR EACH ROW EXECUTE FUNCTION set_employee_schedule_shifts_updated_at();
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON employee_schedule_shifts FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON employee_schedule_shifts FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT ALL ON employee_schedule_shifts TO service_role;
+    END IF;
+END;
+$$;
+
+INSERT INTO employee_schedule_shifts (shift_id, location_id, shift_name, start_time, end_time, display_order)
+SELECT (md5('employee-schedule-shift:' || l.location_id || ':0700-1600'))::uuid,
+       l.location_id, '7 AM–4 PM', TIME '07:00', TIME '16:00', 10
+FROM locations l
+ON CONFLICT (shift_id) DO NOTHING;
+
+INSERT INTO employee_schedule_shifts (shift_id, location_id, shift_name, start_time, end_time, display_order)
+SELECT (md5('employee-schedule-shift:' || l.location_id || ':0900-1800'))::uuid,
+       l.location_id, '9 AM–6 PM', TIME '09:00', TIME '18:00', 20
+FROM locations l
+ON CONFLICT (shift_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS employee_schedule_assignments (
     location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     work_date DATE NOT NULL,
     lunch_start_time TIME,
+    shift_id UUID,
+    shift_name_snapshot TEXT,
+    shift_start_time TIME,
+    shift_end_time TIME,
     created_by_user_id INTEGER REFERENCES users(user_id),
     created_by_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (location_id, user_id, work_date)
+    PRIMARY KEY (location_id, user_id, work_date),
+    CONSTRAINT employee_schedule_assignments_location_shift_fk FOREIGN KEY (location_id, shift_id)
+        REFERENCES employee_schedule_shifts(location_id, shift_id)
 );
 
 CREATE INDEX IF NOT EXISTS employee_schedule_location_date_idx
 ON employee_schedule_assignments(location_id, work_date);
 
+CREATE INDEX IF NOT EXISTS employee_schedule_user_date_idx
+ON employee_schedule_assignments(user_id, work_date);
+
 ALTER TABLE employee_schedule_assignments
 ADD COLUMN IF NOT EXISTS lunch_start_time TIME;
+
+ALTER TABLE employee_schedule_assignments ADD COLUMN IF NOT EXISTS shift_id UUID;
+ALTER TABLE employee_schedule_assignments ADD COLUMN IF NOT EXISTS shift_name_snapshot TEXT;
+ALTER TABLE employee_schedule_assignments ADD COLUMN IF NOT EXISTS shift_start_time TIME;
+ALTER TABLE employee_schedule_assignments ADD COLUMN IF NOT EXISTS shift_end_time TIME;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'employee_schedule_assignments_location_shift_fk'
+    ) THEN
+        ALTER TABLE employee_schedule_assignments
+        ADD CONSTRAINT employee_schedule_assignments_location_shift_fk
+        FOREIGN KEY (location_id, shift_id)
+        REFERENCES employee_schedule_shifts(location_id, shift_id);
+    END IF;
+END;
+$$;
 
 ALTER TABLE employee_schedule_assignments ENABLE ROW LEVEL SECURITY;
 
@@ -224,6 +423,8 @@ ADD COLUMN IF NOT EXISTS email_sender_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_bcc_address TEXT NOT NULL DEFAULT '';
 ALTER TABLE locations
+ADD COLUMN IF NOT EXISTS balance_sheet_recipient_email TEXT NOT NULL DEFAULT '';
+ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE locations
 ADD COLUMN IF NOT EXISTS email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE;
@@ -266,6 +467,16 @@ ALTER TABLE users
 ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 
 ALTER TABLE users
+ADD COLUMN IF NOT EXISTS hire_date DATE;
+
+UPDATE users
+SET hire_date = COALESCE(created_at::date, CURRENT_DATE)
+WHERE hire_date IS NULL;
+
+ALTER TABLE users ALTER COLUMN hire_date SET DEFAULT CURRENT_DATE;
+ALTER TABLE users ALTER COLUMN hire_date SET NOT NULL;
+
+ALTER TABLE users
 ADD COLUMN IF NOT EXISTS employee_photo_url TEXT;
 
 ALTER TABLE users
@@ -282,6 +493,15 @@ ADD COLUMN IF NOT EXISTS badge_generated_at TIMESTAMPTZ;
 
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS badge_print_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS badge_rotated_at TIMESTAMPTZ;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS badge_rotated_by_user_id INTEGER;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS badge_rotated_by_name TEXT;
 
 ALTER TABLE user_locations
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
@@ -338,6 +558,12 @@ CREATE TABLE IF NOT EXISTS categories (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+INSERT INTO categories (name, description)
+SELECT 'Custom', 'Default department for custom items'
+WHERE NOT EXISTS (
+    SELECT 1 FROM categories WHERE UPPER(BTRIM(name)) = 'CUSTOM'
+);
+
 CREATE TABLE IF NOT EXISTS vendors (
     vendor_id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -354,7 +580,7 @@ CREATE TABLE IF NOT EXISTS products (
     product_id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     size TEXT,
-    sku TEXT,
+    sku TEXT NOT NULL,
     barcode TEXT,
     description TEXT,
     cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -378,6 +604,69 @@ CREATE TABLE IF NOT EXISTS product_barcodes (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(barcode)
 );
+
+UPDATE products SET sku = 'ITEM-' || product_id
+WHERE sku IS NULL OR BTRIM(sku) = '';
+ALTER TABLE products ALTER COLUMN sku SET NOT NULL;
+
+CREATE TABLE IF NOT EXISTS item_types (
+    item_type_id SERIAL PRIMARY KEY,
+    category_id INTEGER NOT NULL REFERENCES categories(category_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS item_types_category_name_unique_idx ON item_types(category_id, LOWER(name));
+
+CREATE TABLE IF NOT EXISTS item_brands (
+    brand_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS item_brands_name_unique_idx ON item_brands(LOWER(name));
+
+CREATE TABLE IF NOT EXISTS shelf_locations (
+    shelf_location_id SERIAL PRIMARY KEY,
+    location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (shelf_location_id, location_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS shelf_locations_location_name_unique_idx ON shelf_locations(location_id, LOWER(name));
+CREATE UNIQUE INDEX IF NOT EXISTS shelf_locations_id_location_unique_idx ON shelf_locations(shelf_location_id, location_id);
+
+UPDATE item_types SET name = UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'))
+WHERE name IS DISTINCT FROM UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'));
+UPDATE item_brands SET name = UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'))
+WHERE name IS DISTINCT FROM UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'));
+UPDATE shelf_locations SET name = UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'))
+WHERE name IS DISTINCT FROM UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g'));
+
+CREATE UNIQUE INDEX IF NOT EXISTS item_types_normalized_name_unique_idx ON item_types(category_id, UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g')));
+CREATE UNIQUE INDEX IF NOT EXISTS item_brands_normalized_name_unique_idx ON item_brands(UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g')));
+CREATE UNIQUE INDEX IF NOT EXISTS shelf_locations_normalized_name_unique_idx ON shelf_locations(location_id, UPPER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g')));
+
+ALTER TABLE products ADD COLUMN IF NOT EXISTS item_type_id INTEGER REFERENCES item_types(item_type_id);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id INTEGER REFERENCES item_brands(brand_id);
+
+CREATE TABLE IF NOT EXISTS product_shelf_assignments (
+    product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES locations(location_id) ON DELETE CASCADE,
+    shelf_location_id INTEGER NOT NULL,
+    storage_shelf_location_id INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (product_id, location_id),
+    FOREIGN KEY (shelf_location_id, location_id) REFERENCES shelf_locations(shelf_location_id, location_id),
+    FOREIGN KEY (storage_shelf_location_id, location_id) REFERENCES shelf_locations(shelf_location_id, location_id)
+);
+ALTER TABLE product_shelf_assignments ALTER COLUMN storage_shelf_location_id DROP NOT NULL;
+ALTER TABLE item_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE item_brands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shelf_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_shelf_assignments ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
@@ -506,13 +795,13 @@ CREATE TABLE IF NOT EXISTS receiving_batches (
 
 CREATE TABLE IF NOT EXISTS sales (
     sale_id SERIAL PRIMARY KEY,
-    location_id INTEGER REFERENCES locations(location_id),
+    location_id INTEGER NOT NULL REFERENCES locations(location_id),
     user_id INTEGER REFERENCES users(user_id),
     customer_id INTEGER,
     total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'COMPLETED',
-    payment_method TEXT,
-    payment_status TEXT,
+    payment_method TEXT NOT NULL DEFAULT 'CASH',
+    payment_status TEXT NOT NULL DEFAULT 'PAID',
     amount_paid NUMERIC(12,2) NOT NULL DEFAULT 0,
     user_name TEXT,
     receipt_number TEXT,
@@ -534,18 +823,41 @@ CREATE TABLE IF NOT EXISTS sales (
 CREATE TABLE IF NOT EXISTS sale_items (
     sale_item_id SERIAL PRIMARY KEY,
     sale_id INTEGER NOT NULL REFERENCES sales(sale_id) ON DELETE CASCADE,
-    product_id INTEGER REFERENCES products(product_id),
+    product_id INTEGER NOT NULL REFERENCES products(product_id),
     quantity INTEGER NOT NULL DEFAULT 1,
     unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
-    original_unit_price NUMERIC(12,2),
+    original_unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
     discount_percent NUMERIC(6,2) NOT NULL DEFAULT 0,
     discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     price_override_reason TEXT,
     price_override_by_user_id INTEGER REFERENCES users(user_id),
     price_override_by_name TEXT,
-    product_type TEXT,
+    product_type TEXT NOT NULL DEFAULT 'INVENTORY',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+UPDATE sales
+SET payment_method = COALESCE(NULLIF(BTRIM(payment_method), ''), 'CASH'),
+    payment_status = COALESCE(NULLIF(BTRIM(payment_status), ''), 'PAID'),
+    completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP);
+ALTER TABLE sales ALTER COLUMN location_id SET NOT NULL;
+ALTER TABLE sales ALTER COLUMN payment_method SET DEFAULT 'CASH';
+ALTER TABLE sales ALTER COLUMN payment_method SET NOT NULL;
+ALTER TABLE sales ALTER COLUMN payment_status SET DEFAULT 'PAID';
+ALTER TABLE sales ALTER COLUMN payment_status SET NOT NULL;
+ALTER TABLE sales ALTER COLUMN completed_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE sales ALTER COLUMN completed_at SET NOT NULL;
+
+UPDATE sale_items
+SET original_unit_price = COALESCE(original_unit_price, unit_price, 0),
+    product_type = COALESCE(NULLIF(BTRIM(product_type), ''), 'INVENTORY');
+ALTER TABLE sale_items ALTER COLUMN quantity SET DEFAULT 1;
+ALTER TABLE sale_items ALTER COLUMN unit_price SET DEFAULT 0;
+ALTER TABLE sale_items ALTER COLUMN original_unit_price SET DEFAULT 0;
+ALTER TABLE sale_items ALTER COLUMN original_unit_price SET NOT NULL;
+ALTER TABLE sale_items ALTER COLUMN product_type SET DEFAULT 'INVENTORY';
+ALTER TABLE sale_items ALTER COLUMN product_type SET NOT NULL;
+ALTER TABLE sale_items ALTER COLUMN product_id SET NOT NULL;
 
 ALTER TABLE categories
 ADD COLUMN IF NOT EXISTS vat_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0;
@@ -582,10 +894,10 @@ CHECK (vat_rate_percent >= 0 AND vat_rate_percent <= 100);
 
 CREATE TABLE IF NOT EXISTS inventory_movements (
     movement_id BIGSERIAL PRIMARY KEY,
-    product_id INTEGER REFERENCES products(product_id),
-    location_id INTEGER REFERENCES locations(location_id),
+    product_id INTEGER NOT NULL REFERENCES products(product_id),
+    location_id INTEGER NOT NULL REFERENCES locations(location_id),
     change_qty INTEGER NOT NULL DEFAULT 0,
-    reason TEXT,
+    reason TEXT NOT NULL DEFAULT 'ADJUSTMENT',
     note TEXT,
     user_name TEXT,
     sale_id INTEGER REFERENCES sales(sale_id),
@@ -598,6 +910,15 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
     receive_sequence INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+UPDATE inventory_movements
+SET change_qty = COALESCE(change_qty, 0),
+    reason = COALESCE(NULLIF(BTRIM(reason), ''), 'ADJUSTMENT');
+ALTER TABLE inventory_movements ALTER COLUMN product_id SET NOT NULL;
+ALTER TABLE inventory_movements ALTER COLUMN location_id SET NOT NULL;
+ALTER TABLE inventory_movements ALTER COLUMN change_qty SET DEFAULT 0;
+ALTER TABLE inventory_movements ALTER COLUMN reason SET DEFAULT 'ADJUSTMENT';
+ALTER TABLE inventory_movements ALTER COLUMN reason SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS customer_accounts (
     customer_id SERIAL PRIMARY KEY,
@@ -763,9 +1084,10 @@ $$;
 
 CREATE TABLE IF NOT EXISTS customer_account_transactions (
     transaction_id BIGSERIAL PRIMARY KEY,
-    customer_id INTEGER REFERENCES customer_accounts(customer_id),
+    customer_id INTEGER NOT NULL REFERENCES customer_accounts(customer_id),
     sale_id INTEGER REFERENCES sales(sale_id),
     custom_order_id BIGINT,
+    sales_order_id BIGINT,
     payment_id TEXT,
     location_id INTEGER,
     amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -789,6 +1111,7 @@ CREATE TABLE IF NOT EXISTS customer_account_payment_allocations (
     customer_id INTEGER NOT NULL REFERENCES customer_accounts(customer_id),
     sale_id INTEGER REFERENCES sales(sale_id),
     custom_order_id BIGINT,
+    sales_order_id BIGINT,
     amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -801,10 +1124,22 @@ ALTER TABLE customer_account_transactions
 ADD COLUMN IF NOT EXISTS location_id INTEGER;
 
 ALTER TABLE customer_account_transactions
+ADD COLUMN IF NOT EXISTS sales_order_id BIGINT;
+
+ALTER TABLE customer_account_transactions
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
 ALTER TABLE customer_account_payment_allocations
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE customer_account_payment_allocations
+ADD COLUMN IF NOT EXISTS sales_order_id BIGINT;
+
+CREATE INDEX IF NOT EXISTS customer_account_transactions_sales_order_idx
+ON customer_account_transactions(sales_order_id);
+
+CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sales_order_idx
+ON customer_account_payment_allocations(sales_order_id);
 
 UPDATE customer_account_transactions
 SET payment_id = 'PAY-' || LPAD(transaction_id::text, 6, '0')
@@ -886,7 +1221,8 @@ ON CONFLICT (role_name) DO NOTHING;
 INSERT INTO permissions (permission_key, permission_name, description, permission_group, permission_subgroup)
 VALUES
     ('VIEW_EMPLOYEE_SCHEDULE', 'View Employee Schedule', 'Allows viewing who is scheduled to work each day.', 'People', 'Scheduling'),
-    ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling')
+    ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling'),
+    ('SCHEDULE_OTHER_STORES', 'Schedule Other Stores', 'Allows viewing and scheduling employees at stores other than the selected login store.', 'People', 'Scheduling')
 ON CONFLICT (permission_key) DO UPDATE SET
     permission_name = EXCLUDED.permission_name,
     description = EXCLUDED.description,
@@ -909,6 +1245,13 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id
 FROM roles r
+JOIN permissions p ON UPPER(p.permission_key) = 'SCHEDULE_OTHER_STORES'
+WHERE UPPER(r.role_name) = 'ADMIN'
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.role_id, p.permission_id
+FROM roles r
 CROSS JOIN permissions p
 WHERE (UPPER(r.role_name) IN ('ADMIN', 'CEO') OR UPPER(r.role_name) LIKE '%MANAGER%')
   AND UPPER(p.permission_key) = 'EDIT_EMPLOYEE_SCHEDULE'
@@ -923,6 +1266,18 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 INSERT INTO locations (name, receipt_store_code, timezone)
 SELECT 'Default Store', '0001', 'America/New_York'
 WHERE NOT EXISTS (SELECT 1 FROM locations);
+
+INSERT INTO employee_schedule_shifts (shift_id, location_id, shift_name, start_time, end_time, display_order)
+SELECT (md5('employee-schedule-shift:' || l.location_id || ':0700-1600'))::uuid,
+       l.location_id, '7 AM–4 PM', TIME '07:00', TIME '16:00', 10
+FROM locations l
+ON CONFLICT (shift_id) DO NOTHING;
+
+INSERT INTO employee_schedule_shifts (shift_id, location_id, shift_name, start_time, end_time, display_order)
+SELECT (md5('employee-schedule-shift:' || l.location_id || ':0900-1800'))::uuid,
+       l.location_id, '9 AM–6 PM', TIME '09:00', TIME '18:00', 20
+FROM locations l
+ON CONFLICT (shift_id) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS users_username_idx ON users(LOWER(username));
 CREATE INDEX IF NOT EXISTS users_email_idx ON users(LOWER(email));

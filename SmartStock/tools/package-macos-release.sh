@@ -84,10 +84,16 @@ build_macos_icons() {
 }
 
 cd "$ROOT_DIR"
-mvn package -DskipTests
+"$ROOT_DIR/tools/lan-api-cutover-check.sh"
+"$ROOT_DIR/tools/security-check.sh"
+mvn package
 
 JAR_PATH="$(ls -t "$TARGET_DIR"/inventory-management-*.jar | head -n 1)"
 JAR_NAME="$(basename "$JAR_PATH")"
+if jar tf "$JAR_PATH" | rg -q '(^|/)(\.env|database-credentials\.txt|database\.properties)$'; then
+  echo "Refusing to package privileged configuration or credential files." >&2
+  exit 1
+fi
 VERSION="${JAR_NAME#inventory-management-}"
 VERSION="${VERSION%.jar}"
 ZIP_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.zip"

@@ -1,22 +1,17 @@
 package ui.screens;
 
-import data.DB;
-import services.EmailOutboxService;
-import services.OfflineWriteGuard;
+import services.LanApiClient;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.ZoneId;
 import java.time.zone.ZoneRulesException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 public class LocationManagementPanel extends JPanel {
     private static final String DEFAULT_TIMEZONE = "America/New_York";
@@ -35,6 +30,7 @@ public class LocationManagementPanel extends JPanel {
     private final JTextField senderEmailField = new JTextField();
     private final JTextField senderNameField = new JTextField();
     private final JTextField bccEmailField = new JTextField();
+    private final JTextField balanceSheetEmailField = new JTextField();
     private final JCheckBox emailReceiptsBox = new JCheckBox("Receipts");
     private final JCheckBox emailOrderConfirmationsBox = new JCheckBox("Order Confirmations");
     private final JCheckBox emailQuotesBox = new JCheckBox("Quotes");
@@ -44,9 +40,11 @@ public class LocationManagementPanel extends JPanel {
     private final DefaultTableModel tableModel;
     private final JTable locationTable;
     private Integer selectedLocationId;
-    private boolean hasTimezoneColumn;
-    private boolean hasIdentityColumns;
-    private boolean hasEmailDeliveryColumns;
+    private boolean hasTimezoneColumn=true;
+    private boolean hasIdentityColumns=true;
+    private boolean hasEmailDeliveryColumns=true;
+    private String pendingSaveKey;
+    private String pendingSaveFingerprint;
 
     public LocationManagementPanel() {
         setLayout(new BorderLayout(14, 14));
@@ -56,7 +54,7 @@ public class LocationManagementPanel extends JPanel {
         tableModel = new DefaultTableModel(new Object[]{
                 "ID", "Store Name", "Store Code", "Address", "Address Line 1", "Address Line 2", "Address Line 3",
                 "Phone Line 1", "Phone Line 2", "Email Line 1", "Email Line 2", "Sender Email", "Sender Name",
-                "BCC Email", "Email Receipts", "Email Orders", "Email Quotes", "Email Invoices", "Email Delivery", "Timezone"
+                "BCC Email", "Balance Sheet Email", "Email Receipts", "Email Orders", "Email Quotes", "Email Invoices", "Email Delivery", "Timezone"
         }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -76,7 +74,6 @@ public class LocationManagementPanel extends JPanel {
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(new JScrollPane(locationTable), BorderLayout.CENTER);
         add(buildEditorPanel(), BorderLayout.EAST);
-        ensureLocationIdentitySchema();
         loadLocations();
     }
 
@@ -118,21 +115,18 @@ public class LocationManagementPanel extends JPanel {
 
     private void processEmailOutbox() {
         try {
-            List<EmailOutboxService.SendResult> results = EmailOutboxService.processQueued(25);
-            if (results.isEmpty()) {
+            LanApiClient.EmailProcessingResult results=LanApiClient.processLocationEmailOutbox();
+            if (results.processed()==0) {
                 JOptionPane.showMessageDialog(this, "No queued email is ready to process.");
                 return;
             }
-            long sent = results.stream().filter(result -> "SENT".equals(result.status())).count();
-            long failed = results.stream().filter(result -> "FAILED".equals(result.status())).count();
-            long skipped = results.stream().filter(result -> "SKIPPED".equals(result.status())).count();
             JOptionPane.showMessageDialog(
                     this,
-                    "Email outbox processed.\nSent: " + sent + "\nFailed: " + failed + "\nSkipped: " + skipped,
+                    "Email outbox processed.\nSent: " + results.sent() + "\nFailed: " + results.failed() + "\nSkipped: " + results.skipped(),
                     "Email Outbox",
                     JOptionPane.INFORMATION_MESSAGE
             );
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to process email outbox: " + ex.getMessage(), "Email Outbox", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -182,13 +176,14 @@ public class LocationManagementPanel extends JPanel {
         addFormRow(panel, gbc, 11, "Sender Gmail:", senderEmailField);
         addFormRow(panel, gbc, 12, "Sender Name:", senderNameField);
         addFormRow(panel, gbc, 13, "BCC Email:", bccEmailField);
-        addFormRow(panel, gbc, 14, "Auto Email:", buildEmailTogglePanel());
-        addFormRow(panel, gbc, 15, "Timezone:", timezoneBox);
+        addFormRow(panel, gbc, 14, "Balance Sheet Email:", balanceSheetEmailField);
+        addFormRow(panel, gbc, 15, "Auto Email:", buildEmailTogglePanel());
+        addFormRow(panel, gbc, 16, "Timezone:", timezoneBox);
 
         JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for report date boundaries and store totals.</div></html>");
         timezoneHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.gridx = 1;
-        gbc.gridy = 16;
+        gbc.gridy = 17;
         gbc.gridwidth = 1;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -202,7 +197,7 @@ public class LocationManagementPanel extends JPanel {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 17;
+        gbc.gridy = 18;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -258,119 +253,17 @@ public class LocationManagementPanel extends JPanel {
 
     private void loadLocations() {
         tableModel.setRowCount(0);
-        hasTimezoneColumn = hasColumn("locations", "timezone");
-        hasIdentityColumns = hasColumn("locations", "company_address_line1")
-                && hasColumn("locations", "company_address_line2")
-                && hasColumn("locations", "company_address_line3")
-                && hasColumn("locations", "company_phone_line1")
-                && hasColumn("locations", "company_phone_line2")
-                && hasColumn("locations", "company_email_line1")
-                && hasColumn("locations", "company_email_line2");
-        hasEmailDeliveryColumns = hasColumn("locations", "email_sender_address")
-                && hasColumn("locations", "email_sender_name")
-                && hasColumn("locations", "email_bcc_address")
-                && hasColumn("locations", "email_receipts_enabled")
-                && hasColumn("locations", "email_order_confirmations_enabled")
-                && hasColumn("locations", "email_quotes_enabled")
-                && hasColumn("locations", "email_invoices_enabled")
-                && hasColumn("locations", "email_delivery_bills_enabled");
         String search = searchField.getText().trim();
-        String searchWhere = "";
-        if (!search.isBlank()) {
-            searchWhere = hasIdentityColumns
-                    ? " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR COALESCE(company_phone_line1, '') ILIKE ? OR COALESCE(company_email_line1, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?"
-                    : " WHERE name ILIKE ? OR COALESCE(address, '') ILIKE ? OR CAST(location_id AS TEXT) LIKE ?";
-        }
-        String sql = "SELECT location_id, name, COALESCE(receipt_store_code, '0001') AS receipt_store_code, COALESCE(address, '') AS address"
-                + (hasIdentityColumns
-                ? ", COALESCE(company_address_line1, '') AS company_address_line1"
-                + ", COALESCE(company_address_line2, '') AS company_address_line2"
-                + ", COALESCE(company_address_line3, '') AS company_address_line3"
-                + ", COALESCE(company_phone_line1, '') AS company_phone_line1"
-                + ", COALESCE(company_phone_line2, '') AS company_phone_line2"
-                + ", COALESCE(company_email_line1, '') AS company_email_line1"
-                + ", COALESCE(company_email_line2, '') AS company_email_line2"
-                : ", '' AS company_address_line1, '' AS company_address_line2, '' AS company_address_line3"
-                + ", '' AS company_phone_line1, '' AS company_phone_line2, '' AS company_email_line1, '' AS company_email_line2")
-                + (hasEmailDeliveryColumns
-                ? ", COALESCE(email_sender_address, '') AS email_sender_address"
-                + ", COALESCE(email_sender_name, '') AS email_sender_name"
-                + ", COALESCE(email_bcc_address, '') AS email_bcc_address"
-                + ", COALESCE(email_receipts_enabled, FALSE) AS email_receipts_enabled"
-                + ", COALESCE(email_order_confirmations_enabled, FALSE) AS email_order_confirmations_enabled"
-                + ", COALESCE(email_quotes_enabled, FALSE) AS email_quotes_enabled"
-                + ", COALESCE(email_invoices_enabled, FALSE) AS email_invoices_enabled"
-                + ", COALESCE(email_delivery_bills_enabled, FALSE) AS email_delivery_bills_enabled"
-                : ", '' AS email_sender_address, '' AS email_sender_name, '' AS email_bcc_address"
-                + ", FALSE AS email_receipts_enabled, FALSE AS email_order_confirmations_enabled"
-                + ", FALSE AS email_quotes_enabled, FALSE AS email_invoices_enabled, FALSE AS email_delivery_bills_enabled")
-                + (hasTimezoneColumn ? ", COALESCE(timezone, ?) AS timezone" : ", ? AS timezone")
-                + " FROM locations"
-                + searchWhere
-                + " ORDER BY location_id";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, DEFAULT_TIMEZONE);
-            if (!search.isBlank()) {
-                String pattern = "%" + search + "%";
-                ps.setString(2, pattern);
-                ps.setString(3, pattern);
-                ps.setString(4, pattern);
-                if (hasIdentityColumns) {
-                    ps.setString(5, pattern);
-                    ps.setString(6, pattern);
-                }
-            }
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
+        try {
+            for(LanApiClient.LocationRecord r:LanApiClient.loadLocationRecords(search)){
                     tableModel.addRow(new Object[]{
-                            rs.getInt("location_id"),
-                            rs.getString("name"),
-                            rs.getString("receipt_store_code"),
-                            rs.getString("address"),
-                            rs.getString("company_address_line1"),
-                            rs.getString("company_address_line2"),
-                            rs.getString("company_address_line3"),
-                            rs.getString("company_phone_line1"),
-                            rs.getString("company_phone_line2"),
-                            rs.getString("company_email_line1"),
-                            rs.getString("company_email_line2"),
-                            rs.getString("email_sender_address"),
-                            rs.getString("email_sender_name"),
-                            rs.getString("email_bcc_address"),
-                            rs.getBoolean("email_receipts_enabled"),
-                            rs.getBoolean("email_order_confirmations_enabled"),
-                            rs.getBoolean("email_quotes_enabled"),
-                            rs.getBoolean("email_invoices_enabled"),
-                            rs.getBoolean("email_delivery_bills_enabled"),
-                            rs.getString("timezone")
+                            r.locationId(),r.name(),r.storeCode(),r.address(),r.addressLine1(),r.addressLine2(),r.addressLine3(),r.phoneLine1(),r.phoneLine2(),
+                            r.emailLine1(),r.emailLine2(),r.senderEmail(),r.senderName(),r.bccEmail(),r.balanceSheetEmail(),r.emailReceipts(),r.emailOrders(),
+                            r.emailQuotes(),r.emailInvoices(),r.emailDelivery(),r.timezone()
                     });
-                }
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load locations: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private boolean hasColumn(String tableName, String columnName) {
-        String sql = """
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = ?
-                  AND column_name = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tableName);
-            ps.setString(2, columnName);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException ex) {
-            return false;
         }
     }
 
@@ -394,21 +287,16 @@ public class LocationManagementPanel extends JPanel {
         senderEmailField.setText(String.valueOf(tableModel.getValueAt(modelRow, 11)));
         senderNameField.setText(String.valueOf(tableModel.getValueAt(modelRow, 12)));
         bccEmailField.setText(String.valueOf(tableModel.getValueAt(modelRow, 13)));
-        emailReceiptsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 14))));
-        emailOrderConfirmationsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 15))));
-        emailQuotesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 16))));
-        emailInvoicesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 17))));
-        emailDeliveryBillsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 18))));
-        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 19)));
+        balanceSheetEmailField.setText(String.valueOf(tableModel.getValueAt(modelRow, 14)));
+        emailReceiptsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 15))));
+        emailOrderConfirmationsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 16))));
+        emailQuotesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 17))));
+        emailInvoicesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 18))));
+        emailDeliveryBillsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 19))));
+        timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 20)));
     }
 
     private void saveLocation() {
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Location setup");
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
         String name = nameField.getText().trim();
         String storeCode = sanitizeStoreCode(storeCodeField.getText());
         String address = addressArea.getText().trim();
@@ -422,6 +310,7 @@ public class LocationManagementPanel extends JPanel {
         String senderEmail = senderEmailField.getText().trim();
         String senderName = senderNameField.getText().trim();
         String bccEmail = bccEmailField.getText().trim();
+        String balanceSheetEmail = balanceSheetEmailField.getText().trim();
         String timezone = getTimezoneValue();
 
         if (name.isBlank()) {
@@ -444,52 +333,22 @@ public class LocationManagementPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Enter a valid BCC email address.", "Invalid Email", JOptionPane.WARNING_MESSAGE);
             return;
         }
-
-        String sql;
-        if (selectedLocationId == null) {
-            sql = hasTimezoneColumn
-                    ? "INSERT INTO locations (name, receipt_store_code, address, company_address_line1, company_address_line2, company_address_line3, company_phone_line1, company_phone_line2, company_email_line1, company_email_line2, email_sender_address, email_sender_name, email_bcc_address, email_receipts_enabled, email_order_confirmations_enabled, email_quotes_enabled, email_invoices_enabled, email_delivery_bills_enabled, timezone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    : "INSERT INTO locations (name, receipt_store_code, address, company_address_line1, company_address_line2, company_address_line3, company_phone_line1, company_phone_line2, company_email_line1, company_email_line2, email_sender_address, email_sender_name, email_bcc_address, email_receipts_enabled, email_order_confirmations_enabled, email_quotes_enabled, email_invoices_enabled, email_delivery_bills_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        } else {
-            sql = hasTimezoneColumn
-                    ? "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, company_address_line1 = ?, company_address_line2 = ?, company_address_line3 = ?, company_phone_line1 = ?, company_phone_line2 = ?, company_email_line1 = ?, company_email_line2 = ?, email_sender_address = ?, email_sender_name = ?, email_bcc_address = ?, email_receipts_enabled = ?, email_order_confirmations_enabled = ?, email_quotes_enabled = ?, email_invoices_enabled = ?, email_delivery_bills_enabled = ?, timezone = ? WHERE location_id = ?"
-                    : "UPDATE locations SET name = ?, receipt_store_code = ?, address = ?, company_address_line1 = ?, company_address_line2 = ?, company_address_line3 = ?, company_phone_line1 = ?, company_phone_line2 = ?, company_email_line1 = ?, company_email_line2 = ?, email_sender_address = ?, email_sender_name = ?, email_bcc_address = ?, email_receipts_enabled = ?, email_order_confirmations_enabled = ?, email_quotes_enabled = ?, email_invoices_enabled = ?, email_delivery_bills_enabled = ? WHERE location_id = ?";
+        if (!balanceSheetEmail.isBlank() && !isValidEmail(balanceSheetEmail)) {
+            JOptionPane.showMessageDialog(this, "Enter a valid balance sheet email address.", "Invalid Email", JOptionPane.WARNING_MESSAGE);
+            return;
         }
 
-        try (Connection conn = DB.getConnection();
-            PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, name);
-            ps.setString(2, storeCode);
-            ps.setString(3, emptyToNull(address));
-            ps.setString(4, addressLine1);
-            ps.setString(5, addressLine2);
-            ps.setString(6, addressLine3);
-            ps.setString(7, phoneLine1);
-            ps.setString(8, phoneLine2);
-            ps.setString(9, emailLine1);
-            ps.setString(10, emailLine2);
-            ps.setString(11, senderEmail);
-            ps.setString(12, senderName);
-            ps.setString(13, bccEmail);
-            ps.setBoolean(14, emailReceiptsBox.isSelected());
-            ps.setBoolean(15, emailOrderConfirmationsBox.isSelected());
-            ps.setBoolean(16, emailQuotesBox.isSelected());
-            ps.setBoolean(17, emailInvoicesBox.isSelected());
-            ps.setBoolean(18, emailDeliveryBillsBox.isSelected());
-            if (hasTimezoneColumn) {
-                ps.setString(19, timezone);
-                if (selectedLocationId != null) {
-                    ps.setInt(20, selectedLocationId);
-                }
-            } else if (selectedLocationId != null) {
-                ps.setInt(19, selectedLocationId);
-            }
-
-            ps.executeUpdate();
+        LanApiClient.LocationRecord request=new LanApiClient.LocationRecord(selectedLocationId,name,storeCode,address,addressLine1,addressLine2,addressLine3,
+                phoneLine1,phoneLine2,emailLine1,emailLine2,senderEmail,senderName,bccEmail,balanceSheetEmail,emailReceiptsBox.isSelected(),
+                emailOrderConfirmationsBox.isSelected(),emailQuotesBox.isSelected(),emailInvoicesBox.isSelected(),emailDeliveryBillsBox.isSelected(),timezone);
+        String fingerprint=request.toString();
+        try {
+            if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
+            LanApiClient.saveLocationRecord(request,pendingSaveKey);pendingSaveKey=null;pendingSaveFingerprint=null;
             clearEditor();
             loadLocations();
             JOptionPane.showMessageDialog(this, "Location saved.");
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save location: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -513,13 +372,6 @@ public class LocationManagementPanel extends JPanel {
         return email != null && email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     }
 
-    private String emptyToNull(String value) {
-        if (value == null || value.trim().isBlank()) {
-            return null;
-        }
-        return value.trim();
-    }
-
     private void clearEditor() {
         selectedLocationId = null;
         locationTable.clearSelection();
@@ -536,6 +388,7 @@ public class LocationManagementPanel extends JPanel {
         senderEmailField.setText("");
         senderNameField.setText("");
         bccEmailField.setText("");
+        balanceSheetEmailField.setText("");
         emailReceiptsBox.setSelected(false);
         emailOrderConfirmationsBox.setSelected(false);
         emailQuotesBox.setSelected(false);
@@ -543,89 +396,6 @@ public class LocationManagementPanel extends JPanel {
         emailDeliveryBillsBox.setSelected(false);
         timezoneBox.setSelectedItem(DEFAULT_TIMEZONE);
         nameField.requestFocusInWindow();
-    }
-
-    private void ensureLocationIdentitySchema() {
-        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) {
-            return;
-        }
-        try (Connection conn = DB.getConnection();
-             java.sql.Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_sender_address TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_sender_name TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_bcc_address TEXT NOT NULL DEFAULT ''");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_quotes_enabled BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_invoices_enabled BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_delivery_bills_enabled BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_connected_at TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_last_tested_at TIMESTAMPTZ");
-            if (hasTable("company_customization")) {
-                stmt.executeUpdate("""
-                        DO $$
-                        BEGIN
-                            IF EXISTS (
-                                SELECT 1
-                                FROM information_schema.columns
-                                WHERE table_schema = 'public'
-                                  AND table_name = 'company_customization'
-                                  AND column_name = 'company_address_line1'
-                            ) THEN
-                                EXECUTE $sql$
-                                    UPDATE locations l
-                                    SET company_address_line1 = COALESCE(NULLIF(l.company_address_line1, ''), cc.company_address_line1, ''),
-                                        company_address_line2 = COALESCE(NULLIF(l.company_address_line2, ''), cc.company_address_line2, ''),
-                                        company_address_line3 = COALESCE(NULLIF(l.company_address_line3, ''), cc.company_address_line3, ''),
-                                        company_phone_line1 = COALESCE(NULLIF(l.company_phone_line1, ''), cc.company_phone_line1, ''),
-                                        company_phone_line2 = COALESCE(NULLIF(l.company_phone_line2, ''), cc.company_phone_line2, ''),
-                                        company_email_line1 = COALESCE(NULLIF(l.company_email_line1, ''), cc.company_email_line1, ''),
-                                        company_email_line2 = COALESCE(NULLIF(l.company_email_line2, ''), cc.company_email_line2, '')
-                                    FROM company_customization cc
-                                    WHERE cc.location_id = l.location_id
-                                      AND (l.company_address_line1 = '' OR l.company_address_line2 = '' OR l.company_address_line3 = ''
-                                           OR l.company_phone_line1 = '' OR l.company_phone_line2 = ''
-                                           OR l.company_email_line1 = '' OR l.company_email_line2 = '')
-                                $sql$;
-                            END IF;
-                        END $$;
-                        """);
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line1");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line2");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line3");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line1");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line2");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line1");
-                stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line2");
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to prepare location identity fields: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private boolean hasTable(String tableName) {
-        String sql = """
-                SELECT 1
-                FROM information_schema.tables
-                WHERE table_schema = 'public'
-                  AND table_name = ?
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tableName);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException ex) {
-            return false;
-        }
     }
 
     private String sanitizeStoreCode(String value) {

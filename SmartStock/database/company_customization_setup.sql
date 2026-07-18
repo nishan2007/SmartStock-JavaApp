@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS company_customization (
     badge_template_quote TEXT NOT NULL DEFAULT '"Sales goes up and down, Service is Forever"',
     badge_template_signatory_name TEXT NOT NULL DEFAULT 'Authorized Signature',
     badge_template_signatory_title TEXT NOT NULL DEFAULT 'Management',
-    badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan or swipe this badge for SmartStock access.',
+    badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan, swipe, or tap this badge for SmartStock access.',
     badge_template_show_quote BOOLEAN NOT NULL DEFAULT TRUE,
     badge_template_show_employee_id BOOLEAN NOT NULL DEFAULT TRUE,
     badge_template_show_issue_date BOOLEAN NOT NULL DEFAULT TRUE,
@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS company_customization (
     badge_template_magstripe_track2 TEXT NOT NULL DEFAULT '{badge_id}',
     badge_template_magstripe_track3 TEXT NOT NULL DEFAULT '',
     badge_template_magstripe_command TEXT NOT NULL DEFAULT '',
+    badge_template_nfc_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    badge_template_nfc_payload TEXT NOT NULL DEFAULT '{badge_id}',
+    badge_template_nfc_writer_command TEXT NOT NULL DEFAULT '',
+    badge_template_nfc_verify_command TEXT NOT NULL DEFAULT '',
     badge_template_layout_data TEXT NOT NULL DEFAULT '',
     price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE,
     price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE,
@@ -310,7 +314,7 @@ ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS badge_template_signatory_title TEXT NOT NULL DEFAULT 'Management';
 
 ALTER TABLE company_customization
-ADD COLUMN IF NOT EXISTS badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan or swipe this badge for SmartStock access.';
+ADD COLUMN IF NOT EXISTS badge_template_back_instructions TEXT NOT NULL DEFAULT 'Scan, swipe, or tap this badge for SmartStock access.';
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS badge_template_show_quote BOOLEAN NOT NULL DEFAULT TRUE;
@@ -341,6 +345,18 @@ ADD COLUMN IF NOT EXISTS badge_template_magstripe_track3 TEXT NOT NULL DEFAULT '
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS badge_template_magstripe_command TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS badge_template_nfc_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS badge_template_nfc_payload TEXT NOT NULL DEFAULT '{badge_id}';
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS badge_template_nfc_writer_command TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS badge_template_nfc_verify_command TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS badge_template_layout_data TEXT NOT NULL DEFAULT '';

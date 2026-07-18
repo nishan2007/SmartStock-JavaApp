@@ -1,10 +1,10 @@
 package ui.screens;
 
-import data.DB;
 import data.DatabaseConfig;
 import data.DatabaseCredentials;
 import data.DatabaseMode;
 import services.ServerProvisioningService;
+import services.LanApiClient;
 import services.SyncWorker;
 import services.PostgresRuntimeService;
 import services.LocalServerRepairService;
@@ -12,31 +12,16 @@ import ui.helpers.ThemeManager;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.IOException;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.InterfaceAddress;
-import java.net.NetworkInterface;
-import java.net.Socket;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Enumeration;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.sql.Connection;
 
 public class DatabaseSetup extends JFrame {
-    private final JComboBox<DatabaseMode> modeBox = new JComboBox<>(DatabaseMode.values());
+    private final JComboBox<DatabaseMode> modeBox = new JComboBox<>(new DatabaseMode[]{DatabaseMode.CLIENT, DatabaseMode.SERVER});
     private final JTextField jdbcUrlField = new JTextField();
     private final JTextField dbUserField = new JTextField();
     private final JPasswordField dbPasswordField = new JPasswordField();
     private final JTextField serverHostField = new JTextField();
-    private final JSpinner serverPortSpinner = new JSpinner(new SpinnerNumberModel(5432, 1, 65535, 1));
+    private final JSpinner serverPortSpinner = new JSpinner(new SpinnerNumberModel(8443, 1, 65535, 1));
     private final JTextField locationIdField = new JTextField();
     private final JTextField cloudUrlField = new JTextField();
     private final JTextField cloudUserField = new JTextField();
@@ -62,14 +47,12 @@ public class DatabaseSetup extends JFrame {
         setLocationRelativeTo(owner);
 
         DatabaseConfig config = DatabaseConfig.load();
-        modeBox.setSelectedItem(config.mode());
+        modeBox.setSelectedItem(config.mode() == DatabaseMode.SERVER ? DatabaseMode.SERVER : DatabaseMode.CLIENT);
         jdbcUrlField.setText(config.jdbcUrl());
         dbUserField.setText(config.dbUser());
         dbPasswordField.setText(config.dbPassword());
         serverHostField.setText(config.serverHost());
-        serverPortSpinner.setValue(config.serverPort());
-        serverHostField.getDocument().addDocumentListener(new SimpleDocumentListener(this::syncClientJdbcUrlIfNeeded));
-        serverPortSpinner.addChangeListener(e -> syncClientJdbcUrlIfNeeded());
+        serverPortSpinner.setValue(config.mode() == DatabaseMode.SERVER ? config.serverPort() : LanApiClient.baseUri().getPort());
         locationIdField.setText(config.locationId() == null ? "" : String.valueOf(config.locationId()));
         cloudUrlField.setText(config.cloudJdbcUrl() == null ? "" : config.cloudJdbcUrl());
         cloudUserField.setText(config.cloudDbUser() == null ? "" : config.cloudDbUser());
@@ -171,7 +154,9 @@ public class DatabaseSetup extends JFrame {
         DatabaseMode mode = selectedMode();
         boolean server = mode == DatabaseMode.SERVER;
         boolean client = mode == DatabaseMode.CLIENT;
-        boolean cloud = mode == DatabaseMode.CLOUD_DIRECT;
+        int selectedPort = (Integer) serverPortSpinner.getValue();
+        if (server && selectedPort == 8443) serverPortSpinner.setValue(5432);
+        if (client && selectedPort == 5432) serverPortSpinner.setValue(8443);
 
         setRowVisible(modeBox, true);
         setRowVisible(jdbcUrlField, server);
@@ -180,16 +165,16 @@ public class DatabaseSetup extends JFrame {
         setRowVisible(serverHostField, server || client);
         setRowVisible(serverPortSpinner, server || client);
         setRowVisible(locationIdField, server || client);
-        setRowVisible(cloudUrlField, server || cloud);
-        setRowVisible(cloudUserField, server || cloud);
-        setRowVisible(cloudPasswordField, server || cloud);
+        setRowVisible(cloudUrlField, server);
+        setRowVisible(cloudUserField, server);
+        setRowVisible(cloudPasswordField, server);
         setRowVisible(syncIntervalSpinner, server);
 
         setRowLabel(jdbcUrlField, "Local JDBC URL");
-        setRowLabel(dbUserField, client ? "Database User" : "Local DB User");
-        setRowLabel(dbPasswordField, client ? "Database Password" : "Local DB Password");
-        setRowLabel(serverHostField, client ? "Server IP / Hostname" : "Server Host");
-        setRowLabel(serverPortSpinner, client ? "Server PostgreSQL Port" : "Server Port");
+        setRowLabel(dbUserField, "Local DB User");
+        setRowLabel(dbPasswordField, "Local DB Password");
+        setRowLabel(serverHostField, client ? "SmartStock Server Host" : "Server Host");
+        setRowLabel(serverPortSpinner, client ? "SmartStock HTTPS Port" : "PostgreSQL Port");
 
         installRuntimeButton.setVisible(server);
         installSyncServiceButton.setVisible(server);
@@ -198,16 +183,14 @@ public class DatabaseSetup extends JFrame {
         provisionButton.setVisible(server);
         startServerButton.setVisible(server);
         findServerButton.setVisible(client);
-        testButton.setVisible(server || client);
-        testCloudButton.setVisible(server || cloud);
+        testButton.setVisible(server);
+        testCloudButton.setVisible(server);
         loadCredentialsButton.setVisible(server);
 
         if (client) {
-            applyDefaultClientCredentials();
-            applyClientJdbcUrl();
-            statusLabel.setText("Status: Client mode only needs the server hostname and store location.");
-        } else if (cloud) {
-            statusLabel.setText("Status: Cloud-direct mode only needs the cloud database fields.");
+            statusLabel.setText(LanApiClient.isPaired()
+                    ? "Status: This register is paired. Employees can log in normally."
+                    : "Status: Enter the server host or find it automatically, then an administrator pairs this register once.");
         } else {
             statusLabel.setText("Status: Server mode controls local PostgreSQL, cloud sync, and provisioning.");
         }
@@ -236,13 +219,14 @@ public class DatabaseSetup extends JFrame {
 
     private DatabaseMode selectedMode() {
         Object selected = modeBox.getSelectedItem();
-        return selected instanceof DatabaseMode mode ? mode : DatabaseMode.CLOUD_DIRECT;
+        return selected instanceof DatabaseMode mode ? mode : DatabaseMode.CLIENT;
     }
 
     private void testLocalConnection() {
         saveConfig();
         statusLabel.setText("Status: Testing local connection...");
-        try (Connection ignored = DB.getConnection()) {
+        try {
+            ServerProvisioningService.testLocalConnection();
             statusLabel.setText("Status: Local database connected.");
         } catch (Exception ex) {
             statusLabel.setText("Status: Local connection failed.");
@@ -253,7 +237,8 @@ public class DatabaseSetup extends JFrame {
     private void testCloudConnection() {
         saveConfig();
         statusLabel.setText("Status: Testing cloud connection...");
-        try (Connection ignored = DB.getCloudConnection()) {
+        try {
+            ServerProvisioningService.testCloudConnection();
             statusLabel.setText("Status: Cloud database connected.");
         } catch (Exception ex) {
             statusLabel.setText("Status: Cloud connection failed.");
@@ -263,21 +248,19 @@ public class DatabaseSetup extends JFrame {
 
     private void saveConfig() {
         try {
-            if (selectedMode() == DatabaseMode.CLIENT) {
-                applyDefaultClientCredentials();
-                applyClientJdbcUrl();
-            }
+            boolean client = selectedMode() == DatabaseMode.CLIENT;
+            if (client) LanApiClient.configureEndpoint(serverHostField.getText(), (Integer) serverPortSpinner.getValue());
             DatabaseConfig config = DatabaseConfig.fromForm(
                     selectedMode(),
-                    jdbcUrlField.getText().trim(),
-                    dbUserField.getText().trim(),
-                    new String(dbPasswordField.getPassword()),
+                    client ? "" : jdbcUrlField.getText().trim(),
+                    client ? "" : dbUserField.getText().trim(),
+                    client ? "" : new String(dbPasswordField.getPassword()),
                     serverHostField.getText().trim(),
                     (Integer) serverPortSpinner.getValue(),
                     parseLocationId(),
-                    cloudUrlField.getText().trim(),
-                    cloudUserField.getText().trim(),
-                    new String(cloudPasswordField.getPassword()),
+                    client ? "" : cloudUrlField.getText().trim(),
+                    client ? "" : cloudUserField.getText().trim(),
+                    client ? "" : new String(cloudPasswordField.getPassword()),
                     (Integer) syncIntervalSpinner.getValue()
             );
             config.save();
@@ -288,29 +271,10 @@ public class DatabaseSetup extends JFrame {
         }
     }
 
-    private void applyClientJdbcUrl() {
-        String host = serverHostField.getText() == null ? "" : serverHostField.getText().trim();
-        int port = (Integer) serverPortSpinner.getValue();
-        if (!host.isBlank()) {
-            jdbcUrlField.setText(DatabaseCredentials.load().clientJdbcUrlOrDefault(host, port));
-        }
-    }
-
-    private void applyDefaultClientCredentials() {
-        DatabaseCredentials credentials = DatabaseCredentials.load();
-        dbUserField.setText(credentials.clientDbUserOrDefault());
-        dbPasswordField.setText(credentials.clientDbPasswordOrDefault());
-    }
-
     private void loadSavedCredentials() {
         DatabaseCredentials credentials = DatabaseCredentials.load();
-        if (selectedMode() == DatabaseMode.CLIENT) {
-            applyDefaultClientCredentials();
-            applyClientJdbcUrl();
-            statusLabel.setText("Status: Loaded built-in SmartStock client credentials.");
-            return;
-        }
-        if (!credentials.hasServerCredentials() && !credentials.hasClientCredentials()) {
+        if (selectedMode() == DatabaseMode.CLIENT) return;
+        if (!credentials.hasServerCredentials()) {
             JOptionPane.showMessageDialog(
                     this,
                     "No saved SmartStock database credentials were found at:\n"
@@ -321,16 +285,7 @@ public class DatabaseSetup extends JFrame {
             );
             return;
         }
-        DatabaseMode mode = selectedMode();
-        if (mode == DatabaseMode.CLIENT && credentials.hasClientCredentials()) {
-            dbUserField.setText(credentials.get("SMARTSTOCK_CLIENT_DB_USER"));
-            dbPasswordField.setText(credentials.get("SMARTSTOCK_CLIENT_DB_PASSWORD"));
-            String clientUrl = credentials.get("SMARTSTOCK_CLIENT_JDBC_URL");
-            if (clientUrl != null && !clientUrl.isBlank()) {
-                jdbcUrlField.setText(clientUrl);
-                applyHostAndPortFromJdbcUrl(clientUrl);
-            }
-        } else if (credentials.hasServerCredentials()) {
+        if (credentials.hasServerCredentials()) {
             dbUserField.setText(credentials.get("SMARTSTOCK_DB_USER"));
             dbPasswordField.setText(credentials.get("SMARTSTOCK_DB_PASSWORD"));
             String serverUrl = credentials.get("SMARTSTOCK_SERVER_JDBC_URL");
@@ -342,198 +297,40 @@ public class DatabaseSetup extends JFrame {
     }
 
     private void findNetworkServer() {
-        int port = (Integer) serverPortSpinner.getValue();
-        statusLabel.setText("Status: Scanning this network for PostgreSQL on port " + port + "...");
+        statusLabel.setText("Status: Looking for the SmartStock HTTPS service...");
         findServerButton.setEnabled(false);
-        SwingWorker<List<HostChoice>, Void> worker = new SwingWorker<>() {
+        SwingWorker<List<LanApiClient.DiscoveredServer>, Void> worker = new SwingWorker<>() {
             @Override
-            protected List<HostChoice> doInBackground() throws Exception {
-                return scanForPostgresServers(port);
+            protected List<LanApiClient.DiscoveredServer> doInBackground() throws Exception {
+                return LanApiClient.discoverServers();
             }
 
             @Override
             protected void done() {
                 findServerButton.setEnabled(true);
                 try {
-                    List<HostChoice> hosts = get();
-                    if (hosts.isEmpty()) {
-                        statusLabel.setText("Status: No PostgreSQL server found on this network.");
-                        JOptionPane.showMessageDialog(
-                                DatabaseSetup.this,
-                                "No reachable PostgreSQL server was found on this local network.\n\n"
-                                        + "Make sure the main SmartStock server Mac is on the same Wi-Fi/LAN, "
-                                        + "PostgreSQL is running, port " + port + " is allowed through the firewall, "
-                                        + "and the server is accepting network connections.",
-                                "Find Network Server",
-                                JOptionPane.WARNING_MESSAGE
-                        );
+                    List<LanApiClient.DiscoveredServer> servers = get();
+                    if (servers.isEmpty()) {
+                        statusLabel.setText("Status: No SmartStock service was discovered. Enter its hostname manually.");
                         return;
                     }
-
-                    HostChoice selected = hosts.size() == 1
-                            ? hosts.get(0)
-                            : (HostChoice) JOptionPane.showInputDialog(
-                                    DatabaseSetup.this,
-                                    "Choose the SmartStock database server:",
-                                    "Find Network Server",
-                                    JOptionPane.PLAIN_MESSAGE,
-                                    null,
-                                    hosts.toArray(),
-                                    hosts.get(0)
-                            );
-                    if (selected == null) {
-                        statusLabel.setText("Status: Server scan cancelled.");
-                        return;
-                    }
-
-                    serverHostField.setText(selected.connectHost());
-                    applyDefaultClientCredentials();
-                    applyClientJdbcUrl();
-                    statusLabel.setText("Status: Selected database server " + selected.connectHost() + ":" + port + ".");
+                    LanApiClient.DiscoveredServer selected = servers.size() == 1
+                            ? servers.get(0)
+                            : (LanApiClient.DiscoveredServer) JOptionPane.showInputDialog(
+                                    DatabaseSetup.this, "Choose the SmartStock server:", "Find SmartStock Server",
+                                    JOptionPane.PLAIN_MESSAGE, null, servers.toArray(), servers.get(0));
+                    if (selected == null) return;
+                    serverHostField.setText(selected.host());
+                    serverPortSpinner.setValue(selected.port());
+                    LanApiClient.configureEndpoint(selected.host(), selected.port());
+                    statusLabel.setText("Status: SmartStock service found. An administrator can now pair this register once.");
                 } catch (Exception ex) {
-                    statusLabel.setText("Status: Network scan failed.");
-                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex), "Find Network Server", JOptionPane.ERROR_MESSAGE);
+                    statusLabel.setText("Status: Service discovery failed. Enter the server hostname manually.");
+                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex), "Find SmartStock Server", JOptionPane.ERROR_MESSAGE);
                 }
             }
         };
         worker.execute();
-    }
-
-    private List<HostChoice> scanForPostgresServers(int port) throws Exception {
-        Set<String> candidates = localSubnetCandidates();
-        if (candidates.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        ExecutorService executor = Executors.newFixedThreadPool(Math.min(64, Math.max(4, candidates.size())));
-        try {
-            List<Future<HostChoice>> futures = new ArrayList<>();
-            for (String host : candidates) {
-                futures.add(executor.submit(() -> canConnect(host, port) ? hostChoice(host, port) : null));
-            }
-
-            List<HostChoice> found = new ArrayList<>();
-            for (Future<HostChoice> future : futures) {
-                HostChoice host = future.get();
-                if (host != null) {
-                    found.add(host);
-                }
-            }
-            found.sort((left, right) -> left.connectHost().compareToIgnoreCase(right.connectHost()));
-            return found;
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    private HostChoice hostChoice(String ipAddress, int port) {
-        String hostname = resolvePreferredHostname(ipAddress, port);
-        return new HostChoice(ipAddress, hostname == null || hostname.isBlank() ? ipAddress : hostname);
-    }
-
-    private String resolvePreferredHostname(String ipAddress, int port) {
-        String localHostName = localBonjourNameForOwnAddress(ipAddress, port);
-        if (localHostName != null) {
-            return localHostName;
-        }
-        try {
-            String canonical = InetAddress.getByName(ipAddress).getCanonicalHostName();
-            if (canonical != null && !canonical.equals(ipAddress) && canConnect(canonical, port)) {
-                return canonical;
-            }
-        } catch (Exception ignored) {
-            // IP fallback is still valid when local name resolution is unavailable.
-        }
-        return ipAddress;
-    }
-
-    private String localBonjourNameForOwnAddress(String ipAddress, int port) {
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            while (interfaces.hasMoreElements()) {
-                NetworkInterface networkInterface = interfaces.nextElement();
-                for (InterfaceAddress interfaceAddress : networkInterface.getInterfaceAddresses()) {
-                    InetAddress address = interfaceAddress.getAddress();
-                    if (address instanceof Inet4Address && ipAddress.equals(address.getHostAddress())) {
-                        String host = InetAddress.getLocalHost().getHostName();
-                        if (host != null && !host.isBlank()) {
-                            String bonjourHost = host.endsWith(".local") ? host : host + ".local";
-                            if (canConnect(bonjourHost, port)) {
-                                return bonjourHost;
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-            // Keep the IP when this Mac has no usable local hostname.
-        }
-        return null;
-    }
-
-    private Set<String> localSubnetCandidates() throws Exception {
-        Set<String> candidates = new LinkedHashSet<>();
-        Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-        while (interfaces.hasMoreElements()) {
-            NetworkInterface networkInterface = interfaces.nextElement();
-            if (!networkInterface.isUp() || networkInterface.isLoopback() || networkInterface.isVirtual()) {
-                continue;
-            }
-            for (InterfaceAddress interfaceAddress : networkInterface.getInterfaceAddresses()) {
-                InetAddress address = interfaceAddress.getAddress();
-                if (!(address instanceof Inet4Address) || address.isLoopbackAddress()) {
-                    continue;
-                }
-
-                byte[] bytes = address.getAddress();
-                int first = bytes[0] & 0xff;
-                int second = bytes[1] & 0xff;
-                int third = bytes[2] & 0xff;
-                for (int host = 1; host < 255; host++) {
-                    String candidate = first + "." + second + "." + third + "." + host;
-                    candidates.add(candidate);
-                }
-            }
-        }
-        return candidates;
-    }
-
-    private boolean canConnect(String host, int port) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 220);
-            return true;
-        } catch (IOException ex) {
-            return false;
-        }
-    }
-
-    private void syncClientJdbcUrlIfNeeded() {
-        if (selectedMode() == DatabaseMode.CLIENT) {
-            applyClientJdbcUrl();
-        }
-    }
-
-    private void applyHostAndPortFromJdbcUrl(String jdbcUrl) {
-        String prefix = "jdbc:postgresql://";
-        if (jdbcUrl == null || !jdbcUrl.startsWith(prefix)) {
-            return;
-        }
-        String hostAndPort = jdbcUrl.substring(prefix.length());
-        int slashIndex = hostAndPort.indexOf('/');
-        if (slashIndex >= 0) {
-            hostAndPort = hostAndPort.substring(0, slashIndex);
-        }
-        int colonIndex = hostAndPort.lastIndexOf(':');
-        if (colonIndex <= 0 || colonIndex == hostAndPort.length() - 1) {
-            serverHostField.setText(hostAndPort);
-            return;
-        }
-        serverHostField.setText(hostAndPort.substring(0, colonIndex));
-        try {
-            serverPortSpinner.setValue(Integer.parseInt(hostAndPort.substring(colonIndex + 1)));
-        } catch (NumberFormatException ignored) {
-            // Keep the current port if the saved URL has an unusual format.
-        }
     }
 
     private void provisionServer() {
@@ -730,37 +527,4 @@ public class DatabaseSetup extends JFrame {
 
     private record FormRow(JLabel label, JComponent field, String originalLabel) {}
 
-    private record HostChoice(String ipAddress, String connectHost) {
-        @Override
-        public String toString() {
-            return connectHost.equals(ipAddress) ? ipAddress : connectHost + " (" + ipAddress + ")";
-        }
-    }
-
-    private interface SimpleChangeHandler {
-        void changed();
-    }
-
-    private static class SimpleDocumentListener implements javax.swing.event.DocumentListener {
-        private final SimpleChangeHandler handler;
-
-        private SimpleDocumentListener(SimpleChangeHandler handler) {
-            this.handler = handler;
-        }
-
-        @Override
-        public void insertUpdate(javax.swing.event.DocumentEvent e) {
-            handler.changed();
-        }
-
-        @Override
-        public void removeUpdate(javax.swing.event.DocumentEvent e) {
-            handler.changed();
-        }
-
-        @Override
-        public void changedUpdate(javax.swing.event.DocumentEvent e) {
-            handler.changed();
-        }
-    }
 }

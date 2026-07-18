@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class ServerProvisioningService {
+    public static void testLocalConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getConnection()) { } }
+    public static void testCloudConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getCloudConnection()) { } }
     private ServerProvisioningService() {
     }
 
@@ -36,17 +38,18 @@ public final class ServerProvisioningService {
         }
 
         JdbcParts localParts = JdbcParts.parse(config.jdbcUrl());
+        if (!localParts.isLoopback()) {
+            throw new SQLException("The local PostgreSQL URL must use 127.0.0.1, localhost, or ::1. Registers use the HTTPS service instead of PostgreSQL.");
+        }
         List<String> steps = new ArrayList<>();
         createDatabaseIfMissing(localParts, config.dbUser(), config.dbPassword(), steps);
-        ensureClientRole(localParts, config.dbUser(), config.dbPassword(), steps);
-
         try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
             BaseSchemaInstaller.ensureSchema(local);
             int customOrderStatements = installLocalWorkflowSchemas(local);
             SyncSchemaInstaller.ensureSchema(local);
             SyncSchemaInstaller.ensureSecurityHardening(local);
             LocalAuthCacheService.ensureSchema(local);
-            ensureClientGrants(local, steps);
+            disableLegacyRegisterRoles(local, steps);
             steps.add("Installed local base schema, custom order workflow schema, and sync/employee credential tables ("
                     + customOrderStatements + " custom-order statements).");
         }
@@ -56,6 +59,7 @@ public final class ServerProvisioningService {
                  Connection cloud = DriverManager.getConnection(config.cloudJdbcUrl(), config.cloudDbUser(), config.cloudDbPassword())) {
                 BaseSchemaInstaller.ensureSchema(local);
                 installLocalWorkflowSchemas(local);
+                installWorkflowSyncIdentitySchema(cloud);
                 SyncSchemaInstaller.ensureSchema(cloud);
                 SyncSchemaInstaller.ensureSecurityHardening(cloud);
                 int copiedRows = ReferenceDataSyncService.refreshFromCloud(local, cloud);
@@ -75,13 +79,13 @@ public final class ServerProvisioningService {
         }
 
         config.save();
-        PostgresRuntimeService.CommandResult lanResult = PostgresRuntimeService.ensureLanServerAccess(config.serverPort());
+        PostgresRuntimeService.CommandResult lanResult = PostgresRuntimeService.ensureServiceOnlyDatabaseAccess(config);
         PostgresRuntimeService.CommandResult syncServiceResult = PostgresRuntimeService.ensureSyncServiceInstalled();
         SyncWorker.startIfServerMode();
         steps.add("Saved server-mode configuration.");
         steps.add(lanResult.success()
-                ? "PostgreSQL is configured to accept SmartStock client connections from the local network."
-                : "PostgreSQL LAN setup needs manual attention: " + lanResult.output());
+                ? "PostgreSQL is restricted to the server; registers use HTTPS port 8443."
+                : "PostgreSQL isolation needs manual attention: " + lanResult.output());
         steps.add(syncServiceResult.success()
                 ? "Background sync service is installed and ready."
                 : "Background sync service install failed: " + syncServiceResult.output());
@@ -97,6 +101,7 @@ public final class ServerProvisioningService {
                 "database/location_management_setup.sql",
                 "database/store_timezone_setup.sql",
                 "database/department_setup.sql",
+                "database/item_details_setup.sql",
                 "database/vendor_setup.sql",
                 "database/held_cart_setup.sql",
                 "database/product_type_setup.sql",
@@ -132,6 +137,14 @@ public final class ServerProvisioningService {
         ));
     }
 
+    private static void installWorkflowSyncIdentitySchema(Connection cloud) throws Exception {
+        SqlScriptRunner.runScripts(cloud, List.of(
+                "database/workflow_sync_identity_setup.sql",
+                "database/supabase_rpc_security_setup.sql",
+                "database/supabase_rls_hardening_setup.sql"
+        ));
+    }
+
     private static void createDatabaseIfMissing(JdbcParts localParts, String user, String password, List<String> steps) throws SQLException {
         String adminUrl = localParts.withDatabase("postgres");
         try (Connection admin = DriverManager.getConnection(adminUrl, user, password)) {
@@ -147,43 +160,24 @@ public final class ServerProvisioningService {
         }
     }
 
-    private static void ensureClientRole(JdbcParts localParts, String user, String password, List<String> steps) throws SQLException {
-        String adminUrl = localParts.withDatabase("postgres");
-        String clientUser = DatabaseCredentials.DEFAULT_CLIENT_DB_USER;
-        String clientPassword = DatabaseCredentials.DEFAULT_CLIENT_DB_PASSWORD;
-        try (Connection admin = DriverManager.getConnection(adminUrl, user, password);
-             Statement stmt = admin.createStatement()) {
-            admin.setAutoCommit(true);
-            try {
-                if (roleExists(admin, clientUser)) {
-                    stmt.executeUpdate("ALTER ROLE " + quoteIdentifier(clientUser)
-                            + " WITH LOGIN PASSWORD " + quoteLiteral(clientPassword));
-                    steps.add("Updated SmartStock client database role: " + clientUser);
-                } else {
-                    stmt.executeUpdate("CREATE ROLE " + quoteIdentifier(clientUser)
-                            + " LOGIN PASSWORD " + quoteLiteral(clientPassword));
-                    steps.add("Created SmartStock client database role: " + clientUser);
-                }
-            } catch (SQLException ex) {
-                steps.add("Skipped SmartStock client role password repair because this PostgreSQL user cannot manage roles. "
-                        + "Run the macOS installer or repair command on the server if client login credentials need repair: "
-                        + rootCauseMessage(ex));
-            }
-            stmt.executeUpdate("GRANT CONNECT ON DATABASE " + quoteIdentifier(localParts.database())
-                    + " TO " + quoteIdentifier(clientUser));
-        }
-    }
-
-    private static void ensureClientGrants(Connection local, List<String> steps) throws SQLException {
-        String clientUser = DatabaseCredentials.DEFAULT_CLIENT_DB_USER;
+    private static void disableLegacyRegisterRoles(Connection local, List<String> steps) {
         try (Statement stmt = local.createStatement()) {
-            stmt.executeUpdate("GRANT USAGE ON SCHEMA public TO " + quoteIdentifier(clientUser));
-            stmt.executeUpdate("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + quoteIdentifier(clientUser));
-            stmt.executeUpdate("GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO " + quoteIdentifier(clientUser));
-            stmt.executeUpdate("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + quoteIdentifier(clientUser));
-            stmt.executeUpdate("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO " + quoteIdentifier(clientUser));
+            stmt.executeUpdate("""
+                    DO $$
+                    DECLARE role_name TEXT;
+                    BEGIN
+                      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'smartstock_client') THEN
+                        ALTER ROLE smartstock_client NOLOGIN;
+                      END IF;
+                      FOR role_name IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'smartstock_device_%' LOOP
+                        EXECUTE format('ALTER ROLE %I NOLOGIN', role_name);
+                      END LOOP;
+                    END $$
+                    """);
+            steps.add("Disabled all legacy register database login roles.");
+        } catch (SQLException ex) {
+            steps.add("Legacy register roles could not be disabled with this database user; run the server cutover command with a PostgreSQL administrator.");
         }
-        steps.add("Granted SmartStock client role access to local app tables and sequences.");
     }
 
     private static boolean databaseExists(Connection conn, String databaseName) throws SQLException {
@@ -262,6 +256,17 @@ public final class ServerProvisioningService {
 
         String withDatabase(String databaseName) {
             return prefix + hostPort + "/" + databaseName + query;
+        }
+
+        boolean isLoopback() {
+            String host = hostPort;
+            int colon = host.lastIndexOf(':');
+            if (host.startsWith("[") && host.contains("]")) {
+                host = host.substring(1, host.indexOf(']'));
+            } else if (colon > 0) {
+                host = host.substring(0, colon);
+            }
+            return "127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host) || "::1".equals(host);
         }
     }
 }

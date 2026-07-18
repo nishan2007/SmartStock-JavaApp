@@ -64,6 +64,30 @@ public final class WorkflowSyncIdentitySchemaInstaller {
         return new HealthReport(missing.isEmpty(), receiptIndex, List.copyOf(missing));
     }
 
+    /**
+     * Read-only preflight for sync. Schema changes belong to provisioning or a
+     * migration, never to a live multi-device sync transaction.
+     */
+    public static HealthReport healthReport(Connection conn) throws SQLException {
+        List<String> missing = new ArrayList<>();
+        boolean receiptIndex = !tableExists(conn, "sales") || hasSalesReceiptIndex(conn);
+        if (!receiptIndex) {
+            missing.add("sales_receipt_number_uidx");
+        }
+        for (String table : SYNC_UUID_TABLES) {
+            if (!tableExists(conn, table)) {
+                continue;
+            }
+            if (!hasColumn(conn, table, "sync_uuid")) {
+                missing.add(table + ".sync_uuid");
+            }
+            if (!hasUniqueSyncUuidIndex(conn, table)) {
+                missing.add(table + "_sync_uuid_key");
+            }
+        }
+        return new HealthReport(missing.isEmpty(), receiptIndex, List.copyOf(missing));
+    }
+
     private static void runInstaller(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("CREATE EXTENSION IF NOT EXISTS pgcrypto");
@@ -79,14 +103,17 @@ public final class WorkflowSyncIdentitySchemaInstaller {
     }
 
     private static final List<String> SYNC_UUID_TABLES = List.of(
+            "sales",
             "sale_items",
             "sale_returns",
             "sale_return_items",
             "sale_audit_log",
             "inventory_movements",
+            "customer_accounts",
             "customer_account_transactions",
             "customer_account_payment_allocations",
             "custom_order_lines",
+            "custom_orders",
             "custom_order_line_print_addons",
             "custom_order_payments",
             "custom_order_inventory_reservations",

@@ -271,7 +271,7 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.lookup_login_user(text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.lookup_login_user(text) TO anon, service_role;
+GRANT EXECUTE ON FUNCTION public.lookup_login_user(text) TO service_role;
 
 REVOKE ALL ON FUNCTION public.next_store_receipt_counter(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.next_store_receipt_counter(integer) TO authenticated, service_role;

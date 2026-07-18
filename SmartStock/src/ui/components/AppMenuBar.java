@@ -1,14 +1,12 @@
 package ui.components;
-import services.DeviceService;
+import services.EmployeePinService;
 import services.NotificationService;
 import services.AppUpdateService;
-import services.StoreHydrationService;
-import services.SyncWorker;
+import services.LanApiClient;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
-import data.DB;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import ui.screens.CompanyCustomization;
@@ -53,10 +51,6 @@ import java.awt.Component;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -110,7 +104,7 @@ public class AppMenuBar {
         JMenuItem workstationPreferencesItem = new JMenuItem("Workstation Preferences");
         JMenuItem customerAccountsItem = new JMenuItem("Customer Accounts");
         JMenuItem invoicesItem = new JMenuItem("Quotations & Invoices");
-        JMenuItem customOrdersItem = new JMenuItem("Custom Orders");
+        JMenuItem customOrdersItem = new JMenuItem("Customer Orders");
         JMenuItem ordersItem = new JMenuItem("Orders");
         JMenuItem ViewSalesItem = new JMenuItem("View Sales");
         JMenuItem viewInventoryItem = new JMenuItem("View Inventory");
@@ -493,7 +487,7 @@ public class AppMenuBar {
         customOrdersItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!canCustomOrders) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Custom Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Customer Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
                 NavigationManager.openCustomOrders(parent);
@@ -695,6 +689,7 @@ public class AppMenuBar {
         JMenu sessionMenu = new JMenu(currentSessionMenuTitle());
         JLabel sessionDateLabel = createSessionDateLabel();
         JMenuItem changeStoreItem = new JMenuItem("Change Store");
+        JMenuItem changeEmployeePinItem = new JMenuItem("Change Employee PIN");
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
@@ -711,6 +706,7 @@ public class AppMenuBar {
                 showChangeLocationDialog(parent, currentScreen);
             }
         });
+        changeEmployeePinItem.addActionListener(e -> EmployeePinService.changeCurrentEmployeePin(parent));
         notificationsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 NotificationsDialog dialog = new NotificationsDialog(parent);
@@ -753,12 +749,7 @@ public class AppMenuBar {
 
         logoutItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                try (Connection conn = DB.getConnection()) {
-                    DeviceService.endCurrentSession(conn);
-                } catch (SQLException ex) {
-                    ex.printStackTrace();
-                }
-
+                services.LanApiClient.logout();
                 SessionManager.clearSessionState();
                 SupabaseSessionManager.clearSession();
                 SupabaseSessionManager.clearPersistedSession();
@@ -775,6 +766,7 @@ public class AppMenuBar {
         statusMenu.add(databaseSetupItem);
 
         sessionMenu.add(changeStoreItem);
+        sessionMenu.add(changeEmployeePinItem);
         sessionMenu.add(sessionTimeClockItem);
         sessionMenu.addSeparator();
         sessionMenu.add(closeItem);
@@ -865,10 +857,10 @@ public class AppMenuBar {
     private static void runManualSync(Component parent, JMenuItem syncNowItem) {
         syncNowItem.setEnabled(false);
         syncNowItem.setText("Syncing...");
-        SwingWorker<SyncWorker.SyncStatus, Void> worker = new SwingWorker<>() {
+        SwingWorker<LanApiClient.SyncStatusSnapshot, Void> worker = new SwingWorker<>() {
             @Override
-            protected SyncWorker.SyncStatus doInBackground() {
-                return SyncWorker.runOnceNow();
+            protected LanApiClient.SyncStatusSnapshot doInBackground() throws Exception {
+                return LanApiClient.runSyncNow();
             }
 
             @Override
@@ -876,7 +868,7 @@ public class AppMenuBar {
                 syncNowItem.setEnabled(true);
                 syncNowItem.setText("Sync Now");
                 try {
-                    SyncWorker.SyncStatus status = get();
+                    LanApiClient.SyncStatusSnapshot status = get();
                     JOptionPane.showMessageDialog(
                             parent,
                             formatSyncStatus(status),
@@ -896,28 +888,31 @@ public class AppMenuBar {
         worker.execute();
     }
 
-    private static String formatSyncStatus(SyncWorker.SyncStatus status) {
-        String currentSync = status.currentSync() != null && status.currentSync().running()
-                ? "Running by " + status.currentSync().ownerLabel() + " since " + formatInstant(status.currentSync().acquiredAt())
+    private static String formatSyncStatus(LanApiClient.SyncStatusSnapshot status) {
+        String currentSync = status.lockRunning()
+                ? "Running by " + status.lockOwner() + " since " + formatEpoch(status.lockAcquiredEpochMillis())
                 : "Idle";
-        String backgroundSync = status.serviceInfo() == null
-                ? "Unknown"
-                : status.serviceInfo().status() + " (" + nullToDash(status.serviceInfo().message()) + ")";
+        String backgroundSync = nullToDash(status.serviceStatus())
+                + " (" + nullToDash(status.serviceMessage()) + ")";
         return "Message: " + nullToDash(status.message())
                 + "\nCloud reachable: " + (status.cloudReachable() ? "yes" : "no")
                 + "\nBackground service: " + backgroundSync
-                + "\nIn-app sync: " + (SyncWorker.isStarted() ? "running while UI is open" : "not running")
+                + "\nServer sync: " + (status.serverWorkerStarted() ? "running" : "not running")
                 + "\nCurrent sync: " + currentSync
                 + "\nLast pushed: " + status.lastPushed()
                 + "\nPending events: " + status.pendingCount()
                 + "\nFailed events: " + status.failedCount()
                 + "\nOpen conflicts: " + status.conflictCount()
-                + "\nLast success: " + formatInstant(status.lastSuccess())
+                + "\nLast success: " + formatEpoch(status.lastSuccessEpochMillis())
                 + "\nLast error: " + nullToDash(status.lastError());
     }
 
     private static String formatInstant(Instant instant) {
         return instant == null ? "Never" : instant.toString();
+    }
+
+    private static String formatEpoch(long epochMillis) {
+        return epochMillis <= 0 ? "Never" : Instant.ofEpochMilli(epochMillis).toString();
     }
 
     private static String nullToDash(String value) {
@@ -975,114 +970,15 @@ public class AppMenuBar {
 
 
     private static void showChangeLocationDialog(JFrame parent, String currentScreen) {
-        if (isStoreLockedToConfiguredLocation()) {
-            JOptionPane.showMessageDialog(
-                    parent,
-                    "This workstation is locked to its configured store in server/client mode.",
-                    "Change Store",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return;
-        }
-        if (!PermissionManager.hasPermission("CHANGE_STORE")) {
-            JOptionPane.showMessageDialog(
-                    parent,
-                    "You do not have permission to change stores.",
-                    "Access Denied",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return;
-        }
-        refreshAssignedStoresForPicker(parent);
-        List<StoreOption> allowedStores = getAllowedStoresFromSession();
-
-        if (allowedStores.isEmpty()) {
-            JOptionPane.showMessageDialog(
-                    parent,
-                    "No allowed store locations were found for this user.",
-                    "Change Store",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return;
-        }
-
-        JComboBox<StoreOption> storeCombo = new JComboBox<>(allowedStores.toArray(new StoreOption[0]));
-        storeCombo.setSelectedItem(findCurrentStoreOption(allowedStores));
-
-        JPanel panel = new JPanel();
-        panel.add(new JLabel("Select store:"));
-        panel.add(storeCombo);
-
-        int result = JOptionPane.showConfirmDialog(
-                parent,
-                panel,
-                "Change Store",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
-
-        if (result == JOptionPane.OK_OPTION) {
-            StoreOption selected = (StoreOption) storeCombo.getSelectedItem();
-            if (selected != null) {
-                if (!hydrateStoreOrConfirmLocal(parent, selected.id)) {
-                    return;
-                }
-                boolean updated = setCurrentStoreInSession(selected.id);
-
-                if (updated) {
-                    JOptionPane.showMessageDialog(
-                            parent,
-                            "Current store changed to: " + SessionManager.getCurrentLocationName(),
-                            "Store Updated",
-                            JOptionPane.INFORMATION_MESSAGE
-                    );
-                    refreshCurrentScreen(parent, currentScreen);
-                } else {
-                    JOptionPane.showMessageDialog(
-                            parent,
-                            "Could not change the current store.",
-                            "Store Update Error",
-                            JOptionPane.ERROR_MESSAGE
-                    );
-                }
-            }
-        }
+        JOptionPane.showMessageDialog(parent,
+                "This installation is assigned to " + SessionManager.getCurrentLocationName()
+                        + ". An administrator can change the assignment from Device Management.",
+                "Store Assignment", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private static boolean isStoreLockedToConfiguredLocation() {
         DatabaseMode mode = DatabaseConfig.load().mode();
         return mode == DatabaseMode.SERVER || mode == DatabaseMode.CLIENT;
-    }
-
-    private static void refreshAssignedStoresForPicker(Component parent) {
-        try (Connection conn = DB.getConnection()) {
-            StoreHydrationService.refreshAssignedStores(conn, SessionManager.getCurrentUserId());
-        } catch (SQLException ex) {
-            showWrappedMessageDialog(
-                    parent,
-                    "Could not refresh assigned stores from cloud. Showing stores currently available on this local server.\n\n" + ex.getMessage(),
-                    "Store Data Refresh",
-                    JOptionPane.WARNING_MESSAGE
-            );
-        }
-    }
-
-    private static boolean hydrateStoreOrConfirmLocal(Component parent, int storeId) {
-        try (Connection conn = DB.getConnection()) {
-            StoreHydrationService.hydrateSelectedStore(conn, storeId);
-            return true;
-        } catch (SQLException ex) {
-            int choice = showWrappedConfirmDialog(
-                    parent,
-                    "Cloud store refresh failed for the selected store.\n\n"
-                            + ex.getMessage()
-                            + "\n\nContinue with only the data currently available on this local server?",
-                    "Store Data Refresh",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return choice == JOptionPane.YES_OPTION;
-        }
     }
 
     private static void showWrappedMessageDialog(Component parent, String message, String title, int messageType) {
@@ -1115,99 +1011,4 @@ public class AppMenuBar {
         SwingUtilities.invokeLater(() -> NavigationManager.refreshCurrentScreen(parent, currentScreen));
     }
 
-    private static StoreOption findCurrentStoreOption(List<StoreOption> allowedStores) {
-        Integer currentId = getCurrentStoreIdFromSession();
-        if (currentId == null) {
-            return allowedStores.get(0);
-        }
-
-        for (StoreOption option : allowedStores) {
-            if (option.id == currentId) {
-                return option;
-            }
-        }
-
-        return allowedStores.get(0);
-    }
-
-    private static Integer getCurrentStoreIdFromSession() {
-        return SessionManager.getCurrentLocationId();
-    }
-
-    private static boolean setCurrentStoreInSession(int storeId) {
-        List<StoreOption> stores = getAllowedStoresFromSession();
-
-        for (StoreOption store : stores) {
-            if (store.id == storeId) {
-                SessionManager.setCurrentLocationId(store.id);
-                SessionManager.setCurrentLocationName(store.label);
-                SessionManager.setCurrentLocationTimezone(store.timezone);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static List<StoreOption> getAllowedStoresFromSession() {
-        List<StoreOption> stores = new ArrayList<>();
-
-        if (SessionManager.getCurrentUserId() == null) {
-            return stores;
-        }
-
-        String storesSql = """
-                SELECT l.location_id,
-                       l.name,
-                       COALESCE(l.timezone, '') AS timezone
-                FROM user_locations ul
-                JOIN locations l ON ul.location_id = l.location_id
-                WHERE ul.user_id = ?
-                ORDER BY l.name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(storesSql)) {
-
-            ps.setInt(1, SessionManager.getCurrentUserId());
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    stores.add(new StoreOption(
-                            rs.getInt("location_id"),
-                            rs.getString("name"),
-                            rs.getString("timezone")
-                    ));
-                }
-            }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    null,
-                    "Could not load allowed stores: " + ex.getMessage(),
-                    "Store Load Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
-
-        return stores;
-    }
-
-
-    private static class StoreOption {
-        private final int id;
-        private final String label;
-        private final String timezone;
-
-        private StoreOption(int id, String label, String timezone) {
-            this.id = id;
-            this.label = label;
-            this.timezone = timezone;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
 }

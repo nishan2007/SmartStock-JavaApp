@@ -12,13 +12,17 @@ The installer will:
 - install Java 17, Maven, and PostgreSQL when missing;
 - start PostgreSQL;
 - create the local `smartstock` database and `smartstock_server` role;
-- create or repair the built-in `smartstock_client` role for register/client computers;
-- save both server and client credentials to `~/.smartstock/database-credentials.txt`;
+- bind PostgreSQL to loopback and disable any legacy register database roles;
+- install the HTTPS SmartStock Server Service on port `8443`;
+- create the local pairing, device-session, approval, idempotency, and immutable audit schema;
+- never create a register PostgreSQL role or distribute database credentials;
+- keep privileged database credentials in macOS Keychain;
 - repair old installs that accidentally saved placeholders such as `SMARTSTOCK_DB_USER`;
 - back up existing config/credential files before rewriting them;
 - apply SmartStock local sync and employee credential tables;
 - write `~/.smartstock/database.properties`;
 - build the Java app;
+- fail installation if the zero-client-JDBC or repository security checks fail;
 - create server/client launchers under `SmartStock/target/`.
 
 For customer-facing Mac distribution, build a `.app` update payload and optional
@@ -55,8 +59,6 @@ Optional environment overrides:
 SMARTSTOCK_DB_NAME=smartstock \
 SMARTSTOCK_DB_USER=smartstock_server \
 SMARTSTOCK_DB_PASSWORD='change-me' \
-SMARTSTOCK_CLIENT_DB_USER=smartstock_client \
-SMARTSTOCK_CLIENT_DB_PASSWORD='SmartStockClientLan2026!' \
 SMARTSTOCK_DB_PORT=5432 \
 SmartStock/installer/macos/install.command server
 ```
@@ -69,8 +71,23 @@ Credentials are saved here:
 ~/.smartstock/database-credentials.txt
 ```
 
-Use the `SMARTSTOCK_DB_USER` / `SMARTSTOCK_DB_PASSWORD` values on the server machine.
-Register/client machines fill the SmartStock client credentials automatically; use the saved hostname/JDBC URL if manual setup is ever needed.
+The server database identity is stored in macOS Keychain and used only on the
+physical server. The credentials note records the server username and loopback
+URL, but never the password.
+Register/client machines use one-time administrator pairing and keep only their
+revocable device API credential in macOS Keychain. Employees continue to log in
+normally and are not shown pairing prompts during daily use.
+
+For a register-only installation, run:
+
+```bash
+SmartStock/installer/macos/install.command client
+```
+
+Client installation does not install PostgreSQL or retain database/cloud
+credentials. Pairing automatically discovers the server by the administrator's
+temporary verification phrase; `SMARTSTOCK_LAN_SERVER_HOST` is an optional
+manual hostname fallback.
 
 ## Repair Existing Install
 

@@ -1,19 +1,12 @@
 package ui.screens;
 
-import data.DB;
-import data.DatabaseConfig;
-import services.SyncLockService;
-import services.SyncSchemaInstaller;
-import services.SyncServiceStatusService;
-import services.SyncWorker;
+import services.LanApiClient;
 import ui.helpers.ThemeManager;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.time.Instant;
 
 public class SyncStatus extends JFrame {
     private final JLabel statusLabel = new JLabel();
@@ -49,10 +42,10 @@ public class SyncStatus extends JFrame {
         runNowButton.addActionListener(e -> {
             runNowButton.setEnabled(false);
             runNowButton.setText("Syncing...");
-            SwingWorker<SyncWorker.SyncStatus, Void> worker = new SwingWorker<>() {
+            SwingWorker<LanApiClient.SyncStatusSnapshot, Void> worker = new SwingWorker<>() {
                 @Override
-                protected SyncWorker.SyncStatus doInBackground() {
-                    return SyncWorker.runOnceNow();
+                protected LanApiClient.SyncStatusSnapshot doInBackground() throws Exception {
+                    return LanApiClient.runSyncNow();
                 }
 
                 @Override
@@ -60,12 +53,12 @@ public class SyncStatus extends JFrame {
                     runNowButton.setEnabled(true);
                     runNowButton.setText("Run Sync Now");
                     try {
-                        SyncWorker.SyncStatus status = get();
-                        if (status.currentSync() != null && status.currentSync().running()) {
+                        LanApiClient.SyncStatusSnapshot status = get();
+                        if (status.lockRunning()) {
                             JOptionPane.showMessageDialog(
                                     SyncStatus.this,
-                                    "Sync already running by " + status.currentSync().ownerLabel()
-                                            + "\nStarted: " + status.currentSync().acquiredAt(),
+                                    "Sync already running by " + status.lockOwner()
+                                            + "\nStarted: " + instant(status.lockAcquiredEpochMillis()),
                                     "Manual Sync",
                                     JOptionPane.INFORMATION_MESSAGE
                             );
@@ -99,86 +92,30 @@ public class SyncStatus extends JFrame {
     }
 
     private void refresh() {
-        SyncWorker.SyncStatus status = SyncWorker.latestStatus();
-        boolean cloudOnline = status.cloudReachable();
-        SyncLockService.LockInfo lock = status.currentSync();
-        SyncServiceStatusService.ServiceInfo service = status.serviceInfo();
         conflictModel.setRowCount(0);
         auditModel.setRowCount(0);
-        try (Connection conn = DB.getConnection()) {
-            SyncSchemaInstaller.ensureSchema(conn);
-            cloudOnline = isCloudOnline();
-            service = SyncServiceStatusService.current(conn);
-            lock = SyncLockService.currentLock(conn);
-            try (PreparedStatement ps = conn.prepareStatement("""
-                     SELECT conflict_id, event_type, conflict_type, status, created_at
-                     FROM sync_conflicts
-                     WHERE status = 'OPEN'
-                     ORDER BY created_at DESC
-                     LIMIT 200
-                     """);
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    conflictModel.addRow(new Object[]{
-                            rs.getLong("conflict_id"),
-                            rs.getString("event_type"),
-                            rs.getString("conflict_type"),
-                            rs.getString("status"),
-                            rs.getTimestamp("created_at")
-                    });
-                }
+        try {
+            LanApiClient.SyncStatusSnapshot status = LanApiClient.loadSyncStatus();
+            if (status.conflicts() != null) for (LanApiClient.SyncConflict conflict : status.conflicts()) {
+                conflictModel.addRow(new Object[]{conflict.conflictId(), conflict.eventType(),
+                        conflict.conflictType(), conflict.status(), instant(conflict.createdAtEpochMillis())});
             }
-            loadAuditRows(conn);
+            if (status.audits() != null) for (LanApiClient.SyncAudit audit : status.audits()) {
+                auditModel.addRow(new Object[]{instant(audit.createdAtEpochMillis()), audit.actionType(),
+                        audit.tableName(), audit.localIdBefore(), audit.localIdAfter(), audit.cloudId(),
+                        audit.matchKey(), audit.status(), audit.details()});
+            }
+            statusLabel.setText("Cloud: " + (status.cloudReachable() ? "Online" : "Offline")
+                    + " | Background Service: " + status.serviceStatus()
+                    + " | Server Sync: " + (status.serverWorkerStarted() ? "Running" : "Not running")
+                    + " | Current Sync: " + (status.lockRunning() ? "Running by " + status.lockOwner() : "Idle")
+                    + " | Pending: " + status.pendingCount()
+                    + " | Failed: " + status.failedCount()
+                    + " | Conflicts: " + status.conflictCount()
+                    + " | Last success: " + instantOrNever(status.lastSuccessEpochMillis())
+                    + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Sync Status", JOptionPane.ERROR_MESSAGE);
-        }
-        String backgroundStatus = service == null ? "Unknown" : service.status();
-        String appSyncStatus = SyncWorker.isStarted() ? "Running while UI is open" : "Not running";
-        statusLabel.setText("Cloud: " + (cloudOnline ? "Online" : "Offline")
-                + " | Background Service: " + backgroundStatus
-                + " | In-App Sync: " + appSyncStatus
-                + " | Current Sync: " + (lock != null && lock.running() ? "Running by " + lock.ownerLabel() : "Idle")
-                + " | Pending: " + status.pendingCount()
-                + " | Failed: " + status.failedCount()
-                + " | Conflicts: " + status.conflictCount()
-                + " | Last success: " + (status.lastSuccess() == null ? "Never" : status.lastSuccess())
-                + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
-    }
-
-    private boolean isCloudOnline() {
-        DatabaseConfig config = DatabaseConfig.load();
-        if (!config.hasCloudConnection() && config.mode() != data.DatabaseMode.CLOUD_DIRECT) {
-            return false;
-        }
-        try (Connection ignored = config.hasCloudConnection() ? DB.getCloudConnection() : DB.getConnection()) {
-            return true;
-        } catch (Exception ex) {
-            return false;
-        }
-    }
-
-    private void loadAuditRows(Connection conn) throws Exception {
-        try (PreparedStatement ps = conn.prepareStatement("""
-                 SELECT created_at, action_type, table_name, local_id_before, local_id_after,
-                        cloud_id, match_key, status, details
-                 FROM sync_audit_log
-                 ORDER BY created_at DESC, sync_audit_id DESC
-                 LIMIT 300
-                 """);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                auditModel.addRow(new Object[]{
-                        rs.getTimestamp("created_at"),
-                        rs.getString("action_type"),
-                        rs.getString("table_name"),
-                        rs.getString("local_id_before"),
-                        rs.getString("local_id_after"),
-                        rs.getString("cloud_id"),
-                        rs.getString("match_key"),
-                        rs.getString("status"),
-                        rs.getString("details")
-                });
-            }
         }
     }
 
@@ -188,19 +125,19 @@ public class SyncStatus extends JFrame {
             return;
         }
         long conflictId = Long.parseLong(String.valueOf(conflictModel.getValueAt(table.convertRowIndexToModel(row), 0)));
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("""
-                     UPDATE sync_conflicts
-                     SET status = 'RESOLVED',
-                         resolved_at = CURRENT_TIMESTAMP,
-                         resolution_notes = 'Resolved from SmartStock sync status screen'
-                     WHERE conflict_id = ?
-                     """)) {
-            ps.setLong(1, conflictId);
-            ps.executeUpdate();
+        try {
+            LanApiClient.resolveSyncConflict(conflictId);
             refresh();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Resolve Conflict", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static Object instant(long epochMillis) {
+        return epochMillis <= 0 ? "" : Instant.ofEpochMilli(epochMillis);
+    }
+
+    private static Object instantOrNever(long epochMillis) {
+        return epochMillis <= 0 ? "Never" : Instant.ofEpochMilli(epochMillis);
     }
 }

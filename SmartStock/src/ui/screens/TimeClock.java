@@ -10,6 +10,11 @@ import managers.TimeClockManager.TimeClockDashboard;
 import managers.TimeClockManager.TimeClockException;
 import managers.TimeClockManager.TimeClockRow;
 import services.ManagerApprovalService;
+import services.EmployeeScheduleService;
+import services.EmployeeScheduleService.Holiday;
+import services.TimeClockAutoCloseService;
+import services.TimeClockAutoCloseService.EmployeeAutoCloseNotice;
+import services.TimeClockAutoCloseService.PendingReview;
 import ui.components.AppMenuBar;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
@@ -45,6 +50,8 @@ public class TimeClock extends JFrame {
     private JButton lunchEndButton;
     private JButton clockOutButton;
     private JButton refreshButton;
+    private JButton autoClockOutReviewsButton;
+    private JLabel autoClockOutNoticeLabel;
     private JButton prevMonthButton;
     private JButton nextMonthButton;
     private JButton todayButton;
@@ -75,6 +82,7 @@ public class TimeClock extends JFrame {
     private YearMonth currentMonth;
     private List<TimeClockRow> allRows = new ArrayList<>();
     private Map<LocalDate, DayData> dayDataMap = new HashMap<>();
+    private Map<LocalDate, Holiday> holidays = Map.of();
     private LocalDateTime currentClockIn;
     private LocalDateTime currentLunchStart;
     private LocalDateTime currentLunchEnd;
@@ -85,6 +93,7 @@ public class TimeClock extends JFrame {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
     private static final DateTimeFormatter MONTH_YEAR_FORMAT = DateTimeFormatter.ofPattern("MMMM yyyy");
+    private static final DateTimeFormatter CORRECTION_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final NumberFormat CURRENCY_FORMAT = CurrencyFormatter.create(Locale.US);
 
     public TimeClock() {
@@ -200,11 +209,30 @@ public class TimeClock extends JFrame {
         actionPanel.add(lunchEndButton);
         actionPanel.add(clockOutButton);
         actionPanel.add(refreshButton);
+        if (PermissionManager.hasPermission("TIME_CLOCK_MANAGEMENT")) {
+            autoClockOutReviewsButton = createStyledButton("Auto Clock-Out Reviews", DeckersPalette.ORANGE);
+            autoClockOutReviewsButton.setPreferredSize(new Dimension(210, 42));
+            actionPanel.add(autoClockOutReviewsButton);
+        }
+
+        autoClockOutNoticeLabel = new JLabel();
+        autoClockOutNoticeLabel.setOpaque(true);
+        autoClockOutNoticeLabel.setBackground(DeckersPalette.tileHover(DeckersPalette.ORANGE));
+        autoClockOutNoticeLabel.setForeground(DeckersPalette.text());
+        autoClockOutNoticeLabel.setBorder(BorderFactory.createCompoundBorder(
+                new RoundedBorder(DeckersPalette.sectionBorder(DeckersPalette.ORANGE), 1, 8),
+                new EmptyBorder(10, 12, 10, 12)));
+        autoClockOutNoticeLabel.setVisible(false);
+
+        JPanel actionsAndNotice = new JPanel(new BorderLayout(0, 8));
+        actionsAndNotice.setOpaque(false);
+        actionsAndNotice.add(autoClockOutNoticeLabel, BorderLayout.NORTH);
+        actionsAndNotice.add(actionPanel, BorderLayout.SOUTH);
 
         JPanel topPanel = new JPanel(new BorderLayout(0, 14));
         topPanel.setOpaque(false);
         topPanel.add(headerPanel, BorderLayout.NORTH);
-        topPanel.add(actionPanel, BorderLayout.SOUTH);
+        topPanel.add(actionsAndNotice, BorderLayout.SOUTH);
 
         // Calendar navigation panel with Today button
         JPanel calendarNavPanel = new JPanel(new BorderLayout());
@@ -274,7 +302,7 @@ public class TimeClock extends JFrame {
         preserveForeground(detailsTitle);
 
         detailsModel = new DefaultTableModel(
-                new Object[]{"Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Hours", "Pay", "Type", "Location"},
+                new Object[]{"Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Hours", "Pay", "Type", "Location", "Review"},
                 0
         ) {
             @Override
@@ -417,17 +445,20 @@ public class TimeClock extends JFrame {
         lunchEndButton.addActionListener(e -> runPunch(TimeClockManager::lunchEnd, "Failed to punch lunch end."));
         clockOutButton.addActionListener(e -> runPunch(TimeClockManager::clockOut, "Failed to clock out."));
         refreshButton.addActionListener(e -> loadTimeClock());
+        if (autoClockOutReviewsButton != null) {
+            autoClockOutReviewsButton.addActionListener(e -> showAutoClockOutReviews());
+        }
         prevMonthButton.addActionListener(e -> {
             currentMonth = currentMonth.minusMonths(1);
-            renderCalendar();
+            loadTimeClock();
         });
         nextMonthButton.addActionListener(e -> {
             currentMonth = currentMonth.plusMonths(1);
-            renderCalendar();
+            loadTimeClock();
         });
         todayButton.addActionListener(e -> {
             currentMonth = YearMonth.now();
-            renderCalendar();
+            loadTimeClock();
         });
     }
 
@@ -472,10 +503,13 @@ public class TimeClock extends JFrame {
         try {
             TimeClockDashboard dashboard = TimeClockManager.loadDashboard(false);
             allRows = dashboard.rows();
+            holidays = EmployeeScheduleService.loadCurrentStoreHolidaysForTimeClock(
+                    currentMonth.atDay(1), currentMonth.atEndOfMonth());
             updateClockStatus(dashboard.status());
             updateCurrentSession();
             processDayData();
             renderCalendar();
+            refreshAutoClockOutNotice();
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load time clock: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
             updateButtons(false, false, false, false);
@@ -483,6 +517,108 @@ public class TimeClock extends JFrame {
             JOptionPane.showMessageDialog(this, ex.getMessage());
             updateButtons(false, false, false, false);
         }
+    }
+
+    private void refreshAutoClockOutNotice() {
+        try {
+            Integer userId = SessionManager.getCurrentUserId();
+            EmployeeAutoCloseNotice notice = userId == null ? null
+                    : TimeClockAutoCloseService.latestPendingNotice(userId);
+            if (notice == null) {
+                autoClockOutNoticeLabel.setVisible(false);
+            } else {
+                String rule = "SCHEDULED".equals(notice.rule())
+                        ? "the scheduled-shift safety rule" : "the unscheduled 12-hour safety rule";
+                autoClockOutNoticeLabel.setText("SmartStock automatically closed your session at "
+                        + formatTime(notice.clockOut()) + " using " + rule
+                        + ". It is included in payroll and awaiting manager review.");
+                autoClockOutNoticeLabel.setVisible(true);
+            }
+            if (autoClockOutReviewsButton != null) {
+                int count = TimeClockAutoCloseService.loadPendingReviews().size();
+                autoClockOutReviewsButton.setText("Auto Clock-Out Reviews (" + count + ")");
+            }
+        } catch (SQLException ex) {
+            autoClockOutNoticeLabel.setVisible(false);
+        }
+    }
+
+    private void showAutoClockOutReviews() {
+        try {
+            List<PendingReview> reviews = TimeClockAutoCloseService.loadPendingReviews();
+            if (reviews.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "There are no automatic clock-outs awaiting review.");
+                refreshAutoClockOutNotice();
+                return;
+            }
+            DefaultTableModel model = new DefaultTableModel(
+                    new Object[]{"Employee", "Store", "Work Date", "Clock In", "Lunch", "Clock Out", "Hours", "Rule"}, 0) {
+                @Override public boolean isCellEditable(int row, int column) { return false; }
+            };
+            for (PendingReview review : reviews) {
+                String lunch = review.lunchStart() == null ? "—"
+                        : formatTime(review.lunchStart()) + " – " + formatTime(review.lunchEnd());
+                model.addRow(new Object[]{review.employeeName(), review.locationName(), review.workDate(),
+                        formatTime(review.clockIn()), lunch, formatTime(review.clockOut()),
+                        formatHours(review.workedHours()), review.rule()});
+            }
+            JTable table = new JTable(model);
+            table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            table.setRowHeight(28);
+            if (!reviews.isEmpty()) table.setRowSelectionInterval(0, 0);
+            JScrollPane scroll = new JScrollPane(table);
+            scroll.setPreferredSize(new Dimension(980, 320));
+            Object[] options = {"Confirm", "Correct", "Close"};
+            int choice = JOptionPane.showOptionDialog(this, scroll, "Auto Clock-Out Reviews",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
+            int selected = table.getSelectedRow();
+            if (selected < 0 || choice == 2 || choice == JOptionPane.CLOSED_OPTION) return;
+            PendingReview review = reviews.get(table.convertRowIndexToModel(selected));
+            if (choice == 0) {
+                TimeClockAutoCloseService.confirm(review.clockId(), "Automatic clock-out confirmed by manager.");
+            } else if (choice == 1) {
+                correctAutoClockOut(review);
+            }
+            loadTimeClock();
+            SwingUtilities.invokeLater(this::showAutoClockOutReviews);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Unable to review automatic clock-outs.\n\n" + ex.getMessage(),
+                    "Time Clock Review", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void correctAutoClockOut(PendingReview review) throws SQLException {
+        JTextField clockIn = new JTextField(review.clockIn().format(CORRECTION_FORMAT));
+        JTextField lunchStart = new JTextField(review.lunchStart() == null ? "" : review.lunchStart().format(CORRECTION_FORMAT));
+        JTextField lunchEnd = new JTextField(review.lunchEnd() == null ? "" : review.lunchEnd().format(CORRECTION_FORMAT));
+        JTextField clockOut = new JTextField(review.clockOut().format(CORRECTION_FORMAT));
+        JTextArea reason = new JTextArea(3, 28);
+        reason.setLineWrap(true);
+        reason.setWrapStyleWord(true);
+        JPanel form = new JPanel(new GridLayout(0, 2, 8, 8));
+        form.add(new JLabel("Clock in (yyyy-MM-dd HH:mm)")); form.add(clockIn);
+        form.add(new JLabel("Lunch start (optional)")); form.add(lunchStart);
+        form.add(new JLabel("Lunch end (optional)")); form.add(lunchEnd);
+        form.add(new JLabel("Clock out (yyyy-MM-dd HH:mm)")); form.add(clockOut);
+        form.add(new JLabel("Required reason")); form.add(new JScrollPane(reason));
+        if (JOptionPane.showConfirmDialog(this, form, "Correct Automatic Clock-Out",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        try {
+            TimeClockAutoCloseService.correct(review.clockId(), review.locationZone(),
+                    new TimeClockAutoCloseService.Correction(
+                            LocalDateTime.parse(clockIn.getText().trim(), CORRECTION_FORMAT),
+                            parseOptionalCorrectionTime(lunchStart.getText()),
+                            parseOptionalCorrectionTime(lunchEnd.getText()),
+                            LocalDateTime.parse(clockOut.getText().trim(), CORRECTION_FORMAT),
+                            reason.getText()));
+        } catch (java.time.format.DateTimeParseException ex) {
+            throw new SQLException("Use yyyy-MM-dd HH:mm for every entered date and time.");
+        }
+    }
+
+    private static LocalDateTime parseOptionalCorrectionTime(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? null : LocalDateTime.parse(trimmed, CORRECTION_FORMAT);
     }
 
     private void updateCurrentSession() {
@@ -685,12 +821,17 @@ public class TimeClock extends JFrame {
 
         boolean isToday = date.equals(LocalDate.now());
         boolean hasData = dayData != null && !dayData.rows.isEmpty();
+        Holiday holiday = holidays.get(date);
         boolean isWeekend = date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY;
 
-        Color accent = isToday ? EMPLOYEE_ACCENT : hasData ? DeckersPalette.LIME : isWeekend ? DeckersPalette.CORAL : EMPLOYEE_ACCENT;
+        Color accent = holiday != null ? DeckersPalette.MAGENTA
+                : isToday ? EMPLOYEE_ACCENT : hasData ? DeckersPalette.LIME
+                : isWeekend ? DeckersPalette.CORAL : EMPLOYEE_ACCENT;
 
         // Background colors
-        if (isToday && hasData) {
+        if (holiday != null) {
+            cell.setBackground(DeckersPalette.tileHover(DeckersPalette.MAGENTA));
+        } else if (isToday && hasData) {
             cell.setBackground(DeckersPalette.tilePressed(DeckersPalette.LIME));
         } else if (isToday) {
             cell.setBackground(DeckersPalette.tilePressed(EMPLOYEE_ACCENT));
@@ -733,6 +874,13 @@ public class TimeClock extends JFrame {
             infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
             infoPanel.setOpaque(false);
             infoPanel.add(dayNumber);
+            if (holiday != null) {
+                JLabel holidayLabel = new JLabel(holiday.name(), SwingConstants.CENTER);
+                holidayLabel.setFont(new Font("SansSerif", Font.BOLD, 9));
+                holidayLabel.setForeground(DeckersPalette.MAGENTA);
+                preserveForeground(holidayLabel);
+                infoPanel.add(holidayLabel);
+            }
             infoPanel.add(hoursLabel);
             if (countLabel != null) {
                 infoPanel.add(countLabel);
@@ -746,11 +894,13 @@ public class TimeClock extends JFrame {
                 "<b>%s</b><br>" +
                 "Hours: <b>%s</b><br>" +
                 "Pay: <b>%s</b><br>" +
+                "%s" +
                 "Entries: <b>%d</b>" +
                 "</div></html>",
                 date.format(DATE_FORMAT),
                 formatHours(dayData.totalHours),
                 CURRENCY_FORMAT.format(dayData.totalPay),
+                holiday == null ? "" : "Holiday: <b>" + holiday.name() + "</b><br>",
                 dayData.rows.size()
             );
             cell.setToolTipText(tooltip);
@@ -773,6 +923,21 @@ public class TimeClock extends JFrame {
                     cell.setBackground(originalBg);
                 }
             });
+        } else if (holiday != null) {
+            JPanel holidayPanel = new JPanel();
+            holidayPanel.setOpaque(false);
+            holidayPanel.setLayout(new BoxLayout(holidayPanel, BoxLayout.Y_AXIS));
+            dayNumber.setAlignmentX(Component.CENTER_ALIGNMENT);
+            JLabel holidayLabel = new JLabel(holiday.name());
+            holidayLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            holidayLabel.setFont(new Font("SansSerif", Font.BOLD, 9));
+            holidayLabel.setForeground(DeckersPalette.MAGENTA);
+            preserveForeground(holidayLabel);
+            holidayPanel.add(dayNumber);
+            holidayPanel.add(holidayLabel);
+            cell.add(holidayPanel, BorderLayout.CENTER);
+            cell.setToolTipText(date.format(DATE_FORMAT) + " • " + holiday.name()
+                    + " • Manual scheduling only");
         } else {
             cell.add(dayNumber, BorderLayout.NORTH);
         }
@@ -815,7 +980,8 @@ public class TimeClock extends JFrame {
                     formatHours(row.dailyHours()),
                     formatPay(row),
                     payType,
-                    row.locationName()
+                    row.locationName(),
+                    row.autoClockOut() ? "Auto — " + safeText(row.autoClockOutReviewStatus()) : ""
             });
         }
 
@@ -829,6 +995,7 @@ public class TimeClock extends JFrame {
                     "",
                     formatHours(totalHours),
                     formatTotalPay(dayData.rows, totalPay),
+                    "",
                     "",
                     ""
             });

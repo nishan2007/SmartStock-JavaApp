@@ -9,8 +9,6 @@ import java.util.Map;
 public record DatabaseCredentials(Map<String, String> values) {
     public static final Path CREDENTIALS_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "database-credentials.txt");
     public static final String DEFAULT_DB_NAME = "smartstock";
-    public static final String DEFAULT_CLIENT_DB_USER = "smartstock_client";
-    public static final String DEFAULT_CLIENT_DB_PASSWORD = "SmartStockClientLan2026!";
 
     public static DatabaseCredentials load() {
         Map<String, String> values = new HashMap<>();
@@ -64,34 +62,6 @@ public record DatabaseCredentials(Map<String, String> values) {
 
     public boolean hasServerCredentials() {
         return has("SMARTSTOCK_DB_USER") && has("SMARTSTOCK_DB_PASSWORD");
-    }
-
-    public boolean hasClientCredentials() {
-        return has("SMARTSTOCK_CLIENT_DB_USER") && has("SMARTSTOCK_CLIENT_DB_PASSWORD");
-    }
-
-    public String clientDbUserOrDefault() {
-        String value = get("SMARTSTOCK_CLIENT_DB_USER");
-        return value == null || value.isBlank() ? DEFAULT_CLIENT_DB_USER : value;
-    }
-
-    public String clientDbPasswordOrDefault() {
-        String value = get("SMARTSTOCK_CLIENT_DB_PASSWORD");
-        return value == null || value.isBlank() ? DEFAULT_CLIENT_DB_PASSWORD : value;
-    }
-
-    public String clientJdbcUrlOrDefault(String host, int port) {
-        String savedUrl = get("SMARTSTOCK_CLIENT_JDBC_URL");
-        if (savedUrl != null && !savedUrl.isBlank() && !savedUrl.contains("<SERVER-LAN-IP>")) {
-            return savedUrl;
-        }
-        String cleanHost = host == null || host.isBlank() ? "127.0.0.1" : host.trim();
-        int cleanPort = port <= 0 ? 5432 : port;
-        String database = get("SMARTSTOCK_DB_NAME");
-        if (database == null || database.isBlank()) {
-            database = DEFAULT_DB_NAME;
-        }
-        return "jdbc:postgresql://" + cleanHost + ":" + cleanPort + "/" + database.trim();
     }
 
     private boolean has(String key) {

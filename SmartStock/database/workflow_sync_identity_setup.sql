@@ -1,6 +1,6 @@
 -- Stable sync identities for POS sales and custom order workflows.
--- Parent documents keep their human-readable numbers as the business key.
--- Child/history/audit rows get hidden UUID keys so local/cloud serial ids can differ safely.
+-- Human-readable document numbers remain business keys, while UUIDs are the
+-- machine identities used to reconcile independent local/cloud serial ids.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -23,6 +23,12 @@ $$;
 ALTER TABLE sale_items
 ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 
+ALTER TABLE sales
+ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
+
+ALTER TABLE customer_accounts
+ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
+
 ALTER TABLE sale_returns
 ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 
@@ -42,6 +48,9 @@ ALTER TABLE customer_account_payment_allocations
 ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 
 ALTER TABLE custom_order_lines
+ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
+
+ALTER TABLE custom_orders
 ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 
 ALTER TABLE custom_order_line_print_addons
@@ -72,6 +81,8 @@ ALTER TABLE custom_order_audit_log
 ADD COLUMN IF NOT EXISTS sync_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 
 CREATE UNIQUE INDEX IF NOT EXISTS sale_items_sync_uuid_key ON sale_items(sync_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS sales_sync_uuid_key ON sales(sync_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_accounts_sync_uuid_key ON customer_accounts(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS sale_returns_sync_uuid_key ON sale_returns(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS sale_return_items_sync_uuid_key ON sale_return_items(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS sale_audit_log_sync_uuid_key ON sale_audit_log(sync_uuid);
@@ -79,6 +90,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS inventory_movements_sync_uuid_key ON inventory
 CREATE UNIQUE INDEX IF NOT EXISTS customer_account_transactions_sync_uuid_key ON customer_account_transactions(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS customer_account_payment_allocations_sync_uuid_key ON customer_account_payment_allocations(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS custom_order_lines_sync_uuid_key ON custom_order_lines(sync_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS custom_orders_sync_uuid_key ON custom_orders(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS custom_order_line_print_addons_sync_uuid_key ON custom_order_line_print_addons(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS custom_order_payments_sync_uuid_key ON custom_order_payments(sync_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS custom_order_inventory_reservations_sync_uuid_key ON custom_order_inventory_reservations(sync_uuid);

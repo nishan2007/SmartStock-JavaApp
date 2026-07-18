@@ -1,25 +1,24 @@
 package ui.screens;
 
-import data.DB;
-import managers.CompanyCustomizationManager;
 import managers.SessionManager;
 import models.CashDrawer;
 import models.CashDrawerAssignment;
 import services.CashDrawerService;
 import services.CashDrawerService.DeviceOption;
 import services.CashDrawerService.StoreOption;
+import services.LanApiClient;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public class CashDrawerManagementPanel extends JPanel {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
@@ -61,6 +60,8 @@ public class CashDrawerManagementPanel extends JPanel {
     private final List<CashDrawer> drawers = new ArrayList<>();
     private final List<CashDrawerAssignment> assignments = new ArrayList<>();
     private Long selectedDrawerId;
+    private String pendingMutationKey;
+    private String pendingMutationFingerprint;
 
     public CashDrawerManagementPanel() {
         setLayout(new BorderLayout(16, 16));
@@ -379,10 +380,9 @@ public class CashDrawerManagementPanel extends JPanel {
     }
 
     private void loadInitialData() {
-        try (Connection conn = DB.getConnection()) {
-            loadStores(conn);
-            loadDevices(conn);
-            loadDrawersAndAssignments(conn);
+        try {
+            LanApiClient.CashDrawerAdminState state=LanApiClient.loadCashDrawerAdminState(null,includeInactiveBox.isSelected());
+            loadStores(state);loadDevices(state);applyAdminState(state);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load cash drawer data: " + ex.getMessage(),
                     "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
@@ -390,10 +390,10 @@ public class CashDrawerManagementPanel extends JPanel {
         }
     }
 
-    private void loadStores(Connection conn) throws Exception {
+    private void loadStores(LanApiClient.CashDrawerAdminState state) {
         StoreOption preserve = (StoreOption) storeBox.getSelectedItem();
         storeBox.removeAllItems();
-        for (StoreOption store : CashDrawerService.listStores(conn)) {
+        for (StoreOption store : state.stores()) {
             storeBox.addItem(store);
             if ((preserve != null && preserve.id().equals(store.id()))
                     || (preserve == null && SessionManager.getCurrentLocationId() != null
@@ -403,30 +403,30 @@ public class CashDrawerManagementPanel extends JPanel {
         }
     }
 
-    private void loadDevices(Connection conn) throws Exception {
+    private void loadDevices(LanApiClient.CashDrawerAdminState state) {
         deviceBox.removeAllItems();
-        for (DeviceOption device : CashDrawerService.listApprovedDevices(conn)) {
+        for (DeviceOption device : state.devices()) {
             deviceBox.addItem(device);
         }
     }
 
     private void loadDrawersAndAssignments() {
-        try (Connection conn = DB.getConnection()) {
-            loadDrawersAndAssignments(conn);
+        try {
+            StoreOption store=(StoreOption)storeBox.getSelectedItem();
+            applyAdminState(LanApiClient.loadCashDrawerAdminState(store==null?null:store.id(),includeInactiveBox.isSelected()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to refresh cash drawers: " + ex.getMessage(),
                     "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void loadDrawersAndAssignments(Connection conn) throws Exception {
+    private void applyAdminState(LanApiClient.CashDrawerAdminState state) {
         StoreOption store = (StoreOption) storeBox.getSelectedItem();
-        Integer locationId = store == null ? null : store.id();
         Long preserveDrawerId = selectedDrawerId;
-        loadChangeBasketTarget(locationId);
+        loadChangeBasketTarget(store==null?null:store.id(),state.changeBasketTarget());
 
         drawers.clear();
-        drawers.addAll(CashDrawerService.listDrawers(conn, locationId, includeInactiveBox.isSelected()));
+        drawers.addAll(state.drawers());
         drawerTableModel.setRowCount(0);
         for (CashDrawer drawer : drawers) {
             drawerTableModel.addRow(new Object[]{
@@ -439,7 +439,7 @@ public class CashDrawerManagementPanel extends JPanel {
         }
 
         assignments.clear();
-        assignments.addAll(CashDrawerService.listAssignments(conn, locationId, null));
+        assignments.addAll(state.assignments());
         assignmentTableModel.setRowCount(0);
         for (CashDrawerAssignment assignment : assignments) {
             assignmentTableModel.addRow(new Object[]{
@@ -509,19 +509,11 @@ public class CashDrawerManagementPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Select a store before saving a drawer.");
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            selectedDrawerId = CashDrawerService.saveDrawer(
-                    conn,
-                    selectedDrawerId,
-                    store.id(),
-                    drawerNameField.getText(),
-                    descriptionArea.getText(),
-                    parseMoney(startingCashField.getText()),
-                    parseFloatMix(),
-                    activeBox.isSelected(),
-                    SessionManager.getCurrentUserId()
-            );
-            loadDrawersAndAssignments(conn);
+        LanApiClient.CashDrawerSaveRequest request=new LanApiClient.CashDrawerSaveRequest(selectedDrawerId,store.id(),drawerNameField.getText(),
+                descriptionArea.getText(),parseMoney(startingCashField.getText()),parseFloatMix(),activeBox.isSelected());
+        try {
+            selectedDrawerId=LanApiClient.saveCashDrawer(request,mutationKey("save|"+request));clearMutationKey();
+            loadDrawersAndAssignments();
             JOptionPane.showMessageDialog(this, "Cash drawer saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save cash drawer: " + ex.getMessage(),
@@ -540,17 +532,11 @@ public class CashDrawerManagementPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Select a store and device.");
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            CashDrawerService.assignDevice(
-                    conn,
-                    selectedDrawerId,
-                    store.id(),
-                    device.id(),
-                    SessionManager.getCurrentUserId(),
-                    assignmentNotesArea.getText()
-            );
+        try {
+            String fingerprint="assign|"+selectedDrawerId+"|"+store.id()+"|"+device.id()+"|"+assignmentNotesArea.getText();
+            LanApiClient.assignCashDrawer(selectedDrawerId,store.id(),device.id(),assignmentNotesArea.getText(),mutationKey(fingerprint));clearMutationKey();
             assignmentNotesArea.setText("");
-            loadDrawersAndAssignments(conn);
+            loadDrawersAndAssignments();
             JOptionPane.showMessageDialog(this, "Device assigned to cash drawer.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to assign device: " + ex.getMessage(),
@@ -576,16 +562,16 @@ public class CashDrawerManagementPanel extends JPanel {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            CashDrawerService.unassignAssignment(conn, assignmentId, SessionManager.getCurrentUserId());
-            loadDrawersAndAssignments(conn);
+        try {
+            LanApiClient.unassignCashDrawer(assignmentId,mutationKey("unassign|"+assignmentId));clearMutationKey();
+            loadDrawersAndAssignments();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to unassign device: " + ex.getMessage(),
                     "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void loadChangeBasketTarget(Integer locationId) {
+    private void loadChangeBasketTarget(Integer locationId,BigDecimal target) {
         if (locationId == null) {
             changeBasketTargetField.setEnabled(false);
             changeBasketTargetField.setText("");
@@ -593,7 +579,6 @@ public class CashDrawerManagementPanel extends JPanel {
             return;
         }
         try {
-            BigDecimal target = CompanyCustomizationManager.loadChangeBasketTargetAmount(locationId);
             changeBasketTargetField.setEnabled(true);
             changeBasketTargetField.setText(utils.CurrencyFormatter.normalize(target).toPlainString());
             changeBasketStatusLabel.setText("Separate from drawer starting cash and float mix.");
@@ -611,7 +596,7 @@ public class CashDrawerManagementPanel extends JPanel {
         }
         try {
             BigDecimal target = parseNonNegativeMoney(changeBasketTargetField.getText(), "Change basket target");
-            CompanyCustomizationManager.saveChangeBasketTargetAmount(store.id(), target);
+            LanApiClient.saveCashDrawerChangeTarget(store.id(),target,mutationKey("target|"+store.id()+"|"+target));clearMutationKey();
             changeBasketTargetField.setText(utils.CurrencyFormatter.normalize(target).toPlainString());
             changeBasketStatusLabel.setText("Saved for " + store.name() + ". Separate from drawer starting cash.");
             JOptionPane.showMessageDialog(this, "Change basket target saved.");
@@ -620,6 +605,10 @@ public class CashDrawerManagementPanel extends JPanel {
                     "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+    private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){
+        pendingMutationKey=UUID.randomUUID().toString();pendingMutationFingerprint=fingerprint;}return pendingMutationKey;}
+    private void clearMutationKey(){pendingMutationKey=null;pendingMutationFingerprint=null;}
 
     private BigDecimal parseMoney(String value) {
         String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();

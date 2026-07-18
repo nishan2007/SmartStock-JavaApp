@@ -2,6 +2,7 @@ package ui.screens.workstationprefs;
 
 import managers.ReceiptNumberManager;
 import managers.SessionManager;
+import services.LanApiClient;
 import ui.helpers.ThemeManager;
 
 import javax.swing.*;
@@ -10,9 +11,6 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.io.IOException;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.time.ZoneId;
 
 public class WorkstationSettingsPanel extends JPanel {
@@ -181,18 +179,18 @@ public class WorkstationSettingsPanel extends JPanel {
 
     private void loadSettings() {
         try {
-            int locationId = getCurrentLocationIdForPreview();
-            ReceiptNumberManager.DeviceReceiptSettings settings = ReceiptNumberManager.getDeviceReceiptSettings(locationId);
-            deviceIdField.setText(settings.deviceId());
-            sanitizedPreviewField.setText(settings.deviceId());
-            configPathField.setText(settings.configPath().toString());
+            LanApiClient.WorkstationSettings settings = LanApiClient.loadWorkstationSettings();
+            deviceIdField.setText(settings.deviceCode());
+            sanitizedPreviewField.setText(settings.deviceCode());
+            configPathField.setText(ReceiptNumberManager.getConfigPath().toString());
             currentStoreLabel.setText(getStoreDisplay(settings.storeCode()));
-            storeTimezoneField.setText(getCurrentStoreTimezone());
+            storeTimezoneField.setText(settings.timezone()==null||settings.timezone().isBlank()
+                    ? getCurrentStoreTimezone():settings.timezone());
             nextReceiptLabel.setText(settings.nextReceiptPreview());
             nextReceiveLabel.setText(settings.nextReceivePreview());
             nextSequenceLabel.setText("Receipt: " + settings.nextSequence() + "   Receiving: " + settings.nextReceiveSequence());
             darkModeBox.setSelected(ThemeManager.isDarkModeEnabled());
-        } catch (IOException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(
                     this,
                     "Failed to load workstation settings.\n\n" + ex.getMessage(),
@@ -210,10 +208,10 @@ public class WorkstationSettingsPanel extends JPanel {
         }
 
         try {
-            String savedDeviceId = ReceiptNumberManager.updateDeviceId(deviceIdField.getText());
+            String savedDeviceId = LanApiClient.updateWorkstationDeviceCode(deviceIdField.getText());
             JOptionPane.showMessageDialog(this, "Workstation ID saved as " + savedDeviceId + ".");
             loadSettings();
-        } catch (IllegalArgumentException | IOException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(
                     this,
                     "Failed to save workstation settings.\n\n" + ex.getMessage(),
@@ -238,16 +236,12 @@ public class WorkstationSettingsPanel extends JPanel {
             return;
         }
 
-        String sql = "UPDATE locations SET timezone = ? WHERE location_id = ?";
-        try (Connection conn = data.DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, timezone);
-            ps.setInt(2, locationId);
-            ps.executeUpdate();
+        try {
+            timezone = LanApiClient.updateWorkstationTimezone(timezone);
             SessionManager.setCurrentLocationTimezone(timezone);
             JOptionPane.showMessageDialog(this, "Store timezone saved.");
             loadSettings();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save store timezone.\n\n" + ex.getMessage(), "Store Timezone", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -269,11 +263,6 @@ public class WorkstationSettingsPanel extends JPanel {
 
     private void updateSanitizedPreview() {
         sanitizedPreviewField.setText(ReceiptNumberManager.previewSanitizedDeviceId(deviceIdField.getText()));
-    }
-
-    private int getCurrentLocationIdForPreview() {
-        Integer locationId = SessionManager.getCurrentLocationId();
-        return locationId == null ? 0 : locationId;
     }
 
     private String getStoreDisplay(String storeCode) {

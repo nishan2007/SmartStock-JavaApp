@@ -13,11 +13,14 @@ import Receipt.QuotationInvoiceDocumentBuilder;
 import managers.CompanyCustomizationManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import services.BadgePrintService;
 import services.PriceTagPrintService;
 import services.CompanyBackupService;
 import services.CompanyBackupScheduler;
-import services.OfflineWriteGuard;
+import services.TimeClockAutoCloseService;
+import services.TimeClockAutoCloseService.AutoCloseSettings;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 import utils.ImageCacheManager;
@@ -64,6 +67,7 @@ public class CompanyCustomization extends JFrame {
     public static final String NAV_LOCATIONS = "Locations";
     public static final String NAV_CASH_DRAWER_MANAGER = "Cash Drawer Manager";
     private static final String NAV_BACKUPS = "Backups";
+    private static final String NAV_TIME_CLOCK_SAFETY = "Time Clock Safety";
     private static final String NAV_SALE = "Sale";
     private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
     private static final String NAV_ACCOUNT_PAYMENT_RECEIPTS = "Account Payment Receipts";
@@ -103,6 +107,10 @@ public class CompanyCustomization extends JFrame {
     private final JSpinner backupIntervalMinutesSpinner = new JSpinner(new SpinnerNumberModel(1440, 15, 525600, 15));
     private final JSpinner backupRetentionCountSpinner = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1));
     private final JLabel backupStatusLabel = new JLabel("Not run yet");
+    private final JCheckBox timeClockAutoCloseEnabledBox = new JCheckBox("Automatically close stale time-clock sessions");
+    private final JSpinner scheduledDetectionDelaySpinner = new JSpinner(new SpinnerNumberModel(4, 0, 24, 1));
+    private final JSpinner unscheduledDetectionHoursSpinner = new JSpinner(new SpinnerNumberModel(12, 1, 48, 1));
+    private final JSpinner maximumAutomaticWorkHoursSpinner = new JSpinner(new SpinnerNumberModel(8, 1, 24, 1));
     private final JCheckBox showLogoBox = new JCheckBox("Show logo on receipt");
     private final JCheckBox showSaleIdBox = new JCheckBox("Show sale ID");
     private final JCheckBox showDeviceBox = new JCheckBox("Show device ID");
@@ -171,6 +179,10 @@ public class CompanyCustomization extends JFrame {
     private final JTextField badgeMagStripeTrack2Field = new JTextField();
     private final JTextField badgeMagStripeTrack3Field = new JTextField();
     private final JTextField badgeMagStripeCommandField = new JTextField();
+    private final JCheckBox badgeNfcEnabledBox = new JCheckBox("Enable RFID/NFC writer");
+    private final JTextField badgeNfcPayloadField = new JTextField("{badge_id}");
+    private final JTextField badgeNfcWriterCommandField = new JTextField();
+    private final JTextField badgeNfcVerifyCommandField = new JTextField();
     private String badgeLayoutData = "";
     private final String[] badgeTemplateLayouts = new String[CompanyCustomizationManager.badgeTemplateCount()];
     private int badgeTemplateSlotIndex = 0;
@@ -279,8 +291,10 @@ public class CompanyCustomization extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JButton closeButton = new JButton("Close");
         saveButton = new JButton("Save");
-        buttonPanel.add(exportBackupButton);
-        buttonPanel.add(restoreBackupButton);
+        if (isPhysicalServerMode()) {
+            buttonPanel.add(exportBackupButton);
+            buttonPanel.add(restoreBackupButton);
+        }
         buttonPanel.add(refreshButton);
         buttonPanel.add(closeButton);
         buttonPanel.add(saveButton);
@@ -309,6 +323,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_LOCATIONS);
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
         addNodeIfPermitted(root, NAV_BACKUPS);
+        addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
 
         DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
         addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
@@ -399,6 +414,9 @@ public class CompanyCustomization extends JFrame {
         if (canAccessPreferenceSection(NAV_BACKUPS)) {
             rightContentPanel.add(buildBackupSchedulerScreen(), NAV_BACKUPS);
         }
+        if (canAccessPreferenceSection(NAV_TIME_CLOCK_SAFETY)) {
+            rightContentPanel.add(buildTimeClockSafetyScreen(), NAV_TIME_CLOCK_SAFETY);
+        }
         if (canAccessPreferenceSection(NAV_SALE)) {
             rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE);
         }
@@ -443,10 +461,15 @@ public class CompanyCustomization extends JFrame {
         return switch (key) {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_BACKUPS, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
+            case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
+    }
+
+    private boolean isPhysicalServerMode() {
+        return DatabaseConfig.load().mode() == DatabaseMode.SERVER;
     }
 
     private boolean canEditCompanyPreferences() {
@@ -622,6 +645,46 @@ public class CompanyCustomization extends JFrame {
         return panel;
     }
 
+    private JPanel buildTimeClockSafetyScreen() {
+        JPanel panel = new JPanel(new BorderLayout(0, 16));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(22, 22, 22, 22)
+        ));
+
+        JPanel heading = new JPanel();
+        heading.setOpaque(false);
+        heading.setLayout(new BoxLayout(heading, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel("Time Clock Safety");
+        title.setFont(new Font("SansSerif", Font.BOLD, 18));
+        JLabel explanation = new JLabel("<html>Close forgotten punches safely while keeping every automatic result available for manager review.</html>");
+        explanation.setForeground(new Color(75, 85, 99));
+        explanation.setBorder(new EmptyBorder(6, 0, 0, 0));
+        heading.add(title);
+        heading.add(explanation);
+
+        JPanel form = new JPanel(new GridBagLayout());
+        form.setOpaque(false);
+        addBackupCheckRow(form, 0, "Status", timeClockAutoCloseEnabledBox);
+        addBackupSpinnerRow(form, 1, "After scheduled shift", scheduledDetectionDelaySpinner, "hours after shift end");
+        addBackupSpinnerRow(form, 2, "Without a schedule", unscheduledDetectionHoursSpinner, "elapsed hours after clock-in");
+        addBackupSpinnerRow(form, 3, "Automatic work cap", maximumAutomaticWorkHoursSpinner, "worked hours, excluding lunch");
+
+        JTextArea note = new JTextArea("Manual clock-outs preserve actual time and overtime. Automatic clock-outs affect payroll immediately and remain pending until a manager confirms or corrects them.");
+        note.setEditable(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+        note.setOpaque(false);
+        note.setForeground(new Color(75, 85, 99));
+        note.setBorder(new EmptyBorder(8, 0, 0, 0));
+
+        panel.add(heading, BorderLayout.NORTH);
+        panel.add(form, BorderLayout.CENTER);
+        panel.add(note, BorderLayout.SOUTH);
+        return panel;
+    }
+
     private void addBackupCheckRow(JPanel panel, int row, String label, JCheckBox checkBox) {
         addBackupLabel(panel, row, label);
         GridBagConstraints valueConstraints = backupValueConstraints(row);
@@ -724,6 +787,31 @@ public class CompanyCustomization extends JFrame {
         help.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.insets = new Insets(4, 0, 0, 0);
         panel.add(help, gbc);
+        gbc.gridy++;
+
+        gbc.insets = new Insets(16, 0, 8, 0);
+        JLabel nfcTitle = new JLabel("RFID / NFC");
+        nfcTitle.setFont(new Font("SansSerif", Font.BOLD, 16));
+        panel.add(nfcTitle, gbc);
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 8, 0);
+        panel.add(badgeNfcEnabledBox, gbc);
+        gbc.gridy++;
+        addFullWidthPreferenceField(panel, gbc, "Payload template:", badgeNfcPayloadField);
+        addFullWidthPreferenceField(panel, gbc, "Writer command:", badgeNfcWriterCommandField);
+        addFullWidthPreferenceField(panel, gbc, "Verification command (optional):", badgeNfcVerifyCommandField);
+
+        JTextArea nfcHelp = new JTextArea(
+                "RFID/NFC placeholders: {badge_id}, {employee_id}, {full_name}, {first_name}, "
+                        + "{last_name}, {role}, {company}, and {payload}. The payload defaults to {badge_id}.");
+        nfcHelp.setEditable(false);
+        nfcHelp.setLineWrap(true);
+        nfcHelp.setWrapStyleWord(true);
+        nfcHelp.setOpaque(false);
+        nfcHelp.setForeground(new Color(75, 85, 99));
+        nfcHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        gbc.insets = new Insets(4, 0, 0, 0);
+        panel.add(nfcHelp, gbc);
         gbc.gridy++;
         gbc.weighty = 1;
         panel.add(Box.createVerticalGlue(), gbc);
@@ -2156,6 +2244,18 @@ public class CompanyCustomization extends JFrame {
         loadQuotationInvoicePrintFields(salesPrintSettings);
         CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = CompanyCustomizationManager.loadBadgeTemplateSettings();
         loadBadgeTemplateFields(badgeTemplateSettings);
+        try {
+            AutoCloseSettings timeClockSettings = TimeClockAutoCloseService.loadSettings();
+            timeClockAutoCloseEnabledBox.setSelected(timeClockSettings.enabled());
+            scheduledDetectionDelaySpinner.setValue(timeClockSettings.scheduledDelayHours());
+            unscheduledDetectionHoursSpinner.setValue(timeClockSettings.unscheduledDetectionHours());
+            maximumAutomaticWorkHoursSpinner.setValue(timeClockSettings.maxWorkHours());
+        } catch (Exception ex) {
+            timeClockAutoCloseEnabledBox.setSelected(true);
+            scheduledDetectionDelaySpinner.setValue(TimeClockAutoCloseService.DEFAULT_SCHEDULED_DELAY_HOURS);
+            unscheduledDetectionHoursSpinner.setValue(TimeClockAutoCloseService.DEFAULT_UNSCHEDULED_DETECTION_HOURS);
+            maximumAutomaticWorkHoursSpinner.setValue(TimeClockAutoCloseService.DEFAULT_MAX_WORK_HOURS);
+        }
         updateLogoPreview(settings.logoPath());
         loadingSettings = false;
         refreshSamplePreview();
@@ -2167,7 +2267,6 @@ public class CompanyCustomization extends JFrame {
 
     private void saveSettings() {
         try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Company preference");
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             CompanyCustomizationManager.saveReceiptSettings(getSettingsFromFields());
             CompanyCustomizationManager.SaleSafetySettings existingSaleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
@@ -2181,6 +2280,14 @@ public class CompanyCustomization extends JFrame {
             CompanyCustomizationManager.saveCustomOrderSlipSettings(getSlipSettingsFromFields());
             CompanyCustomizationManager.saveQuotationInvoicePrintSettings(getQuotationInvoicePrintSettingsFromFields());
             CompanyCustomizationManager.saveBadgeTemplateSettings(getBadgeTemplateSettingsForSave());
+            TimeClockAutoCloseService.saveSettings(new AutoCloseSettings(
+                    timeClockAutoCloseEnabledBox.isSelected(),
+                    ((Number) scheduledDetectionDelaySpinner.getValue()).intValue(),
+                    ((Number) unscheduledDetectionHoursSpinner.getValue()).intValue(),
+                    ((Number) maximumAutomaticWorkHoursSpinner.getValue()).intValue(),
+                    null,
+                    null
+            ));
             JOptionPane.showMessageDialog(this, "Company preferences saved.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save company preferences.\n\n" + ex.getMessage(), "Company Preferences", JOptionPane.ERROR_MESSAGE);
@@ -2230,7 +2337,6 @@ public class CompanyCustomization extends JFrame {
             return;
         }
         try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Company backup restore");
             CompanyBackupService.BackupSummary summary = CompanyBackupService.restoreBackup(backupPath);
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             loadSettings();
@@ -2564,6 +2670,10 @@ public class CompanyCustomization extends JFrame {
         badgeMagStripeTrack2Field.setText(settings.magStripeTrack2());
         badgeMagStripeTrack3Field.setText(settings.magStripeTrack3());
         badgeMagStripeCommandField.setText(settings.magStripeCommand());
+        badgeNfcEnabledBox.setSelected(settings.nfcEnabled());
+        badgeNfcPayloadField.setText(settings.nfcPayloadTemplate());
+        badgeNfcWriterCommandField.setText(settings.nfcWriterCommand());
+        badgeNfcVerifyCommandField.setText(settings.nfcVerifyCommand());
         String[] loadedLayouts = CompanyCustomizationManager.unpackBadgeTemplateLayouts(settings.layoutData());
         for (int i = 0; i < badgeTemplateLayouts.length; i++) {
             badgeTemplateLayouts[i] = i < loadedLayouts.length ? loadedLayouts[i] : "";
@@ -2602,6 +2712,10 @@ public class CompanyCustomization extends JFrame {
                 badgeMagStripeTrack2Field.getText(),
                 badgeMagStripeTrack3Field.getText(),
                 badgeMagStripeCommandField.getText(),
+                badgeNfcEnabledBox.isSelected(),
+                badgeNfcPayloadField.getText(),
+                badgeNfcWriterCommandField.getText(),
+                badgeNfcVerifyCommandField.getText(),
                 badgeLayoutData
         );
         return new CompanyCustomizationManager.BadgeTemplateSettings(
@@ -2621,6 +2735,10 @@ public class CompanyCustomization extends JFrame {
                 badgeMagStripeTrack2Field.getText(),
                 badgeMagStripeTrack3Field.getText(),
                 badgeMagStripeCommandField.getText(),
+                badgeNfcEnabledBox.isSelected(),
+                badgeNfcPayloadField.getText(),
+                badgeNfcWriterCommandField.getText(),
+                badgeNfcVerifyCommandField.getText(),
                 badgeLayoutData
         );
     }

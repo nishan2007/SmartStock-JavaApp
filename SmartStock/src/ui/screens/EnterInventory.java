@@ -1,14 +1,9 @@
 package ui.screens;
 
-import data.DB;
-import data.DatabaseConfig;
-import data.DatabaseMode;
 import managers.PermissionManager;
-import managers.ReceiptNumberManager;
 import managers.SessionManager;
-import services.DeviceContextService;
+import services.LanApiClient;
 import services.ManagerApprovalService;
-import services.SyncOutboxService;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -22,16 +17,11 @@ import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumnModel;
 import java.awt.*;
 import java.net.URL;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.UUID;
 
 public class EnterInventory extends JFrame {
     private JTextField searchField;
@@ -48,6 +38,8 @@ public class EnterInventory extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
+    private String pendingReceiveKey;
+    private String pendingReceiveFingerprint;
 
     public EnterInventory() {
         setTitle("Receiving Inventory");
@@ -336,101 +328,16 @@ public class EnterInventory extends JFrame {
         if (searchText.isEmpty()) {
             closeSearchPopup();
             if (showMessages) {
-                JOptionPane.showMessageDialog(this, "Type a product name, SKU, or custom item name first.");
+                JOptionPane.showMessageDialog(this, "Type a product name, brand, item type, SKU, barcode, department, or shelf first.");
             }
             return;
         }
 
-        String sql = """
-                SELECT item_type, item_id, name, description, code, quantity_on_hand
-                FROM (
-                    SELECT 'Product' AS item_type,
-                           p.product_id AS item_id,
-                           p.name || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS name,
-                           p.description,
-                           p.sku AS code,
-                           COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
-                    FROM products p
-                    LEFT JOIN inventory i
-                        ON p.product_id = i.product_id
-                       AND i.location_id = ?
-                    WHERE COALESCE(p.product_type, 'INVENTORY') = 'INVENTORY'
-                      AND (p.name ILIKE ? OR COALESCE(p.size, '') ILIKE ? OR p.sku ILIKE ?)
-                    UNION ALL
-                    SELECT 'Custom Item' AS item_type,
-                           coi.custom_item_id AS item_id,
-                           coi.item_name AS name,
-                           coi.description,
-                           COALESCE(NULLIF(coi.sku, ''), NULLIF(coi.barcode, ''), 'CUSTOM-' || coi.custom_item_id) AS code,
-                           coi.quantity_on_hand
-                    FROM custom_order_items coi
-                    WHERE coi.is_active = TRUE
-                      AND COALESCE(coi.product_type, 'INVENTORY') = 'INVENTORY'
-                      AND COALESCE(coi.has_variants, FALSE) = FALSE
-                      AND (
-                          coi.item_name ILIKE ?
-                          OR COALESCE(coi.sku, '') ILIKE ?
-                          OR COALESCE(coi.barcode, '') ILIKE ?
-                          OR ('CUSTOM-' || coi.custom_item_id) ILIKE ?
-                          OR EXISTS (
-                              SELECT 1
-                              FROM custom_order_item_barcodes coib
-                              WHERE coib.custom_item_id = coi.custom_item_id
-                                AND coib.barcode ILIKE ?
-                          )
-                      )
-                    UNION ALL
-                    SELECT 'Custom Variant' AS item_type,
-                           coiv.custom_variant_id AS item_id,
-                           coi.item_name || ' - ' || coiv.variant_name AS name,
-                           coi.description,
-                           COALESCE(NULLIF(coiv.sku, ''), NULLIF(coiv.barcode, ''), 'CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) AS code,
-                           coiv.quantity_on_hand
-                    FROM custom_order_item_variants coiv
-                    JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
-                    WHERE coi.is_active = TRUE
-                      AND COALESCE(coi.product_type, 'INVENTORY') = 'INVENTORY'
-                      AND coiv.is_active = TRUE
-                      AND (
-                          coi.item_name ILIKE ?
-                          OR coiv.variant_name ILIKE ?
-                          OR COALESCE(coiv.sku, '') ILIKE ?
-                          OR COALESCE(coiv.barcode, '') ILIKE ?
-                          OR ('CUSTOM-' || coi.custom_item_id || '-' || coiv.custom_variant_id) ILIKE ?
-                      )
-                ) matched_items
-                ORDER BY item_type, name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, SessionManager.getCurrentLocationId());
-            ps.setString(2, "%" + searchText + "%");
-            ps.setString(3, "%" + searchText + "%");
-            ps.setString(4, "%" + searchText + "%");
-            ps.setString(5, "%" + searchText + "%");
-            ps.setString(6, "%" + searchText + "%");
-            ps.setString(7, "%" + searchText + "%");
-            ps.setString(8, "%" + searchText + "%");
-            ps.setString(9, "%" + searchText + "%");
-            ps.setString(10, "%" + searchText + "%");
-            ps.setString(11, "%" + searchText + "%");
-            ps.setString(12, "%" + searchText + "%");
-            ps.setString(13, "%" + searchText + "%");
-            ps.setString(14, "%" + searchText + "%");
-
-            ResultSet rs = ps.executeQuery();
+        try {
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
-
-            while (rs.next()) {
+            for (LanApiClient.LookupItem item : LanApiClient.searchReceivingItems(searchText)) {
                 rows.add(new Object[]{
-                        rs.getString("item_type"),
-                        rs.getInt("item_id"),
-                        rs.getString("name"),
-                        rs.getString("description"),
-                        rs.getString("code"),
-                        rs.getInt("quantity_on_hand")
+                        item.itemType(), item.itemId(), item.name(), item.description(), item.code(), item.quantityOnHand()
                 });
             }
 
@@ -444,8 +351,8 @@ public class EnterInventory extends JFrame {
 
             showSearchResultsPopup(rows);
 
-        } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Database error: " + e.getMessage());
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "SmartStock server error: " + e.getMessage());
         }
     }
 
@@ -587,7 +494,7 @@ public class EnterInventory extends JFrame {
         updatingInventoryRows = true;
         try {
             for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+                int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
                 int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 7), 1);
                 inventoryModel.setValueAt(countedStock, i, 6);
                 inventoryModel.setValueAt(qtyToAdd, i, 7);
@@ -605,15 +512,6 @@ public class EnterInventory extends JFrame {
         try {
             int parsed = Integer.parseInt(value.toString().trim());
             return parsed > 0 ? parsed : fallback;
-        } catch (Exception ex) {
-            return fallback;
-        }
-    }
-
-    private int parseNonNegativeInt(Object value, int fallback) {
-        try {
-            int parsed = Integer.parseInt(value.toString().trim());
-            return parsed >= 0 ? parsed : fallback;
         } catch (Exception ex) {
             return fallback;
         }
@@ -712,311 +610,62 @@ public class EnterInventory extends JFrame {
             JOptionPane.showMessageDialog(this, "No inventory entries have been added.");
             return;
         }
-
         if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
             return;
         }
-
         if (SessionManager.getCurrentUserId() == null) {
             JOptionPane.showMessageDialog(this, "No user is logged in for this session.");
             return;
         }
 
         updateNewStockTotals();
-        int locationId = SessionManager.getCurrentLocationId();
-        ensureReceivingStockOverridePermissionAvailable();
-        StockOverrideAuthorization stockOverrideAuthorization = requestStockOverrideAuthorizationIfNeeded();
-        if (stockOverrideAuthorization == null && hasStockCountOverrides()) {
+        StockOverrideAuthorization authorization = requestStockOverrideAuthorizationIfNeeded();
+        if (authorization == null && hasStockCountOverrides()) {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try {
-                ensureMovementAuditColumns(conn);
-                ReceiptNumberManager.ReceiveNumber receive = ReceiptNumberManager.nextReceive(locationId);
-                String insertReceivingBatchSql = """
-                        INSERT INTO receiving_batches (
-                            receive_id,
-	                            location_id,
-	                            user_id,
-	                            user_name,
-	                            receive_device_id,
-	                            receive_sequence
-	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?)
-                        """;
-                String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-                String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
-                String updateCustomItemSql = "UPDATE custom_order_items SET quantity_on_hand = quantity_on_hand + ?, updated_at = CURRENT_TIMESTAMP WHERE custom_item_id = ?";
-                String insertCustomItemMovementSql = """
-                        INSERT INTO custom_order_item_movements (
-                            custom_item_id,
-                            location_id,
-                            change_qty,
-                            reason,
-                            note,
-                            user_name,
-                            user_id,
-                            device_id,
-                            device_name,
-                            receive_id,
-                            receive_device_id,
-                            receive_sequence
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """;
-                String updateCustomVariantSql = "UPDATE custom_order_item_variants SET quantity_on_hand = quantity_on_hand + ?, updated_at = CURRENT_TIMESTAMP WHERE custom_variant_id = ?";
-                String insertCustomVariantMovementSql = """
-                        INSERT INTO custom_order_item_movements (
-                            custom_item_id,
-                            custom_variant_id,
-                            variant_name,
-                            location_id,
-                            change_qty,
-                            reason,
-                            note,
-                            user_name,
-                            user_id,
-                            device_id,
-                            device_name,
-                            receive_id,
-                            receive_device_id,
-                            receive_sequence
-                        )
-                        SELECT custom_item_id, custom_variant_id, variant_name, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                        FROM custom_order_item_variants
-                        WHERE custom_variant_id = ?
-                        """;
-                String insertMovementSql = """
-                        INSERT INTO inventory_movements (
-                            product_id,
-                            location_id,
-                            change_qty,
-                            reason,
-	                            note,
-	                            user_name,
-                            user_id,
-                            device_id,
-                            device_name,
-	                            receive_id,
-	                            receive_device_id,
-	                            receive_sequence
-	                        )
-	                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """;
-
-                try (PreparedStatement receivingBatchStmt = conn.prepareStatement(insertReceivingBatchSql);
-                     PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
-                     PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
-                     PreparedStatement updateCustomItemStmt = conn.prepareStatement(updateCustomItemSql, Statement.RETURN_GENERATED_KEYS);
-                     PreparedStatement customItemMovementStmt = conn.prepareStatement(insertCustomItemMovementSql);
-                     PreparedStatement updateCustomVariantStmt = conn.prepareStatement(updateCustomVariantSql, Statement.RETURN_GENERATED_KEYS);
-                     PreparedStatement customVariantMovementStmt = conn.prepareStatement(insertCustomVariantMovementSql);
-                     PreparedStatement movementStmt = conn.prepareStatement(insertMovementSql)) {
-                    List<StockExpectation> expectations = new ArrayList<>();
-                    String movementDeviceId = DeviceContextService.currentDeviceId();
-                    String movementDeviceName = DeviceContextService.currentDeviceName();
-
-	                    receivingBatchStmt.setString(1, receive.receiveId());
-	                    receivingBatchStmt.setInt(2, locationId);
-	                    receivingBatchStmt.setInt(3, SessionManager.getCurrentUserId());
-	                    receivingBatchStmt.setString(4, SessionManager.getCurrentUserDisplayName());
-	                    receivingBatchStmt.setString(5, receive.deviceId());
-	                    receivingBatchStmt.setInt(6, receive.sequence());
-                    receivingBatchStmt.executeUpdate();
-
-                    for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                        String itemType = inventoryModel.getValueAt(i, 0).toString();
-                        int itemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
-                        String itemName = String.valueOf(inventoryModel.getValueAt(i, 2));
-                        int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-                        int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
-                        int qty = parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
-                        if (qty <= 0) {
-                            throw new SQLException("Quantity must be greater than zero for " + itemType + " " + itemId + ".");
-                        }
-                        int stockAdjustment = countedStock - systemStock;
-                        if (stockAdjustment != 0 && stockOverrideAuthorization == null) {
-                            throw new SQLException("Stock count override approval is required for " + itemName + ".");
-                        }
-                        expectations.add(new StockExpectation(itemType, itemId, itemName, countedStock + qty));
-
-                        if ("Custom Item".equals(itemType)) {
-                            if (stockAdjustment != 0) {
-                                updateCustomItemStmt.setInt(1, stockAdjustment);
-                                updateCustomItemStmt.setInt(2, itemId);
-                                if (updateCustomItemStmt.executeUpdate() == 0) {
-                                    throw new SQLException("Custom item " + itemId + " no longer exists.");
-                                }
-                                fillCustomItemMovement(
-                                        customItemMovementStmt,
-                                        itemId,
-                                        locationId,
-                                        stockAdjustment,
-                                        "RECEIVING_STOCK_OVERRIDE",
-                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
-                                        stockOverrideAuthorization.approvedByName(),
-                                        stockOverrideAuthorization.approvedByUserId(),
-                                        movementDeviceId,
-                                        movementDeviceName,
-                                        receive
-                                );
-                                customItemMovementStmt.executeUpdate();
-                            }
-
-                            updateCustomItemStmt.setInt(1, qty);
-                            updateCustomItemStmt.setInt(2, itemId);
-                            if (updateCustomItemStmt.executeUpdate() == 0) {
-                                throw new SQLException("Custom item " + itemId + " no longer exists.");
-                            }
-
-                            fillCustomItemMovement(
-                                    customItemMovementStmt,
-                                    itemId,
-                                    locationId,
-                                    qty,
-                                    "INVENTORY_ENTRY",
-                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
-                                    SessionManager.getCurrentUserDisplayName(),
-                                    SessionManager.getCurrentUserId(),
-                                    movementDeviceId,
-                                    movementDeviceName,
-                                    receive
-                            );
-                            customItemMovementStmt.executeUpdate();
-                        } else if ("Custom Variant".equals(itemType)) {
-                            if (stockAdjustment != 0) {
-                                updateCustomVariantStmt.setInt(1, stockAdjustment);
-                                updateCustomVariantStmt.setInt(2, itemId);
-                                if (updateCustomVariantStmt.executeUpdate() == 0) {
-                                    throw new SQLException("Custom variant " + itemId + " no longer exists.");
-                                }
-                                fillCustomVariantMovement(
-                                        customVariantMovementStmt,
-                                        locationId,
-                                        stockAdjustment,
-                                        "RECEIVING_STOCK_OVERRIDE",
-                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
-                                        stockOverrideAuthorization.approvedByName(),
-                                        stockOverrideAuthorization.approvedByUserId(),
-                                        movementDeviceId,
-                                        movementDeviceName,
-                                        receive,
-                                        itemId
-                                );
-                                if (customVariantMovementStmt.executeUpdate() == 0) {
-                                    throw new SQLException("Failed to record stock override for custom variant " + itemId + ".");
-                                }
-                            }
-
-                            updateCustomVariantStmt.setInt(1, qty);
-                            updateCustomVariantStmt.setInt(2, itemId);
-                            if (updateCustomVariantStmt.executeUpdate() == 0) {
-                                throw new SQLException("Custom variant " + itemId + " no longer exists.");
-                            }
-
-                            fillCustomVariantMovement(
-                                    customVariantMovementStmt,
-                                    locationId,
-                                    qty,
-                                    "INVENTORY_ENTRY",
-                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
-                                    SessionManager.getCurrentUserDisplayName(),
-                                    SessionManager.getCurrentUserId(),
-                                    movementDeviceId,
-                                    movementDeviceName,
-                                    receive,
-                                    itemId
-                            );
-                            if (customVariantMovementStmt.executeUpdate() == 0) {
-                                throw new SQLException("Failed to record movement for custom variant " + itemId + ".");
-                            }
-                        } else {
-                            ensureInventoryStmt.setInt(1, itemId);
-                            ensureInventoryStmt.setInt(2, locationId);
-                            ensureInventoryStmt.executeUpdate();
-
-                            if (stockAdjustment != 0) {
-                                updateInventoryStmt.setInt(1, stockAdjustment);
-                                updateInventoryStmt.setInt(2, itemId);
-                                updateInventoryStmt.setInt(3, locationId);
-                                if (updateInventoryStmt.executeUpdate() == 0) {
-                                    throw new SQLException("Inventory row for product " + itemId + " no longer exists.");
-                                }
-                                fillInventoryMovement(
-                                        movementStmt,
-                                        itemId,
-                                        locationId,
-                                        stockAdjustment,
-                                        "RECEIVING_STOCK_OVERRIDE",
-                                        stockOverrideNote(systemStock, countedStock, stockOverrideAuthorization),
-                                        stockOverrideAuthorization.approvedByName(),
-                                        stockOverrideAuthorization.approvedByUserId(),
-                                        movementDeviceId,
-                                        movementDeviceName,
-                                        receive
-                                );
-                                movementStmt.executeUpdate();
-                            }
-
-                            updateInventoryStmt.setInt(1, qty);
-                            updateInventoryStmt.setInt(2, itemId);
-                            updateInventoryStmt.setInt(3, locationId);
-                            if (updateInventoryStmt.executeUpdate() == 0) {
-                                throw new SQLException("Inventory row for product " + itemId + " no longer exists.");
-                            }
-
-                            fillInventoryMovement(
-                                    movementStmt,
-                                    itemId,
-                                    locationId,
-                                    qty,
-                                    "INVENTORY_ENTRY",
-                                    "entered_by_user_id=" + SessionManager.getCurrentUserId(),
-                                    SessionManager.getCurrentUserDisplayName(),
-                                    SessionManager.getCurrentUserId(),
-                                    movementDeviceId,
-                                    movementDeviceName,
-                                    receive
-                            );
-                            movementStmt.executeUpdate();
-                        }
-                    }
-
-                    verifyExpectedStock(conn, locationId, expectations);
+        try {
+            List<LanApiClient.ReceiveInventoryLine> lines = new ArrayList<>();
+            for (int i = 0; i < inventoryModel.getRowCount(); i++) {
+                String displayType = String.valueOf(inventoryModel.getValueAt(i, 0));
+                String itemType = switch (displayType) {
+                    case "Custom Item" -> "CUSTOM_ITEM";
+                    case "Custom Variant" -> "CUSTOM_VARIANT";
+                    default -> "PRODUCT";
+                };
+                int itemId = Integer.parseInt(String.valueOf(inventoryModel.getValueAt(i, 1)));
+                int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+                int quantity = parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
+                if (quantity <= 0) {
+                    throw new IllegalArgumentException("Quantity must be greater than zero for "
+                            + inventoryModel.getValueAt(i, 2) + ".");
                 }
-
-                SyncOutboxService.recordEvent(conn, "INVENTORY_RECEIVED", Map.of(
-                        "receive_id", receive.receiveId(),
-                        "location_id", locationId,
-                        "device_id", receive.deviceId(),
-                        "receive_sequence", receive.sequence(),
-                        "line_count", inventoryModel.getRowCount(),
-                        "user_id", SessionManager.getCurrentUserId() == null ? "" : SessionManager.getCurrentUserId()
-                ));
-                SyncOutboxService.recordEvent(conn, "INVENTORY_MOVEMENT_CREATED", Map.of(
-                        "source", "ENTER_INVENTORY",
-                        "receive_id", receive.receiveId(),
-                        "location_id", locationId,
-                        "line_count", inventoryModel.getRowCount()
-                ));
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Inventory added successfully.\nReceive ID: " + receive.receiveId());
-                inventoryModel.setRowCount(0);
-                searchField.setText("");
-                updateTotalUnitsLabel();
-                configureInventoryTableColumns();
-
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
+                lines.add(new LanApiClient.ReceiveInventoryLine(itemType, itemId, countedStock, quantity));
             }
 
+            LanApiClient.ReceiveInventoryRequest request = new LanApiClient.ReceiveInventoryRequest(
+                    authorization == null ? null : authorization.approvalToken(),
+                    authorization == null ? null : authorization.reason(),
+                    List.copyOf(lines)
+            );
+            String fingerprint = request.toString();
+            if (!fingerprint.equals(pendingReceiveFingerprint) || pendingReceiveKey == null) {
+                pendingReceiveFingerprint = fingerprint;
+                pendingReceiveKey = UUID.randomUUID().toString();
+            }
+
+            LanApiClient.ReceiveInventoryResult result =
+                    LanApiClient.receiveInventory(request, pendingReceiveKey);
+            pendingReceiveKey = null;
+            pendingReceiveFingerprint = null;
+
+            JOptionPane.showMessageDialog(this,
+                    "Inventory added successfully.\nReceive ID: " + result.receiveId());
+            inventoryModel.setRowCount(0);
+            searchField.setText("");
+            updateTotalUnitsLabel();
+            configureInventoryTableColumns();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Inventory entry failed: " + ex.getMessage());
         }
@@ -1025,48 +674,12 @@ public class EnterInventory extends JFrame {
     private boolean hasStockCountOverrides() {
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
             int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
             if (systemStock != countedStock) {
                 return true;
             }
         }
         return false;
-    }
-
-    private void ensureReceivingStockOverridePermissionAvailable() {
-        String insertPermissionSql = """
-                INSERT INTO permissions (permission_key, permission_name, description, permission_group)
-                VALUES (
-                    'RECEIVING_STOCK_OVERRIDE',
-                    'Receiving Stock Override',
-                    'Allows correcting counted shelf/storage stock during receiving with an audit trail.',
-                    'Inventory'
-                )
-                ON CONFLICT (permission_key) DO UPDATE
-                SET permission_name = COALESCE(NULLIF(permissions.permission_name, ''), EXCLUDED.permission_name),
-                    description = COALESCE(NULLIF(permissions.description, ''), EXCLUDED.description),
-                    permission_group = COALESCE(NULLIF(permissions.permission_group, ''), EXCLUDED.permission_group)
-                """;
-        String grantSql = """
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.role_id, p.permission_id
-                FROM roles r
-                JOIN permissions p ON UPPER(p.permission_key) = 'RECEIVING_STOCK_OVERRIDE'
-                WHERE UPPER(r.role_name) IN ('ADMIN', 'MANAGER')
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM role_permissions rp
-                      WHERE rp.role_id = r.role_id
-                        AND rp.permission_id = p.permission_id
-                  )
-                """;
-        try (Connection conn = DB.getConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(insertPermissionSql);
-            stmt.executeUpdate(grantSql);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Unable to prepare receiving override permission: " + ex.getMessage());
-        }
     }
 
     private StockOverrideAuthorization requestStockOverrideAuthorizationIfNeeded() {
@@ -1104,7 +717,8 @@ public class EnterInventory extends JFrame {
             return new StockOverrideAuthorization(
                     SessionManager.getCurrentUserId(),
                     SessionManager.getCurrentUserDisplayName(),
-                    reason
+                    reason,
+                    null
             );
         }
 
@@ -1118,7 +732,8 @@ public class EnterInventory extends JFrame {
             if (approval == null) {
                 return null;
             }
-            return new StockOverrideAuthorization(approval.approvedByUserId(), approval.approvedByName(), approval.reason());
+            return new StockOverrideAuthorization(approval.approvedByUserId(), approval.approvedByName(),
+                    approval.reason(), approval.lanApprovalToken());
         } catch (IllegalStateException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Override Approval Failed", JOptionPane.WARNING_MESSAGE);
             return null;
@@ -1130,7 +745,7 @@ public class EnterInventory extends JFrame {
         int count = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
             int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
             if (systemStock == countedStock) {
                 continue;
             }
@@ -1160,7 +775,7 @@ public class EnterInventory extends JFrame {
         int count = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
             int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseNonNegativeInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
             if (systemStock != countedStock) {
                 count++;
             }
@@ -1169,119 +784,8 @@ public class EnterInventory extends JFrame {
     }
 
     private boolean currentUserHasPermission(String permissionKey) {
-        if (permissionKey == null || permissionKey.isBlank()) {
-            return false;
-        }
-        String sql = """
-                SELECT 1
-                FROM users u
-                JOIN roles r ON r.role_id = u.role_id
-                JOIN role_permissions rp ON rp.role_id = r.role_id
-                JOIN permissions p ON p.permission_id = rp.permission_id
-                WHERE u.user_id = ?
-                  AND UPPER(p.permission_key) = UPPER(?)
-                LIMIT 1
-                """;
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, SessionManager.getCurrentUserId());
-            ps.setString(2, permissionKey);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException ex) {
-            return PermissionManager.hasPermission(permissionKey);
-        }
-    }
-
-    private String stockOverrideNote(int systemStock, int countedStock, StockOverrideAuthorization authorization) {
-        return "system_stock=" + systemStock
-                + "; counted_stock=" + countedStock
-                + "; reason=" + authorization.reason()
-                + "; approved_by_user_id=" + authorization.approvedByUserId()
-                + "; approved_by_name=" + authorization.approvedByName()
-                + "; entered_by_user_id=" + SessionManager.getCurrentUserId();
-    }
-
-    private void fillInventoryMovement(
-            PreparedStatement movementStmt,
-            int itemId,
-            int locationId,
-            int changeQty,
-            String reason,
-            String note,
-            String userName,
-            Integer userId,
-            String deviceId,
-            String deviceName,
-            ReceiptNumberManager.ReceiveNumber receive
-    ) throws SQLException {
-        movementStmt.setInt(1, itemId);
-        movementStmt.setInt(2, locationId);
-        movementStmt.setInt(3, changeQty);
-        movementStmt.setString(4, reason);
-        movementStmt.setString(5, note);
-        movementStmt.setString(6, userName);
-        setNullableInteger(movementStmt, 7, userId);
-        movementStmt.setString(8, deviceId);
-        movementStmt.setString(9, deviceName);
-        movementStmt.setString(10, receive.receiveId());
-        movementStmt.setString(11, receive.deviceId());
-        movementStmt.setInt(12, receive.sequence());
-    }
-
-    private void fillCustomItemMovement(
-            PreparedStatement movementStmt,
-            int itemId,
-            int locationId,
-            int changeQty,
-            String reason,
-            String note,
-            String userName,
-            Integer userId,
-            String deviceId,
-            String deviceName,
-            ReceiptNumberManager.ReceiveNumber receive
-    ) throws SQLException {
-        movementStmt.setInt(1, itemId);
-        movementStmt.setInt(2, locationId);
-        movementStmt.setInt(3, changeQty);
-        movementStmt.setString(4, reason);
-        movementStmt.setString(5, note);
-        movementStmt.setString(6, userName);
-        setNullableInteger(movementStmt, 7, userId);
-        movementStmt.setString(8, deviceId);
-        movementStmt.setString(9, deviceName);
-        movementStmt.setString(10, receive.receiveId());
-        movementStmt.setString(11, receive.deviceId());
-        movementStmt.setInt(12, receive.sequence());
-    }
-
-    private void fillCustomVariantMovement(
-            PreparedStatement movementStmt,
-            int locationId,
-            int changeQty,
-            String reason,
-            String note,
-            String userName,
-            Integer userId,
-            String deviceId,
-            String deviceName,
-            ReceiptNumberManager.ReceiveNumber receive,
-            int variantId
-    ) throws SQLException {
-        movementStmt.setInt(1, locationId);
-        movementStmt.setInt(2, changeQty);
-        movementStmt.setString(3, reason);
-        movementStmt.setString(4, note);
-        movementStmt.setString(5, userName);
-        setNullableInteger(movementStmt, 6, userId);
-        movementStmt.setString(7, deviceId);
-        movementStmt.setString(8, deviceName);
-        movementStmt.setString(9, receive.receiveId());
-        movementStmt.setString(10, receive.deviceId());
-        movementStmt.setInt(11, receive.sequence());
-        movementStmt.setInt(12, variantId);
+        return permissionKey != null && !permissionKey.isBlank()
+                && PermissionManager.hasPermission(permissionKey);
     }
 
     private String escapeHtml(String value) {
@@ -1296,79 +800,6 @@ public class EnterInventory extends JFrame {
                 .replace("'", "&#39;");
     }
 
-    private void verifyExpectedStock(Connection conn, int locationId, List<StockExpectation> expectations) throws SQLException {
-        String productSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM inventory WHERE location_id = ? AND product_id = ?";
-        String customItemSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM custom_order_items WHERE custom_item_id = ?";
-        String customVariantSql = "SELECT COALESCE(quantity_on_hand, 0) AS quantity_on_hand FROM custom_order_item_variants WHERE custom_variant_id = ?";
-
-        try (PreparedStatement productPs = conn.prepareStatement(productSql);
-             PreparedStatement customItemPs = conn.prepareStatement(customItemSql);
-             PreparedStatement customVariantPs = conn.prepareStatement(customVariantSql)) {
-            for (StockExpectation expectation : expectations) {
-                int actual;
-                if ("Custom Item".equals(expectation.itemType())) {
-                    customItemPs.setInt(1, expectation.itemId());
-                    actual = queryOnHand(customItemPs);
-                } else if ("Custom Variant".equals(expectation.itemType())) {
-                    customVariantPs.setInt(1, expectation.itemId());
-                    actual = queryOnHand(customVariantPs);
-                } else {
-                    productPs.setInt(1, locationId);
-                    productPs.setInt(2, expectation.itemId());
-                    actual = queryOnHand(productPs);
-                }
-
-                if (actual != expectation.expectedNewStock()) {
-                    throw new SQLException(
-                            "Stock mismatch for " + expectation.itemType() + " " + expectation.itemName()
-                                    + " (id " + expectation.itemId() + "). Expected "
-                                    + expectation.expectedNewStock() + " but found " + actual + "."
-                    );
-                }
-            }
-        }
-    }
-
-    private int queryOnHand(PreparedStatement ps) throws SQLException {
-        try (ResultSet rs = ps.executeQuery()) {
-            if (!rs.next()) {
-                return 0;
-            }
-            return rs.getInt("quantity_on_hand");
-        }
-    }
-
-    private static void ensureMovementAuditColumns(Connection conn) throws SQLException {
-        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
-            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS device_id TEXT");
-            stmt.executeUpdate("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS device_name TEXT");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id)");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_id TEXT");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS device_name TEXT");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_id TEXT");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_device_id TEXT");
-            stmt.executeUpdate("ALTER TABLE custom_order_item_movements ADD COLUMN IF NOT EXISTS receive_sequence INTEGER");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_user_idx ON custom_order_item_movements(user_id, created_at DESC)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_device_idx ON custom_order_item_movements(device_id, created_at DESC)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_location_idx ON custom_order_item_movements(location_id, created_at DESC)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS custom_order_item_movements_receive_idx ON custom_order_item_movements(receive_id, created_at DESC)");
-        }
-    }
-
-    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
-    private record StockOverrideAuthorization(Integer approvedByUserId, String approvedByName, String reason) {}
-
-    private record StockExpectation(String itemType, int itemId, String itemName, int expectedNewStock) {}
+    private record StockOverrideAuthorization(Integer approvedByUserId, String approvedByName, String reason,
+                                              String approvalToken) {}
 }

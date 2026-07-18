@@ -2,12 +2,11 @@ package data;
 
 public enum DatabaseMode {
     SERVER,
-    CLIENT,
-    CLOUD_DIRECT;
+    CLIENT;
 
     public static DatabaseMode from(String value) {
         if (value == null || value.isBlank()) {
-            return CLOUD_DIRECT;
+            return CLIENT;
         }
         String normalized = value.trim().replace("-", "_").toUpperCase();
         for (DatabaseMode mode : values()) {
@@ -15,6 +14,6 @@ public enum DatabaseMode {
                 return mode;
             }
         }
-        return CLOUD_DIRECT;
+        return CLIENT;
     }
 }

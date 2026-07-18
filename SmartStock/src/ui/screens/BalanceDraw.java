@@ -1,7 +1,6 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import data.DB;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -9,6 +8,7 @@ import models.CashDrawerContext;
 import models.CashDrawerHandover;
 import models.CashDrawerSession;
 import services.CashDrawerService;
+import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.helpers.WindowHelper;
 
@@ -20,13 +20,13 @@ import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.Connection;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 public class BalanceDraw extends JFrame {
     private static final int[] DENOMINATIONS = {5000, 2000, 1000, 500, 100, 50, 20};
@@ -43,6 +43,8 @@ public class BalanceDraw extends JFrame {
     private final JLabel expectedLabel = new JLabel();
     private final JLabel countedLabel = new JLabel();
     private final JLabel floatLabel = new JLabel();
+    private String pendingMutationKey;
+    private String pendingMutationFingerprint;
     private final JLabel cihLabel = new JLabel();
     private final JLabel varianceLabel = new JLabel();
     private final DefaultTableModel denominationModel;
@@ -214,11 +216,10 @@ public class BalanceDraw extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            CashDrawerContext drawer = CashDrawerService.resolveCurrentDrawer(conn);
-            activeSession = CashDrawerService.getActiveSessionForCurrentDevice(conn);
-            drawerLabel.setText(drawer.drawerName() == null ? "Unassigned" : drawer.drawerName());
-            if (!drawer.isAssigned()) {
+        try {
+            LanApiClient.CashDrawerRegisterState state=LanApiClient.loadCashDrawerRegisterState();
+            activeSession=state.session();drawerLabel.setText(state.drawerName()==null?"Unassigned":state.drawerName());
+            if (state.drawerId()==null) {
                 statusLabel.setText("This register is not assigned to an active cash drawer.");
                 mainCashierLabel.setText("-");
                 currentCashierLabel.setText("-");
@@ -249,8 +250,8 @@ public class BalanceDraw extends JFrame {
                 return;
             }
 
-            expectedCash = CashDrawerService.calculateExpectedCash(conn, activeSession.sessionId());
-            configuredFloatMix = CashDrawerService.getDrawerFloatMix(conn, activeSession.cashDrawerId());
+            expectedCash = state.expectedCash();
+            configuredFloatMix = state.floatMix();
             statusLabel.setText("Draw is open. Count cash for handover or final close.");
             mainCashierLabel.setText(displayName(activeSession.mainCashierName()));
             currentCashierLabel.setText(displayName(activeSession.currentCashierName()));
@@ -270,8 +271,8 @@ public class BalanceDraw extends JFrame {
     }
 
     private void startDraw() {
-        try (Connection conn = DB.getConnection()) {
-            activeSession = CashDrawerService.openSessionForCurrentDevice(conn, null);
+        try {
+            activeSession = LanApiClient.openCashDrawer(mutationKey("open"));clearMutationKey();
             loadState();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to start draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
@@ -316,8 +317,9 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            CashDrawerHandover handover = CashDrawerService.recordHandover(conn, activeSession.sessionId(), countedCash, null);
+        try {
+            CashDrawerHandover handover = LanApiClient.handoverCashDrawer(activeSession.sessionId(),countedCash,null,
+                    mutationKey("handover|"+activeSession.sessionId()+"|"+countedCash));clearMutationKey();
             JOptionPane.showMessageDialog(
                     this,
                     "Handover confirmed.\nFrom: " + displayName(handover.fromUserName())
@@ -374,9 +376,10 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            CashDrawerSession closed = CashDrawerService.closeSession(conn, activeSession.sessionId(), countedCash, null);
-            String handlers = String.join(", ", CashDrawerService.listCashHandlers(conn, closed.sessionId()));
+        try {
+            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(activeSession.sessionId(),countedCash,null,
+                    mutationKey("close|"+activeSession.sessionId()+"|"+countedCash));clearMutationKey();
+            CashDrawerSession closed=result.session();String handlers=String.join(", ",result.handlers());
             JOptionPane.showMessageDialog(
                     this,
                     "Draw closed.\nExpected: " + CURRENCY.format(closed.expectedCash())
@@ -398,8 +401,8 @@ public class BalanceDraw extends JFrame {
             JOptionPane.showMessageDialog(this, "You do not have permission to correct closed draws.", "Balance Draw", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        try (Connection conn = DB.getConnection()) {
-            List<ClosedDrawOption> options = CashDrawerService.listRecentSessions(conn, SessionManager.getCurrentLocationId(), null, false)
+        try {
+            List<ClosedDrawOption> options = LanApiClient.loadRecentCashDrawers()
                     .stream()
                     .filter(session -> !session.isOpen())
                     .map(ClosedDrawOption::new)
@@ -443,7 +446,8 @@ public class BalanceDraw extends JFrame {
                 return;
             }
 
-            CashDrawerSession revised = CashDrawerService.reviseClosedSessionCount(conn, selected.session().sessionId(), correctedCount, notesArea.getText());
+            CashDrawerSession revised = LanApiClient.reviseCashDrawer(selected.session().sessionId(),correctedCount,notesArea.getText(),
+                    mutationKey("revise|"+selected.session().sessionId()+"|"+correctedCount+"|"+notesArea.getText()));clearMutationKey();
             JOptionPane.showMessageDialog(
                     this,
                     "Closed draw corrected.\nExpected: " + CURRENCY.format(revised.expectedCash())
@@ -459,6 +463,10 @@ public class BalanceDraw extends JFrame {
             JOptionPane.showMessageDialog(this, "Failed to correct closed draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+    private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){
+        pendingMutationKey=UUID.randomUUID().toString();pendingMutationFingerprint=fingerprint;}return pendingMutationKey;}
+    private void clearMutationKey(){pendingMutationKey=null;pendingMutationFingerprint=null;}
 
     private void populateClosedDrawCount(JComboBox<ClosedDrawOption> sessionBox, JTextField countedField) {
         ClosedDrawOption selected = (ClosedDrawOption) sessionBox.getSelectedItem();

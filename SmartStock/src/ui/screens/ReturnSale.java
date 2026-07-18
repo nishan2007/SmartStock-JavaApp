@@ -1,52 +1,47 @@
 package ui.screens;
 
-import utils.CurrencyFormatter;
-import data.DB;
-import managers.CompanyCustomizationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
-import models.CashDrawerContext;
-import services.CashDrawerService;
-import services.CustomerAccountLedgerService;
-import services.DeviceContextService;
+import services.LanApiClient;
 import services.ManagerApprovalService;
-import services.SaleAuditService;
-import services.SyncOutboxService;
+import services.RefundApprovalIdentity;
 import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
+import utils.CurrencyFormatter;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.TableModelEvent;
-import javax.swing.table.DefaultTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableColumn;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.text.NumberFormat;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
+/** Return editor backed exclusively by the authenticated SmartStock LAN service. */
 public class ReturnSale extends JFrame {
     private static final String RETURN_OVERRIDE_PERMISSION = "RETURN_OVERRIDE";
+    private static final NumberFormatAdapter CURRENCY = new NumberFormatAdapter();
+    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
+
     private final JTextField saleSearchField = new JTextField();
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
-    private final JComboBox<String> refundMethodBox = new JComboBox<>(new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
+    private final JComboBox<String> refundMethodBox = new JComboBox<>(
+            new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
     private final JTextArea reasonArea = new JTextArea(3, 30);
     private final JLabel totalReturnLabel = new JLabel("Return Total: $0");
     private final JLabel overrideStatusLabel = new JLabel("No active override approvals");
@@ -55,15 +50,16 @@ public class ReturnSale extends JFrame {
     private final JTable saleSearchTable;
     private final JPopupMenu saleSearchPopup = new JPopupMenu();
     private final Timer saleSearchTimer;
+
     private SaleSnapshot loadedSale;
     private boolean updatingModel;
     private boolean selectingSearchResult;
-    private Integer overrideApprovedByUserId;
+    private String overrideApprovalToken;
+    private String overrideApprovalReason;
     private String overrideApprovedByName;
-    private BigDecimal overrideApprovedUpToAmount = BigDecimal.ZERO;
-
-    private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
-    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
+    private String overrideApprovedResource;
+    private String pendingRefundKey;
+    private String pendingRefundFingerprint;
 
     public ReturnSale() {
         this(null);
@@ -76,18 +72,15 @@ public class ReturnSale extends JFrame {
         setJMenuBar(AppMenuBar.create(this, "ReturnSale"));
 
         itemModel = new DefaultTableModel(
-                new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned", "Available", "Unit Price", "Product Type", "Return Qty"},
-                0
-        ) {
+                new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned",
+                        "Available", "Unit Price", "Product Type", "Return Qty"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return column == 9;
             }
         };
         saleSearchModel = new DefaultTableModel(
-                new Object[]{"Sale ID", "Receipt", "Date / Time", "Total", "Cashier", "Device"},
-                0
-        ) {
+                new Object[]{"Sale ID", "Receipt", "Date / Time", "Total", "Cashier", "Device"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -116,14 +109,12 @@ public class ReturnSale extends JFrame {
             saleSearchField.setText(String.valueOf(saleId));
             loadSaleById(saleId);
         }
-
         WindowHelper.configurePosWindow(this);
     }
 
     private JPanel buildHeaderPanel() {
         JPanel panel = new JPanel(new BorderLayout(12, 12));
         panel.setOpaque(false);
-
         JLabel titleLabel = new JLabel("Process Return");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
         titleLabel.setForeground(new Color(31, 41, 55));
@@ -146,20 +137,9 @@ public class ReturnSale extends JFrame {
         loadButton.addActionListener(e -> loadSale());
         saleSearchField.addActionListener(e -> loadSale());
         saleSearchField.getDocument().addDocumentListener(new DocumentListener() {
-            @Override
-            public void insertUpdate(DocumentEvent e) {
-                scheduleSaleSearch();
-            }
-
-            @Override
-            public void removeUpdate(DocumentEvent e) {
-                scheduleSaleSearch();
-            }
-
-            @Override
-            public void changedUpdate(DocumentEvent e) {
-                scheduleSaleSearch();
-            }
+            @Override public void insertUpdate(DocumentEvent e) { scheduleSaleSearch(); }
+            @Override public void removeUpdate(DocumentEvent e) { scheduleSaleSearch(); }
+            @Override public void changedUpdate(DocumentEvent e) { scheduleSaleSearch(); }
         });
         setupSaleSearchPopup();
         panel.add(top, BorderLayout.CENTER);
@@ -174,12 +154,9 @@ public class ReturnSale extends JFrame {
         saleSearchTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() >= 1) {
-                    selectSaleSearchResult();
-                }
+                if (e.getClickCount() >= 1) selectSaleSearchResult();
             }
         });
-
         JTableHeader header = saleSearchTable.getTableHeader();
         JScrollPane scrollPane = new JScrollPane(saleSearchTable);
         JPanel popupPanel = new JPanel(new BorderLayout());
@@ -193,11 +170,9 @@ public class ReturnSale extends JFrame {
     private void configureSaleSearchColumns() {
         TableColumn saleIdColumn = saleSearchTable.getColumnModel().getColumn(0);
         saleSearchTable.removeColumn(saleIdColumn);
-
         TableColumn receiptColumn = saleSearchTable.getColumnModel().getColumn(0);
         receiptColumn.setPreferredWidth(420);
         receiptColumn.setCellRenderer(new TrailingTextRenderer());
-
         saleSearchTable.getColumnModel().getColumn(1).setPreferredWidth(150);
         saleSearchTable.getColumnModel().getColumn(2).setPreferredWidth(90);
         saleSearchTable.getColumnModel().getColumn(3).setPreferredWidth(170);
@@ -217,7 +192,6 @@ public class ReturnSale extends JFrame {
     private JPanel buildFooterPanel() {
         JPanel panel = new JPanel(new BorderLayout(12, 12));
         panel.setOpaque(false);
-
         reasonArea.setLineWrap(true);
         reasonArea.setWrapStyleWord(true);
         JPanel reasonPanel = new JPanel(new BorderLayout(8, 8));
@@ -232,7 +206,6 @@ public class ReturnSale extends JFrame {
         JButton returnAllButton = new JButton("Return All Available");
         JButton clearButton = new JButton("Clear Qty");
         JButton submitButton = new JButton("Submit Return");
-
         actionPanel.add(new JLabel("Refund Method:"));
         actionPanel.add(refundMethodBox);
         actionPanel.add(totalReturnLabel);
@@ -254,10 +227,7 @@ public class ReturnSale extends JFrame {
     }
 
     private void scheduleSaleSearch() {
-        if (selectingSearchResult) {
-            return;
-        }
-        saleSearchTimer.restart();
+        if (!selectingSearchResult) saleSearchTimer.restart();
     }
 
     private void refreshSaleSearchResults() {
@@ -267,57 +237,26 @@ public class ReturnSale extends JFrame {
             saleSearchPopup.setVisible(false);
             return;
         }
-
-        String sql = """
-                SELECT sale_id,
-                       COALESCE(receipt_number, '') AS receipt_number,
-                       (created_at AT TIME ZONE ?) AS local_created_at,
-                       COALESCE(total_amount, 0) AS total_amount,
-                       COALESCE(user_name, '') AS user_name,
-                       COALESCE(receipt_device_id, '') AS device_id
-                FROM sales
-                WHERE CAST(sale_id AS TEXT) = ?
-                   OR COALESCE(receipt_number, '') ILIKE ?
-                   OR COALESCE(receipt_number, '') ILIKE ?
-                ORDER BY
-                    CASE
-                        WHEN CAST(sale_id AS TEXT) = ? THEN 0
-                        WHEN COALESCE(receipt_number, '') ILIKE ? THEN 1
-                        ELSE 2
-                    END,
-                    created_at DESC
-                LIMIT 20
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setString(2, search);
-            ps.setString(3, "%" + search + "%");
-            ps.setString(4, "%" + search);
-            ps.setString(5, search);
-            ps.setString(6, "%" + search + "%");
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    saleSearchModel.addRow(new Object[]{
-                            rs.getInt("sale_id"),
-                            rs.getString("receipt_number"),
-                            StoreTimeZoneHelper.formatLocalTimestamp(rs.getTimestamp("local_created_at"), DATE_TIME_FORMAT),
-                            CURRENCY.format(defaultZero(rs.getBigDecimal("total_amount"))),
-                            rs.getString("user_name"),
-                            rs.getString("device_id")
-                    });
-                }
-            }
-
-            if (saleSearchModel.getRowCount() == 0) {
+        try {
+            List<LanApiClient.SaleSearchResult> results = LanApiClient.searchSalesForReturn(search);
+            populateSearchResults(results);
+            if (results.isEmpty()) {
                 saleSearchPopup.setVisible(false);
-                return;
+            } else {
+                showSaleSearchPopup();
             }
-            showSaleSearchPopup();
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             saleSearchPopup.setVisible(false);
+        }
+    }
+
+    private void populateSearchResults(List<LanApiClient.SaleSearchResult> results) {
+        saleSearchModel.setRowCount(0);
+        for (LanApiClient.SaleSearchResult sale : results) {
+            String localTime = Instant.ofEpochMilli(sale.createdAtEpochMillis())
+                    .atZone(StoreTimeZoneHelper.getStoreZone()).format(DATE_TIME_FORMAT);
+            saleSearchModel.addRow(new Object[]{sale.saleId(), sale.receiptNumber(), localTime,
+                    CURRENCY.format(sale.totalAmount()), sale.cashierName(), sale.deviceId()});
         }
     }
 
@@ -331,12 +270,8 @@ public class ReturnSale extends JFrame {
 
     private void selectSaleSearchResult() {
         int row = saleSearchTable.getSelectedRow();
-        if (row < 0 && saleSearchModel.getRowCount() == 1) {
-            row = 0;
-        }
-        if (row < 0) {
-            return;
-        }
+        if (row < 0 && saleSearchModel.getRowCount() == 1) row = 0;
+        if (row < 0) return;
         int modelRow = saleSearchTable.convertRowIndexToModel(row);
         int saleId = Integer.parseInt(String.valueOf(saleSearchModel.getValueAt(modelRow, 0)));
         String receipt = String.valueOf(saleSearchModel.getValueAt(modelRow, 1));
@@ -351,150 +286,66 @@ public class ReturnSale extends JFrame {
     }
 
     private void loadSale() {
-        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Load Sale for Return")) {
-            return;
-        }
+        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Load Sale for Return")) return;
         String search = saleSearchField.getText().trim();
         if (search.isBlank()) {
             JOptionPane.showMessageDialog(this, "Enter a sale ID or receipt number.");
             return;
         }
-
-        String saleSql = """
-                SELECT sale_id
-                FROM sales
-                WHERE CAST(sale_id AS TEXT) = ?
-                   OR COALESCE(receipt_number, '') ILIKE ?
-                   OR COALESCE(receipt_number, '') ILIKE ?
-                ORDER BY
-                    CASE
-                        WHEN CAST(sale_id AS TEXT) = ? THEN 0
-                        WHEN COALESCE(receipt_number, '') ILIKE ? THEN 1
-                        ELSE 2
-                    END,
-                    created_at DESC
-                LIMIT 20
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement salePs = conn.prepareStatement(saleSql)) {
-            salePs.setString(1, search);
-            salePs.setString(2, "%" + search + "%");
-            salePs.setString(3, "%" + search);
-            salePs.setString(4, search);
-            salePs.setString(5, "%" + search + "%");
-
-            try (ResultSet rs = salePs.executeQuery()) {
-                if (!rs.next()) {
-                    JOptionPane.showMessageDialog(this, "Sale was not found.");
-                    return;
-                }
-                int saleId = rs.getInt("sale_id");
-                if (rs.next()) {
-                    refreshSaleSearchResults();
-                    JOptionPane.showMessageDialog(this, "Multiple sales matched. Select the correct sale from the search list.");
-                    return;
-                }
-                loadSaleById(saleId);
+        try {
+            List<LanApiClient.SaleSearchResult> matches = LanApiClient.searchSalesForReturn(search);
+            if (matches.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Sale was not found.");
+            } else if (matches.size() > 1) {
+                populateSearchResults(matches);
+                showSaleSearchPopup();
+                JOptionPane.showMessageDialog(this,
+                        "Multiple sales matched. Select the correct sale from the search list.");
+            } else {
+                loadSaleById(matches.get(0).saleId());
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load sale: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            showApiError("Failed to load sale", ex);
         }
     }
 
     private void loadSaleById(int saleId) {
-        String saleSql = """
-                SELECT sale_id,
-                       COALESCE(receipt_number, '') AS receipt_number,
-                       location_id,
-                       customer_id,
-                       COALESCE(payment_method, '') AS payment_method,
-                       COALESCE(payment_status, 'PAID') AS payment_status,
-                       COALESCE(total_amount, 0) AS total_amount,
-                       COALESCE(returned_amount, 0) AS returned_amount
-                FROM sales
-                WHERE sale_id = ?
-                """;
-        String itemsSql = """
-                SELECT si.sale_item_id,
-                       si.product_id,
-                       COALESCE(p.sku, '') AS sku,
-                       COALESCE(p.name, 'Unknown')
-                           || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END AS product_name,
-                       COALESCE(si.product_type, p.product_type, 'INVENTORY') AS product_type,
-                       COALESCE(si.quantity, 0) AS sold_qty,
-                       COALESCE(si.unit_price, 0) AS unit_price,
-                       COALESCE(SUM(sri.quantity), 0) AS returned_qty
-                FROM sale_items si
-                LEFT JOIN products p ON p.product_id = si.product_id
-                LEFT JOIN sale_return_items sri ON sri.sale_item_id = si.sale_item_id
-                WHERE si.sale_id = ?
-                GROUP BY si.sale_item_id, si.product_id, p.sku, p.name, p.size, si.product_type, p.product_type, si.quantity, si.unit_price
-                ORDER BY si.sale_item_id ASC
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement salePs = conn.prepareStatement(saleSql);
-             PreparedStatement itemsPs = conn.prepareStatement(itemsSql)) {
-            salePs.setInt(1, saleId);
-            try (ResultSet rs = salePs.executeQuery()) {
-                if (!rs.next()) {
-                    JOptionPane.showMessageDialog(this, "Sale was not found.");
-                    return;
-                }
-                loadedSale = new SaleSnapshot(
-                        rs.getInt("sale_id"),
-                        rs.getString("receipt_number"),
-                        rs.getInt("location_id"),
-                        nullableInt(rs, "customer_id"),
-                        rs.getString("payment_method"),
-                        rs.getString("payment_status"),
-                        defaultZero(rs.getBigDecimal("total_amount")),
-                        defaultZero(rs.getBigDecimal("returned_amount"))
-                );
-            }
-
+        try {
+            LanApiClient.ReturnSaleDetails details = LanApiClient.loadReturnSaleDetails(saleId);
+            loadedSale = new SaleSnapshot(details.saleId(), details.receiptNumber(), details.customerId(),
+                    safe(details.paymentMethod()), safe(details.paymentStatus()), zero(details.totalAmount()),
+                    zero(details.returnedAmount()), zero(details.returnApprovalLimit()),
+                    details.requesterCanOverride());
+            clearApproval();
+            pendingRefundKey = null;
+            pendingRefundFingerprint = null;
             updatingModel = true;
             itemModel.setRowCount(0);
-            itemsPs.setInt(1, loadedSale.saleId());
-            try (ResultSet rs = itemsPs.executeQuery()) {
-                while (rs.next()) {
-                    int soldQty = rs.getInt("sold_qty");
-                    int returnedQty = rs.getInt("returned_qty");
-                    int availableQty = Math.max(0, soldQty - returnedQty);
-                    itemModel.addRow(new Object[]{
-                            rs.getInt("sale_item_id"),
-                            rs.getInt("product_id"),
-                            rs.getString("sku"),
-                            rs.getString("product_name"),
-                            soldQty,
-                            returnedQty,
-                            availableQty,
-                            utils.CurrencyFormatter.normalize(rs.getBigDecimal("unit_price")),
-                            normalizeProductType(rs.getString("product_type")),
-                            0
-                    });
+            if (details.items() != null) {
+                for (LanApiClient.ReturnSaleLine item : details.items()) {
+                    itemModel.addRow(new Object[]{item.saleItemId(), item.productId(), safe(item.sku()),
+                            safe(item.productName()), item.soldQuantity(), item.returnedQuantity(),
+                            item.availableQuantity(), zero(item.unitPrice()),
+                            normalizeProductType(item.productType()), 0});
                 }
-            } finally {
-                updatingModel = false;
             }
-
-            refundMethodBox.setSelectedItem(loadedSale.paymentMethod().isBlank() ? "CASH" : loadedSale.paymentMethod());
+            updatingModel = false;
+            refundMethodBox.setSelectedItem(loadedSale.paymentMethod().isBlank()
+                    ? "CASH" : loadedSale.paymentMethod());
             saleInfoLabel.setText("Sale #" + loadedSale.saleId()
                     + "  Receipt: " + loadedSale.receiptNumber()
                     + "  Payment: " + loadedSale.paymentMethod()
                     + "  Sale Total: " + CURRENCY.format(loadedSale.totalAmount())
                     + "  Previously Returned: " + CURRENCY.format(loadedSale.returnedAmount()));
             updateReturnTotal();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load sale: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            updatingModel = false;
+            showApiError("Failed to load sale", ex);
         }
     }
 
     private void submitReturn() {
-        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Submit Return")) {
-            return;
-        }
+        if (!PermissionManager.requirePermission("PROCESS_RETURNS", this, "Submit Return")) return;
         if (loadedSale == null) {
             JOptionPane.showMessageDialog(this, "Load a sale first.");
             return;
@@ -508,394 +359,106 @@ public class ReturnSale extends JFrame {
         try {
             lines = collectReturnLines();
         } catch (IllegalArgumentException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid Return Quantity", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, ex.getMessage(),
+                    "Invalid Return Quantity", JOptionPane.WARNING_MESSAGE);
             return;
         }
         if (lines.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Enter at least one return quantity.");
             return;
         }
-
         BigDecimal returnTotal = calculateReturnTotal(lines);
-        if (returnTotal.compareTo(BigDecimal.ZERO) <= 0) {
+        if (returnTotal.signum() <= 0) {
             JOptionPane.showMessageDialog(this, "Return total must be greater than zero.");
             return;
         }
-        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
-        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
-                ? BigDecimal.ZERO
-                : saleSafetySettings.returnApprovalLimit();
-        boolean overrideRequired = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
-                && returnTotal.compareTo(returnApprovalLimit) > 0;
-        if (overrideRequired && !PermissionManager.hasPermission(RETURN_OVERRIDE_PERMISSION)) {
-            if (overrideApprovedByUserId == null || overrideApprovedUpToAmount.compareTo(returnTotal) < 0) {
-                JOptionPane.showMessageDialog(
-                        this,
-                        "Return override is required in the return editor before submit.",
-                        "Override Required",
-                        JOptionPane.WARNING_MESSAGE
-                );
-                return;
-            }
-        } else if (overrideRequired) {
-            overrideApprovedByUserId = SessionManager.getCurrentUserId();
-            overrideApprovedByName = SessionManager.getCurrentUserDisplayName();
-            overrideApprovedUpToAmount = returnTotal;
-            overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
-        } else {
-            overrideApprovedByUserId = null;
-            overrideApprovedByName = null;
-            overrideApprovedUpToAmount = BigDecimal.ZERO;
-            overrideStatusLabel.setText("No active override approvals");
-        }
+        if (!ensureApprovalFor(lines, returnTotal)) return;
+
         String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
         if (reason.isBlank()) {
             JOptionPane.showMessageDialog(this, "Reason / note is required for returns.");
             return;
         }
-        int result = JOptionPane.showConfirmDialog(
-                this,
+        int confirmed = JOptionPane.showConfirmDialog(this,
                 "Process return for " + CURRENCY.format(returnTotal) + "?",
-                "Confirm Return",
-                JOptionPane.YES_NO_OPTION
-        );
-        if (result != JOptionPane.YES_OPTION) {
-            return;
-        }
+                "Confirm Return", JOptionPane.YES_NO_OPTION);
+        if (confirmed != JOptionPane.YES_OPTION) return;
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                long returnId = createReturn(conn, lines, returnTotal);
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Return processed successfully.\nReturn ID: " + returnId);
-                loadSale();
-            } catch (Exception ex) {
-                conn.rollback();
-                throw ex;
-            } finally {
-                conn.setAutoCommit(true);
-            }
+        List<LanApiClient.RefundLine> apiLines = lines.stream()
+                .map(line -> new LanApiClient.RefundLine(line.saleItemId(), line.quantity()))
+                .toList();
+        LanApiClient.RefundRequest request = new LanApiClient.RefundRequest(
+                loadedSale.saleId(), String.valueOf(refundMethodBox.getSelectedItem()), reason,
+                overrideApprovalToken, overrideApprovalReason, apiLines);
+        String fingerprint = refundFingerprint(request);
+        if (!fingerprint.equals(pendingRefundFingerprint)) {
+            pendingRefundFingerprint = fingerprint;
+            pendingRefundKey = "return-" + UUID.randomUUID();
+        }
+        try {
+            LanApiClient.RefundResult result = LanApiClient.refund(request, pendingRefundKey);
+            pendingRefundKey = null;
+            pendingRefundFingerprint = null;
+            JOptionPane.showMessageDialog(this,
+                    "Return processed successfully.\nReturn ID: " + result.returnId()
+                            + "\nRefund amount: " + CURRENCY.format(result.refundAmount()));
+            loadSaleById(loadedSale.saleId());
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to process return: " + ex.getMessage(), "Return Error", JOptionPane.ERROR_MESSAGE);
+            showApiError("Failed to process return", ex);
         }
     }
 
-    private long createReturn(Connection conn, List<ReturnLine> lines, BigDecimal returnTotal) throws Exception {
-        String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
-        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
-        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
-                ? BigDecimal.ZERO
-                : saleSafetySettings.returnApprovalLimit();
-        boolean returnOverrideApplied = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
-                && returnTotal.compareTo(returnApprovalLimit) > 0;
-        String lockSaleSql = """
-                SELECT sale_id, location_id, customer_id, payment_method, total_amount, amount_paid, returned_amount
-                FROM sales
-                WHERE sale_id = ?
-                FOR UPDATE
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(lockSaleSql)) {
-            ps.setInt(1, loadedSale.saleId());
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Sale was not found.");
-                }
+    private boolean ensureApprovalFor(List<ReturnLine> lines, BigDecimal total) {
+        if (!overrideRequired(total)) {
+            clearApproval();
+            return true;
+        }
+        if (loadedSale.requesterCanOverride()) {
+            overrideStatusLabel.setText("Return override approved by: "
+                    + SessionManager.getCurrentUserDisplayName());
+            return true;
+        }
+        String resource = approvalResource(lines, total);
+        if (overrideApprovalToken != null && resource.equals(overrideApprovedResource)) return true;
+        try {
+            String label = "Sale #" + loadedSale.saleId() + " return total: " + CURRENCY.format(total);
+            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                    this, RETURN_OVERRIDE_PERMISSION, "Return Override",
+                    "Reason for return override:", label, resource);
+            if (approval == null) {
+                clearApproval();
+                overrideStatusLabel.setText("Return override required before submit");
+                return false;
             }
-        }
-        validateReturnQuantities(conn, lines);
-
-        String deviceId = DeviceContextService.currentDeviceId();
-        CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
-        if ("CASH".equalsIgnoreCase(String.valueOf(refundMethodBox.getSelectedItem()))) {
-            cashDrawer = CashDrawerService.requireActiveCashSession(conn);
-        }
-        String insertReturnSql = """
-                INSERT INTO sale_returns (
-                    sale_id,
-                    location_id,
-                    user_id,
-                    user_name,
-                    refund_method,
-                    refund_amount,
-                    reason,
-                    device_id,
-                    device_name,
-                    cash_drawer_id,
-                    cash_drawer_name,
-                    cash_drawer_session_id,
-                    override_reason,
-                    override_by_user_id,
-                    override_by_name
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String insertReturnItemSql = """
-                INSERT INTO sale_return_items (return_id, sale_item_id, product_id, quantity, unit_price)
-                VALUES (?, ?, ?, ?, ?)
-                """;
-        String ensureInventorySql = "INSERT INTO inventory (product_id, location_id, quantity_on_hand, reorder_level) VALUES (?, ?, 0, 0) ON CONFLICT (product_id, location_id) DO NOTHING";
-        String updateInventorySql = "UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE product_id = ? AND location_id = ?";
-        String movementSql = """
-                INSERT INTO inventory_movements (
-                    product_id, location_id, change_qty, reason, note, user_name,
-                    sale_id, sale_item_id, sale_return_id, device_id, device_name, user_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        String updateSaleSql = """
-                UPDATE sales
-                SET returned_amount = COALESCE(returned_amount, 0) + ?,
-                    payment_status = CASE
-                        WHEN payment_method = 'ACCOUNT'
-                         AND COALESCE(amount_paid, 0) >= GREATEST(COALESCE(total_amount, 0) - (COALESCE(returned_amount, 0) + ?), 0)
-                        THEN 'PAID'
-                        ELSE payment_status
-                    END
-                WHERE sale_id = ?
-                """;
-
-        long returnId;
-        try (PreparedStatement returnStmt = conn.prepareStatement(insertReturnSql, Statement.RETURN_GENERATED_KEYS)) {
-            returnStmt.setInt(1, loadedSale.saleId());
-            returnStmt.setInt(2, loadedSale.locationId());
-            returnStmt.setInt(3, SessionManager.getCurrentUserId());
-            returnStmt.setString(4, SessionManager.getCurrentUserDisplayName());
-            returnStmt.setString(5, String.valueOf(refundMethodBox.getSelectedItem()));
-            returnStmt.setBigDecimal(6, returnTotal);
-            returnStmt.setString(7, reason);
-            returnStmt.setString(8, deviceId);
-            returnStmt.setString(9, DeviceContextService.currentDeviceName());
-            setNullableLong(returnStmt, 10, cashDrawer.cashDrawerId());
-            returnStmt.setString(11, cashDrawer.drawerName());
-            setNullableLong(returnStmt, 12, cashDrawer.sessionId());
-            returnStmt.setString(13, returnOverrideApplied ? reason : null);
-            setNullableInteger(returnStmt, 14, returnOverrideApplied ? overrideApprovedByUserId : null);
-            returnStmt.setString(15, returnOverrideApplied ? overrideApprovedByName : null);
-            returnStmt.executeUpdate();
-
-            try (ResultSet keys = returnStmt.getGeneratedKeys()) {
-                if (!keys.next()) {
-                    throw new SQLException("Failed to create return record.");
-                }
-                returnId = keys.getLong(1);
+            overrideApprovalToken = approval.lanApprovalToken();
+            overrideApprovalReason = approval.reason();
+            overrideApprovedByName = approval.approvedByName();
+            overrideApprovedResource = resource;
+            if ((reasonArea.getText() == null || reasonArea.getText().trim().isBlank())
+                    && approval.reason() != null) {
+                reasonArea.setText(approval.reason());
             }
+            overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
+            return true;
+        } catch (Exception ex) {
+            clearApproval();
+            showApiError("Manager approval could not be completed", ex);
+            return false;
         }
-
-        SaleAuditService.record(
-                conn, loadedSale.saleId(), null, returnId, null,
-                loadedSale.customerId(), null, loadedSale.locationId(),
-                "RETURN_CREATED", "RETURN", "refund_amount",
-                null, returnTotal, returnTotal, null,
-                reason,
-                "refund_method=" + refundMethodBox.getSelectedItem()
-        );
-        if (returnOverrideApplied) {
-            SaleAuditService.record(
-                    conn, loadedSale.saleId(), null, returnId, null,
-                    loadedSale.customerId(), null, loadedSale.locationId(),
-                    "RETURN_OVERRIDE_APPROVED", "RETURN", "override_by",
-                    null, overrideApprovedByName,
-                    returnTotal, null,
-                    reason,
-                    "Return override approval captured."
-            );
-        }
-
-        try (PreparedStatement itemStmt = conn.prepareStatement(insertReturnItemSql, Statement.RETURN_GENERATED_KEYS);
-             PreparedStatement ensureInventoryStmt = conn.prepareStatement(ensureInventorySql);
-             PreparedStatement updateInventoryStmt = conn.prepareStatement(updateInventorySql);
-             PreparedStatement movementStmt = conn.prepareStatement(movementSql);
-             PreparedStatement updateSaleStmt = conn.prepareStatement(updateSaleSql)) {
-            for (ReturnLine line : lines) {
-                itemStmt.setLong(1, returnId);
-                itemStmt.setInt(2, line.saleItemId());
-                itemStmt.setInt(3, line.productId());
-                itemStmt.setInt(4, line.quantity());
-                itemStmt.setBigDecimal(5, line.unitPrice());
-                itemStmt.executeUpdate();
-                long returnItemId;
-                try (ResultSet itemKeys = itemStmt.getGeneratedKeys()) {
-                    if (!itemKeys.next()) {
-                        throw new SQLException("Failed to create return item audit reference.");
-                    }
-                    returnItemId = itemKeys.getLong(1);
-                }
-
-                BigDecimal lineReturnAmount = utils.CurrencyFormatter.normalize(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
-                SaleAuditService.record(
-                        conn, loadedSale.saleId(), line.saleItemId(), returnId, returnItemId,
-                        loadedSale.customerId(), line.productId(), loadedSale.locationId(),
-                        "RETURN_LINE_RECORDED", "RETURN_ITEM", "quantity",
-                        null, line.quantity(), lineReturnAmount, line.quantity(),
-                        reason,
-                        "refund_method=" + refundMethodBox.getSelectedItem()
-                );
-
-                if (isInventoryProduct(line.productType())) {
-                    ensureInventoryStmt.setInt(1, line.productId());
-                    ensureInventoryStmt.setInt(2, loadedSale.locationId());
-                    ensureInventoryStmt.executeUpdate();
-
-                    updateInventoryStmt.setInt(1, line.quantity());
-                    updateInventoryStmt.setInt(2, line.productId());
-                    updateInventoryStmt.setInt(3, loadedSale.locationId());
-                    updateInventoryStmt.executeUpdate();
-
-                    movementStmt.setInt(1, line.productId());
-                    movementStmt.setInt(2, loadedSale.locationId());
-                    movementStmt.setInt(3, line.quantity());
-                    movementStmt.setString(4, "RETURN");
-                    movementStmt.setString(5, "return_id=" + returnId + "; sale_id=" + loadedSale.saleId() + "; receipt=" + loadedSale.receiptNumber());
-                    movementStmt.setString(6, SessionManager.getCurrentUserDisplayName());
-                    movementStmt.setInt(7, loadedSale.saleId());
-                    movementStmt.setInt(8, line.saleItemId());
-                    movementStmt.setLong(9, returnId);
-                    movementStmt.setString(10, DeviceContextService.currentDeviceId());
-                    movementStmt.setString(11, DeviceContextService.currentDeviceName());
-                    setNullableInteger(movementStmt, 12, SessionManager.getCurrentUserId());
-                    movementStmt.executeUpdate();
-                    SaleAuditService.record(
-                            conn, loadedSale.saleId(), line.saleItemId(), returnId, returnItemId,
-                            loadedSale.customerId(), line.productId(), loadedSale.locationId(),
-                            "RETURN_INVENTORY_RESTOCKED", "INVENTORY", null,
-                            null, null, null, line.quantity(),
-                            reason,
-                            "Inventory restored from sale return."
-                    );
-                }
-            }
-
-            updateSaleStmt.setBigDecimal(1, returnTotal);
-            updateSaleStmt.setBigDecimal(2, returnTotal);
-            updateSaleStmt.setInt(3, loadedSale.saleId());
-            updateSaleStmt.executeUpdate();
-        }
-
-        if (loadedSale.customerId() != null && "ACCOUNT".equalsIgnoreCase(loadedSale.paymentMethod())) {
-            applyAccountReturn(conn, loadedSale.customerId(), returnTotal, returnId);
-        }
-
-        SyncOutboxService.recordEvent(conn, "SALE_RETURN_CREATED", Map.of(
-                "return_id", returnId,
-                "sale_id", loadedSale.saleId(),
-                "location_id", loadedSale.locationId(),
-                "user_id", SessionManager.getCurrentUserId(),
-                "device_id", String.valueOf(deviceId),
-                "refund_method", String.valueOf(refundMethodBox.getSelectedItem()),
-                "refund_amount", returnTotal,
-                "cash_drawer_session_id", cashDrawer.sessionId() == null ? "" : cashDrawer.sessionId()
-        ));
-        return returnId;
-    }
-
-    private void validateReturnQuantities(Connection conn, List<ReturnLine> lines) throws SQLException {
-        String lockItemSql = """
-                SELECT quantity
-                FROM sale_items
-                WHERE sale_item_id = ?
-                  AND sale_id = ?
-                FOR UPDATE
-                """;
-        String returnedSql = "SELECT COALESCE(SUM(quantity), 0) AS returned_qty FROM sale_return_items WHERE sale_item_id = ?";
-
-        try (PreparedStatement itemPs = conn.prepareStatement(lockItemSql);
-             PreparedStatement returnedPs = conn.prepareStatement(returnedSql)) {
-            for (ReturnLine line : lines) {
-                int soldQty;
-                itemPs.setInt(1, line.saleItemId());
-                itemPs.setInt(2, loadedSale.saleId());
-                try (ResultSet rs = itemPs.executeQuery()) {
-                    if (!rs.next()) {
-                        throw new SQLException("Sale item " + line.saleItemId() + " was not found on this sale.");
-                    }
-                    soldQty = rs.getInt("quantity");
-                }
-
-                returnedPs.setInt(1, line.saleItemId());
-                int alreadyReturned;
-                try (ResultSet rs = returnedPs.executeQuery()) {
-                    rs.next();
-                    alreadyReturned = rs.getInt("returned_qty");
-                }
-
-                int available = soldQty - alreadyReturned;
-                if (line.quantity() > available) {
-                    throw new SQLException("Return quantity is higher than available for sale item " + line.saleItemId() + ".");
-                }
-            }
-        }
-    }
-
-    private void applyAccountReturn(Connection conn, int customerId, BigDecimal returnTotal, long returnId) throws SQLException {
-        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
-        BigDecimal currentBalance;
-        try (PreparedStatement ps = conn.prepareStatement("SELECT current_balance FROM customer_accounts WHERE customer_id = ? FOR UPDATE")) {
-            ps.setInt(1, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Customer account was not found.");
-                }
-                currentBalance = defaultZero(rs.getBigDecimal("current_balance"));
-            }
-        }
-
-        BigDecimal newBalance = currentBalance.subtract(returnTotal);
-        if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
-            newBalance = BigDecimal.ZERO;
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
-            ps.setBigDecimal(1, newBalance);
-            ps.setInt(2, customerId);
-            ps.executeUpdate();
-        }
-
-        String transactionSql = """
-                INSERT INTO customer_account_transactions (
-                    customer_id, sale_id, location_id, amount, transaction_type, note, user_name, device_id, device_name
-                )
-                VALUES (?, ?, ?, ?, 'RETURN', ?, ?, ?, ?)
-                """;
-        try (PreparedStatement ps = conn.prepareStatement(transactionSql)) {
-            ps.setInt(1, customerId);
-            ps.setInt(2, loadedSale.saleId());
-            ps.setInt(3, loadedSale.locationId());
-            ps.setBigDecimal(4, returnTotal.negate());
-            ps.setString(5, "Returned items. return_id=" + returnId + "; sale_id=" + loadedSale.saleId());
-            ps.setString(6, SessionManager.getCurrentUserDisplayName());
-            ps.setString(7, DeviceContextService.currentDeviceId());
-            ps.setString(8, DeviceContextService.currentDeviceName());
-            ps.executeUpdate();
-        }
-        SaleAuditService.record(
-                conn, loadedSale.saleId(), null, returnId, null,
-                customerId, null, loadedSale.locationId(),
-                "ACCOUNT_RETURN_APPLIED", "CUSTOMER_ACCOUNT", "current_balance",
-                currentBalance, newBalance, returnTotal.negate(), null,
-                null,
-                "return_id=" + returnId
-        );
     }
 
     private List<ReturnLine> collectReturnLines() {
         List<ReturnLine> lines = new ArrayList<>();
         for (int row = 0; row < itemModel.getRowCount(); row++) {
-            int qty = parseInt(itemModel.getValueAt(row, 9), 0);
+            int quantity = parseInt(itemModel.getValueAt(row, 9), 0);
             int available = parseInt(itemModel.getValueAt(row, 6), 0);
-            if (qty <= 0) {
-                continue;
+            if (quantity <= 0) continue;
+            if (quantity > available) {
+                throw new IllegalArgumentException("Return quantity cannot be more than available for "
+                        + itemModel.getValueAt(row, 3));
             }
-            if (qty > available) {
-                throw new IllegalArgumentException("Return quantity cannot be more than available for " + itemModel.getValueAt(row, 3));
-            }
-            lines.add(new ReturnLine(
-                    parseInt(itemModel.getValueAt(row, 0), 0),
-                    parseInt(itemModel.getValueAt(row, 1), 0),
-                    qty,
-                    parseMoney(itemModel.getValueAt(row, 7)),
-                    normalizeProductType(String.valueOf(itemModel.getValueAt(row, 8)))
-            ));
+            lines.add(new ReturnLine(parseInt(itemModel.getValueAt(row, 0), 0), quantity,
+                    parseMoney(itemModel.getValueAt(row, 7))));
         }
         return lines;
     }
@@ -905,9 +468,8 @@ public class ReturnSale extends JFrame {
         try {
             for (int row = 0; row < itemModel.getRowCount(); row++) {
                 int available = parseInt(itemModel.getValueAt(row, 6), 0);
-                int qty = parseInt(itemModel.getValueAt(row, 9), 0);
-                qty = Math.max(0, Math.min(qty, available));
-                itemModel.setValueAt(qty, row, 9);
+                int quantity = parseInt(itemModel.getValueAt(row, 9), 0);
+                itemModel.setValueAt(Math.max(0, Math.min(quantity, available)), row, 9);
             }
         } finally {
             updatingModel = false;
@@ -915,63 +477,38 @@ public class ReturnSale extends JFrame {
     }
 
     private void updateReturnTotal() {
-        BigDecimal total = BigDecimal.ZERO;
-        for (ReturnLine line : collectReturnLines()) {
-            total = total.add(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
+        List<ReturnLine> lines = collectReturnLines();
+        BigDecimal total = calculateReturnTotal(lines);
+        if (!overrideRequired(total)) {
+            clearApproval();
+        } else if (loadedSale != null && loadedSale.requesterCanOverride()) {
+            overrideStatusLabel.setText("Return override approved by: "
+                    + SessionManager.getCurrentUserDisplayName());
+        } else if (overrideApprovalToken != null
+                && !approvalResource(lines, total).equals(overrideApprovedResource)) {
+            clearApproval();
+            overrideStatusLabel.setText("Return override required before submit");
         }
-        evaluateReturnOverrideForCurrentTotal(total);
         totalReturnLabel.setText("Return Total: " + CURRENCY.format(total));
     }
 
-    private void evaluateReturnOverrideForCurrentTotal(BigDecimal total) {
-        CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = CompanyCustomizationManager.loadSaleSafetySettings();
-        BigDecimal returnApprovalLimit = saleSafetySettings.returnApprovalLimit() == null
-                ? BigDecimal.ZERO
-                : saleSafetySettings.returnApprovalLimit();
-        boolean overrideRequired = returnApprovalLimit.compareTo(BigDecimal.ZERO) > 0
-                && total.compareTo(returnApprovalLimit) > 0;
+    private boolean overrideRequired(BigDecimal total) {
+        return loadedSale != null && loadedSale.returnApprovalLimit().signum() > 0
+                && total.compareTo(loadedSale.returnApprovalLimit()) > 0;
+    }
 
-        if (!overrideRequired) {
-            overrideApprovedByUserId = null;
-            overrideApprovedByName = null;
-            overrideApprovedUpToAmount = BigDecimal.ZERO;
-            overrideStatusLabel.setText("No active override approvals");
-            return;
-        }
+    private String approvalResource(List<ReturnLine> lines, BigDecimal total) {
+        Map<Integer, Integer> quantities = new LinkedHashMap<>();
+        for (ReturnLine line : lines) quantities.put(line.saleItemId(), line.quantity());
+        return RefundApprovalIdentity.build(loadedSale.saleId(), total, quantities);
+    }
 
-        if (PermissionManager.hasPermission(RETURN_OVERRIDE_PERMISSION)) {
-            overrideApprovedByUserId = SessionManager.getCurrentUserId();
-            overrideApprovedByName = SessionManager.getCurrentUserDisplayName();
-            overrideApprovedUpToAmount = total;
-            overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
-            return;
-        }
-
-        if (overrideApprovedByUserId != null && overrideApprovedUpToAmount.compareTo(total) >= 0) {
-            return;
-        }
-
-        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
-                this,
-                RETURN_OVERRIDE_PERMISSION,
-                "Return Override",
-                "Reason for return override:"
-        );
-        if (approval == null) {
-            overrideApprovedByUserId = null;
-            overrideApprovedByName = null;
-            overrideApprovedUpToAmount = BigDecimal.ZERO;
-            overrideStatusLabel.setText("Return override required before submit");
-            return;
-        }
-
-        overrideApprovedByUserId = approval.approvedByUserId();
-        overrideApprovedByName = approval.approvedByName();
-        overrideApprovedUpToAmount = total;
-        if ((reasonArea.getText() == null || reasonArea.getText().trim().isBlank()) && approval.reason() != null) {
-            reasonArea.setText(approval.reason());
-        }
-        overrideStatusLabel.setText("Return override approved by: " + overrideApprovedByName);
+    private void clearApproval() {
+        overrideApprovalToken = null;
+        overrideApprovalReason = null;
+        overrideApprovedByName = null;
+        overrideApprovedResource = null;
+        overrideStatusLabel.setText("No active override approvals");
     }
 
     private BigDecimal calculateReturnTotal(List<ReturnLine> lines) {
@@ -979,7 +516,7 @@ public class ReturnSale extends JFrame {
         for (ReturnLine line : lines) {
             total = total.add(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
         }
-        return utils.CurrencyFormatter.normalize(total);
+        return CurrencyFormatter.normalize(total);
     }
 
     private void returnAllAvailable() {
@@ -997,125 +534,99 @@ public class ReturnSale extends JFrame {
     private void clearReturnQty() {
         updatingModel = true;
         try {
-            for (int row = 0; row < itemModel.getRowCount(); row++) {
-                itemModel.setValueAt(0, row, 9);
-            }
+            for (int row = 0; row < itemModel.getRowCount(); row++) itemModel.setValueAt(0, row, 9);
         } finally {
             updatingModel = false;
         }
         updateReturnTotal();
     }
 
-    private Integer nullableInt(ResultSet rs, String column) throws SQLException {
-        int value = rs.getInt(column);
-        return rs.wasNull() ? null : value;
+    private String refundFingerprint(LanApiClient.RefundRequest request) {
+        StringBuilder value = new StringBuilder();
+        value.append(request.saleId()).append('|').append(request.refundMethod()).append('|')
+                .append(request.reason()).append('|').append(safe(request.approvalToken())).append('|')
+                .append(safe(request.approvalReason()));
+        for (LanApiClient.RefundLine line : request.lines()) {
+            value.append('|').append(line.saleItemId()).append(':').append(line.quantity());
+        }
+        return value.toString();
     }
 
-    private BigDecimal parseMoney(Object value) {
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        try {
-            return new BigDecimal(String.valueOf(value).replace("$", "").replace(",", "").trim());
-        } catch (Exception ex) {
-            return BigDecimal.ZERO;
-        }
+    private void showApiError(String prefix, Exception ex) {
+        String message = ex.getMessage() == null || ex.getMessage().isBlank()
+                ? "The SmartStock server could not complete the request." : ex.getMessage();
+        JOptionPane.showMessageDialog(this, prefix + ": " + message,
+                "SmartStock Server", JOptionPane.ERROR_MESSAGE);
     }
 
-    private int parseInt(Object value, int fallback) {
-        try {
-            return Integer.parseInt(String.valueOf(value).trim());
-        } catch (Exception ex) {
-            return fallback;
-        }
+    private static int parseInt(Object value, int fallback) {
+        try { return Integer.parseInt(String.valueOf(value).trim()); }
+        catch (Exception ex) { return fallback; }
     }
 
-    private BigDecimal defaultZero(BigDecimal value) {
+    private static BigDecimal parseMoney(Object value) {
+        if (value instanceof BigDecimal decimal) return decimal;
+        try { return new BigDecimal(String.valueOf(value).replace("$", "").replace(",", "").trim()); }
+        catch (Exception ex) { return BigDecimal.ZERO; }
+    }
+
+    private static BigDecimal zero(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
     }
 
-    private static void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
-    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
+    private static String normalizeProductType(String value) {
+        String normalized = safe(value).trim().toUpperCase().replace(' ', '_');
+        return "SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)
+                ? normalized : "INVENTORY";
     }
 
-    private record SaleSnapshot(
-            int saleId,
-            String receiptNumber,
-            int locationId,
-            Integer customerId,
-            String paymentMethod,
-            String paymentStatus,
-            BigDecimal totalAmount,
-            BigDecimal returnedAmount
-    ) {
+    private record SaleSnapshot(int saleId, String receiptNumber, Integer customerId,
+                                String paymentMethod, String paymentStatus, BigDecimal totalAmount,
+                                BigDecimal returnedAmount, BigDecimal returnApprovalLimit,
+                                boolean requesterCanOverride) {
     }
 
-    private String normalizeProductType(String value) {
-        String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
-        if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
-            return normalized;
-        }
-        return "INVENTORY";
+    private record ReturnLine(int saleItemId, int quantity, BigDecimal unitPrice) {
     }
 
-    private boolean isInventoryProduct(String productType) {
-        return "INVENTORY".equals(normalizeProductType(productType));
-    }
-
-    private record ReturnLine(int saleItemId, int productId, int quantity, BigDecimal unitPrice, String productType) {
+    private static final class NumberFormatAdapter {
+        private final java.text.NumberFormat formatter = CurrencyFormatter.create(Locale.US);
+        private String format(BigDecimal value) { return formatter.format(zero(value)); }
     }
 
     private static class TrailingTextRenderer extends DefaultTableCellRenderer {
         @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column) {
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, isSelected, hasFocus, row, column);
             String text = value == null ? "" : String.valueOf(value);
             label.setHorizontalAlignment(SwingConstants.LEFT);
             label.setToolTipText(text);
-            label.setText(clipBeginning(label, text, table.getColumnModel().getColumn(column).getWidth()));
+            label.setText(clipBeginning(label, text,
+                    table.getColumnModel().getColumn(column).getWidth()));
             return label;
         }
 
         private String clipBeginning(JLabel label, String text, int columnWidth) {
-            if (text == null || text.isBlank()) {
-                return "";
-            }
-
+            if (text == null || text.isBlank()) return "";
             Insets insets = label.getInsets();
             int availableWidth = Math.max(0, columnWidth - insets.left - insets.right - 8);
             FontMetrics metrics = label.getFontMetrics(label.getFont());
-            if (metrics.stringWidth(text) <= availableWidth) {
-                return text;
-            }
-
+            if (metrics.stringWidth(text) <= availableWidth) return text;
             String prefix = "...";
             int prefixWidth = metrics.stringWidth(prefix);
-            if (prefixWidth >= availableWidth) {
-                return prefix;
-            }
-
+            if (prefixWidth >= availableWidth) return prefix;
             int low = 0;
             int high = text.length();
             while (low < high) {
                 int mid = (low + high) / 2;
-                String candidate = text.substring(mid);
-                if (prefixWidth + metrics.stringWidth(candidate) <= availableWidth) {
-                    high = mid;
-                } else {
-                    low = mid + 1;
-                }
+                if (prefixWidth + metrics.stringWidth(text.substring(mid)) <= availableWidth) high = mid;
+                else low = mid + 1;
             }
             return prefix + text.substring(low);
         }

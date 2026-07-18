@@ -5,11 +5,13 @@ import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.SyncServiceStatusService;
 import services.SyncWorker;
+import services.LanApiServer;
 
 import java.sql.Connection;
 
 public final class SyncServiceMain {
     private static volatile boolean running = true;
+    private static volatile LanApiServer lanApiServer;
 
     private SyncServiceMain() {
     }
@@ -17,6 +19,9 @@ public final class SyncServiceMain {
     public static void main(String[] args) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
+            if (lanApiServer != null) {
+                lanApiServer.close();
+            }
             SyncServiceStatusService.mark("Stopped", "SmartStock background sync is stopping.");
         }, "smartstock-sync-shutdown"));
 
@@ -30,6 +35,8 @@ public final class SyncServiceMain {
                 sleepSeconds(intervalSeconds);
                 continue;
             }
+
+            ensureLanApiStarted();
 
             try (Connection ignored = DB.getConnection()) {
                 SyncServiceStatusService.mark("Running", "Local database is online. Running cloud sync every " + intervalSeconds + " seconds.");
@@ -47,6 +54,21 @@ public final class SyncServiceMain {
                 SyncServiceStatusService.mark("Failed", status.lastError());
             }
             sleepSeconds(intervalSeconds);
+        }
+    }
+
+    private static void ensureLanApiStarted() {
+        if (lanApiServer != null) return;
+        synchronized (SyncServiceMain.class) {
+            if (lanApiServer != null) return;
+            try {
+                lanApiServer = LanApiServer.start();
+                SyncServiceStatusService.mark("Running",
+                        "SmartStock LAN service is online on HTTPS port " + LanApiServer.DEFAULT_PORT + ".");
+            } catch (Exception ex) {
+                System.err.println("SmartStock LAN service could not start: " + ex.getMessage());
+                SyncServiceStatusService.mark("Failed", "LAN service could not start: " + ex.getMessage());
+            }
         }
     }
 

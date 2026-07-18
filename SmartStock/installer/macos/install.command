@@ -6,7 +6,7 @@ MODE="server"
 RESET_LOCAL_DB="no"
 for arg in "$@"; do
   case "$arg" in
-    server|client|cloud-direct|cloud_direct)
+    server|client)
       MODE="$arg"
       ;;
     --reset-local-db)
@@ -38,8 +38,6 @@ done
 DB_NAME="${SMARTSTOCK_DB_NAME:-smartstock}"
 DB_USER="${SMARTSTOCK_DB_USER:-smartstock_server}"
 DB_PASSWORD="${SMARTSTOCK_DB_PASSWORD:-}"
-CLIENT_DB_USER="${SMARTSTOCK_CLIENT_DB_USER:-smartstock_client}"
-CLIENT_DB_PASSWORD="${SMARTSTOCK_CLIENT_DB_PASSWORD:-SmartStockClientLan2026!}"
 DB_PORT="${SMARTSTOCK_DB_PORT:-5432}"
 SYNC_INTERVAL="${SMARTSTOCK_SYNC_INTERVAL:-60}"
 CLOUD_JDBC_URL="${SMARTSTOCK_CLOUD_JDBC_URL:-}"
@@ -99,9 +97,15 @@ load_existing_cloud_config() {
   fi
   if [[ -z "$CLOUD_DB_USER" ]]; then
     CLOUD_DB_USER="$(properties_get "cloud.db.user" "$CONFIG_PATH")"
+    if looks_like_placeholder "$CLOUD_DB_USER"; then
+      CLOUD_DB_USER="$(security find-generic-password -w -s com.smartstock.database -a cloud-db-user 2>/dev/null || true)"
+    fi
   fi
   if [[ -z "$CLOUD_DB_PASSWORD" ]]; then
     CLOUD_DB_PASSWORD="$(properties_get "cloud.db.password" "$CONFIG_PATH")"
+    if looks_like_placeholder "$CLOUD_DB_PASSWORD"; then
+      CLOUD_DB_PASSWORD="$(security find-generic-password -w -s com.smartstock.database -a cloud-db-password 2>/dev/null || true)"
+    fi
   fi
 }
 
@@ -112,24 +116,20 @@ load_or_create_credentials() {
     source "$CREDENTIALS_PATH"
     DB_USER="${SMARTSTOCK_DB_USER:-$DB_USER}"
     DB_PASSWORD="${SMARTSTOCK_DB_PASSWORD:-$DB_PASSWORD}"
-    CLIENT_DB_USER="${SMARTSTOCK_CLIENT_DB_USER:-$CLIENT_DB_USER}"
-    CLIENT_DB_PASSWORD="${SMARTSTOCK_CLIENT_DB_PASSWORD:-$CLIENT_DB_PASSWORD}"
+  fi
+  if [[ -z "$DB_USER" ]] || looks_like_placeholder "$DB_USER"; then
+    DB_USER="$(security find-generic-password -w -s com.smartstock.database -a primary-db-user 2>/dev/null || true)"
+  fi
+  if [[ -z "$DB_PASSWORD" ]] || looks_like_placeholder "$DB_PASSWORD"; then
+    DB_PASSWORD="$(security find-generic-password -w -s com.smartstock.database -a primary-db-password 2>/dev/null || true)"
   fi
   DB_USER="$(clean_placeholder "$DB_USER")"
   DB_PASSWORD="$(clean_placeholder "$DB_PASSWORD")"
-  CLIENT_DB_USER="$(clean_placeholder "$CLIENT_DB_USER")"
-  CLIENT_DB_PASSWORD="$(clean_placeholder "$CLIENT_DB_PASSWORD")"
   if [[ -z "$DB_USER" ]]; then
     DB_USER="smartstock_server"
   fi
-  if [[ -z "$CLIENT_DB_USER" ]]; then
-    CLIENT_DB_USER="smartstock_client"
-  fi
   if [[ -z "$DB_PASSWORD" ]]; then
     DB_PASSWORD="$(generate_password)"
-  fi
-  if [[ -z "$CLIENT_DB_PASSWORD" ]]; then
-    CLIENT_DB_PASSWORD="SmartStockClientLan2026!"
   fi
 }
 
@@ -169,6 +169,18 @@ install_dependencies() {
     export PATH="/usr/local/opt/openjdk@17/bin:$PATH"
   fi
   add_postgres_to_path
+}
+
+install_client_dependencies() {
+  install_homebrew_if_needed
+  log "Installing Java and Maven when missing"
+  require_command java || brew install openjdk@17
+  require_command mvn || brew install maven
+  if [[ -x /opt/homebrew/opt/openjdk@17/bin/java ]]; then
+    export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+  elif [[ -x /usr/local/opt/openjdk@17/bin/java ]]; then
+    export PATH="/usr/local/opt/openjdk@17/bin:$PATH"
+  fi
 }
 
 postgres_formula() {
@@ -240,20 +252,12 @@ init_database() {
     -v ON_ERROR_STOP=1 \
     -v db_name="$DB_NAME" \
     -v db_user="$DB_USER" \
-    -v db_password="$DB_PASSWORD" \
-    -v client_db_user="$CLIENT_DB_USER" \
-    -v client_db_password="$CLIENT_DB_PASSWORD" <<'SQL'
+    -v db_password="$DB_PASSWORD" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'db_user', :'db_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'db_user')\gexec
 
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'db_user', :'db_password')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'db_user')\gexec
-
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'client_db_user', :'client_db_password')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'client_db_user')\gexec
-
-SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'client_db_user', :'client_db_password')
-WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'client_db_user')\gexec
 
 SELECT 'CREATE ROLE service_role NOLOGIN'
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')\gexec
@@ -269,7 +273,6 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db_name')\gexec
 
 SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'db_name', :'db_user')\gexec
 
-SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'db_name', :'client_db_user')\gexec
 SQL
 
   psql "postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
@@ -282,15 +285,6 @@ SQL
 
   apply_feature_schema_scripts
 
-  psql "postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
-    -v ON_ERROR_STOP=1 \
-    -v client_db_user="$CLIENT_DB_USER" <<'SQL'
-GRANT USAGE ON SCHEMA public TO :"client_db_user";
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"client_db_user";
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO :"client_db_user";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"client_db_user";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO :"client_db_user";
-SQL
 }
 
 apply_feature_schema_scripts() {
@@ -301,6 +295,7 @@ apply_feature_schema_scripts() {
     location_management_setup.sql
     store_timezone_setup.sql
     department_setup.sql
+    item_details_setup.sql
     vendor_setup.sql
     held_cart_setup.sql
     product_type_setup.sql
@@ -308,6 +303,7 @@ apply_feature_schema_scripts() {
     product_sku_setup.sql
     customer_type_setup.sql
     device_management_setup.sql
+    lan_api_security_setup.sql
     hardware_setup_permission.sql
     company_customization_setup.sql
     company_customization_permission.sql
@@ -340,28 +336,91 @@ apply_feature_schema_scripts() {
   done
 }
 
+restrict_postgres_to_server() {
+  log "Restricting PostgreSQL to the physical server"
+  local postgres_url="postgresql://127.0.0.1:${DB_PORT}/postgres"
+  local hba_file
+  hba_file="$(psql "$postgres_url" -Atc 'show hba_file')"
+  cp "$hba_file" "$hba_file.smartstock-service-only-backup-${BACKUP_SUFFIX}"
+  psql "$postgres_url" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE role_name text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'smartstock_client') THEN
+    ALTER ROLE smartstock_client NOLOGIN;
+  END IF;
+  FOR role_name IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'smartstock_device_%' LOOP
+    EXECUTE format('ALTER ROLE %I NOLOGIN', role_name);
+  END LOOP;
+END $$;
+ALTER SYSTEM SET listen_addresses = 'localhost';
+SQL
+  perl -0pi -e "s/^([[:space:]]*host(?:ssl|nossl)?[[:space:]]+${DB_NAME}[[:space:]]+[^[:space:]]+[[:space:]]+samenet[[:space:]]+.*)$/# disabled by SmartStock HTTPS single cutover: \$1/mg" "$hba_file"
+  perl -0pi -e "s/^([[:space:]]*host(?:ssl|nossl)?[[:space:]]+[^[:space:]]+[[:space:]]+smartstock_(?:client|device_)[^[:space:]]*[[:space:]]+.*)$/# disabled by SmartStock HTTPS single cutover: \$1/mg" "$hba_file"
+  local formula
+  formula="$(postgres_formula || true)"
+  [[ -n "$formula" ]] || formula="postgresql"
+  brew services restart "$formula"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pg_isready -h 127.0.0.1 -p "$DB_PORT" -q && break
+    sleep 1
+  done
+  [[ "$(psql "$postgres_url" -Atc 'show listen_addresses')" == "localhost" ]]
+}
+
 write_config() {
   log "Writing SmartStock database config"
   mkdir -p "${HOME}/.smartstock"
+  security add-generic-password -U -s com.smartstock.database -a primary-db-user -w "$DB_USER" >/dev/null
+  security add-generic-password -U -s com.smartstock.database -a primary-db-password -w "$DB_PASSWORD" >/dev/null
   cat > "$CONFIG_PATH" <<EOF
 # SmartStock database mode and sync configuration
 mode=$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')
 server.host=127.0.0.1
 server.port=${DB_PORT}
+lan.api.port=8443
 database.name=${DB_NAME}
 jdbc.url=jdbc:postgresql://127.0.0.1:${DB_PORT}/${DB_NAME}
-db.user=${DB_USER}
-db.password=${DB_PASSWORD}
+db.user=\${SMARTSTOCK_SECURE_DB_USER}
+db.password=\${SMARTSTOCK_SECURE_DB_PASSWORD}
 sync.interval.seconds=${SYNC_INTERVAL}
 EOF
   if [[ -n "$CLOUD_JDBC_URL" || -n "$CLOUD_DB_USER" || -n "$CLOUD_DB_PASSWORD" ]]; then
+    if [[ -n "$CLOUD_DB_USER" ]]; then
+      security add-generic-password -U -s com.smartstock.database -a cloud-db-user -w "$CLOUD_DB_USER" >/dev/null
+    fi
+    if [[ -n "$CLOUD_DB_PASSWORD" ]]; then
+      security add-generic-password -U -s com.smartstock.database -a cloud-db-password -w "$CLOUD_DB_PASSWORD" >/dev/null
+    fi
     cat >> "$CONFIG_PATH" <<EOF
 cloud.jdbc.url=${CLOUD_JDBC_URL}
-cloud.db.user=${CLOUD_DB_USER}
-cloud.db.password=${CLOUD_DB_PASSWORD}
+cloud.db.user=\${SMARTSTOCK_SECURE_CLOUD_DB_USER}
+cloud.db.password=\${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}
 EOF
   fi
   chmod 600 "$CONFIG_PATH"
+}
+
+write_client_config() {
+  log "Writing register HTTPS service config"
+  local lan_host="${SMARTSTOCK_LAN_SERVER_HOST:-127.0.0.1}"
+  local lan_port="${SMARTSTOCK_LAN_API_PORT:-8443}"
+  mkdir -p "${HOME}/.smartstock"
+  cat > "$CONFIG_PATH" <<EOF
+# SmartStock register mode. Registers have no database or cloud credentials.
+mode=CLIENT
+server.host=${lan_host}
+server.port=${lan_port}
+sync.interval.seconds=${SYNC_INTERVAL}
+EOF
+  chmod 600 "$CONFIG_PATH"
+  security add-generic-password -U -s com.smartstock.database -a lan-api-server-host -w "$lan_host" >/dev/null
+  security add-generic-password -U -s com.smartstock.database -a lan-api-server-port -w "$lan_port" >/dev/null
+  security delete-generic-password -s com.smartstock.database -a primary-db-user >/dev/null 2>&1 || true
+  security delete-generic-password -s com.smartstock.database -a primary-db-password >/dev/null 2>&1 || true
+  security delete-generic-password -s com.smartstock.database -a cloud-db-user >/dev/null 2>&1 || true
+  security delete-generic-password -s com.smartstock.database -a cloud-db-password >/dev/null 2>&1 || true
+  rm -f "$CREDENTIALS_PATH"
 }
 
 write_credentials_note() {
@@ -381,22 +440,21 @@ write_credentials_note() {
 SMARTSTOCK_DB_NAME='${DB_NAME}'
 SMARTSTOCK_DB_PORT='${DB_PORT}'
 
-# Use these on the dedicated server computer.
+# The dedicated server password is stored in macOS Keychain, not in this file.
 SMARTSTOCK_DB_USER='${DB_USER}'
-SMARTSTOCK_DB_PASSWORD='${DB_PASSWORD}'
 SMARTSTOCK_SERVER_JDBC_URL='jdbc:postgresql://127.0.0.1:${DB_PORT}/${DB_NAME}'
 
-# Use these on register/client computers.
-SMARTSTOCK_CLIENT_DB_USER='${CLIENT_DB_USER}'
-SMARTSTOCK_CLIENT_DB_PASSWORD='${CLIENT_DB_PASSWORD}'
-SMARTSTOCK_CLIENT_JDBC_URL='jdbc:postgresql://${server_host}:${DB_PORT}/${DB_NAME}'
+# Registers use the pinned SmartStock HTTPS service and receive no database credentials.
+SMARTSTOCK_LAN_API_URL='https://${server_host}:8443'
 EOF
   chmod 600 "$CREDENTIALS_PATH"
 }
 
 build_app() {
-  log "Building SmartStock"
+  log "Running LAN cutover/security checks and building SmartStock"
   cd "$APP_DIR"
+  "${APP_DIR}/tools/lan-api-cutover-check.sh"
+  "${APP_DIR}/tools/security-check.sh"
   mvn -q clean package
 }
 
@@ -411,12 +469,16 @@ write_launchers() {
   fi
   local jar_name
   jar_name="$(basename "$jar_path")"
-  cat > "${APP_DIR}/target/run-smartstock-server.command" <<EOF
+  if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" == "SERVER" ]]; then
+    cat > "${APP_DIR}/target/run-smartstock-server.command" <<EOF
 #!/usr/bin/env bash
 cd "${APP_DIR}"
 java -jar target/${jar_name} --server
 EOF
-  chmod +x "${APP_DIR}/target/run-smartstock-server.command"
+    chmod +x "${APP_DIR}/target/run-smartstock-server.command"
+  else
+    rm -f "${APP_DIR}/target/run-smartstock-server.command"
+  fi
 
   cat > "${APP_DIR}/target/run-smartstock-client.command" <<EOF
 #!/usr/bin/env bash
@@ -424,6 +486,10 @@ cd "${APP_DIR}"
 java -jar target/${jar_name} --client
 EOF
   chmod +x "${APP_DIR}/target/run-smartstock-client.command"
+
+  if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" != "SERVER" ]]; then
+    return
+  fi
 
   local service_dir="${HOME}/.smartstock/sync-service"
   local service_app_dir="${service_dir}/app"
@@ -446,7 +512,7 @@ install_sync_launch_agent() {
   if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" != "SERVER" ]]; then
     return
   fi
-  log "Installing SmartStock background sync LaunchAgent"
+  log "Installing SmartStock Server Service (LAN API and background sync)"
   mkdir -p "${HOME}/Library/LaunchAgents" "${HOME}/.smartstock"
   local plist="${HOME}/Library/LaunchAgents/com.smartstock.sync.plist"
   cat > "$plist" <<EOF
@@ -478,26 +544,90 @@ EOF
   launchctl kickstart -k "gui/$(id -u)/com.smartstock.sync" || true
 }
 
-load_existing_cloud_config
-load_or_create_credentials
+install_backup_launch_agent() {
+  if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" != "SERVER" ]]; then
+    return
+  fi
+  log "Installing encrypted SmartStock database backups"
+  local backup_dir="${HOME}/.smartstock/backups"
+  local backup_script="${HOME}/.smartstock/run-smartstock-backup.command"
+  local plist="${HOME}/Library/LaunchAgents/com.smartstock.backup.plist"
+  mkdir -p "$backup_dir" "${HOME}/Library/LaunchAgents"
+  chmod 700 "$backup_dir"
+  if ! security find-generic-password -w -s com.smartstock.database -a backup-encryption-key >/dev/null 2>&1; then
+    security add-generic-password -U -s com.smartstock.database -a backup-encryption-key -w "$(generate_password)$(generate_password)" >/dev/null
+  fi
+  cat > "$backup_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
+BACKUP_DIR="\${HOME}/.smartstock/backups"
+mkdir -p "\$BACKUP_DIR"
+chmod 700 "\$BACKUP_DIR"
+DB_USER="\$(security find-generic-password -w -s com.smartstock.database -a primary-db-user)"
+DB_PASSWORD="\$(security find-generic-password -w -s com.smartstock.database -a primary-db-password)"
+STAMP="\$(date +%Y%m%d-%H%M%S)-\$\$"
+TARGET="\$BACKUP_DIR/smartstock-\$STAMP.dump.enc"
+PARTIAL="\$TARGET.partial"
+trap 'rm -f "\$PARTIAL"' EXIT
+PGPASSWORD="\$DB_PASSWORD" pg_dump -h 127.0.0.1 -p ${DB_PORT} -U "\$DB_USER" -d ${DB_NAME} -Fc |
+  openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+    -pass file:<(security find-generic-password -w -s com.smartstock.database -a backup-encryption-key) \
+    -out "\$PARTIAL"
+mv "\$PARTIAL" "\$TARGET"
+trap - EXIT
+chmod 600 "\$TARGET"
+find "\$BACKUP_DIR" -type f -name 'smartstock-*.dump.enc' -mtime +30 -delete
+EOF
+  chmod 700 "$backup_script"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.smartstock.backup</string>
+  <key>ProgramArguments</key><array><string>${backup_script}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>21600</integer>
+  <key>StandardOutPath</key><string>${HOME}/.smartstock/backup.log</string>
+  <key>StandardErrorPath</key><string>${HOME}/.smartstock/backup.err.log</string>
+</dict>
+</plist>
+EOF
+  launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$(id -u)" "$plist" || true
+  launchctl kickstart -k "gui/$(id -u)/com.smartstock.backup" || true
+}
+
 backup_existing_files
-install_dependencies
-start_postgres
-reset_database_if_requested
-init_database
-write_config
-write_credentials_note
+if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" == "SERVER" ]]; then
+  load_existing_cloud_config
+  load_or_create_credentials
+  install_dependencies
+  start_postgres
+  reset_database_if_requested
+  init_database
+  restrict_postgres_to_server
+  write_config
+  write_credentials_note
+else
+  install_client_dependencies
+  write_client_config
+fi
 build_app
 write_launchers
 install_sync_launch_agent
+install_backup_launch_agent
 
 log "SmartStock installation complete"
 printf 'Install mode: %s\n' "$MODE"
 printf 'Existing config/credential backups use suffix: %s\n' "$BACKUP_SUFFIX"
-printf 'Credentials saved to: %s\n' "$CREDENTIALS_PATH"
 printf 'Config saved to: %s\n' "$CONFIG_PATH"
-printf 'Server DB user: %s\n' "$DB_USER"
-printf 'Client DB user: %s\n' "$CLIENT_DB_USER"
-printf 'Server launcher: %s\n' "${APP_DIR}/target/run-smartstock-server.command"
 printf 'Client launcher: %s\n' "${APP_DIR}/target/run-smartstock-client.command"
-printf 'Sync service launcher: %s\n' "${HOME}/.smartstock/sync-service/run-smartstock-sync-service.command"
+if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" == "SERVER" ]]; then
+  printf 'Credentials saved to: %s\n' "$CREDENTIALS_PATH"
+  printf 'Server DB user: %s\n' "$DB_USER"
+  printf 'Server launcher: %s\n' "${APP_DIR}/target/run-smartstock-server.command"
+  printf 'Sync service launcher: %s\n' "${HOME}/.smartstock/sync-service/run-smartstock-sync-service.command"
+  printf 'Encrypted backups: %s\n' "${HOME}/.smartstock/backups"
+fi

@@ -1,13 +1,9 @@
 package ui.components;
 
-import data.DB;
+import services.LanApiClient;
 
 import javax.swing.*;
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 
 public class CustomerTypeSelector extends JPanel {
     private final JComboBox<CustomerTypeOption> customerTypeBox = new JComboBox<>();
@@ -27,15 +23,13 @@ public class CustomerTypeSelector extends JPanel {
         customerTypeBox.removeAllItems();
         customerTypeBox.addItem(new CustomerTypeOption(null, ""));
 
-        String sql = "SELECT customer_type_id, name FROM customer_types WHERE COALESCE(is_active, TRUE) = TRUE ORDER BY name";
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                customerTypeBox.addItem(new CustomerTypeOption(rs.getInt("customer_type_id"), rs.getString("name")));
+        try {
+            for (LanApiClient.CustomerTypeRecord type : LanApiClient.loadCustomerTypes("", true)) {
+                customerTypeBox.addItem(new CustomerTypeOption(type.customerTypeId(), type.name()));
             }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to load customer types: " + ex.getMessage(),
+                    "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         } finally {
             loading = false;
         }

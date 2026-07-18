@@ -68,14 +68,34 @@ public final class EmailSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE email_outbox ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
             stmt.executeUpdate("ALTER TABLE email_outbox ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
             stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS email_outbox_sync_uuid_key ON email_outbox(sync_uuid)");
-            stmt.executeUpdate("ALTER TABLE email_outbox DROP CONSTRAINT IF EXISTS email_outbox_status_chk");
             stmt.executeUpdate("""
-                    ALTER TABLE email_outbox
-                    ADD CONSTRAINT email_outbox_status_chk
-                    CHECK (status IN ('QUEUED', 'SENDING', 'SENT', 'FAILED', 'CANCELLED'))
+                    DO $$
+                    BEGIN
+                        LOCK TABLE email_outbox IN ACCESS EXCLUSIVE MODE;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'email_outbox_status_chk'
+                              AND conrelid = 'email_outbox'::regclass
+                        ) THEN
+                            ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_status_chk
+                            CHECK (status IN ('QUEUED', 'SENDING', 'SENT', 'FAILED', 'CANCELLED'));
+                        END IF;
+                    END $$
                     """);
-            stmt.executeUpdate("ALTER TABLE email_outbox DROP CONSTRAINT IF EXISTS email_outbox_attempts_chk");
-            stmt.executeUpdate("ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_attempts_chk CHECK (attempts >= 0 AND max_attempts > 0)");
+            stmt.executeUpdate("""
+                    DO $$
+                    BEGIN
+                        LOCK TABLE email_outbox IN ACCESS EXCLUSIVE MODE;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'email_outbox_attempts_chk'
+                              AND conrelid = 'email_outbox'::regclass
+                        ) THEN
+                            ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_attempts_chk
+                            CHECK (attempts >= 0 AND max_attempts > 0);
+                        END IF;
+                    END $$
+                    """);
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS email_outbox_events (
                         email_outbox_event_id BIGSERIAL PRIMARY KEY,
@@ -130,6 +150,7 @@ public final class EmailSchemaInstaller {
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_sender_address TEXT NOT NULL DEFAULT ''");
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_sender_name TEXT NOT NULL DEFAULT ''");
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_bcc_address TEXT NOT NULL DEFAULT ''");
+        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS balance_sheet_recipient_email TEXT NOT NULL DEFAULT ''");
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_receipts_enabled BOOLEAN NOT NULL DEFAULT FALSE");
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_order_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE");
         stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS email_quotes_enabled BOOLEAN NOT NULL DEFAULT FALSE");

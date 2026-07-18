@@ -1,7 +1,9 @@
 package ui.screens;
 
-import data.DB;
 import data.DatabaseConfig;
+import data.DatabaseMode;
+import services.LanApiClient;
+import services.LanCutoverPolicy;
 import managers.SupabaseSessionManager;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
@@ -34,7 +36,6 @@ import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Insets;
-import java.sql.Connection;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -51,6 +52,7 @@ public class WelcomeFrame extends JFrame {
     private final JLabel smartStockLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
     private final JButton refreshStatusBtn = new JButton("Refresh System Status");
     private final JButton setupBtn = new JButton("Initial Database Setup");
+    private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
     private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Log In");
     private Timer displayRefreshTimer;
@@ -118,6 +120,8 @@ public class WelcomeFrame extends JFrame {
         root.add(centerPanel, BorderLayout.CENTER);
 
         setContentPane(root);
+        pairRegisterBtn.setVisible(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && !LanApiClient.isPaired());
+        setupBtn.setVisible(!(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && LanCutoverPolicy.isEnforced()));
         refreshModeLabel();
         refreshSystemStats();
         updateGreeting();
@@ -157,6 +161,7 @@ public class WelcomeFrame extends JFrame {
         styleWelcomeButton(refreshStatusBtn, DeckersPalette.ORANGE);
         styleWelcomeButton(syncStatusBtn, DeckersPalette.MAGENTA);
         styleWelcomeButton(setupBtn, DeckersPalette.PURPLE);
+        styleWelcomeButton(pairRegisterBtn, DeckersPalette.PURPLE);
 
         panel.add(title);
         panel.add(Box.createVerticalStrut(12));
@@ -175,6 +180,8 @@ public class WelcomeFrame extends JFrame {
         panel.add(syncStatusBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(setupBtn);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(pairRegisterBtn);
         panel.add(Box.createVerticalGlue());
         return panel;
     }
@@ -231,8 +238,50 @@ public class WelcomeFrame extends JFrame {
     private void wireActions() {
         refreshStatusBtn.addActionListener(e -> refreshSystemStatus());
         setupBtn.addActionListener(e -> openDatabaseSetup());
+        pairRegisterBtn.addActionListener(e -> pairRegister());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> openLogin());
+    }
+
+    private void pairRegister() {
+        String phrase = JOptionPane.showInputDialog(
+                this,
+                "On the SmartStock server, open Device Management > Security Status.\n"
+                        + "Enter the temporary administrator pairing phrase shown there:",
+                "One-Time Register Pairing",
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (phrase == null || phrase.isBlank()) return;
+        pairRegisterBtn.setEnabled(false);
+        statusLabel.setText("Status: Pairing this register...");
+        new SwingWorker<LanApiClient.PairingResult, Void>() {
+            @Override protected LanApiClient.PairingResult doInBackground() throws Exception {
+                return LanApiClient.pairOnce(phrase);
+            }
+
+            @Override protected void done() {
+                pairRegisterBtn.setEnabled(true);
+                try {
+                    LanApiClient.PairingResult result = get();
+                    if ("PAIRED".equals(result.status())) {
+                        pairRegisterBtn.setVisible(false);
+                        statusLabel.setText("Status: Register paired. Employees can log in normally.");
+                        JOptionPane.showMessageDialog(WelcomeFrame.this,
+                                "This register is paired. Employees will not be asked for this phrase again.");
+                    } else {
+                        statusLabel.setText("Status: Waiting for administrator device approval.");
+                        JOptionPane.showMessageDialog(WelcomeFrame.this,
+                                "Enrollment was sent. Approve this register from Device Management on the server.\n"
+                                        + "SmartStock will claim approval automatically.");
+                    }
+                } catch (Exception ex) {
+                    Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                    statusLabel.setText("Status: Pairing was not completed.");
+                    JOptionPane.showMessageDialog(WelcomeFrame.this, cause.getMessage(),
+                            "Register Pairing", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private void openDatabaseSetup() {
@@ -376,8 +425,8 @@ public class WelcomeFrame extends JFrame {
         SwingWorker<String, Void> worker = new SwingWorker<>() {
             @Override
             protected String doInBackground() {
-                try (Connection ignored = DB.getConnection()) {
-                    // Continue only after the configured database is reachable.
+                try {
+                    LanApiClient.checkHealth();
                     return null;
                 } catch (Exception ex) {
                     return getRootCauseMessage(ex);
@@ -464,8 +513,8 @@ public class WelcomeFrame extends JFrame {
             protected SystemStatus doInBackground() {
                 String localStatus = checkLocalDb(config);
                 String onlineStatus = checkOnlineDb(config);
-                boolean canLogin = localStatus.startsWith("Online") || (config.mode() == data.DatabaseMode.CLOUD_DIRECT && onlineStatus.startsWith("Online"));
-                String message = canLogin ? "Ready for login" : "Database connection needs attention";
+                boolean canLogin = localStatus.startsWith("Online") && LanApiClient.isPaired();
+                String message = canLogin ? "Ready for login" : "SmartStock Server Service needs attention";
                 return new SystemStatus(localStatus, onlineStatus, message, canLogin);
             }
 
@@ -494,22 +543,19 @@ public class WelcomeFrame extends JFrame {
     }
 
     private boolean isInitialSetupRequired(DatabaseConfig config) {
-        return !DatabaseConfig.hasConfigFile()
-                || !config.hasPrimaryConnection()
-                || config.hasUnresolvedCredentialPlaceholders();
+        if (!DatabaseConfig.hasConfigFile()) return true;
+        if (config.mode() == DatabaseMode.CLIENT) {
+            return config.locationId() == null || config.serverHost() == null || config.serverHost().isBlank();
+        }
+        return !config.hasPrimaryConnection() || config.hasUnresolvedCredentialPlaceholders();
     }
 
     private String checkLocalDb(DatabaseConfig config) {
         if (!DatabaseConfig.hasConfigFile()) {
             return "Setup required";
         }
-        if (config.mode() == data.DatabaseMode.CLOUD_DIRECT) {
-            return "Not used in cloud-direct mode";
-        }
-        if (!config.hasPrimaryConnection() || config.hasUnresolvedCredentialPlaceholders()) {
-            return "Not configured";
-        }
-        try (Connection ignored = DB.getConnection()) {
+        try {
+            LanApiClient.checkHealth();
             return "Online";
         } catch (Exception ex) {
             return "Offline - " + getRootCauseMessage(ex);
@@ -520,14 +566,7 @@ public class WelcomeFrame extends JFrame {
         if (!DatabaseConfig.hasConfigFile()) {
             return "Setup required";
         }
-        if (!config.hasCloudConnection() && config.mode() != data.DatabaseMode.CLOUD_DIRECT) {
-            return "Not configured";
-        }
-        try (Connection ignored = config.hasCloudConnection() ? DB.getCloudConnection() : DB.getConnection()) {
-            return "Online";
-        } catch (Exception ex) {
-            return "Offline - " + getRootCauseMessage(ex);
-        }
+        return "Managed by server";
     }
 
     private void showInitialDatabaseSetup() {

@@ -1,9 +1,8 @@
 package ui.screens;
 
 import utils.CurrencyFormatter;
-import data.DB;
 import managers.PermissionManager;
-import services.CustomerAccountLedgerService;
+import services.LanApiClient;
 import ui.components.CustomerTypeSelector;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
@@ -13,13 +12,10 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 
 public class CustomerAccountDetails extends JFrame {
     private final int customerId;
@@ -45,6 +41,8 @@ public class CustomerAccountDetails extends JFrame {
     private DefaultTableModel transactionModel;
     private JLabel transactionSummaryLabel;
     private String customerLabel = "Customer Account";
+    private String pendingSaveKey;
+    private String pendingFingerprint;
 
     public CustomerAccountDetails(int customerId, Runnable afterSave) {
         this.customerId = customerId;
@@ -218,138 +216,39 @@ public class CustomerAccountDetails extends JFrame {
     }
 
     private void loadDetails() {
-        String sql = """
-                SELECT ca.account_number,
-                       ca.name AS customer_name,
-                       ca.phone AS customer_phone,
-                       ca.email AS customer_email,
-                       ca.credit_limit,
-                       ca.current_balance,
-                       (ca.credit_limit - ca.current_balance) AS available_credit,
-                       COALESCE(ca.is_business, FALSE) AS is_business,
-                       ca.is_active,
-                       COALESCE(ca.account_notes, '') AS account_notes,
-                       ca.customer_type_id,
-                       COALESCE(ct.name, '') AS customer_type_name
-                FROM customer_accounts ca
-                LEFT JOIN customer_types ct ON ct.customer_type_id = ca.customer_type_id
-                WHERE ca.customer_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    JOptionPane.showMessageDialog(this, "Customer account was not found.", "Not Found", JOptionPane.WARNING_MESSAGE);
-                    dispose();
-                    return;
-                }
-
-                String accountNumber = text(rs.getString("account_number"));
-                String name = text(rs.getString("customer_name"));
+        try {
+                LanApiClient.CustomerAccountRecord account=LanApiClient.loadCustomerAccountDetails(customerId);
+                String accountNumber=text(account.accountNumber());String name=text(account.name());
                 customerLabel = accountNumber.isBlank() ? name : accountNumber + " - " + name;
 
                 titleLabel.setText(customerLabel);
                 accountNumberField.setText(accountNumber);
                 nameField.setText(name);
                 customerTypeSelector.setSelectedCustomerType(
-                        rs.getObject("customer_type_id") == null ? null : rs.getInt("customer_type_id"),
-                        rs.getString("customer_type_name")
+                        account.customerTypeId(),account.customerTypeName()
                 );
-                phoneField.setText(text(rs.getString("customer_phone")));
-                emailField.setText(text(rs.getString("customer_email")));
-                businessAccountCheckBox.setSelected(rs.getBoolean("is_business"));
-                activeCheckBox.setSelected(rs.getBoolean("is_active"));
-                balanceLabel.setText(money(rs.getBigDecimal("current_balance")));
-                availableCreditLabel.setText(money(rs.getBigDecimal("available_credit")));
-                creditLimitField.setText(stripMoney(money(rs.getBigDecimal("credit_limit"))));
-                notesArea.setText(rs.getString("account_notes"));
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load account details: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());
+                activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));availableCreditLabel.setText(money(account.availableCredit()));
+                creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,"Failed to load account details: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void loadTransactions() {
         transactionModel.setRowCount(0);
-        String sql = """
-                SELECT t.transaction_id,
-                       COALESCE(t.payment_id, '') AS payment_id,
-		                       (t.created_at AT TIME ZONE ?) AS local_created_at,
-		                       COALESCE(t.user_name, '') AS user_name,
-                       COALESCE(t.device_name, t.device_id, '') AS device_name,
-                       COALESCE(t.cash_drawer_name, '') AS cash_drawer_name,
-		                       COALESCE(t.transaction_type, '') AS transaction_type,
-                       COALESCE(t.payment_method, '') AS payment_method,
-                       COALESCE(t.payment_reference, '') AS payment_reference,
-	                       t.sale_id,
-                       t.custom_order_id,
-                       COALESCE(t.amount, 0) AS ledger_amount,
-                       %s AS balance_delta,
-                       CASE
-                           WHEN t.custom_order_id IS NOT NULL
-                                AND COALESCE(t.transaction_type, '') IN ('CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_CREDIT')
-                               THEN COALESCE(co.amount_paid, 0)
-                           ELSE COALESCE(t.amount, 0)
-                       END AS display_amount,
-                       COALESCE(t.note, '') AS note,
-                       COALESCE(s.payment_status, co.payment_status, '') AS payment_status,
-                       COALESCE(s.total_amount, co.total_amount, 0) AS sale_total
-                FROM customer_account_transactions t
-                LEFT JOIN sales s ON t.sale_id = s.sale_id
-                LEFT JOIN custom_orders co ON t.custom_order_id = co.custom_order_id
-                WHERE t.customer_id = ?
-                ORDER BY t.created_at DESC, t.transaction_id DESC
-                """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
-
-        int count = 0;
-        BigDecimal totalCharges = BigDecimal.ZERO;
-        BigDecimal totalPayments = BigDecimal.ZERO;
-
-        try (Connection conn = DB.getConnection()) {
-            CustomerAccountLedgerService.ensureSchema(conn);
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, StoreTimeZoneHelper.getStoreZoneId());
-            ps.setInt(2, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    BigDecimal ledgerAmount = defaultZero(rs.getBigDecimal("balance_delta"));
-                    BigDecimal displayAmount = defaultZero(rs.getBigDecimal("display_amount"));
-                    if (ledgerAmount.compareTo(BigDecimal.ZERO) >= 0) {
-                        totalCharges = totalCharges.add(ledgerAmount);
-                    } else {
-                        totalPayments = totalPayments.add(ledgerAmount.abs());
-                    }
-
-                    transactionModel.addRow(new Object[]{
-                            rs.getInt("transaction_id"),
-	                            rs.getString("payment_id"),
-		                            formatTimestamp(rs.getTimestamp("local_created_at")),
-		                            rs.getString("user_name"),
-                            rs.getString("device_name"),
-                            rs.getString("cash_drawer_name"),
-		                            formatType(rs.getString("transaction_type")),
-                            rs.getString("payment_method"),
-                            rs.getString("payment_reference"),
-	                            nullableInt(rs, "sale_id"),
-                            nullableLong(rs, "custom_order_id"),
-                            currencyFormat.format(displayAmount),
-                            formatStatus(rs.getString("payment_status")),
-                            currencyFormat.format(defaultZero(rs.getBigDecimal("sale_total"))),
-                            rs.getString("note")
-                    });
-                    count++;
-                }
-            }
-            }
-
-            transactionSummaryLabel.setText("Transactions: " + count
-                    + "    Charges: " + currencyFormat.format(totalCharges)
-                    + "    Payments: " + currencyFormat.format(totalPayments));
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load transaction history: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        try {
+            LanApiClient.CustomerTransactionResult result=LanApiClient.loadCustomerTransactions(customerId);
+            for(LanApiClient.CustomerTransactionRecord row:result.transactions())transactionModel.addRow(new Object[]{
+                    row.transactionId(),row.paymentId(),formatTimestamp(row.createdAtEpochMillis()),row.userName(),row.deviceName(),
+                    row.cashDrawerName(),formatType(row.transactionType()),row.paymentMethod(),row.paymentReference(),
+                    row.saleId()==null?"":row.saleId(),row.customOrderId()==null?"":row.customOrderId(),
+                    currencyFormat.format(defaultZero(row.amount())),formatStatus(row.paymentStatus()),
+                    currencyFormat.format(defaultZero(row.chargeTotal())),row.note()});
+            transactionSummaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
+                    +"    Payments: "+currencyFormat.format(result.totalPayments()));
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,"Failed to load transaction history: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -385,60 +284,20 @@ public class CustomerAccountDetails extends JFrame {
             }
         }
 
-        String sql = canSetCreditLimit
-                ? """
-                UPDATE customer_accounts
-                SET account_number = ?,
-                    name = ?,
-                    customer_type_id = ?,
-                    phone = ?,
-                    email = ?,
-                    is_business = ?,
-                    is_active = ?,
-                    account_notes = ?,
-                    credit_limit = ?
-                WHERE customer_id = ?
-                """
-                : """
-                UPDATE customer_accounts
-                SET account_number = ?,
-                    name = ?,
-                    customer_type_id = ?,
-                    phone = ?,
-                    email = ?,
-                    is_business = ?,
-                    is_active = ?,
-                    account_notes = ?
-                WHERE customer_id = ?
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setString(1, accountNumber);
-            ps.setString(2, name);
-            setNullableInteger(ps, 3, customerTypeId);
-            ps.setString(4, phone.isEmpty() ? null : phone);
-            ps.setString(5, email.isEmpty() ? null : email);
-            ps.setBoolean(6, businessAccountCheckBox.isSelected());
-            ps.setBoolean(7, activeCheckBox.isSelected());
-            ps.setString(8, notes.isEmpty() ? null : notes);
-            if (canSetCreditLimit) {
-                ps.setBigDecimal(9, creditLimit);
-                ps.setInt(10, customerId);
-            } else {
-                ps.setInt(9, customerId);
-            }
-            ps.executeUpdate();
-
+        try {
+            LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
+                    customerTypeId,phone,email,creditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes);
+            String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
+                pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
+            LanApiClient.saveCustomerAccount(request,pendingSaveKey);pendingSaveKey=null;pendingFingerprint=null;
             JOptionPane.showMessageDialog(this, "Customer account updated.");
             if (afterSave != null) {
                 afterSave.run();
             }
             loadDetails();
             loadTransactions();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to update customer account: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,"Failed to update customer account: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -447,21 +306,11 @@ public class CustomerAccountDetails extends JFrame {
         WindowHelper.showPosWindow(paymentHistory, this);
     }
 
-    private Object nullableInt(ResultSet rs, String column) throws SQLException {
-        int value = rs.getInt(column);
-        return rs.wasNull() ? "" : value;
-    }
-
-    private Object nullableLong(ResultSet rs, String column) throws SQLException {
-        long value = rs.getLong(column);
-        return rs.wasNull() ? "" : value;
-    }
-
-    private String formatTimestamp(Timestamp timestamp) {
-        if (timestamp == null) {
+    private String formatTimestamp(long epochMillis) {
+        if (epochMillis <= 0) {
             return "";
         }
-        return StoreTimeZoneHelper.formatLocalTimestamp(timestamp, dateTimeFormatter);
+        return java.time.Instant.ofEpochMilli(epochMillis).atZone(StoreTimeZoneHelper.getStoreZone()).format(dateTimeFormatter);
     }
 
     private String formatType(String type) {
@@ -516,11 +365,4 @@ public class CustomerAccountDetails extends JFrame {
         }
     }
 
-    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
 }

@@ -3,16 +3,17 @@ package ui.screens;
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
 import managers.CompanyCustomizationManager;
-import services.OfflineWriteGuard;
-import services.BadgeCredentialService;
+import services.BadgeEncoderService;
 import services.EmployeeDocumentService;
 import services.BadgePrintService;
 import services.EmployeePhotoService;
-import services.ReferenceDataSyncService;
+import services.EmployeePayrollSettingsService;
+import services.LanApiClient;
+import services.LanEmployeeAdminService;
+import services.EmployeePayrollSettingsService.PeriodType;
 import ui.components.AppMenuBar;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.WindowHelper;
-import data.DB;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -24,30 +25,18 @@ import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class EmployeeManagement extends JFrame {
@@ -58,6 +47,37 @@ public class EmployeeManagement extends JFrame {
     private static final Color TEXT = new Color(238, 238, 238);
     private static final Color MUTED_TEXT = new Color(182, 182, 182);
     private static final Color PRIMARY = new Color(78, 111, 158);
+
+    private static final class ViewportWidthPanel extends JPanel implements Scrollable {
+        private ViewportWidthPanel(LayoutManager layout) {
+            super(layout);
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return Math.max(16, visibleRect.height - 32);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
+    }
 
     private JTable employeeTable;
     private DefaultTableModel employeeModel;
@@ -79,9 +99,15 @@ public class EmployeeManagement extends JFrame {
     private JLabel employeePhotoPreviewLabel;
     private JTextField employeeIdCardDocumentField;
     private JTextField dateOfBirthField;
+    private JTextField hireDateField;
+    private JTextField deactivationDateField;
     private JTextField badgeIdField;
     private JComboBox<CompensationOption> compensationTypeBox;
     private JTextField salaryAmountField;
+    private JLabel salaryAmountLabel;
+    private JComboBox<PeriodType> payrollPeriodBox;
+    private JTextField workHourLimitField;
+    private JLabel payrollSettingsStatusLabel;
     private JComboBox<RoleOption> roleBox;
     private JCheckBox activeCheckBox;
 
@@ -94,6 +120,8 @@ public class EmployeeManagement extends JFrame {
     private JButton printBadgeButton;
     private JButton saveBadgePdfButton;
     private JButton writeMagStripeButton;
+    private JButton programNfcButton;
+    private JButton rotateBadgeIdButton;
 
     private Integer selectedUserId = null;
     private String originalFirstName = "";
@@ -104,13 +132,9 @@ public class EmployeeManagement extends JFrame {
     private boolean originalIsActive = true;
     private boolean updatingGeneratedUsername;
     private String lastGeneratedUsername = "";
-
-    private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
-    private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
-
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
+    private boolean loadingPayrollSettings;
+    private PeriodType originalPayrollPeriodType = PeriodType.SEMI_MONTHLY;
+    private BigDecimal originalWorkHourLimit = EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT;
 
     public EmployeeManagement() {
         setTitle("Employee Management");
@@ -127,7 +151,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active", "ID Card Document"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active", "ID Card Document", "Hire Date", "Deactivation Date"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -157,8 +181,8 @@ public class EmployeeManagement extends JFrame {
         searchPanel.add(searchLabel, BorderLayout.WEST);
         searchPanel.add(employeeSearchField, BorderLayout.CENTER);
         JScrollPane tableScrollPane = new JScrollPane(employeeTable);
-        leftPanel.setPreferredSize(new Dimension(620, 0));
-        tableScrollPane.setPreferredSize(new Dimension(620, 0));
+        leftPanel.setPreferredSize(new Dimension(430, 0));
+        leftPanel.setMinimumSize(new Dimension(320, 0));
         tableScrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
         tableScrollPane.getViewport().setBackground(CARD_BG);
         leftPanel.add(searchPanel, BorderLayout.NORTH);
@@ -200,7 +224,7 @@ public class EmployeeManagement extends JFrame {
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
-        JPanel formPanel = new JPanel(new GridBagLayout());
+        JPanel formPanel = new ViewportWidthPanel(new GridBagLayout());
         formPanel.setBackground(CARD_BG);
         formPanel.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
 
@@ -212,20 +236,34 @@ public class EmployeeManagement extends JFrame {
         emailField = new JTextField();
         phoneField = new JTextField();
         employeePhotoField = new JTextField();
+        employeePhotoField.setColumns(24);
         employeePhotoField.setEditable(false);
         employeeIdCardDocumentField = new JTextField();
+        employeeIdCardDocumentField.setColumns(24);
         employeeIdCardDocumentField.setEditable(false);
         dateOfBirthField = new JTextField();
         dateOfBirthField.setToolTipText("Optional. Use YYYY-MM-DD. If present, it is included in the badge verification hash.");
+        hireDateField = new JTextField(storeToday().toString());
+        hireDateField.setToolTipText("Use YYYY-MM-DD. New employees default to today's date.");
+        deactivationDateField = new JTextField();
+        deactivationDateField.setEditable(false);
+        deactivationDateField.setToolTipText("Set automatically when the employee is deactivated.");
         badgeIdField = new JTextField();
         badgeIdField.setToolTipText("Auto-generated for Code 128 badge barcodes when blank.");
+        badgeIdField.setEditable(false);
         compensationTypeBox = new JComboBox<>(new CompensationOption[]{
                 new CompensationOption("HOURLY", "Hourly"),
-                new CompensationOption("SALARY", "Salary"),
+                new CompensationOption("SALARY", "Salary (per pay period)"),
                 new CompensationOption("DAILY", "Daily")
         });
         compensationTypeBox.setEditable(false);
         salaryAmountField = new JTextField();
+        salaryAmountLabel = new JLabel("Hourly Rate:");
+        payrollPeriodBox = new JComboBox<>(PeriodType.values());
+        payrollPeriodBox.setEditable(false);
+        workHourLimitField = new JTextField(EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT.toPlainString());
+        payrollSettingsStatusLabel = new JLabel("Applies to hourly employees only.");
+        payrollSettingsStatusLabel.setForeground(MUTED_TEXT);
         roleBox = new JComboBox<>();
         activeCheckBox = new JCheckBox("Active", true);
         activeCheckBox.setEnabled(true);
@@ -270,7 +308,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 1;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Password:"), gbc);
+        formPanel.add(new JLabel("Password * (new employee only):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -279,7 +317,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 2;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("First Name:"), gbc);
+        formPanel.add(new JLabel("First Name *:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -297,7 +335,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 4;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Last Name:"), gbc);
+        formPanel.add(new JLabel("Last Name *:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -306,7 +344,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 5;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Email:"), gbc);
+        formPanel.add(new JLabel("Email *:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -315,7 +353,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 6;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Phone Number:"), gbc);
+        formPanel.add(new JLabel("Phone Number (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -324,7 +362,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 7;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Badge Photo:"), gbc);
+        formPanel.add(new JLabel("Badge Photo (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -333,7 +371,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 8;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("ID Card Document:"), gbc);
+        formPanel.add(new JLabel("ID Card Document (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -342,7 +380,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 9;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Date of Birth:"), gbc);
+        formPanel.add(new JLabel("Date of Birth (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -351,6 +389,15 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 10;
         gbc.weightx = 0;
+        formPanel.add(new JLabel("Hire Date *:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(hireDateField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 11;
+        gbc.weightx = 0;
         formPanel.add(new JLabel("Badge ID (auto):"), gbc);
 
         gbc.gridx = 1;
@@ -358,40 +405,77 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(badgeIdField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 11;
+        gbc.gridy = 12;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Pay Type:"), gbc);
+        formPanel.add(new JLabel("Pay Type *:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         formPanel.add(compensationTypeBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 12;
+        gbc.gridy = 13;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Salary:"), gbc);
+        salaryAmountLabel.setText("Hourly Rate *:");
+        formPanel.add(salaryAmountLabel, gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         formPanel.add(salaryAmountField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 13;
+        gbc.gridy = 14;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Role:"), gbc);
+        formPanel.add(new JLabel("Payroll Period *:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(payrollPeriodBox, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 15;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Work Hour Limit *:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(workHourLimitField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 16;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Payroll Setting:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(payrollSettingsStatusLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 17;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Role *:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 14;
+        gbc.gridy = 18;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         formPanel.add(activeCheckBox, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 19;
+        gbc.weightx = 0;
+        formPanel.add(new JLabel("Deactivation Date:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(deactivationDateField, gbc);
 
         JPanel storePanel = new JPanel(new BorderLayout(6, 6));
         storePanel.setBackground(CARD_BG);
@@ -401,7 +485,7 @@ public class EmployeeManagement extends JFrame {
         ));
         JPanel storeSearchPanel = new JPanel(new BorderLayout(6, 0));
         storeSearchPanel.setOpaque(false);
-        JLabel assignedStoresLabel = new JLabel("Assigned Stores");
+        JLabel assignedStoresLabel = new JLabel("Assigned Stores *");
         assignedStoresLabel.setForeground(TEXT);
         assignedStoresLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         storeSearchField.putClientProperty("JTextField.placeholderText", "Search stores");
@@ -424,7 +508,7 @@ public class EmployeeManagement extends JFrame {
         storeIdColumn.setMaxWidth(90);
 
         gbc.gridx = 0;
-        gbc.gridy = 15;
+        gbc.gridy = 20;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.weighty = 0.0;
@@ -433,13 +517,13 @@ public class EmployeeManagement extends JFrame {
 
         gbc.gridwidth = 1;
         gbc.gridx = 0;
-        gbc.gridy = 16;
+        gbc.gridy = 21;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(Box.createVerticalGlue(), gbc);
         styleLabels(formPanel);
 
-        JPanel topButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JPanel topButtonPanel = new JPanel(new GridLayout(0, 3, 8, 8));
         JPanel bottomButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         topButtonPanel.setOpaque(false);
         bottomButtonPanel.setOpaque(false);
@@ -452,6 +536,8 @@ public class EmployeeManagement extends JFrame {
         printBadgeButton = new JButton("Print Badge");
         saveBadgePdfButton = new JButton("Save Badge PDF");
         writeMagStripeButton = new JButton("Write Stripe");
+        programNfcButton = new JButton("Program NFC/RFID");
+        rotateBadgeIdButton = new JButton("Rotate Badge ID");
 
         Dimension compactButtonSize = new Dimension(145, 32);
         addButton.setPreferredSize(compactButtonSize);
@@ -470,6 +556,8 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(printBadgeButton);
         topButtonPanel.add(saveBadgePdfButton);
         topButtonPanel.add(writeMagStripeButton);
+        topButtonPanel.add(programNfcButton);
+        topButtonPanel.add(rotateBadgeIdButton);
 
         bottomButtonPanel.add(clearButton);
         bottomButtonPanel.add(refreshButton);
@@ -480,7 +568,8 @@ public class EmployeeManagement extends JFrame {
                 BorderFactory.createLineBorder(BORDER),
                 BorderFactory.createEmptyBorder(12, 12, 12, 12)
         ));
-        rightPanel.setPreferredSize(new Dimension(640, 0));
+        rightPanel.setPreferredSize(new Dimension(700, 0));
+        rightPanel.setMinimumSize(new Dimension(540, 0));
         JLabel detailsTitle = new JLabel("Employee Details");
         detailsTitle.setForeground(TEXT);
         detailsTitle.setFont(new Font("SansSerif", Font.BOLD, 18));
@@ -497,8 +586,19 @@ public class EmployeeManagement extends JFrame {
         rightPanel.add(formScrollPane, BorderLayout.CENTER);
         rightPanel.add(bottomButtonPanel, BorderLayout.SOUTH);
 
-        mainPanel.add(leftPanel, BorderLayout.WEST);
-        mainPanel.add(rightPanel, BorderLayout.CENTER);
+        JSplitPane contentSplitPane = new JSplitPane(
+                JSplitPane.HORIZONTAL_SPLIT,
+                leftPanel,
+                rightPanel
+        );
+        contentSplitPane.setBorder(BorderFactory.createEmptyBorder());
+        contentSplitPane.setOpaque(false);
+        contentSplitPane.setContinuousLayout(true);
+        contentSplitPane.setOneTouchExpandable(true);
+        contentSplitPane.setResizeWeight(0.38);
+        contentSplitPane.setDividerLocation(430);
+        contentSplitPane.setDividerSize(8);
+        mainPanel.add(contentSplitPane, BorderLayout.CENTER);
 
         add(mainPanel);
 
@@ -527,6 +627,8 @@ public class EmployeeManagement extends JFrame {
         printBadgeButton.addActionListener(e -> printSelectedBadge());
         saveBadgePdfButton.addActionListener(e -> saveSelectedBadgePdf());
         writeMagStripeButton.addActionListener(e -> writeSelectedMagStripe());
+        programNfcButton.addActionListener(e -> programSelectedNfc());
+        rotateBadgeIdButton.addActionListener(e -> rotateSelectedBadgeId());
 
         clearButton.addActionListener(new ActionListener() {
             @Override
@@ -593,6 +695,13 @@ public class EmployeeManagement extends JFrame {
         };
         firstNameField.getDocument().addDocumentListener(generatedUsernameListener);
         lastNameField.getDocument().addDocumentListener(generatedUsernameListener);
+        compensationTypeBox.addActionListener(e -> refreshPayrollSettingsControls());
+        payrollPeriodBox.addActionListener(e -> {
+            if (!loadingPayrollSettings) {
+                PeriodType type = (PeriodType) payrollPeriodBox.getSelectedItem();
+                if (type != null) workHourLimitField.setText(type.defaultLimit().toPlainString());
+            }
+        });
 
         employeeTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -605,9 +714,12 @@ public class EmployeeManagement extends JFrame {
         printBadgeButton.setEnabled(false);
         saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
+        programNfcButton.setEnabled(false);
+        rotateBadgeIdButton.setEnabled(false);
         loadRoles();
         loadStoresForUser(null);
         loadEmployees();
+        refreshPayrollSettingsControls();
         WindowHelper.showPosWindow(this);
     }
 
@@ -637,10 +749,12 @@ public class EmployeeManagement extends JFrame {
                 dateOfBirthField,
                 badgeIdField,
                 salaryAmountField
+                , workHourLimitField
         }) {
             styleTextField(field);
         }
         styleComboBox(compensationTypeBox);
+        styleComboBox(payrollPeriodBox);
         styleComboBox(roleBox);
         activeCheckBox.setForeground(TEXT);
         activeCheckBox.setOpaque(false);
@@ -1053,6 +1167,68 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
+    private void programSelectedNfc() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            CompanyCustomizationManager.BadgeTemplateSettings settings =
+                    CompanyCustomizationManager.loadBadgeTemplateSettings();
+            String payload = BadgePrintService.buildTrackData(settings.nfcPayloadTemplate(), employee, settings);
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "Program RFID/NFC badge for " + employee.displayName() + "?\n\nPayload: " + payload,
+                    "Program RFID/NFC",
+                    JOptionPane.OK_CANCEL_OPTION
+            );
+            if (confirm != JOptionPane.OK_OPTION) {
+                return;
+            }
+            String writeOutput = BadgeEncoderService.programNfc(employee, settings);
+            String verifyOutput = BadgeEncoderService.verifyNfc(employee, settings);
+            JOptionPane.showMessageDialog(this, writeOutput + "\n\n" + verifyOutput,
+                    "RFID/NFC", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to program RFID/NFC badge.\n\n" + ex.getMessage(),
+                    "RFID/NFC", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void rotateSelectedBadgeId() {
+        if (selectedUserId == null) {
+            JOptionPane.showMessageDialog(this, "Select an employee first.");
+            return;
+        }
+        String employeeName = composeFullName(firstNameField.getText().trim(),
+                middleNameField.getText().trim(), lastNameField.getText().trim());
+        if (employeeName.isBlank()) {
+            employeeName = usernameField.getText().trim();
+        }
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Rotate the badge ID for " + employeeName + "?\n\n"
+                        + "The current barcode, magnetic stripe, and RFID/NFC badge will stop working immediately.\n"
+                        + "Printing or programming a badge does not rotate the ID.",
+                "Rotate Badge ID",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE
+        );
+        if (confirm != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        try {
+                String newBadgeId=LanApiClient.updateEmployeeAdmin("ROTATE_BADGE",selectedUserId,null,null,null,UUID.randomUUID().toString()).get("badgeId").getAsString();
+                badgeIdField.setText(newBadgeId);
+                loadEmployees();
+                selectEmployeeInTable(selectedUserId);
+                JOptionPane.showMessageDialog(this,
+                        "Badge ID rotated successfully. Program or print the replacement badge using the new ID.",
+                        "Rotate Badge ID", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to rotate badge ID.\n\n" + ex.getMessage(),
+                    "Rotate Badge ID", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private BadgePrintService.EmployeeBadgeData selectedBadgeData() throws Exception {
         if (selectedUserId == null) {
             throw new IllegalStateException("Select an employee first.");
@@ -1066,21 +1242,11 @@ public class EmployeeManagement extends JFrame {
 
     private void loadRoles() {
         roleBox.removeAllItems();
-
-        String sql = "SELECT role_name FROM roles ORDER BY role_name";
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-
-            while (rs.next()) {
-                String roleName = rs.getString("role_name");
+        try {for(String roleName:LanApiClient.loadEmployeeAdminState(null).roles()) {
                 if (roleName != null && !roleName.isBlank()) {
                     roleBox.addItem(new RoleOption(roleName));
                 }
-            }
-
-        } catch (SQLException ex) {
+            }} catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load roles: " + ex.getMessage());
         }
 
@@ -1092,56 +1258,11 @@ public class EmployeeManagement extends JFrame {
     private void loadEmployees() {
         employeeModel.setRowCount(0);
 
-        String sql = """
-                SELECT u.user_id,
-                       u.username,
-                       u.full_name,
-                       u.first_name,
-                       u.middle_name,
-                       u.last_name,
-                       u.email,
-                       u.phone,
-                       COALESCE(u.employee_photo_url, '') AS employee_photo_url,
-                       u.date_of_birth,
-                       u.badge_id,
-                       COALESCE(u.badge_print_count, 0) AS badge_print_count,
-                       COALESCE(u.compensation_type, 'HOURLY') AS compensation_type,
-                       COALESCE(u.salary, 0) AS salary,
-                       COALESCE(r.role_name, 'USER') AS role,
-                       COALESCE(u.is_active, TRUE) AS is_active,
-                       COALESCE(u.employee_id_card_document_url, '') AS employee_id_card_document_url
-                FROM users u
-                LEFT JOIN roles r ON u.role_id = r.role_id
-                ORDER BY u.user_id
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-
-            while (rs.next()) {
+        try {for(var row:LanApiClient.loadEmployeeAdminState(null).employees()) {
                 employeeModel.addRow(new Object[]{
-                        rs.getInt("user_id"),
-                        rs.getString("username"),
-                        rs.getString("full_name"),
-                        rs.getString("first_name"),
-                        rs.getString("middle_name"),
-                        rs.getString("last_name"),
-                        rs.getString("email"),
-                        rs.getString("phone"),
-                        rs.getString("employee_photo_url"),
-                        rs.getDate("date_of_birth") == null ? "" : rs.getDate("date_of_birth").toLocalDate().toString(),
-                        rs.getString("badge_id"),
-                        rs.getInt("badge_print_count"),
-                        rs.getString("compensation_type"),
-                        rs.getBigDecimal("salary"),
-                        rs.getString("role"),
-                        rs.getBoolean("is_active"),
-                        rs.getString("employee_id_card_document_url")
+                        row.userId(),row.username(),row.fullName(),row.firstName(),row.middleName(),row.lastName(),row.email(),row.phone(),row.photoUrl(),dateText(row.dateOfBirth()),row.badgeId(),row.badgePrintCount(),row.compensationType(),row.salary(),row.role(),row.active(),row.idCardUrl(),dateText(row.hireDate()),dateText(row.deactivationDate())
                 });
-            }
-
-        } catch (SQLException ex) {
+            }} catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load employees: " + ex.getMessage());
         }
     }
@@ -1149,34 +1270,11 @@ public class EmployeeManagement extends JFrame {
     private void loadStoresForUser(Integer userId) {
         storeModel.setRowCount(0);
 
-        String sql = """
-                SELECT l.location_id,
-                       l.name,
-                       l.address,
-                       CASE WHEN ul.user_id IS NULL THEN FALSE ELSE TRUE END AS assigned
-                FROM locations l
-                LEFT JOIN user_locations ul
-                    ON l.location_id = ul.location_id AND ul.user_id = ?
-                ORDER BY l.name
-                """;
-
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, userId == null ? -1 : userId);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
+        try {for(var row:LanApiClient.loadEmployeeAdminState(userId).stores()) {
                     storeModel.addRow(new Object[]{
-                            rs.getBoolean("assigned"),
-                            String.valueOf(rs.getInt("location_id")),
-                            rs.getString("name"),
-                            rs.getString("address") == null ? "" : rs.getString("address")
+                            row.assigned(),String.valueOf(row.locationId()),row.name(),row.address()
                     });
-                }
-            }
-
-        } catch (SQLException ex) {
+                }} catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to load stores: " + ex.getMessage());
         }
 
@@ -1207,9 +1305,12 @@ public class EmployeeManagement extends JFrame {
         refreshEmployeePhotoPreview();
         employeeIdCardDocumentField.setText(employeeModel.getValueAt(selectedRow, 16) == null ? "" : employeeModel.getValueAt(selectedRow, 16).toString());
         dateOfBirthField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
+        hireDateField.setText(employeeModel.getValueAt(selectedRow, 17) == null ? "" : employeeModel.getValueAt(selectedRow, 17).toString());
+        deactivationDateField.setText(employeeModel.getValueAt(selectedRow, 18) == null ? "" : employeeModel.getValueAt(selectedRow, 18).toString());
         badgeIdField.setText(employeeModel.getValueAt(selectedRow, 10) == null ? "" : employeeModel.getValueAt(selectedRow, 10).toString());
         selectCompensationType(employeeModel.getValueAt(selectedRow, 12) == null ? "HOURLY" : employeeModel.getValueAt(selectedRow, 12).toString());
         salaryAmountField.setText(employeeModel.getValueAt(selectedRow, 13) == null ? "" : employeeModel.getValueAt(selectedRow, 13).toString());
+        loadPayrollSettings(selectedUserId, getSelectedCompensationType());
         selectRole(String.valueOf(employeeModel.getValueAt(selectedRow, 14)));
 
         Object activeValue = employeeModel.getValueAt(selectedRow, 15);
@@ -1229,15 +1330,11 @@ public class EmployeeManagement extends JFrame {
         printBadgeButton.setEnabled(true);
         saveBadgePdfButton.setEnabled(true);
         writeMagStripeButton.setEnabled(true);
+        programNfcButton.setEnabled(true);
+        rotateBadgeIdButton.setEnabled(true);
     }
 
     private void addEmployee() {
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Employee setup");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
         String username = usernameField.getText().trim();
         String password = passwordField.getText().trim();
         String firstName = firstNameField.getText().trim();
@@ -1252,34 +1349,23 @@ public class EmployeeManagement extends JFrame {
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
         }
-        String badgeId = badgeIdField.getText().trim();
-        if (badgeId.isEmpty()) {
-            badgeId = BadgeCredentialService.generateBadgeId();
-            badgeIdField.setText(badgeId);
-        }
-        BadgeCredentialService.BadgeHash badgeHash;
-        try {
-            badgeHash = BadgeCredentialService.createHash(badgeId, dateOfBirth);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to secure badge ID: " + ex.getMessage());
-            return;
-        }
+        LocalDate hireDate = parseHireDate();
+        if (hireDate == null) return;
         String compensationType = getSelectedCompensationType();
         BigDecimal salary = parseMoneyAmount(salaryAmountField, "Salary");
         if (salary == null) {
             return;
         }
+        PeriodType payrollPeriodType = selectedPayrollPeriodType();
+        BigDecimal workHourLimit = parseWorkHourLimit(compensationType);
+        if (workHourLimit == null) return;
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
-        if (password.isEmpty()
-                || firstName.isEmpty()
-                || lastName.isEmpty()
-                || email.isEmpty()
-                || phoneNumber.isEmpty()
-                || salaryAmountField.getText().trim().isEmpty()
-                || role.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "All employee fields are required.");
+        List<String> missingFields = missingRequiredEmployeeFields(
+                true, password, firstName, lastName, email, salaryAmountField.getText(), role);
+        if (!missingFields.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Complete the required fields: " + String.join(", ", missingFields) + ".");
             return;
         }
         if (username.isEmpty()) {
@@ -1308,75 +1394,19 @@ public class EmployeeManagement extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try {
-                String authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
-
-                String sql = """
-                        INSERT INTO users (
-                            username, password_hash, first_name, middle_name, last_name, full_name,
-                            email, phone, employee_photo_url, employee_id_card_document_url, date_of_birth, badge_id, badge_secret_salt, badge_secret_hash, badge_generated_at,
-                            compensation_type, salary, role_id, auth_user_id, is_active, password_cache_invalidated_at
-                        )
-                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)), ?::uuid, ?, CURRENT_TIMESTAMP)
-                        RETURNING user_id
-                        """;
-
-                int newUserId;
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    ps.setString(1, username);
-                    ps.setString(2, firstName);
-                    ps.setString(3, middleName.isEmpty() ? null : middleName);
-                    ps.setString(4, lastName);
-                    ps.setString(5, fullName);
-                    ps.setString(6, email);
-                    ps.setString(7, phoneNumber);
-                    ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
-                    ps.setString(9, idCardDocumentUrl.isEmpty() ? null : idCardDocumentUrl);
-                    ps.setDate(10, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(11, badgeId);
-                    ps.setString(12, badgeHash.salt());
-                    ps.setString(13, badgeHash.hash());
-                    ps.setObject(14, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(15, salary);
-                    ps.setString(16, role);
-                    ps.setString(17, normalizeUuid(authUserId));
-                    ps.setBoolean(18, isActive);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (!rs.next()) {
-                            throw new SQLException("Employee was not created.");
-                        }
-                        newUserId = rs.getInt("user_id");
-                    }
-                }
-
-                saveStoreAssignments(conn, newUserId, selectedLocationIds);
-                conn.commit();
+        try {
+                String token=SupabaseSessionManager.getValidAccessToken();
+                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(username,password,firstName,middleName,lastName,fullName,email,phoneNumber,employeePhotoUrl,idCardDocumentUrl,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
+                int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,UUID.randomUUID().toString()).get("userId").getAsInt();
                 JOptionPane.showMessageDialog(this, "Employee added successfully.");
                 loadEmployees();
                 selectEmployeeInTable(newUserId);
-
-            } catch (Exception ex) {
-                conn.rollback();
+        } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Failed to add employee: " + getFriendlyEmployeeError(ex));
-            } finally {
-                conn.setAutoCommit(true);
-            }
-
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to add employee: " + getFriendlyEmployeeError(ex));
         }
     }
 
     private void updateEmployee() {
-        try {
-            OfflineWriteGuard.requireCloudForGlobalWrite("Employee setup");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Required", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
         if (selectedUserId == null) {
             JOptionPane.showMessageDialog(this, "Select an employee first.");
             return;
@@ -1396,33 +1426,23 @@ public class EmployeeManagement extends JFrame {
         if (dateOfBirthField.getText() != null && !dateOfBirthField.getText().trim().isEmpty() && dateOfBirth == null) {
             return;
         }
-        String badgeId = badgeIdField.getText().trim();
-        if (badgeId.isEmpty()) {
-            badgeId = BadgeCredentialService.generateBadgeId();
-            badgeIdField.setText(badgeId);
-        }
-        BadgeCredentialService.BadgeHash badgeHash;
-        try {
-            badgeHash = BadgeCredentialService.createHash(badgeId, dateOfBirth);
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to secure badge ID: " + ex.getMessage());
-            return;
-        }
+        LocalDate hireDate = parseHireDate();
+        if (hireDate == null) return;
         String compensationType = getSelectedCompensationType();
         BigDecimal salary = parseMoneyAmount(salaryAmountField, "Salary");
         if (salary == null) {
             return;
         }
+        PeriodType payrollPeriodType = selectedPayrollPeriodType();
+        BigDecimal workHourLimit = parseWorkHourLimit(compensationType);
+        if (workHourLimit == null) return;
         String role = getSelectedRole();
         boolean isActive = activeCheckBox.isSelected();
 
-        if (firstName.isEmpty()
-                || lastName.isEmpty()
-                || email.isEmpty()
-                || phoneNumber.isEmpty()
-                || salaryAmountField.getText().trim().isEmpty()
-                || role.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "All employee fields except password are required.");
+        List<String> missingFields = missingRequiredEmployeeFields(
+                false, password, firstName, lastName, email, salaryAmountField.getText(), role);
+        if (!missingFields.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Complete the required fields: " + String.join(", ", missingFields) + ".");
             return;
         }
         if (username.isEmpty()) {
@@ -1451,107 +1471,35 @@ public class EmployeeManagement extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try {
-                String authUserId = getAuthUserId(conn, selectedUserId);
-                boolean shouldSyncAuth = !password.isBlank()
-                        || !sameText(fullName, originalFullName)
-                        || !sameText(email, originalEmail)
-                        || isActive != originalIsActive;
-
-                if (shouldSyncAuth) {
-                    if (authUserId == null || authUserId.isBlank()) {
-                        if (password.isEmpty()) {
-                            throw new IllegalStateException("This employee does not have a linked Supabase auth user yet. Enter a password so one can be created.");
-                        }
-                        authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
-                    } else {
-                        try {
-                            updateSupabaseAuthUser(authUserId, email, password, fullName, isActive);
-                        } catch (IllegalStateException ex) {
-                            if (!isSupabaseAuthUserNotFound(ex)) {
-                                throw ex;
-                            }
-                            if (password.isEmpty()) {
-                                throw new IllegalStateException("This employee's linked Supabase auth account was not found. Enter a new password so the auth account can be recreated.");
-                            }
-                            authUserId = createSupabaseAuthUser(email, password, fullName, isActive);
-                        }
-                    }
-                }
-
-                String sql = """
-                        UPDATE users
-                        SET username = ?,
-                            password_hash = NULL,
-                            first_name = ?,
-                            middle_name = ?,
-                            last_name = ?,
-                            full_name = ?,
-                            email = ?,
-                            phone = ?,
-                            employee_photo_url = ?,
-                            employee_id_card_document_url = ?,
-                            date_of_birth = ?,
-                            badge_id = ?,
-                            badge_secret_salt = ?,
-                            badge_secret_hash = ?,
-                            badge_generated_at = CURRENT_TIMESTAMP,
-                            compensation_type = ?,
-                            salary = ?,
-                            role_id = (SELECT role_id FROM roles WHERE UPPER(role_name) = UPPER(?)),
-                            auth_user_id = ?::uuid,
-                            is_active = ?,
-                            password_cache_invalidated_at = CASE
-                                WHEN ? THEN CURRENT_TIMESTAMP
-                                ELSE password_cache_invalidated_at
-                            END,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE user_id = ?
-                        """;
-
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    ps.setString(1, username);
-                    ps.setString(2, firstName);
-                    ps.setString(3, middleName.isEmpty() ? null : middleName);
-                    ps.setString(4, lastName);
-                    ps.setString(5, fullName);
-                    ps.setString(6, email);
-                    ps.setString(7, phoneNumber);
-                    ps.setString(8, employeePhotoUrl.isEmpty() ? null : employeePhotoUrl);
-                    ps.setString(9, idCardDocumentUrl.isEmpty() ? null : idCardDocumentUrl);
-                    ps.setDate(10, dateOfBirth == null ? null : java.sql.Date.valueOf(dateOfBirth));
-                    ps.setString(11, badgeId);
-                    ps.setString(12, badgeHash.salt());
-                    ps.setString(13, badgeHash.hash());
-                    ps.setObject(14, compensationType, java.sql.Types.OTHER);
-                    ps.setBigDecimal(15, salary);
-                    ps.setString(16, role);
-                    ps.setString(17, normalizeUuid(authUserId));
-                    ps.setBoolean(18, isActive);
-                    ps.setBoolean(19, !password.isBlank());
-                    ps.setInt(20, selectedUserId);
-                    ps.executeUpdate();
-                }
-
-                saveStoreAssignments(conn, selectedUserId, selectedLocationIds);
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Employee updated successfully.");
-                clearFields();
-                loadEmployees();
-
-            } catch (Exception ex) {
-                conn.rollback();
-                JOptionPane.showMessageDialog(this, "Failed to update employee: " + getFriendlyEmployeeError(ex));
-            } finally {
-                conn.setAutoCommit(true);
-            }
-
-        } catch (SQLException ex) {
+        try {
+            String token = SupabaseSessionManager.getValidAccessToken();
+            boolean payrollChanged = payrollPeriodType != originalPayrollPeriodType
+                    || workHourLimit.compareTo(originalWorkHourLimit) != 0;
+            LanEmployeeAdminService.SaveRequest request = new LanEmployeeAdminService.SaveRequest(
+                    username, password, firstName, middleName, lastName, fullName, email, phoneNumber,
+                    employeePhotoUrl, idCardDocumentUrl, dateOfBirth, hireDate, compensationType, salary,
+                    role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, token);
+            LanApiClient.updateEmployeeAdmin("UPDATE", selectedUserId, request, null, null,
+                    UUID.randomUUID().toString());
+            JOptionPane.showMessageDialog(this, "Employee updated successfully.");
+            clearFields();
+            loadEmployees();
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update employee: " + getFriendlyEmployeeError(ex));
         }
+    }
+
+    private static List<String> missingRequiredEmployeeFields(boolean creating, String password,
+                                                               String firstName, String lastName,
+                                                               String email, String salary, String role) {
+        List<String> missing = new ArrayList<>();
+        if (creating && password.isBlank()) missing.add("Password");
+        if (firstName.isBlank()) missing.add("First Name");
+        if (lastName.isBlank()) missing.add("Last Name");
+        if (email.isBlank()) missing.add("Email");
+        if (salary.isBlank()) missing.add("Hourly Rate / Salary");
+        if (role.isBlank()) missing.add("Role");
+        return missing;
     }
 
     private void clearFields() {
@@ -1569,9 +1517,19 @@ public class EmployeeManagement extends JFrame {
         refreshEmployeePhotoPreview();
         employeeIdCardDocumentField.setText("");
         dateOfBirthField.setText("");
+        hireDateField.setText(storeToday().toString());
+        deactivationDateField.setText("");
         badgeIdField.setText("");
         selectCompensationType("HOURLY");
         salaryAmountField.setText("");
+        loadingPayrollSettings = true;
+        payrollPeriodBox.setSelectedItem(PeriodType.SEMI_MONTHLY);
+        workHourLimitField.setText(EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT.toPlainString());
+        loadingPayrollSettings = false;
+        originalPayrollPeriodType = PeriodType.SEMI_MONTHLY;
+        originalWorkHourLimit = EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT;
+        payrollSettingsStatusLabel.setText("Applies to hourly employees only.");
+        refreshPayrollSettingsControls();
         roleBox.setSelectedIndex(0);
         activeCheckBox.setSelected(true);
         activeCheckBox.setEnabled(true);
@@ -1590,6 +1548,8 @@ public class EmployeeManagement extends JFrame {
         printBadgeButton.setEnabled(false);
         saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
+        programNfcButton.setEnabled(false);
+        rotateBadgeIdButton.setEnabled(false);
         usernameField.requestFocusInWindow();
     }
 
@@ -1602,6 +1562,20 @@ public class EmployeeManagement extends JFrame {
             return LocalDate.parse(value);
         } catch (DateTimeParseException ex) {
             JOptionPane.showMessageDialog(this, "Date of birth must use YYYY-MM-DD.");
+            return null;
+        }
+    }
+
+    private LocalDate parseHireDate() {
+        String value = hireDateField.getText() == null ? "" : hireDateField.getText().trim();
+        if (value.isEmpty()) {
+            hireDateField.setText(storeToday().toString());
+            return storeToday();
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException ex) {
+            JOptionPane.showMessageDialog(this, "Hire date must use YYYY-MM-DD.");
             return null;
         }
     }
@@ -1693,51 +1667,6 @@ public class EmployeeManagement extends JFrame {
         return locationIds;
     }
 
-    private void saveStoreAssignments(Connection conn, int userId, List<Integer> locationIds) throws SQLException {
-        Set<Integer> currentLocationIds = loadAssignedLocationIds(conn, userId);
-        Set<Integer> selectedLocationIds = new HashSet<>(locationIds);
-        Set<Integer> removedLocationIds = new HashSet<>(currentLocationIds);
-        removedLocationIds.removeAll(selectedLocationIds);
-
-        String deleteSql = "DELETE FROM user_locations WHERE user_id = ? AND location_id = ?";
-        String insertSql = "INSERT INTO user_locations (user_id, location_id) VALUES (?, ?) ON CONFLICT (user_id, location_id) DO NOTHING";
-        try (PreparedStatement deletePs = conn.prepareStatement(deleteSql);
-             PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
-
-            for (Integer locationId : removedLocationIds) {
-                ReferenceDataSyncService.recordTombstone(conn, "user_locations", Map.of(
-                        "user_id", userId,
-                        "location_id", locationId
-                ));
-                deletePs.setInt(1, userId);
-                deletePs.setInt(2, locationId);
-                deletePs.addBatch();
-            }
-            deletePs.executeBatch();
-
-            for (Integer locationId : locationIds) {
-                insertPs.setInt(1, userId);
-                insertPs.setInt(2, locationId);
-                insertPs.addBatch();
-            }
-
-            insertPs.executeBatch();
-        }
-    }
-
-    private Set<Integer> loadAssignedLocationIds(Connection conn, int userId) throws SQLException {
-        Set<Integer> locationIds = new HashSet<>();
-        try (PreparedStatement ps = conn.prepareStatement("SELECT location_id FROM user_locations WHERE user_id = ?")) {
-            ps.setInt(1, userId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    locationIds.add(rs.getInt("location_id"));
-                }
-            }
-        }
-        return locationIds;
-    }
-
     private static String getFriendlyEmployeeError(Exception ex) {
         if (isDuplicateBadgeError(ex)) {
             return "That badge ID is already assigned to another employee.";
@@ -1749,10 +1678,9 @@ public class EmployeeManagement extends JFrame {
         Throwable current = ex;
         while (current != null) {
             String message = current.getMessage();
-            if (current instanceof SQLException sqlException
-                    && "23505".equals(sqlException.getSQLState())
-                    && message != null
-                    && message.toLowerCase().contains("badge")) {
+            if (message != null
+                    && message.toLowerCase().contains("badge")
+                    && (message.contains("23505") || message.toLowerCase().contains("duplicate"))) {
                 return true;
             }
             if (message != null) {
@@ -1796,6 +1724,96 @@ public class EmployeeManagement extends JFrame {
             }
         }
         compensationTypeBox.setSelectedIndex(0);
+    }
+
+    private void refreshPayrollSettingsControls() {
+        String compensationType = getSelectedCompensationType();
+        boolean hourly = EmployeePayrollSettingsService.isHourly(compensationType);
+        boolean selectablePeriod = EmployeePayrollSettingsService.usesSelectablePeriod(compensationType);
+        payrollPeriodBox.setEnabled(selectablePeriod);
+        workHourLimitField.setEnabled(hourly);
+        salaryAmountLabel.setText(switch (compensationType.toUpperCase()) {
+            case "SALARY" -> "Salary Per Period *:";
+            case "DAILY" -> "Daily Rate *:";
+            default -> "Hourly Rate *:";
+        });
+        if ("SALARY".equalsIgnoreCase(compensationType)) {
+            payrollSettingsStatusLabel.setText("Salary is paid in full once per selected pay period; overtime does not apply.");
+        } else if (!hourly) {
+            payrollSettingsStatusLabel.setText("Semi-monthly; overtime does not apply to this pay type.");
+        }
+    }
+
+    private void loadPayrollSettings(int userId, String compensationType) {
+        loadingPayrollSettings = true;
+        try {
+            EmployeePayrollSettingsService.SettingView view =
+                    LanApiClient.loadEmployeeAdminState(userId).payroll();
+            if (view == null) {
+                throw new IllegalStateException("Payroll settings were not returned by the server.");
+            }
+            EmployeePayrollSettingsService.PayrollSetting displayed = view.pending() == null
+                    ? view.current() : view.pending();
+            payrollPeriodBox.setSelectedItem(displayed.periodType());
+            workHourLimitField.setText(displayed.workHourLimit().stripTrailingZeros().toPlainString());
+            originalPayrollPeriodType = displayed.periodType();
+            originalWorkHourLimit = displayed.workHourLimit();
+            if ("SALARY".equalsIgnoreCase(compensationType)) {
+                payrollSettingsStatusLabel.setText(displayed.periodType().label()
+                        + "; salary is paid in full once per period and overtime does not apply.");
+            } else if (!EmployeePayrollSettingsService.isHourly(compensationType)) {
+                payrollSettingsStatusLabel.setText("Semi-monthly; overtime does not apply to this pay type.");
+            } else if (view.pending() == null) {
+                payrollSettingsStatusLabel.setText("Current since " + view.current().effectiveFrom());
+            } else {
+                payrollSettingsStatusLabel.setText("Current: " + view.current().periodType().label()
+                        + " / " + view.current().workHourLimit().stripTrailingZeros().toPlainString()
+                        + " hours. Pending from " + view.pending().effectiveFrom());
+            }
+        } catch (Exception ex) {
+            payrollPeriodBox.setSelectedItem(PeriodType.SEMI_MONTHLY);
+            workHourLimitField.setText(EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT.toPlainString());
+            originalPayrollPeriodType = PeriodType.SEMI_MONTHLY;
+            originalWorkHourLimit = EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT;
+            payrollSettingsStatusLabel.setText("Could not load payroll setting: " + ex.getMessage());
+        } finally {
+            loadingPayrollSettings = false;
+            refreshPayrollSettingsControls();
+        }
+    }
+
+    private PeriodType selectedPayrollPeriodType() {
+        Object selected = payrollPeriodBox.getSelectedItem();
+        return selected instanceof PeriodType type ? type : PeriodType.SEMI_MONTHLY;
+    }
+
+    private BigDecimal parseWorkHourLimit(String compensationType) {
+        if (!EmployeePayrollSettingsService.isHourly(compensationType)) {
+            return selectedPayrollPeriodType().defaultLimit();
+        }
+        String value = workHourLimitField.getText().trim();
+        try {
+            BigDecimal limit = new BigDecimal(value);
+            if (limit.compareTo(BigDecimal.ZERO) <= 0) throw new NumberFormatException();
+            return limit.setScale(2, java.math.RoundingMode.HALF_UP);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Enter a valid work hour limit greater than zero.");
+            return null;
+        }
+    }
+
+    private static LocalDate storeToday() {
+        String timezone = SessionManager.getCurrentLocationTimezone();
+        try {
+            return LocalDate.now(ZoneId.of(timezone == null || timezone.isBlank()
+                    ? ZoneId.systemDefault().getId() : timezone));
+        } catch (Exception ignored) {
+            return LocalDate.now();
+        }
+    }
+
+    private static String dateText(LocalDate value) {
+        return value == null ? "" : value.toString();
     }
 
     private BigDecimal parseMoneyAmount(JTextField field, String label) {
@@ -1882,35 +1900,6 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
-    private void deleteSupabaseAuthUser(String authUserId) throws IOException, InterruptedException {
-        ensureSupabaseConfig();
-
-        String body = "{" +
-                "\"user_id\":" + jsonValue(authUserId) +
-                "}";
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SUPABASE_URL + "/functions/v1/delete-employee-auth-user"))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/json")
-                .header("apikey", SUPABASE_PUBLISHABLE_KEY)
-                .header("Authorization", buildUserAuthHeader())
-                .method("DELETE", HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException(
-                    extractErrorMessage(response.body(),
-                            "Supabase auth user delete failed with status " + response.statusCode())
-            );
-        }
-    }
-
     private void openAssignStoresDialog() {
         if (selectedUserId == null) {
             JOptionPane.showMessageDialog(this, "Select an employee first.");
@@ -1947,6 +1936,8 @@ public class EmployeeManagement extends JFrame {
 
         JTable storeTable = new JTable(storeModel);
         storeTable.setRowHeight(24);
+        TableRowSorter<DefaultTableModel> dialogSorter = new TableRowSorter<>(storeModel);
+        storeTable.setRowSorter(dialogSorter);
         JScrollPane scrollPane = new JScrollPane(storeTable);
 
         TableColumn assignedColumn = storeTable.getColumnModel().getColumn(0);
@@ -1965,97 +1956,39 @@ public class EmployeeManagement extends JFrame {
 
         Runnable loadStores = () -> {
             storeModel.setRowCount(0);
-            String searchText = searchField.getText().trim();
-
-            String sql = """
-                    SELECT l.location_id, l.name, l.address,
-                           CASE WHEN ul.user_id IS NULL THEN FALSE ELSE TRUE END AS assigned
-                    FROM locations l
-                    LEFT JOIN user_locations ul
-                        ON l.location_id = ul.location_id AND ul.user_id = ?
-                    WHERE l.name LIKE ?
-                       OR COALESCE(l.address, '') LIKE ?
-                       OR CAST(l.location_id AS TEXT) LIKE ?
-                    ORDER BY l.location_id
-                    """;
-
-            try (Connection conn = DB.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(sql)) {
-
-                String searchLike = "%" + searchText + "%";
-                ps.setInt(1, selectedUserId);
-                ps.setString(2, searchLike);
-                ps.setString(3, searchLike);
-                ps.setString(4, searchLike);
-
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        storeModel.addRow(new Object[]{
-                                rs.getBoolean("assigned"),
-                                String.valueOf(rs.getInt("location_id")),
-                                rs.getString("name"),
-                                rs.getString("address") == null ? "" : rs.getString("address")
-                        });
-                    }
+            try {
+                for (LanEmployeeAdminService.Store store : LanApiClient.loadEmployeeAdminState(selectedUserId).stores()) {
+                    storeModel.addRow(new Object[]{store.assigned(), String.valueOf(store.locationId()),
+                            store.name(), store.address()});
                 }
-
-            } catch (SQLException ex) {
+            } catch (Exception ex) {
                 JOptionPane.showMessageDialog(dialog, "Failed to load stores: " + ex.getMessage());
             }
         };
 
-        searchField.addActionListener(e -> loadStores.run());
+        searchField.getDocument().addDocumentListener(new DocumentListener() {
+            private void updateFilter() {
+                String value = searchField.getText().trim();
+                dialogSorter.setRowFilter(value.isBlank() ? null : RowFilter.regexFilter("(?i)" + Pattern.quote(value)));
+            }
+            @Override public void insertUpdate(DocumentEvent e) { updateFilter(); }
+            @Override public void removeUpdate(DocumentEvent e) { updateFilter(); }
+            @Override public void changedUpdate(DocumentEvent e) { updateFilter(); }
+        });
 
         saveButton.addActionListener(e -> {
-            String deleteSql = "DELETE FROM user_locations WHERE user_id = ? AND location_id = ?";
-            String insertSql = "INSERT INTO user_locations (user_id, location_id) VALUES (?, ?) ON CONFLICT (user_id, location_id) DO NOTHING";
-
-            try (Connection conn = DB.getConnection()) {
-                conn.setAutoCommit(false);
-
-                try (PreparedStatement deletePs = conn.prepareStatement(deleteSql);
-                     PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
-                    Set<Integer> selectedLocationIds = new HashSet<>();
-                    for (int i = 0; i < storeModel.getRowCount(); i++) {
-                        Object assignedValue = storeModel.getValueAt(i, 0);
-                        boolean assigned = assignedValue instanceof Boolean && (Boolean) assignedValue;
-                        if (assigned) {
-                            selectedLocationIds.add(Integer.parseInt(storeModel.getValueAt(i, 1).toString()));
-                        }
+            try {
+                List<Integer> selectedLocationIds = new ArrayList<>();
+                for (int i = 0; i < storeModel.getRowCount(); i++) {
+                    if (Boolean.TRUE.equals(storeModel.getValueAt(i, 0))) {
+                        selectedLocationIds.add(Integer.parseInt(storeModel.getValueAt(i, 1).toString()));
                     }
-
-                    Set<Integer> removedLocationIds = loadAssignedLocationIds(conn, selectedUserId);
-                    removedLocationIds.removeAll(selectedLocationIds);
-                    for (Integer locationId : removedLocationIds) {
-                        ReferenceDataSyncService.recordTombstone(conn, "user_locations", Map.of(
-                                "user_id", selectedUserId,
-                                "location_id", locationId
-                        ));
-                        deletePs.setInt(1, selectedUserId);
-                        deletePs.setInt(2, locationId);
-                        deletePs.addBatch();
-                    }
-                    deletePs.executeBatch();
-
-                    for (Integer locationId : selectedLocationIds) {
-                        insertPs.setInt(1, selectedUserId);
-                        insertPs.setInt(2, locationId);
-                        insertPs.addBatch();
-                    }
-
-                    insertPs.executeBatch();
-                    conn.commit();
-                    JOptionPane.showMessageDialog(dialog, "Store assignments saved.");
-                    dialog.dispose();
-
-                } catch (SQLException ex) {
-                    conn.rollback();
-                    throw ex;
-                } finally {
-                    conn.setAutoCommit(true);
                 }
-
-            } catch (SQLException ex) {
+                LanApiClient.updateEmployeeAdmin("SAVE_STORES", selectedUserId, null,
+                        selectedLocationIds, null, UUID.randomUUID().toString());
+                JOptionPane.showMessageDialog(dialog, "Store assignments saved.");
+                dialog.dispose();
+            } catch (Exception ex) {
                 JOptionPane.showMessageDialog(dialog, "Failed to save assignments: " + ex.getMessage());
             }
         });
@@ -2064,195 +1997,6 @@ public class EmployeeManagement extends JFrame {
 
         loadStores.run();
         dialog.setVisible(true);
-    }
-
-    private String getAuthUserId(Connection conn, int userId) throws SQLException {
-        String sql = "SELECT auth_user_id FROM users WHERE user_id = ?";
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, userId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("auth_user_id");
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private String createSupabaseAuthUser(String email, String password, String fullName, boolean isActive)
-            throws IOException, InterruptedException {
-        ensureSupabaseConfig();
-
-        String body = "{"
-                + "\"email\":" + jsonValue(email) + ","
-                + "\"password\":" + jsonValue(password) + ","
-                + "\"full_name\":" + jsonValue(fullName == null || fullName.isBlank() ? email : fullName) + ","
-                + "\"is_active\":" + isActive
-                + "}";
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SUPABASE_URL + "/functions/v1/create-employee-auth-user"))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/json")
-                .header("apikey", SUPABASE_PUBLISHABLE_KEY)
-                .header("Authorization", buildUserAuthHeader())
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException(
-                    extractErrorMessage(response.body(),
-                            "Supabase auth user creation failed with status " + response.statusCode())
-            );
-        }
-
-        String authUserId = extractJsonString(response.body(), "auth_user_id");
-        if (authUserId == null || authUserId.isBlank()) {
-            authUserId = extractJsonString(response.body(), "user_id");
-        }
-        if (authUserId == null || authUserId.isBlank()) {
-            authUserId = extractJsonString(response.body(), "id");
-        }
-
-        if (authUserId == null || authUserId.isBlank()) {
-            throw new IllegalStateException("Supabase auth user was created but no auth user id was returned.");
-        }
-
-        return authUserId;
-    }
-
-    private void updateSupabaseAuthUser(String authUserId, String email, String password, String fullName, boolean isActive)
-            throws IOException, InterruptedException {
-        ensureSupabaseConfig();
-
-        StringBuilder body = new StringBuilder();
-        body.append("{")
-                .append("\"auth_user_id\":").append(jsonValue(authUserId)).append(",")
-                .append("\"email\":").append(jsonValue(email)).append(",")
-                .append("\"full_name\":").append(jsonValue(fullName == null || fullName.isBlank() ? email : fullName)).append(",")
-                .append("\"is_active\":").append(isActive);
-
-        if (password != null && !password.isBlank()) {
-            body.append(",\"password\":").append(jsonValue(password));
-        }
-
-        body.append("}");
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SUPABASE_URL + "/functions/v1/update-employee-auth-user"))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/json")
-                .header("apikey", SUPABASE_PUBLISHABLE_KEY)
-                .header("Authorization", buildUserAuthHeader())
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException(
-                    extractErrorMessage(response.body(),
-                            "Supabase auth user update failed with status " + response.statusCode())
-            );
-        }
-    }
-
-    private static boolean isSupabaseAuthUserNotFound(Exception ex) {
-        String message = ex.getMessage();
-        if (message == null) {
-            return false;
-        }
-        String normalized = message.trim().toLowerCase();
-        return normalized.contains("user not found")
-                || normalized.contains("user from sub claim in jwt does not exist");
-    }
-
-    private static void ensureSupabaseConfig() {
-        if (SUPABASE_URL == null || SUPABASE_URL.isBlank()) {
-            throw new IllegalStateException("Missing SUPABASE_URL configuration.");
-        }
-        if (SUPABASE_PUBLISHABLE_KEY == null || SUPABASE_PUBLISHABLE_KEY.isBlank()) {
-            throw new IllegalStateException("Missing SUPABASE_PUBLISHABLE_KEY configuration.");
-        }
-    }
-
-    private static String buildUserAuthHeader() throws IOException, InterruptedException {
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
-        if (accessToken == null || accessToken.isBlank()) {
-            throw new IllegalStateException("Missing logged-in Supabase access token.");
-        }
-        return "Bearer " + accessToken;
-    }
-
-
-
-    private static String getConfig(String key) {
-        return getConfig(key, null);
-    }
-
-    private static String getConfig(String key, String fallback) {
-        String value = System.getenv(key);
-        if (value == null || value.isBlank()) {
-            value = System.getProperty(key);
-        }
-        if (value == null || value.isBlank()) {
-            value = fallback;
-        }
-        return value;
-    }
-
-    private static String normalizeUuid(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return UUID.fromString(value.trim()).toString();
-    }
-
-    private static String jsonValue(String value) {
-        if (value == null) {
-            return "null";
-        }
-        return "\"" + escapeJson(value) + "\"";
-    }
-
-    private static String escapeJson(String value) {
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-
-    private static String extractJsonString(String json, String fieldName) {
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-
-        Pattern pattern = Pattern.compile("\"" + Pattern.quote(fieldName) + "\"\\s*:\\s*\"([^\"]+)\"");
-        Matcher matcher = pattern.matcher(json);
-        return matcher.find() ? matcher.group(1) : null;
-    }
-
-    private static String extractErrorMessage(String responseBody, String fallback) {
-        String message = extractJsonString(responseBody, "error");
-        if (message == null || message.isBlank()) {
-            message = extractJsonString(responseBody, "message");
-        }
-        if (message == null || message.isBlank()) {
-            message = extractJsonString(responseBody, "msg");
-        }
-        return (message == null || message.isBlank()) ? fallback : message;
     }
 
     private void deleteEmployee() {
@@ -2273,52 +2017,15 @@ public class EmployeeManagement extends JFrame {
             return;
         }
 
-        try (Connection conn = DB.getConnection()) {
-            conn.setAutoCommit(false);
-
-            try {
-                String authUserId = getAuthUserId(conn, selectedUserId);
-
-                if (authUserId != null && !authUserId.isBlank()) {
-                    deleteSupabaseAuthUser(authUserId);
-                }
-
-                try (PreparedStatement ps = conn.prepareStatement("""
-                        UPDATE users
-                        SET is_active = FALSE,
-                            deactivated_at = COALESCE(deactivated_at, CURRENT_TIMESTAMP),
-                            deactivated_by_user_id = ?,
-                            deactivated_by_name = ?,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE user_id = ?
-                        """)) {
-                    Integer currentUserId = SessionManager.getCurrentUserId();
-                    if (currentUserId == null) {
-                        ps.setNull(1, java.sql.Types.INTEGER);
-                    } else {
-                        ps.setInt(1, currentUserId);
-                    }
-                    ps.setString(2, SessionManager.getCurrentUserDisplayName());
-                    ps.setInt(3, selectedUserId);
-                    int updatedRows = ps.executeUpdate();
-                    if (updatedRows == 0) {
-                        throw new IllegalStateException("Employee record was not found.");
-                    }
-                }
-
-                conn.commit();
-                JOptionPane.showMessageDialog(this, "Employee deactivated successfully. Their history was kept for reporting and audit records.");
-                clearFields();
-                loadEmployees();
-
-            } catch (Exception ex) {
-                conn.rollback();
-                JOptionPane.showMessageDialog(this, "Failed to deactivate employee: " + ex.getMessage());
-            } finally {
-                conn.setAutoCommit(true);
-            }
-
-        } catch (SQLException ex) {
+        try {
+            String token = SupabaseSessionManager.getValidAccessToken();
+            LanApiClient.updateEmployeeAdmin("DEACTIVATE", selectedUserId, null, null, token,
+                    UUID.randomUUID().toString());
+            JOptionPane.showMessageDialog(this,
+                    "Employee deactivated successfully. Their history was kept for reporting and audit records.");
+            clearFields();
+            loadEmployees();
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to deactivate employee: " + ex.getMessage());
         }
     }
