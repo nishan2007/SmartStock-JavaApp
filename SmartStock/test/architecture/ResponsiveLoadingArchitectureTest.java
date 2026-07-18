@@ -20,6 +20,13 @@ class ResponsiveLoadingArchitectureTest {
     }
 
     @Test
+    void macRuntimeIncludesGsonUnsafeSupport() throws Exception {
+        String packaging = Files.readString(Path.of("tools/package-macos-release.sh"));
+        assertTrue(packaging.contains("jdk.unsupported"),
+                "The packaged runtime must support Gson model construction used by devices and pairing");
+    }
+
+    @Test
     void lanAndDatabaseBoundariesHaveEdtGuards() throws Exception {
         String lan = Files.readString(SOURCE_ROOT.resolve("services/LanApiClient.java"));
         String database = Files.readString(SOURCE_ROOT.resolve("data/DB.java"));

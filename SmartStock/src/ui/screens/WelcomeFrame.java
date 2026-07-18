@@ -276,8 +276,11 @@ public class WelcomeFrame extends JFrame {
                     }
                 } catch (Exception ex) {
                     Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                    String message = getRootCauseMessage(cause);
                     statusLabel.setText("Status: Pairing was not completed.");
-                    JOptionPane.showMessageDialog(WelcomeFrame.this, cause.getMessage(),
+                    JOptionPane.showMessageDialog(WelcomeFrame.this,
+                            "This register could not be paired.\n\n" + message
+                                    + "\n\nConfirm both Macs are on the same network, then request a new phrase from Device Management > Security Status.",
                             "Register Pairing", JOptionPane.ERROR_MESSAGE);
                 }
             }
@@ -464,7 +467,7 @@ public class WelcomeFrame extends JFrame {
         worker.execute();
     }
 
-    private String getRootCauseMessage(Exception ex) {
+    private String getRootCauseMessage(Throwable ex) {
         Throwable cause = ex;
         while (cause.getCause() != null) {
             cause = cause.getCause();
@@ -486,10 +489,11 @@ public class WelcomeFrame extends JFrame {
         refreshModeLabel();
         refreshSystemStats();
         DatabaseConfig config = DatabaseConfig.load();
+        String connectionLabel = config.mode() == DatabaseMode.CLIENT ? "SmartStock Server: " : "Local DB: ";
         setupBtn.setVisible(isInitialSetupRequired(config));
         if (!DatabaseConfig.hasConfigFile()) {
             systemStatusRefreshInProgress = false;
-            localDbLabel.setText("Local DB: Setup required");
+            localDbLabel.setText(connectionLabel + "Setup required");
             onlineDbLabel.setText("Online DB: Setup required");
             localDbLabel.setForeground(DeckersPalette.CORAL);
             onlineDbLabel.setForeground(DeckersPalette.CORAL);
@@ -499,7 +503,7 @@ public class WelcomeFrame extends JFrame {
             return;
         }
         if (showCheckingState) {
-            localDbLabel.setText("Local DB: Checking...");
+            localDbLabel.setText(connectionLabel + "Checking...");
             onlineDbLabel.setText("Online DB: Checking...");
             localDbLabel.setForeground(DeckersPalette.muted());
             onlineDbLabel.setForeground(DeckersPalette.muted());
@@ -524,12 +528,12 @@ public class WelcomeFrame extends JFrame {
                 refreshStatusBtn.setEnabled(true);
                 try {
                     SystemStatus result = get();
-                    updateStatusLabel(localDbLabel, "Local DB: " + result.localStatus(), result.localStatus());
+                    updateStatusLabel(localDbLabel, connectionLabel + result.localStatus(), result.localStatus());
                     updateStatusLabel(onlineDbLabel, "Online DB: " + result.onlineStatus(), result.onlineStatus());
                     statusLabel.setText("Status: " + result.message());
                     continueBtn.setEnabled(result.canLogin());
                 } catch (Exception ex) {
-                    localDbLabel.setText("Local DB: Failed");
+                    localDbLabel.setText(connectionLabel + "Failed");
                     onlineDbLabel.setText("Online DB: Failed");
                     localDbLabel.setForeground(DeckersPalette.CORAL);
                     onlineDbLabel.setForeground(DeckersPalette.CORAL);

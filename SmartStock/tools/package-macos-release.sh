@@ -131,7 +131,7 @@ JPACKAGE_OUTPUT="$(jpackage \
   --app-version "$VERSION" \
   --icon "$MAC_ICON_PATH" \
   --mac-package-identifier "com.smartstock.desktop" \
-  --add-modules "java.base,java.desktop,java.management,java.net.http,java.prefs,java.sql,jdk.httpserver" \
+  --add-modules "java.base,java.desktop,java.management,java.net.http,java.prefs,java.sql,jdk.httpserver,jdk.unsupported" \
   --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
 JPACKAGE_STATUS=$?
 set -e
