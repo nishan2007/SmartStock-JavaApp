@@ -29,4 +29,11 @@ class SmartStockUpdaterTest {
         assertThrows(IllegalArgumentException.class,
                 () -> SmartStockUpdater.macLaunchctlCommand("remove", "501", PLIST, "com.smartstock.sync"));
     }
+
+    @Test
+    void usesAbsoluteMacOpenCommandForRelaunch() {
+        Path app = Path.of("/Applications/SmartStock.app");
+        assertEquals(List.of("/usr/bin/open", "-n", app.toString()),
+                SmartStockUpdater.macOpenCommand(app));
+    }
 }

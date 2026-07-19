@@ -195,6 +195,9 @@ public final class AppUpdateService {
         Path appJar = currentAppJar();
         Path appDir = appJar.getParent();
         Path appBundle = findContainingMacAppBundle(appJar);
+        if (appBundle != null) {
+            validateMacUpdateLocation(appBundle);
+        }
         Path stagingDir = UPDATE_ROOT.resolve("staged-" + release.version() + "-" + UUID.randomUUID());
         Files.createDirectories(stagingDir);
 
@@ -335,6 +338,17 @@ public final class AppUpdateService {
             current = current.getParent();
         }
         return null;
+    }
+
+    static void validateMacUpdateLocation(Path appBundle) throws IOException {
+        String normalized = appBundle.toAbsolutePath().normalize().toString();
+        if (normalized.contains("/AppTranslocation/") || normalized.startsWith("/Volumes/")) {
+            throw new IOException("SmartStock is running from a temporary location. Install SmartStock.app in Applications, open it there, then try the update again.");
+        }
+        Path parent = appBundle.getParent();
+        if (parent == null || !Files.isWritable(parent)) {
+            throw new IOException("SmartStock cannot update its current installation. Reinstall SmartStock.app in Applications, then try again.");
+        }
     }
 
     private static Path javaBinary() {

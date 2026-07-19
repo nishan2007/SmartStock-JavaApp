@@ -2,13 +2,16 @@ package app;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -24,9 +27,12 @@ public final class SmartStockUpdater {
             System.exit(2);
         }
         try {
+            log("Updater started.");
             Thread.sleep(1800);
             apply(Path.of(args[0]));
+            log("Updater completed.");
         } catch (Exception ex) {
+            log("Updater failed: " + rootMessage(ex));
             ex.printStackTrace();
             System.exit(1);
         }
@@ -93,7 +99,7 @@ public final class SmartStockUpdater {
 
         if (Boolean.parseBoolean(props.getProperty("relaunch", "true"))) {
             if ("mac-app".equals(layout) && isMac()) {
-                new ProcessBuilder("open", launchTarget.toString()).start();
+                relaunchMacApp(launchTarget);
             } else {
                 new ProcessBuilder(javaBin.toString(), "-jar", launchTarget.toString())
                         .directory(appDir.toFile())
@@ -115,15 +121,80 @@ public final class SmartStockUpdater {
             throw new IOException("Unable to determine current app bundle parent.");
         }
         Files.createDirectories(parent);
-        deleteRecursively(currentBundle);
-        copyMacBundle(newBundle, currentBundle);
+        String nonce = UUID.randomUUID().toString();
+        Path stagedBundle = parent.resolve("." + currentBundle.getFileName() + ".update-" + nonce);
+        Path previousBundle = parent.resolve("." + currentBundle.getFileName() + ".previous-" + nonce);
+        try {
+            copyMacBundle(newBundle, stagedBundle);
+            validateMacBundle(stagedBundle);
+            if (Files.exists(currentBundle)) {
+                moveMacBundle(currentBundle, previousBundle);
+            }
+            try {
+                moveMacBundle(stagedBundle, currentBundle);
+            } catch (IOException ex) {
+                if (Files.exists(previousBundle) && !Files.exists(currentBundle)) {
+                    moveMacBundle(previousBundle, currentBundle);
+                }
+                throw ex;
+            }
+            deleteRecursively(previousBundle);
+        } finally {
+            deleteRecursively(stagedBundle);
+            if (Files.exists(previousBundle) && Files.exists(currentBundle)) {
+                deleteRecursively(previousBundle);
+            }
+        }
+    }
+
+    private static void validateMacBundle(Path bundle) throws IOException {
+        Path executable = bundle.resolve("Contents").resolve("MacOS").resolve("SmartStock");
+        Path appDir = bundle.resolve("Contents").resolve("app");
+        if (!Files.isExecutable(executable) || findReleaseJar(appDir) == null) {
+            throw new IOException("The staged Mac app is incomplete and was not installed.");
+        }
+    }
+
+    private static void moveMacBundle(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ex) {
+            Files.move(source, target);
+        }
+    }
+
+    static void relaunchMacApp(Path appBundle) throws IOException {
+        try {
+            Process process = new ProcessBuilder(macOpenCommand(appBundle))
+                    .redirectErrorStream(true)
+                    .start();
+            if (process.waitFor(30, TimeUnit.SECONDS) && process.exitValue() == 0) {
+                log("Relaunched SmartStock with /usr/bin/open.");
+                return;
+            }
+            process.destroyForcibly();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+
+        Path executable = appBundle.resolve("Contents").resolve("MacOS").resolve("SmartStock");
+        if (!Files.isExecutable(executable)) {
+            throw new IOException("The updated SmartStock launcher is missing at " + executable + ".");
+        }
+        new ProcessBuilder(executable.toString())
+                .directory(appBundle.getParent().toFile())
+                .start();
+        log("Relaunched SmartStock with its absolute launcher.");
+    }
+
+    static List<String> macOpenCommand(Path appBundle) {
+        return List.of("/usr/bin/open", "-n", appBundle.toString());
     }
 
     private static void restoreMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
-        deleteRecursively(currentBundle);
         Path backedUpBundle = backupDir.resolve(currentBundle.getFileName().toString());
         if (Files.exists(backedUpBundle)) {
-            copyMacBundle(backedUpBundle, currentBundle);
+            replaceMacAppBundle(currentBundle, backedUpBundle);
         }
     }
 
@@ -438,5 +509,25 @@ public final class SmartStockUpdater {
             throw new IllegalArgumentException("Missing update manifest value: " + key);
         }
         return value;
+    }
+
+    private static void log(String message) {
+        try {
+            Path logPath = Path.of(System.getProperty("user.home"), ".smartstock", "updates", "updater.log");
+            Files.createDirectories(logPath.getParent());
+            Files.writeString(logPath,
+                    java.time.Instant.now() + " " + message + System.lineSeparator(),
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 }
