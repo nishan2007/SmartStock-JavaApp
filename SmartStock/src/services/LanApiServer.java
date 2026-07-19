@@ -1978,11 +1978,16 @@ public final class LanApiServer implements AutoCloseable {
                     return ApiResult.ok(previous);
                 }
                 AuthenticatedUser user = loadUser(connection, session.userId(), session.locationId());
-                Map<String, Object> result = LanSalesService.checkout(connection, context.body(), device.deviceId(),
-                        session.userId(), user.fullName() == null || user.fullName().isBlank()
-                                ? user.username() : user.fullName(), session.locationId(),
-                        (token, permission, action, reason) -> consumeApproval(connection, device, session,
-                                token, permission, action, reason));
+                Map<String, Object> result;
+                try {
+                    result = LanSalesService.checkout(connection, context.body(), device.deviceId(),
+                            session.userId(), user.fullName() == null || user.fullName().isBlank()
+                                    ? user.username() : user.fullName(), session.locationId(),
+                            (token, permission, action, reason) -> consumeApproval(connection, device, session,
+                                    token, permission, action, reason));
+                } catch (LanSalesService.RuleViolation ex) {
+                    throw new ApiException(ex.status(), ex.code(), ex.safeMessage(), ex.retryable());
+                }
                 completeIdempotency(connection, device.deviceId(), idempotencyKey.trim(), result);
                 connection.commit();
                 return ApiResult.ok(result);

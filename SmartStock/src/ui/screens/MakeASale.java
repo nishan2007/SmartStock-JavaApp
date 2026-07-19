@@ -2142,7 +2142,7 @@ public class MakeASale extends JFrame {
         }, failure -> {
             checkoutBtn.setEnabled(true);
             checkoutPrintBtn.setEnabled(true);
-            loadingState.failed(failure.getMessage(), false,
+            loadingState.actionFailed("Sale", failure.getMessage(),
                     () -> checkoutThroughLanApi(showReceiptPreview, paymentMethod, paymentReference,
                             customer, saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason));
         });

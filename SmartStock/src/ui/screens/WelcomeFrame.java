@@ -12,6 +12,7 @@ import ui.design.DeckersSwing;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WelcomeGreetingHelper;
+import utils.DeviceUtils;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -436,7 +437,8 @@ public class WelcomeFrame extends JFrame {
         String location = config.locationId() == null ? "Not selected" : String.valueOf(config.locationId());
         String localTime = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone()).format(DateTimeFormatter.ofPattern("hh:mm a"));
         systemStatsLabel.setText("<html><b>System Stats</b><br>"
-                + "Store Location: " + escapeHtml(location)
+                + "SmartStock Version: " + escapeHtml(DeviceUtils.getAppVersion())
+                + "<br>Store Location: " + escapeHtml(location)
                 + "<br>Sync Interval: " + config.syncIntervalSeconds() + "s"
                 + "<br>Memory: " + usedMb + " MB / " + maxMb + " MB"
                 + "<br>Java: " + escapeHtml(System.getProperty("java.version", "Unknown"))

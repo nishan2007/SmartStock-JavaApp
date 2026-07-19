@@ -405,7 +405,7 @@ public class ReturnSale extends JFrame {
                     "Return processed successfully.\nReturn ID: " + result.returnId()
                             + "\nRefund amount: " + CURRENCY.format(result.refundAmount()));
             loadSaleById(saleId);
-        },failure->{submitButton.setEnabled(true);loadingState.failed(failure.getMessage(),false,this::submitReturn);});
+        },failure->{submitButton.setEnabled(true);loadingState.actionFailed("Return",failure.getMessage(),this::submitReturn);});
     }
 
     private boolean ensureApprovalFor(List<ReturnLine> lines, BigDecimal total) {

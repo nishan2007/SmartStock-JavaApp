@@ -39,8 +39,15 @@ final class LanSalesService {
         boolean cashPayment = "CASH".equals(request.paymentMethod());
         boolean accountPayment = "ACCOUNT".equals(request.paymentMethod());
         if (cashPayment) {
-            if (!drawer.isAssigned()) throw new SQLException("This register is not assigned to an active cash drawer.");
-            if (!drawer.hasActiveSession()) throw new SQLException("No active draw session is open for " + drawer.drawerName() + ".");
+            if (!drawer.isAssigned()) {
+                throw new RuleViolation(409, "CASH_DRAWER_REQUIRED",
+                        "This register is not assigned to a cash drawer. An administrator must assign it in Company Preferences > Cash Drawer Manager, then open its draw from Operations > Balance Draw.", false);
+            }
+            if (!drawer.hasActiveSession()) {
+                throw new RuleViolation(409, "CASH_SESSION_REQUIRED",
+                        "No active draw session is open for " + drawer.drawerName()
+                                + ". Open Operations > Balance Draw before taking cash.", false);
+            }
         }
 
         SaleConfig config = loadConfig(connection, locationId);
@@ -362,6 +369,14 @@ final class LanSalesService {
     private static void setLong(PreparedStatement ps,int i,Long v)throws SQLException{if(v==null)ps.setNull(i,Types.BIGINT);else ps.setLong(i,v);}
 
     interface ApprovalConsumer { Approval consume(String token,String permission,String action,String reason)throws Exception; }
+    static final class RuleViolation extends Exception {
+        private final int status;
+        private final String code;
+        private final String safeMessage;
+        private final boolean retryable;
+        RuleViolation(int status,String code,String safeMessage,boolean retryable){super(safeMessage);this.status=status;this.code=code;this.safeMessage=safeMessage;this.retryable=retryable;}
+        int status(){return status;} String code(){return code;} String safeMessage(){return safeMessage;} boolean retryable(){return retryable;}
+    }
     record Approval(int approverUserId,String approverName,String reason) { }
     private record SaleConfig(boolean vatEnabled,boolean departmentVat,BigDecimal fixedVatRate,BigDecimal discountLimit) { }
     private record CatalogLine(int productId,String name,BigDecimal catalogPrice,String productType,BigDecimal departmentVatRate) { }
