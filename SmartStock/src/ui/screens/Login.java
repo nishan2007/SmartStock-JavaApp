@@ -150,7 +150,15 @@ public class Login extends JFrame {
             protected void done() {
                 setTitle("SmartStock Login");
                 try {
-                    applySession(get());
+                    LanApiClient.LoginResult restored = get();
+                    if (!restored.persistentLoginAllowed()) {
+                        LanApiClient.clearEmployeeSession();
+                        SupabaseSessionManager.clearPersistedSession();
+                        SessionManager.clearSessionState();
+                        setLoginControlsEnabled(true);
+                        return;
+                    }
+                    applySession(restored);
                     openMainMenu();
                 } catch (Exception ex) {
                     LanApiClient.clearEmployeeSession();
