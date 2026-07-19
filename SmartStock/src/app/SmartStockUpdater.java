@@ -105,7 +105,7 @@ public final class SmartStockUpdater {
     private static void backupMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
         Files.createDirectories(backupDir);
         if (Files.exists(currentBundle)) {
-            copyRecursively(currentBundle, backupDir.resolve(currentBundle.getFileName().toString()));
+            copyMacBundle(currentBundle, backupDir.resolve(currentBundle.getFileName().toString()));
         }
     }
 
@@ -116,14 +116,36 @@ public final class SmartStockUpdater {
         }
         Files.createDirectories(parent);
         deleteRecursively(currentBundle);
-        copyRecursively(newBundle, currentBundle);
+        copyMacBundle(newBundle, currentBundle);
     }
 
     private static void restoreMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
         deleteRecursively(currentBundle);
         Path backedUpBundle = backupDir.resolve(currentBundle.getFileName().toString());
         if (Files.exists(backedUpBundle)) {
-            copyRecursively(backedUpBundle, currentBundle);
+            copyMacBundle(backedUpBundle, currentBundle);
+        }
+    }
+
+    private static void copyMacBundle(Path source, Path target) throws IOException {
+        try {
+            Process process = new ProcessBuilder("/usr/bin/ditto", source.toString(), target.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            String output;
+            try (InputStream input = process.getInputStream()) {
+                output = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            if (!process.waitFor(2, TimeUnit.MINUTES)) {
+                process.destroyForcibly();
+                throw new IOException("Timed out while copying the Mac app bundle.");
+            }
+            if (process.exitValue() != 0) {
+                throw new IOException("Could not copy the Mac app bundle: " + output.trim());
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while copying the Mac app bundle.", ex);
         }
     }
 
@@ -207,6 +229,29 @@ public final class SmartStockUpdater {
     private static void unzip(Path zip, Path targetDir) throws IOException {
         deleteRecursively(targetDir);
         Files.createDirectories(targetDir);
+        if (isMac() && Files.isExecutable(Path.of("/usr/bin/ditto"))) {
+            Process process = new ProcessBuilder("/usr/bin/ditto", "-x", "-k",
+                    zip.toString(), targetDir.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            String output;
+            try (InputStream input = process.getInputStream()) {
+                output = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            try {
+                if (!process.waitFor(2, TimeUnit.MINUTES)) {
+                    process.destroyForcibly();
+                    throw new IOException("Timed out while extracting the Mac update bundle.");
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while extracting the Mac update bundle.", ex);
+            }
+            if (process.exitValue() != 0) {
+                throw new IOException("Could not extract the Mac update bundle: " + output.trim());
+            }
+            return;
+        }
         try (ZipInputStream input = new ZipInputStream(Files.newInputStream(zip))) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
