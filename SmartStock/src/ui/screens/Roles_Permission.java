@@ -6,6 +6,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -111,20 +112,20 @@ public class Roles_Permission extends JFrame {
 
     private void savePermissions() {
         RoleItem role=roleList.getSelectedValue();if(role==null)return;
-        try {LanApiClient.saveRolePermissions(role.id,selected(desktopChecks),selected(mobileChecks),UUID.randomUUID().toString());SessionDataCache.invalidate("roles.");if(role.name!=null&&role.name.equalsIgnoreCase(PermissionManager.getCurrentRole()))PermissionManager.refreshOpenWindows();JOptionPane.showMessageDialog(this,"Permissions updated.");}
-        catch(Exception ex){showError("Permissions could not be saved",ex);}
+        Set<String> desktop=selected(desktopChecks),mobile=selected(mobileChecks);String mutationKey=UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"roles.save-permissions",()->{LanApiClient.saveRolePermissions(role.id,desktop,mobile,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("roles.");if(role.name!=null&&role.name.equalsIgnoreCase(PermissionManager.getCurrentRole()))PermissionManager.refreshOpenWindows();JOptionPane.showMessageDialog(this,"Permissions updated.");},ex->showError("Permissions could not be saved",ex));
     }
 
     private void addRole() {
         String name=JOptionPane.showInputDialog(this,"Enter new role name:");if(name==null||name.isBlank())return;
-        try {var added=LanApiClient.addRole(name,UUID.randomUUID().toString());SessionDataCache.invalidate("roles.");loadState(added.roleId());}
-        catch(Exception ex){showError("The role could not be added",ex);}
+        String mutationKey=UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"roles.add",()->LanApiClient.addRole(name,mutationKey),added->{SessionDataCache.invalidate("roles.");loadState(added.roleId());},ex->showError("The role could not be added",ex));
     }
 
     private static void select(Map<String,JCheckBox>checks,List<String>keys){if(keys!=null)for(String key:keys){JCheckBox b=checks.get(key.toUpperCase());if(b!=null)b.setSelected(true);}}
     private static Set<String>selected(Map<String,JCheckBox>checks){Set<String>x=new LinkedHashSet<>();checks.forEach((k,v)->{if(v.isSelected())x.add(k);});return x;}
     private static JPanel permissionColumn(){JPanel p=new JPanel();p.setLayout(new BoxLayout(p,BoxLayout.Y_AXIS));p.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));return p;}
-    private void showError(String message,Exception ex){JOptionPane.showMessageDialog(this,message+".\n\n"+ex.getMessage(),"SmartStock Server",JOptionPane.ERROR_MESSAGE);}
+    private void showError(String message,Throwable ex){JOptionPane.showMessageDialog(this,message+".\n\n"+ex.getMessage(),"SmartStock Server",JOptionPane.ERROR_MESSAGE);}
     private static String text(String value,String fallback){return value==null||value.isBlank()?fallback:value;}
     private static String format(String value){if(value==null)return "";StringBuilder b=new StringBuilder();for(String word:value.trim().replace('_',' ').split("\\s+")){if(!b.isEmpty())b.append(' ');b.append(Character.toUpperCase(word.charAt(0)));if(word.length()>1)b.append(word.substring(1).toLowerCase());}return b.toString();}
     private record RoleItem(int id,String name){}

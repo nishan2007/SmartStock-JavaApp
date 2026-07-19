@@ -12,6 +12,7 @@ import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -281,14 +282,11 @@ public class OrdersManagerDashboard extends JFrame {
             status = "ASSIGNED";
         }
 
-        try {
-            services.LanApiClient.assignCustomOrder(orderId,assigned?employee.userId():null,status,java.util.UUID.randomUUID().toString());
-            SessionDataCache.invalidate("orders-dashboard");
+        String requestedStatus=status;Integer employeeId=assigned?employee.userId():null;String mutationKey=java.util.UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"orders-dashboard.assign",()->{services.LanApiClient.assignCustomOrder(orderId,employeeId,requestedStatus,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("orders-dashboard");
             loadDashboard();
             JOptionPane.showMessageDialog(this, "Order assignment saved.");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save assignment: " + ex.getMessage(), "Server Error", JOptionPane.ERROR_MESSAGE);
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to save assignment: "+ex.getMessage(),"Server Error",JOptionPane.ERROR_MESSAGE));
     }
 
     private void selectEmployeeByName(String name) {

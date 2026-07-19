@@ -5,6 +5,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -121,8 +122,8 @@ public class LocationManagementPanel extends JPanel {
     }
 
     private void processEmailOutbox() {
-        try {
-            LanApiClient.EmailProcessingResult results=LanApiClient.processLocationEmailOutbox();
+        Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"locations.process-email",LanApiClient::processLocationEmailOutbox,results->{
             if (results.processed()==0) {
                 JOptionPane.showMessageDialog(this, "No queued email is ready to process.");
                 return;
@@ -133,9 +134,7 @@ public class LocationManagementPanel extends JPanel {
                     "Email Outbox",
                     JOptionPane.INFORMATION_MESSAGE
             );
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to process email outbox: " + ex.getMessage(), "Email Outbox", JOptionPane.ERROR_MESSAGE);
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to process email outbox: "+ex.getMessage(),"Email Outbox",JOptionPane.ERROR_MESSAGE));
     }
 
     private JPanel buildEditorPanel() {
@@ -351,15 +350,9 @@ public class LocationManagementPanel extends JPanel {
                 phoneLine1,phoneLine2,emailLine1,emailLine2,senderEmail,senderName,bccEmail,balanceSheetEmail,emailReceiptsBox.isSelected(),
                 emailOrderConfirmationsBox.isSelected(),emailQuotesBox.isSelected(),emailInvoicesBox.isSelected(),emailDeliveryBillsBox.isSelected(),timezone);
         String fingerprint=request.toString();
-        try {
-            if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
-            LanApiClient.saveLocationRecord(request,pendingSaveKey);pendingSaveKey=null;pendingSaveFingerprint=null;
-            clearEditor();
-            loadLocations();
-            JOptionPane.showMessageDialog(this, "Location saved.");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save location: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
+        if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
+        String mutationKey=pendingSaveKey;Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"locations.save",()->{LanApiClient.saveLocationRecord(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("locations:");pendingSaveKey=null;pendingSaveFingerprint=null;clearEditor();loadLocations();JOptionPane.showMessageDialog(this,"Location saved.");},ex->JOptionPane.showMessageDialog(this,"Failed to save location: "+ex.getMessage(),"Database Error",JOptionPane.ERROR_MESSAGE));
     }
 
     private String getTimezoneValue() {

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 import managers.NavigationManager;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -91,6 +92,22 @@ class ResponsiveLoadingArchitectureTest {
     }
 
     @Test
+    void everyNavigationDestinationUsesTheVisibleFirstFactory() throws Exception {
+        String source = Files.readString(SOURCE_ROOT.resolve("managers/NavigationManager.java"));
+        String factory = source.substring(source.indexOf("private static JFrame createScreen"),
+                source.indexOf("private static ScreenType parseScreenType"));
+        for (NavigationManager.ScreenType type : NavigationManager.ScreenType.values()) {
+            Pattern visibleFirst = Pattern.compile("case\\s+" + type.name()
+                    + "\\s+->\\s+(?:deferred\\(|new DeferredScreenFrame\\()", Pattern.DOTALL);
+            assertTrue(visibleFirst.matcher(factory).find(),
+                    () -> "Screen bypasses visible-first factory: " + type.name());
+        }
+        String login = Files.readString(SOURCE_ROOT.resolve("ui/screens/Login.java"));
+        assertTrue(login.contains("NavigationManager.showMainMenuAfterLogin(this)"));
+        assertFalse(login.contains("new MainMenu()"));
+    }
+
+    @Test
     void sharedLoaderIsBoundedAndFilteredScreensUseStableCancellationKeys() throws Exception {
         String runner = Files.readString(SOURCE_ROOT.resolve("ui/helpers/UiTaskRunner.java"));
         String reports = Files.readString(SOURCE_ROOT.resolve("ui/screens/Reports.java"));
@@ -124,5 +141,38 @@ class ResponsiveLoadingArchitectureTest {
         String scheduleService = Files.readString(SOURCE_ROOT.resolve("services/ServerEmployeeScheduleService.java"));
         assertTrue(scheduleService.contains("synchronized (SCHEMA_LOCK)"));
         assertTrue(scheduleService.contains("schemaReady = true"));
+    }
+
+    @Test
+    void coldHeavyScreensExposeVisibleFirstShells() throws Exception {
+        String navigation = Files.readString(SOURCE_ROOT.resolve("managers/NavigationManager.java"));
+        String mainMenu = Files.readString(SOURCE_ROOT.resolve("ui/screens/MainMenu.java"));
+        String sale = Files.readString(SOURCE_ROOT.resolve("ui/screens/MakeASale.java"));
+        String preferences = Files.readString(SOURCE_ROOT.resolve("ui/screens/CompanyCustomization.java"));
+
+        assertTrue(navigation.contains("case COMPANY_CUSTOMIZATION -> new DeferredScreenFrame"));
+        assertTrue(navigation.contains("UiTaskRunner.submit(this, taskKey, screenFactory::get"));
+        assertTrue(mainMenu.contains("new Timer(75"));
+        assertTrue(mainMenu.contains("Preparing menu..."));
+        assertFalse(mainMenu.contains("createMenuButton(\"Make a Sale\""));
+        assertTrue(sale.contains("Preparing point of sale..."));
+        assertTrue(sale.contains("new javax.swing.Timer(50"));
+        assertTrue(preferences.contains("addPermittedCardPlaceholders()"));
+        assertFalse(preferences.contains("addPermittedCards();"));
+    }
+
+    @Test
+    void coldLocalAssetsAndFontEnumerationAreDeferred() throws Exception {
+        String mainMenu = Files.readString(SOURCE_ROOT.resolve("ui/screens/MainMenu.java"));
+        String sale = Files.readString(SOURCE_ROOT.resolve("ui/screens/MakeASale.java"));
+        String preferences = Files.readString(SOURCE_ROOT.resolve("ui/screens/CompanyCustomization.java"));
+        String theme = Files.readString(SOURCE_ROOT.resolve("ui/helpers/ThemeManager.java"));
+
+        assertTrue(mainMenu.contains("main-menu.local-assets"));
+        assertTrue(sale.contains("make-sale.branding"));
+        assertFalse(sale.contains("setSmartStockAppLogo();"));
+        assertTrue(preferences.contains("company-preferences.badge-fonts"));
+        assertFalse(preferences.contains("new JComboBox<>(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames())"));
+        assertTrue(theme.contains("cachedDarkMode"));
     }
 }

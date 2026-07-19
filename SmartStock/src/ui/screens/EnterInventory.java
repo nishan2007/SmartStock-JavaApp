@@ -8,6 +8,7 @@ import ui.components.AppMenuBar;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -56,13 +57,7 @@ public class EnterInventory extends JFrame {
 
         JLabel logoLabel = new JLabel();
         logoLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        ImageIcon centerLogoIcon = loadCenterLogoIcon();
-        if (centerLogoIcon != null) {
-            Image scaledImage = centerLogoIcon.getImage().getScaledInstance(180, 80, Image.SCALE_SMOOTH);
-            logoLabel.setIcon(new ImageIcon(scaledImage));
-        } else {
-            logoLabel.setText("SmartStock");
-        }
+        logoLabel.setText("SmartStock");
 
         selectedStoreLabel = new JLabel("Store: Not selected");
         currentUserLabel = new JLabel("No User currently logged in");
@@ -202,7 +197,22 @@ public class EnterInventory extends JFrame {
 
         updateSelectedStoreLabel();
         updateCurrentUserLabel();
-        WindowHelper.configurePosWindow(this);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent event) {
+                WindowHelper.configurePosWindow(EnterInventory.this);
+                ui.helpers.UiTaskRunner.submit(EnterInventory.this, "receiving-inventory.logo", () -> {
+                    ImageIcon icon = loadCenterLogoIcon();
+                    return icon == null ? null : new ImageIcon(
+                            icon.getImage().getScaledInstance(180, 80, Image.SCALE_SMOOTH));
+                }, icon -> {
+                    if (icon != null) {
+                        logoLabel.setText("");
+                        logoLabel.setIcon(icon);
+                    }
+                }, ignored -> { });
+            }
+        });
     }
 
     private ImageIcon loadCenterLogoIcon() {
@@ -653,17 +663,15 @@ public class EnterInventory extends JFrame {
                 pendingReceiveKey = UUID.randomUUID().toString();
             }
 
-            LanApiClient.ReceiveInventoryResult result =
-                    LanApiClient.receiveInventory(request, pendingReceiveKey);
-            pendingReceiveKey = null;
-            pendingReceiveFingerprint = null;
-
+            String mutationKey=pendingReceiveKey;
+            UiTaskRunner.submit(this,"receiving-inventory.receive",()->LanApiClient.receiveInventory(request,mutationKey),result->{pendingReceiveKey=null;pendingReceiveFingerprint=null;SessionDataCache.invalidate("inventory-");
             JOptionPane.showMessageDialog(this,
                     "Inventory added successfully.\nReceive ID: " + result.receiveId());
             inventoryModel.setRowCount(0);
             searchField.setText("");
             updateTotalUnitsLabel();
             configureInventoryTableColumns();
+            },ex->JOptionPane.showMessageDialog(this,"Inventory entry failed: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Inventory entry failed: " + ex.getMessage());
         }

@@ -9,6 +9,7 @@ import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -364,13 +365,8 @@ public class StoreTransfer extends JFrame {
                 pendingCreateFingerprint = fingerprint;
                 pendingCreateKey = UUID.randomUUID().toString();
             }
-            LanApiClient.CreateTransferResult result =
-                    LanApiClient.createTransfer(request, pendingCreateKey);
-            SessionDataCache.invalidate("transfer-products:");
-            SessionDataCache.invalidate("incoming-transfer");
-            pendingCreateKey = null;
-            pendingCreateFingerprint = null;
-
+            String mutationKey=pendingCreateKey;
+            UiTaskRunner.submit(this,"store-transfer.create",()->LanApiClient.createTransfer(request,mutationKey),result->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");pendingCreateKey=null;pendingCreateFingerprint=null;
             JOptionPane.showMessageDialog(this,
                     "Transfer sent successfully.\nTransfer ID: " + result.transferId()
                             + "\nThe receiving store must verify it before stock is added.");
@@ -378,6 +374,7 @@ public class StoreTransfer extends JFrame {
             noteArea.setText("");
             loadProducts();
             loadIncomingTransfers();
+            },ex->JOptionPane.showMessageDialog(this,"Transfer failed: "+ex.getMessage(),"Transfer Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Transfer failed: " + ex.getMessage(),
                     "Transfer Error", JOptionPane.ERROR_MESSAGE);
@@ -477,18 +474,14 @@ public class StoreTransfer extends JFrame {
                 pendingReceiveTransferId = transferId;
                 pendingReceiveKey = UUID.randomUUID().toString();
             }
-            LanApiClient.ReceiveTransferResult response =
-                    LanApiClient.receiveTransfer(transferId, pendingReceiveKey);
-            SessionDataCache.invalidate("transfer-products:");
-            SessionDataCache.invalidate("incoming-transfer");
-            pendingReceiveTransferId = null;
-            pendingReceiveKey = null;
-
+            String mutationKey=pendingReceiveKey;
+            UiTaskRunner.submit(this,"store-transfer.receive",()->LanApiClient.receiveTransfer(transferId,mutationKey),response->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");pendingReceiveTransferId=null;pendingReceiveKey=null;
             JOptionPane.showMessageDialog(this,
                     "Transfer received successfully.\nReceive ID: " + response.receiveId());
             loadIncomingTransfers();
             incomingItemsModel.setRowCount(0);
             loadProducts();
+            },ex->JOptionPane.showMessageDialog(this,"Failed to receive transfer: "+ex.getMessage(),"Transfer Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to receive transfer: " + ex.getMessage(),
                     "Transfer Error", JOptionPane.ERROR_MESSAGE);

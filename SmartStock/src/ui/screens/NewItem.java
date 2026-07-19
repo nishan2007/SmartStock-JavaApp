@@ -12,6 +12,8 @@ import ui.components.VendorSelector;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
+import ui.helpers.SessionDataCache;
 import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
@@ -499,38 +501,30 @@ public class NewItem extends JFrame {
             return;
         }
 
-        String imageUrl;
         try {
-            imageUrl = ProductImageHelper.uploadLocalImageIfNeeded(imageSelector.getImageUrl());
-            imageSelector.setImageUrl(imageUrl);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Image upload failed: " + ex.getMessage(), "Image Upload", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        try {
-            LanApiClient.ProductSaveRequest request = new LanApiClient.ProductSaveRequest(
+            String imageInput=imageSelector.getImageUrl();
+            String itemTypeName=itemDetailsSelector.itemTypeName(),brandName=itemDetailsSelector.brandName(),shelfName=itemDetailsSelector.shelfName(),storageShelfName=itemDetailsSelector.storageShelfName();
+            LanApiClient.ProductSaveRequest draft = new LanApiClient.ProductSaveRequest(
                     null, name, size, sku, barcode, description,
                     BigDecimal.valueOf(costPrice), BigDecimal.valueOf(price), productType,
-                    categoryId, vendorId, imageUrl, itemDetailsSelector.itemTypeName(),
-                    itemDetailsSelector.brandName(), itemDetailsSelector.shelfName(),
-                    itemDetailsSelector.storageShelfName(), List.copyOf(extraBarcodes),
+                    categoryId, vendorId, imageInput, itemTypeName,
+                    brandName, shelfName,
+                    storageShelfName, List.copyOf(extraBarcodes),
                     quantity, 0, null, true
             );
-            String fingerprint = request.toString();
+            String fingerprint = draft.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
                 pendingSaveFingerprint = fingerprint;
                 pendingSaveKey = UUID.randomUUID().toString();
             }
-            LanApiClient.SavedProduct saved = LanApiClient.createProduct(request, pendingSaveKey);
-            pendingSaveKey = null;
-            pendingSaveFingerprint = null;
-            JOptionPane.showMessageDialog(this, "Item added successfully. SKU: " + saved.sku());
-            clearFields(false);
+            String mutationKey=pendingSaveKey;
+            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput);LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
     }
+
+    private record ProductSaveOutcome(LanApiClient.SavedProduct saved,String imageUrl) { }
 
     private void showValidationError(String message, JComponent component) {
         JOptionPane.showMessageDialog(this, message, "Check Item Details", JOptionPane.WARNING_MESSAGE);

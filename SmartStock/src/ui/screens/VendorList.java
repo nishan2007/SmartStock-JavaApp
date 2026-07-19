@@ -6,6 +6,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -230,13 +231,8 @@ public class VendorList extends JFrame {
                 pendingSaveFingerprint = fingerprint;
                 pendingSaveKey = UUID.randomUUID().toString();
             }
-            LanApiClient.saveVendor(request, pendingSaveKey);
-            SessionDataCache.invalidate("vendors:");
-            pendingSaveKey = null;
-            pendingSaveFingerprint = null;
-            clearEditor();
-            loadVendors();
-            JOptionPane.showMessageDialog(this, "Vendor saved.");
+            String mutationKey = pendingSaveKey;
+            UiTaskRunner.submit(this,"vendors.save",()->{LanApiClient.saveVendor(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("vendors:");pendingSaveKey=null;pendingSaveFingerprint=null;clearEditor();loadVendors();JOptionPane.showMessageDialog(this,"Vendor saved.");},ex->JOptionPane.showMessageDialog(this,"Failed to save vendor: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save vendor: " + ex.getMessage(),
                     "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);

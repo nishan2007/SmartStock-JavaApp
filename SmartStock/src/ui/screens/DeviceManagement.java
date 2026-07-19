@@ -443,12 +443,11 @@ public class DeviceManagement extends JFrame {
             return;
         }
 
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",selectedDevice.getDeviceId(),approved,allowStaySignedIn,
+        String targetDeviceId=selectedDevice.getDeviceId();
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",targetDeviceId,approved,allowStaySignedIn,
                 allowSales,allowOrders,notesArea.getText(),null,null);
-        try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
-            if (selectedDevice.getDeviceId() != null
-                    && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())) {
+        updateDeviceAsync("devices.save-access",request,()->{
+            if (targetDeviceId != null && targetDeviceId.equals(SessionManager.getCurrentDeviceId())) {
                 if (approved && allowStaySignedIn) {
                     SupabaseSessionManager.savePersistedSession(
                             SessionManager.getCurrentUserId(),
@@ -459,15 +458,7 @@ public class DeviceManagement extends JFrame {
                 }
             }
             loadDevices();
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not save device access settings.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        },"Could not save device access settings.");
     }
 
     private void blockSelectedDevice() {
@@ -491,9 +482,7 @@ public class DeviceManagement extends JFrame {
                 && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId());
 
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,false,notesArea.getText(),null,null);
-        try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
-
+        updateDeviceAsync("devices.block",request,()->{
             if (isCurrentDevice) {
                 SessionManager.clearSessionState();
                 SupabaseSessionManager.clearSession();
@@ -509,15 +498,7 @@ public class DeviceManagement extends JFrame {
             }
 
             loadDevices();
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not block the device.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        },"Could not block the device.");
     }
 
     private void saveDeviceCode() {
@@ -525,19 +506,7 @@ public class DeviceManagement extends JFrame {
             return;
         }
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,false,null,null,receiptCodeField.getText());
-        try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
-            loadDevices();
-            JOptionPane.showMessageDialog(this, "Device code saved.");
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not save device code.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        updateDeviceAsync("devices.save-code",request,()->{loadDevices();JOptionPane.showMessageDialog(this,"Device code saved.");},"Could not save device code.");
     }
 
     private void saveDeviceName() {
@@ -545,19 +514,7 @@ public class DeviceManagement extends JFrame {
             return;
         }
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,false,null,deviceNameField.getText(),null);
-        try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
-            loadDevices();
-            JOptionPane.showMessageDialog(this, "Device name saved.");
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not save device name.\n\n" + ex.getMessage(),
-                    "Device Management",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        updateDeviceAsync("devices.save-name",request,()->{loadDevices();JOptionPane.showMessageDialog(this,"Device name saved.");},"Could not save device name.");
     }
 
     private void rotateSelectedCredential() {
@@ -567,20 +524,18 @@ public class DeviceManagement extends JFrame {
                 "Rotate Device Credential", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) return;
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,false,null,null,null);
-        try {
-            LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
+        updateDeviceAsync("devices.rotate",request,()->{
             JOptionPane.showMessageDialog(this,
                     "Rotation queued. The server will issue and the register will claim the replacement automatically.",
                     "Device Credential", JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Could not queue credential rotation.\n\n" + ex.getMessage(),
-                    "Device Credential", JOptionPane.ERROR_MESSAGE);
-        }
+        },"Could not queue credential rotation.");
     }
 
     private void showSecurityStatus() {
-        try {
-            LanApiClient.DeviceSecurityStatus report = LanApiClient.loadDeviceSecurityStatus();
+        UiTaskRunner.submit(this,"devices.security-status",LanApiClient::loadDeviceSecurityStatus,this::showSecurityStatus,ex->JOptionPane.showMessageDialog(this,"Could not inspect database security.\n\n"+ex.getMessage(),"Security Status",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void showSecurityStatus(LanApiClient.DeviceSecurityStatus report) {
             StringBuilder text = new StringBuilder();
             text.append(report.healthy() ? "Security checks passed" : "Security attention required").append("\n\n")
                     .append("Encrypted database connection: ").append(yesNo(report.tls())).append('\n')
@@ -606,10 +561,12 @@ public class DeviceManagement extends JFrame {
             area.setWrapStyleWord(true);
             JOptionPane.showMessageDialog(this, new JScrollPane(area), "SmartStock Security Status",
                     report.healthy() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Could not inspect database security.\n\n" + ex.getMessage(),
-                    "Security Status", JOptionPane.ERROR_MESSAGE);
-        }
+    }
+
+    private void updateDeviceAsync(String jobKey, LanApiClient.DeviceAdminUpdate request,
+                                   Runnable success, String failureMessage) {
+        String key=mutationKey(request.toString());
+        UiTaskRunner.submit(this,jobKey,()->{LanApiClient.updateManagedDevice(request,key);return Boolean.TRUE;},ignored->{clearMutationKey();SessionDataCache.invalidate("devices:list");success.run();},ex->JOptionPane.showMessageDialog(this,failureMessage+"\n\n"+ex.getMessage(),"Device Management",JOptionPane.ERROR_MESSAGE));
     }
 
     private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){

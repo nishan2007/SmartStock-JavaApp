@@ -15,6 +15,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.WindowHelper;
 
@@ -1220,18 +1221,16 @@ public class EmployeeManagement extends JFrame {
             return;
         }
 
-        try {
-                String newBadgeId=LanApiClient.updateEmployeeAdmin("ROTATE_BADGE",selectedUserId,null,null,null,UUID.randomUUID().toString()).get("badgeId").getAsString();
+        Integer userId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"employees.rotate-badge",()->LanApiClient.updateEmployeeAdmin("ROTATE_BADGE",userId,null,null,null,mutationKey).get("badgeId").getAsString(),newBadgeId->{
                 badgeIdField.setText(newBadgeId);
+                SessionDataCache.invalidate("employee-admin:");
                 loadEmployees();
-                selectEmployeeInTable(selectedUserId);
+                selectEmployeeInTable(userId);
                 JOptionPane.showMessageDialog(this,
                         "Badge ID rotated successfully. Program or print the replacement badge using the new ID.",
                         "Rotate Badge ID", JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to rotate badge ID.\n\n" + ex.getMessage(),
-                    "Rotate Badge ID", JOptionPane.ERROR_MESSAGE);
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to rotate badge ID.\n\n"+ex.getMessage(),"Rotate Badge ID",JOptionPane.ERROR_MESSAGE));
     }
 
     private BadgePrintService.EmployeeBadgeData selectedBadgeData() throws Exception {
@@ -1388,32 +1387,22 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
-        try {
-            employeePhotoUrl = EmployeePhotoService.uploadLocalPhotoIfNeeded(employeePhotoUrl, username);
-            employeePhotoField.setText(employeePhotoUrl);
-            refreshEmployeePhotoPreview();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        try {
-            idCardDocumentUrl = EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(idCardDocumentUrl, username);
-            employeeIdCardDocumentField.setText(idCardDocumentUrl);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to upload ID card document: " + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        try {
+        String requestedUsername=username,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        String mutationKey=UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"employees.create",()->{
+                String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedUsername);
+                String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedUsername);
                 String token=SupabaseSessionManager.getValidAccessToken();
-                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(username,password,firstName,middleName,lastName,fullName,email,phoneNumber,employeePhotoUrl,idCardDocumentUrl,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
-                int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,UUID.randomUUID().toString()).get("userId").getAsInt();
+                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
+                int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey).get("userId").getAsInt();
+                return new EmployeeSaveResult(newUserId,uploadedPhoto,uploadedDocument);
+        },result->{
+                employeePhotoField.setText(result.photoUrl());employeeIdCardDocumentField.setText(result.documentUrl());refreshEmployeePhotoPreview();
+                SessionDataCache.invalidate("employee-admin:");
                 JOptionPane.showMessageDialog(this, "Employee added successfully.");
                 loadEmployees();
-                selectEmployeeInTable(newUserId);
-        } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "Failed to add employee: " + getFriendlyEmployeeError(ex));
-        }
+                selectEmployeeInTable(result.userId());
+        },ex->JOptionPane.showMessageDialog(this,"Failed to add employee: "+getFriendlyEmployeeError(ex)));
     }
 
     private void updateEmployee() {
@@ -1465,38 +1454,26 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
-        try {
-            employeePhotoUrl = EmployeePhotoService.uploadLocalPhotoIfNeeded(employeePhotoUrl, username);
-            employeePhotoField.setText(employeePhotoUrl);
-            refreshEmployeePhotoPreview();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to upload employee photo: " + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        try {
-            idCardDocumentUrl = EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(idCardDocumentUrl, username);
-            employeeIdCardDocumentField.setText(idCardDocumentUrl);
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to upload ID card document: " + ex.getMessage(), "ID Card Document", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        try {
+        String requestedUsername=username,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        Integer targetUserId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
+        boolean payrollChanged=payrollPeriodType!=originalPayrollPeriodType||workHourLimit.compareTo(originalWorkHourLimit)!=0;
+        UiTaskRunner.submit(this,"employees.update",()->{
+            String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedUsername);
+            String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedUsername);
             String token = SupabaseSessionManager.getValidAccessToken();
-            boolean payrollChanged = payrollPeriodType != originalPayrollPeriodType
-                    || workHourLimit.compareTo(originalWorkHourLimit) != 0;
             LanEmployeeAdminService.SaveRequest request = new LanEmployeeAdminService.SaveRequest(
-                    username, password, firstName, middleName, lastName, fullName, email, phoneNumber,
-                    employeePhotoUrl, idCardDocumentUrl, dateOfBirth, hireDate, compensationType, salary,
+                    requestedUsername, password, firstName, middleName, lastName, fullName, email, phoneNumber,
+                    uploadedPhoto, uploadedDocument, dateOfBirth, hireDate, compensationType, salary,
                     role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, token);
-            LanApiClient.updateEmployeeAdmin("UPDATE", selectedUserId, request, null, null,
-                    UUID.randomUUID().toString());
+            LanApiClient.updateEmployeeAdmin("UPDATE",targetUserId,request,null,null,mutationKey);
+            return new EmployeeSaveResult(targetUserId,uploadedPhoto,uploadedDocument);
+        },result->{
+            employeePhotoField.setText(result.photoUrl());employeeIdCardDocumentField.setText(result.documentUrl());refreshEmployeePhotoPreview();
+            SessionDataCache.invalidate("employee-admin:");
             JOptionPane.showMessageDialog(this, "Employee updated successfully.");
             clearFields();
             loadEmployees();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to update employee: " + getFriendlyEmployeeError(ex));
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to update employee: "+getFriendlyEmployeeError(ex)));
     }
 
     private static List<String> missingRequiredEmployeeFields(boolean creating, String password,
@@ -1677,7 +1654,9 @@ public class EmployeeManagement extends JFrame {
         return locationIds;
     }
 
-    private static String getFriendlyEmployeeError(Exception ex) {
+    private record EmployeeSaveResult(Integer userId,String photoUrl,String documentUrl) { }
+
+    private static String getFriendlyEmployeeError(Throwable ex) {
         if (isDuplicateBadgeError(ex)) {
             return "That badge ID is already assigned to another employee.";
         }
@@ -1756,9 +1735,7 @@ public class EmployeeManagement extends JFrame {
 
     private void loadPayrollSettings(int userId, String compensationType) {
         loadingPayrollSettings = true;
-        try {
-            EmployeePayrollSettingsService.SettingView view =
-                    LanApiClient.loadEmployeeAdminState(userId).payroll();
+        UiTaskRunner.submit(this,"employees.payroll-setting",()->LanApiClient.loadEmployeeAdminState(userId).payroll(),view->{
             if (view == null) {
                 throw new IllegalStateException("Payroll settings were not returned by the server.");
             }
@@ -1780,16 +1757,15 @@ public class EmployeeManagement extends JFrame {
                         + " / " + view.current().workHourLimit().stripTrailingZeros().toPlainString()
                         + " hours. Pending from " + view.pending().effectiveFrom());
             }
-        } catch (Exception ex) {
+            loadingPayrollSettings=false;refreshPayrollSettingsControls();
+        },ex->{
             payrollPeriodBox.setSelectedItem(PeriodType.SEMI_MONTHLY);
             workHourLimitField.setText(EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT.toPlainString());
             originalPayrollPeriodType = PeriodType.SEMI_MONTHLY;
             originalWorkHourLimit = EmployeePayrollSettingsService.DEFAULT_SEMI_MONTHLY_LIMIT;
             payrollSettingsStatusLabel.setText("Could not load payroll setting: " + ex.getMessage());
-        } finally {
-            loadingPayrollSettings = false;
-            refreshPayrollSettingsControls();
-        }
+            loadingPayrollSettings=false;refreshPayrollSettingsControls();
+        });
     }
 
     private PeriodType selectedPayrollPeriodType() {
@@ -1965,15 +1941,14 @@ public class EmployeeManagement extends JFrame {
         dialog.add(bottomPanel, BorderLayout.SOUTH);
 
         Runnable loadStores = () -> {
-            storeModel.setRowCount(0);
-            try {
-                for (LanEmployeeAdminService.Store store : LanApiClient.loadEmployeeAdminState(selectedUserId).stores()) {
+            Integer userId=selectedUserId;
+            UiTaskRunner.submit(dialog,"employees.assignment-stores",()->LanApiClient.loadEmployeeAdminState(userId).stores(),stores->{
+                storeModel.setRowCount(0);
+                for (LanEmployeeAdminService.Store store : stores) {
                     storeModel.addRow(new Object[]{store.assigned(), String.valueOf(store.locationId()),
                             store.name(), store.address()});
                 }
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to load stores: " + ex.getMessage());
-            }
+            },ex->JOptionPane.showMessageDialog(dialog,"Failed to load stores: "+ex.getMessage()));
         };
 
         searchField.getDocument().addDocumentListener(new DocumentListener() {
@@ -1994,10 +1969,8 @@ public class EmployeeManagement extends JFrame {
                         selectedLocationIds.add(Integer.parseInt(storeModel.getValueAt(i, 1).toString()));
                     }
                 }
-                LanApiClient.updateEmployeeAdmin("SAVE_STORES", selectedUserId, null,
-                        selectedLocationIds, null, UUID.randomUUID().toString());
-                JOptionPane.showMessageDialog(dialog, "Store assignments saved.");
-                dialog.dispose();
+                Integer userId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
+                UiTaskRunner.submit(dialog,"employees.save-stores",()->{LanApiClient.updateEmployeeAdmin("SAVE_STORES",userId,null,selectedLocationIds,null,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("employee-admin:");JOptionPane.showMessageDialog(dialog,"Store assignments saved.");dialog.dispose();},ex->JOptionPane.showMessageDialog(dialog,"Failed to save assignments: "+ex.getMessage()));
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(dialog, "Failed to save assignments: " + ex.getMessage());
             }
@@ -2005,7 +1978,7 @@ public class EmployeeManagement extends JFrame {
 
         closeButton.addActionListener(e -> dialog.dispose());
 
-        loadStores.run();
+        dialog.addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowOpened(java.awt.event.WindowEvent event){loadStores.run();}});
         dialog.setVisible(true);
     }
 
@@ -2027,17 +2000,14 @@ public class EmployeeManagement extends JFrame {
             return;
         }
 
-        try {
-            String token = SupabaseSessionManager.getValidAccessToken();
-            LanApiClient.updateEmployeeAdmin("DEACTIVATE", selectedUserId, null, null, token,
-                    UUID.randomUUID().toString());
+        Integer userId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"employees.deactivate",()->{String token=SupabaseSessionManager.getValidAccessToken();LanApiClient.updateEmployeeAdmin("DEACTIVATE",userId,null,null,token,mutationKey);return Boolean.TRUE;},ignored->{
+            SessionDataCache.invalidate("employee-admin:");
             JOptionPane.showMessageDialog(this,
                     "Employee deactivated successfully. Their history was kept for reporting and audit records.");
             clearFields();
             loadEmployees();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to deactivate employee: " + ex.getMessage());
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to deactivate employee: "+ex.getMessage()));
     }
 
     private void applyEmployeeFilter() {

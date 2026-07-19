@@ -128,6 +128,7 @@ public class MakeASale extends JFrame {
     private Integer pendingResumeHeldCartId;
     private String pendingResumeKey;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private boolean saleUiInitialized;
 
    public MakeASale() {
 
@@ -139,6 +140,21 @@ public class MakeASale extends JFrame {
        setLocationRelativeTo(null);
        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
        setJMenuBar(AppMenuBar.create(this, "MakeASale"));
+
+       JPanel initialShell = new JPanel(new BorderLayout());
+       JLabel initialStatus = new JLabel("Preparing point of sale...", SwingConstants.CENTER);
+       initialStatus.setFont(new Font("SansSerif", Font.PLAIN, 16));
+       initialShell.add(initialStatus, BorderLayout.CENTER);
+       add(initialShell);
+       WindowHelper.configurePosWindow(this);
+       addWindowListener(new java.awt.event.WindowAdapter() {
+           @Override
+           public void windowOpened(java.awt.event.WindowEvent event) {
+               if (saleUiInitialized) return;
+               javax.swing.Timer buildTimer = new javax.swing.Timer(50, ignored -> {
+                   if (!isDisplayable() || saleUiInitialized) return;
+                   saleUiInitialized = true;
+                   remove(initialShell);
 
        // Main container
        JPanel panel = new JPanel(new BorderLayout(16, 16));
@@ -181,7 +197,6 @@ public class MakeASale extends JFrame {
        appLogoLabel.setForeground(DeckersPalette.muted());
        appLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
        appLogoLabel.setPreferredSize(new Dimension(210, 96));
-       setSmartStockAppLogo();
 
        newItemBtn = createUtilityButton("New Item", DeckersPalette.LIME);
        searchField = new PromptTextField("Scan or enter item information");
@@ -558,7 +573,18 @@ public class MakeASale extends JFrame {
 	       loadStartupData();
 	       updateCustomerAccountEnabled();
        loadCompanyBranding();
-	       WindowHelper.configurePosWindow(this);
+	       revalidate();
+	       repaint();
+	       javax.swing.Timer themeTimer = new javax.swing.Timer(100, themeEvent -> {
+	           if (isShowing()) WindowHelper.configurePosWindow(MakeASale.this);
+	       });
+	       themeTimer.setRepeats(false);
+	       themeTimer.start();
+	       });
+	       buildTimer.setRepeats(false);
+	       buildTimer.start();
+	   }
+	   });
 	   }
 
     private void loadStartupData() {
@@ -910,7 +936,25 @@ public class MakeASale extends JFrame {
         }
 
         updateSalesGreeting();
-        setDeckersCompanyLogo();
+        loadBrandingAssets();
+    }
+
+    private void loadBrandingAssets() {
+        UiTaskRunner.submit(this, "make-sale.branding", () -> {
+            ImageIcon deckers = DeckersLogoManager.loadDeckersLogoIcon(getClass());
+            ImageIcon smartStock = DeckersLogoManager.loadSmartStockLogoIcon(getClass());
+            ImageIcon scaledDeckers = deckers == null || deckers.getIconWidth() <= 0 ? null
+                    : new ImageIcon(DeckersLogoManager.scaleToFit(deckers.getImage(), 300, 96));
+            ImageIcon scaledSmartStock = smartStock == null || smartStock.getIconWidth() <= 0 ? null
+                    : new ImageIcon(DeckersLogoManager.scaleToFit(smartStock.getImage(), 196, 88));
+            return new BrandingAssets(scaledDeckers, scaledSmartStock);
+        }, assets -> {
+            applyDeckersCompanyLogo(assets.deckers());
+            applySmartStockAppLogo(assets.smartStock());
+        }, ignored -> {
+            applyDeckersCompanyLogo(null);
+            applySmartStockAppLogo(null);
+        });
     }
 
     private void updateSalesGreeting() {
@@ -977,12 +1021,10 @@ public class MakeASale extends JFrame {
         }
     }
 
-    private void setDeckersCompanyLogo() {
-        ImageIcon deckersLogoIcon = DeckersLogoManager.loadDeckersLogoIcon(getClass());
+    private void applyDeckersCompanyLogo(ImageIcon deckersLogoIcon) {
         if (deckersLogoIcon != null && deckersLogoIcon.getIconWidth() > 0) {
-            Image scaled = DeckersLogoManager.scaleToFit(deckersLogoIcon.getImage(), 300, 96);
             companyLogoLabel.setText("");
-            companyLogoLabel.setIcon(new ImageIcon(scaled));
+            companyLogoLabel.setIcon(deckersLogoIcon);
             return;
         }
 
@@ -991,21 +1033,21 @@ public class MakeASale extends JFrame {
         companyLogoLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
     }
 
-    private void setSmartStockAppLogo() {
+    private void applySmartStockAppLogo(ImageIcon centerLogoIcon) {
         if (appLogoLabel == null) {
             return;
         }
-        ImageIcon centerLogoIcon = DeckersLogoManager.loadSmartStockLogoIcon(getClass());
         if (centerLogoIcon != null && centerLogoIcon.getIconWidth() > 0) {
-            Image scaled = DeckersLogoManager.scaleToFit(centerLogoIcon.getImage(), 196, 88);
             appLogoLabel.setText("");
-            appLogoLabel.setIcon(new ImageIcon(scaled));
+            appLogoLabel.setIcon(centerLogoIcon);
             return;
         }
 
         appLogoLabel.setIcon(null);
         appLogoLabel.setText("SmartStock");
     }
+
+    private record BrandingAssets(ImageIcon deckers, ImageIcon smartStock) { }
 
     private void refreshPermissionButtons() {
         if (newItemBtn != null) {

@@ -3,6 +3,8 @@ package ui.screens;
 import managers.PermissionManager;
 import services.LanApiClient;
 import ui.components.CustomerTypeSelector;
+import ui.helpers.UiTaskRunner;
+import ui.helpers.SessionDataCache;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -163,14 +165,14 @@ public class QuickCustomerAccount extends JFrame {
             if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();
             }
-            LanApiClient.SavedCustomerAccount saved=LanApiClient.saveCustomerAccount(request,pendingSaveKey);
-            pendingSaveKey=null;pendingFingerprint=null;accountNumberField.setText(saved.accountNumber());
-
+            String mutationKey=pendingSaveKey;
+            UiTaskRunner.submit(this,"customer-accounts.quick-create",()->LanApiClient.saveCustomerAccount(request,mutationKey),saved->{pendingSaveKey=null;pendingFingerprint=null;SessionDataCache.invalidate("customer-accounts:");accountNumberField.setText(saved.accountNumber());
             JOptionPane.showMessageDialog(this, "Customer account created.");
             if (afterSave != null) {
                 afterSave.run();
             }
             dispose();
+            },ex->JOptionPane.showMessageDialog(this,"Failed to create customer account: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to create customer account: " + ex.getMessage(), "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);
         }

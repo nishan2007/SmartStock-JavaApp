@@ -43,11 +43,12 @@ import javax.swing.*;
 import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.function.Supplier;
 
 public final class NavigationManager {
 
     private static boolean transitionInProgress = false;
-    private static MainMenu activeMainMenu;
+    private static JFrame activeMainMenu;
 
     private NavigationManager() {
     }
@@ -258,42 +259,54 @@ public final class NavigationManager {
 
     private static JFrame createScreen(ScreenType screenType) {
         return switch (screenType) {
-            case MAIN_MENU -> new MainMenu();
-            case MAKE_SALE -> new MakeASale();
-            case RETURN_SALE -> new ReturnSale();
-            case BALANCE_DRAW -> new BalanceDraw();
-            case CHANGE_BASKET -> new ChangeBasket();
-            case BALANCE_SHEET -> new BalanceSheet();
-            case ORDERS_MANAGER_DASHBOARD -> new OrdersManagerDashboard();
-            case REPORTS -> new Reports();
-            case RECEIVING_INVENTORY -> new EnterInventory();
-            case RECEIVING_HISTORY -> new ReceivingHistory();
-            case STORE_TRANSFER -> new StoreTransfer();
-            case CUSTOM_ORDER_ITEMS -> new CustomOrderItems();
-            case DEPARTMENT_LIST -> new DepartmentList();
-            case VENDOR_LIST -> new VendorList();
-            case NEW_ITEM -> new NewItem();
-            case EDIT_ITEM -> new EditItem();
-            case VIEW_SALES -> new ViewSales();
-            case VIEW_INVENTORY -> new ViewInventory();
-            case PRICE_TAG_PRINTING -> new PriceTagPrinting();
-            case CUSTOMER_ACCOUNTS -> new CustomerAccounts();
-            case QUOTATIONS -> new Invoices(Invoices.InitialTab.QUOTATIONS);
-            case INVOICES -> new Invoices();
-            case CUSTOM_ORDERS -> new CustomOrders();
-            case ORDERS -> new Orders();
-            case TIME_CLOCK -> new TimeClock();
-            case PAYROLL_DASHBOARD -> new PayrollDashboard();
-            case WEEKLY_SCHEDULE -> new WeeklySchedule();
-            case EMPLOYEE_MANAGEMENT -> new EmployeeManagement();
-            case ROLES_PERMISSION -> new Roles_Permission();
-            case DEVICE_MANAGEMENT -> new DeviceManagement();
-            case MACHINE_MANAGEMENT -> new MachineManagement();
-            case PARTS_MANAGEMENT -> new PartsManagement();
-            case MAINTENANCE_MANAGEMENT -> new MaintenanceManagement();
-            case COMPANY_CUSTOMIZATION -> new CompanyCustomization();
-            case WORKSTATION_PREFERENCES -> new WorkstationPreferences();
+            case MAIN_MENU -> new DeferredScreenFrame(
+                    "SmartStock", "Preparing main menu...", MainMenu::new, true);
+            case MAKE_SALE -> deferred("Point of Sale", "Preparing point of sale...", MakeASale::new);
+            case RETURN_SALE -> deferred("Returns", "Preparing returns...", ReturnSale::new);
+            case BALANCE_DRAW -> new DeferredScreenFrame(
+                    "Balance Draw", "Preparing cash drawer...", BalanceDraw::new);
+            case CHANGE_BASKET -> new DeferredScreenFrame(
+                    "Change Basket", "Preparing change basket...", ChangeBasket::new);
+            case BALANCE_SHEET -> deferred("Balance Sheet", "Preparing balance sheet...", BalanceSheet::new);
+            case ORDERS_MANAGER_DASHBOARD -> deferred("Orders Manager Dashboard", "Preparing orders dashboard...", OrdersManagerDashboard::new);
+            case REPORTS -> deferred("Reports", "Preparing reports...", Reports::new);
+            case RECEIVING_INVENTORY -> deferred("Receiving Inventory", "Preparing receiving...", EnterInventory::new);
+            case RECEIVING_HISTORY -> deferred("Receiving History", "Preparing receiving history...", ReceivingHistory::new);
+            case STORE_TRANSFER -> deferred("Store Transfer", "Preparing store transfer...", StoreTransfer::new);
+            case CUSTOM_ORDER_ITEMS -> new DeferredScreenFrame(
+                    "Custom Order Items", "Preparing custom order items...", CustomOrderItems::new);
+            case DEPARTMENT_LIST -> deferred("Departments", "Preparing departments...", DepartmentList::new);
+            case VENDOR_LIST -> deferred("Vendors", "Preparing vendors...", VendorList::new);
+            case NEW_ITEM -> new DeferredScreenFrame(
+                    "Add New Item", "Preparing item form...", NewItem::new);
+            case EDIT_ITEM -> deferred("Edit Items", "Preparing item editor...", EditItem::new);
+            case VIEW_SALES -> deferred("View Sales", "Preparing sales history...", ViewSales::new);
+            case VIEW_INVENTORY -> deferred("View Inventory", "Preparing inventory...", ViewInventory::new);
+            case PRICE_TAG_PRINTING -> deferred("Price Tag Printing", "Preparing price tags...", PriceTagPrinting::new);
+            case CUSTOMER_ACCOUNTS -> deferred("Customers", "Preparing customer accounts...", CustomerAccounts::new);
+            case QUOTATIONS -> deferred("Quotations", "Preparing quotations...", () -> new Invoices(Invoices.InitialTab.QUOTATIONS));
+            case INVOICES -> deferred("Invoices", "Preparing invoices...", Invoices::new);
+            case CUSTOM_ORDERS -> deferred("Customer Orders", "Preparing customer orders...", CustomOrders::new);
+            case ORDERS -> deferred("Orders", "Preparing orders...", Orders::new);
+            case TIME_CLOCK -> deferred("Time Clock", "Preparing time clock...", TimeClock::new);
+            case PAYROLL_DASHBOARD -> deferred("Payroll", "Preparing payroll...", PayrollDashboard::new);
+            case WEEKLY_SCHEDULE -> deferred("Employee Schedule", "Preparing employee schedule...", WeeklySchedule::new);
+            case EMPLOYEE_MANAGEMENT -> deferred("Employees", "Preparing employee management...", EmployeeManagement::new);
+            case ROLES_PERMISSION -> deferred("Roles & Permissions", "Preparing roles and permissions...", Roles_Permission::new);
+            case DEVICE_MANAGEMENT -> deferred("Device Management", "Preparing devices...", DeviceManagement::new);
+            case MACHINE_MANAGEMENT -> deferred("Machines", "Preparing machines...", MachineManagement::new);
+            case PARTS_MANAGEMENT -> deferred("Parts", "Preparing parts...", PartsManagement::new);
+            case MAINTENANCE_MANAGEMENT -> deferred("Maintenance", "Preparing maintenance...", MaintenanceManagement::new);
+            case COMPANY_CUSTOMIZATION -> new DeferredScreenFrame(
+                    "Company Preferences", "Preparing company preferences...", CompanyCustomization::new);
+            case WORKSTATION_PREFERENCES -> new DeferredScreenFrame(
+                    "Workstation Preferences", "Preparing workstation preferences...",
+                    WorkstationPreferences::new);
         };
+    }
+
+    private static JFrame deferred(String title, String loadingText, Supplier<JFrame> factory) {
+        return new DeferredScreenFrame(title, loadingText, factory);
     }
 
     private static ScreenType parseScreenType(String currentScreenName) {
@@ -343,7 +356,7 @@ public final class NavigationManager {
 
     private static void showExistingMainMenu(JFrame relativeTo) {
         if (activeMainMenu != null) {
-            activeMainMenu.applyPermissions();
+            if (activeMainMenu instanceof MainMenu mainMenu) mainMenu.applyPermissions();
             WindowHelper.showPosWindow(activeMainMenu, relativeTo);
             activeMainMenu.toFront();
             activeMainMenu.requestFocus();
@@ -466,7 +479,7 @@ public final class NavigationManager {
         if (activeMainMenu != null) {
             showExistingMainMenu(currentScreen);
         } else {
-            MainMenu menu = new MainMenu();
+            JFrame menu = createScreen(ScreenType.MAIN_MENU);
             activeMainMenu = menu;
             WindowHelper.showPosWindow(menu, currentScreen);
         }
@@ -474,6 +487,16 @@ public final class NavigationManager {
         if (currentScreen != null) {
             currentScreen.dispose();
         }
+        transitionInProgress = false;
+    }
+
+    public static void showMainMenuAfterLogin(JFrame login) {
+        if (transitionInProgress) return;
+        transitionInProgress = true;
+        JFrame menu = createScreen(ScreenType.MAIN_MENU);
+        activeMainMenu = menu;
+        WindowHelper.showPosWindow(menu, login);
+        if (login != null) login.dispose();
         transitionInProgress = false;
     }
 
@@ -500,5 +523,106 @@ public final class NavigationManager {
         }
 
         transitionInProgress = false;
+    }
+
+    private static void promoteDeferredScreen(DeferredScreenFrame shell, JFrame screen) {
+        if (!shell.isDisplayable()) {
+            screen.dispose();
+            return;
+        }
+        if (shell.getRootPane() != null) {
+            shell.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
+        }
+        if (shell.mainMenuDestination) {
+            activeMainMenu = screen;
+            WindowHelper.showPosWindow(screen, shell);
+            shell.dispose();
+            services.AppUpdateService.checkForUpdatesAsync(screen, false);
+            return;
+        }
+        if (screen.getRootPane() != null) {
+            screen.getRootPane().putClientProperty("returnToMainMenu", Boolean.TRUE);
+        }
+        screen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        screen.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent event) {
+                UiTaskRunner.cancelAll(screen);
+                Object returnToMainMenu = screen.getRootPane() == null ? null
+                        : screen.getRootPane().getClientProperty("returnToMainMenu");
+                if (!Boolean.FALSE.equals(returnToMainMenu)) {
+                    showExistingMainMenu(screen);
+                }
+            }
+
+            @Override
+            public void windowClosing(WindowEvent event) {
+                if (!transitionInProgress) closeApplication(screen);
+            }
+        });
+        WindowHelper.showPosWindow(screen, shell);
+        shell.dispose();
+    }
+
+    private static final class DeferredScreenFrame extends JFrame {
+        private final String taskKey;
+        private final String loadingText;
+        private final Supplier<JFrame> screenFactory;
+        private final boolean mainMenuDestination;
+        private final JLabel statusLabel = new JLabel("", SwingConstants.CENTER);
+        private final JButton retryButton = new JButton("Retry");
+        private boolean started;
+
+        private DeferredScreenFrame(String title, String loadingText, Supplier<JFrame> screenFactory) {
+            this(title, loadingText, screenFactory, false);
+        }
+
+        private DeferredScreenFrame(String title, String loadingText, Supplier<JFrame> screenFactory,
+                                    boolean mainMenuDestination) {
+            super(title);
+            this.taskKey = "deferred-screen." + title.toLowerCase().replace(' ', '-');
+            this.loadingText = loadingText;
+            this.screenFactory = screenFactory;
+            this.mainMenuDestination = mainMenuDestination;
+            setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            setSize(900, 640);
+            setLocationRelativeTo(null);
+            JPanel shell = new JPanel(new java.awt.BorderLayout(12, 12));
+            shell.setBorder(BorderFactory.createEmptyBorder(30, 30, 30, 30));
+            statusLabel.setText(loadingText);
+            statusLabel.setFont(new java.awt.Font("SansSerif", java.awt.Font.PLAIN, 16));
+            shell.add(statusLabel, java.awt.BorderLayout.CENTER);
+            retryButton.setVisible(false);
+            retryButton.addActionListener(event -> startPreparing());
+            JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER));
+            actions.add(retryButton);
+            shell.add(actions, java.awt.BorderLayout.SOUTH);
+            add(shell);
+            WindowHelper.configurePosWindow(this);
+            addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowOpened(WindowEvent event) {
+                    startPreparing();
+                }
+            });
+        }
+
+        private void startPreparing() {
+            if (started || !isDisplayable()) return;
+            started = true;
+            retryButton.setVisible(false);
+            statusLabel.setText(loadingText);
+            UiTaskRunner.submit(this, taskKey, screenFactory::get,
+                    screen -> promoteDeferredScreen(this, screen), failure -> {
+                        started = false;
+                        statusLabel.setText("Could not prepare this screen: " + safeMessage(failure));
+                        retryButton.setVisible(true);
+                    });
+        }
+
+        private static String safeMessage(Throwable failure) {
+            String message = failure == null ? null : failure.getMessage();
+            return message == null || message.isBlank() ? "Unknown error" : message;
+        }
     }
 }

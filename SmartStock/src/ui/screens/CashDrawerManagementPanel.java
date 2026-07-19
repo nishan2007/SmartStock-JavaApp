@@ -10,6 +10,7 @@ import services.LanApiClient;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -510,14 +511,8 @@ public class CashDrawerManagementPanel extends JPanel {
         }
         LanApiClient.CashDrawerSaveRequest request=new LanApiClient.CashDrawerSaveRequest(selectedDrawerId,store.id(),drawerNameField.getText(),
                 descriptionArea.getText(),parseMoney(startingCashField.getText()),parseFloatMix(),activeBox.isSelected());
-        try {
-            selectedDrawerId=LanApiClient.saveCashDrawer(request,mutationKey("save|"+request));clearMutationKey();
-            loadDrawersAndAssignments();
-            JOptionPane.showMessageDialog(this, "Cash drawer saved.");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save cash drawer: " + ex.getMessage(),
-                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
-        }
+        String key=mutationKey("save|"+request);
+        submitMutation("cash-drawers.save",()->LanApiClient.saveCashDrawer(request,key),id->{selectedDrawerId=id;clearMutationKey();SessionDataCache.invalidate("cash-drawer:");loadDrawersAndAssignments();JOptionPane.showMessageDialog(this,"Cash drawer saved.");},"Failed to save cash drawer");
     }
 
     private void assignDevice() {
@@ -531,16 +526,8 @@ public class CashDrawerManagementPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Select a store and device.");
             return;
         }
-        try {
-            String fingerprint="assign|"+selectedDrawerId+"|"+store.id()+"|"+device.id()+"|"+assignmentNotesArea.getText();
-            LanApiClient.assignCashDrawer(selectedDrawerId,store.id(),device.id(),assignmentNotesArea.getText(),mutationKey(fingerprint));clearMutationKey();
-            assignmentNotesArea.setText("");
-            loadDrawersAndAssignments();
-            JOptionPane.showMessageDialog(this, "Device assigned to cash drawer.");
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to assign device: " + ex.getMessage(),
-                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
-        }
+        Long drawerId=selectedDrawerId;String notes=assignmentNotesArea.getText();String fingerprint="assign|"+drawerId+"|"+store.id()+"|"+device.id()+"|"+notes;String key=mutationKey(fingerprint);
+        submitMutation("cash-drawers.assign",()->{LanApiClient.assignCashDrawer(drawerId,store.id(),device.id(),notes,key);return Boolean.TRUE;},ignored->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");assignmentNotesArea.setText("");loadDrawersAndAssignments();JOptionPane.showMessageDialog(this,"Device assigned to cash drawer.");},"Failed to assign device");
     }
 
     private void unassignSelectedAssignment() {
@@ -561,13 +548,8 @@ public class CashDrawerManagementPanel extends JPanel {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try {
-            LanApiClient.unassignCashDrawer(assignmentId,mutationKey("unassign|"+assignmentId));clearMutationKey();
-            loadDrawersAndAssignments();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to unassign device: " + ex.getMessage(),
-                    "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
-        }
+        String key=mutationKey("unassign|"+assignmentId);
+        submitMutation("cash-drawers.unassign",()->{LanApiClient.unassignCashDrawer(assignmentId,key);return Boolean.TRUE;},ignored->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");loadDrawersAndAssignments();},"Failed to unassign device");
     }
 
     private void loadChangeBasketTarget(Integer locationId,BigDecimal target) {
@@ -594,11 +576,12 @@ public class CashDrawerManagementPanel extends JPanel {
             return;
         }
         try {
-            BigDecimal target = parseNonNegativeMoney(changeBasketTargetField.getText(), "Change basket target");
-            LanApiClient.saveCashDrawerChangeTarget(store.id(),target,mutationKey("target|"+store.id()+"|"+target));clearMutationKey();
+            BigDecimal target = parseNonNegativeMoney(changeBasketTargetField.getText(), "Change basket target");String key=mutationKey("target|"+store.id()+"|"+target);
+            submitMutation("cash-drawers.change-target",()->{LanApiClient.saveCashDrawerChangeTarget(store.id(),target,key);return Boolean.TRUE;},ignored->{clearMutationKey();SessionDataCache.invalidate("change-basket:");
             changeBasketTargetField.setText(utils.CurrencyFormatter.normalize(target).toPlainString());
             changeBasketStatusLabel.setText("Saved for " + store.name() + ". Separate from drawer starting cash.");
             JOptionPane.showMessageDialog(this, "Change basket target saved.");
+            },"Failed to save change basket target");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save change basket target: " + ex.getMessage(),
                     "Cash Drawer Management", JOptionPane.ERROR_MESSAGE);
@@ -608,6 +591,12 @@ public class CashDrawerManagementPanel extends JPanel {
     private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){
         pendingMutationKey=UUID.randomUUID().toString();pendingMutationFingerprint=fingerprint;}return pendingMutationKey;}
     private void clearMutationKey(){pendingMutationKey=null;pendingMutationFingerprint=null;}
+
+    private <T> void submitMutation(String jobKey,java.util.concurrent.Callable<T> mutation,
+                                    java.util.function.Consumer<T> success,String failureMessage){
+        Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,jobKey,mutation,success,ex->JOptionPane.showMessageDialog(this,failureMessage+": "+ex.getMessage(),"Cash Drawer Management",JOptionPane.ERROR_MESSAGE));
+    }
 
     private BigDecimal parseMoney(String value) {
         String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();

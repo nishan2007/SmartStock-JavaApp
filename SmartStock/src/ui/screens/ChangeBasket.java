@@ -10,6 +10,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -89,8 +90,13 @@ public class ChangeBasket extends JFrame {
         refreshButton.addActionListener(e -> loadState());
         backButton.addActionListener(e -> NavigationManager.showMainMenu(this));
 
-        loadState();
-        WindowHelper.configurePosWindow(this);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent event) {
+                WindowHelper.configurePosWindow(ChangeBasket.this);
+                loadState();
+            }
+        });
     }
 
     private JPanel buildHeaderPanel() {
@@ -263,7 +269,8 @@ public class ChangeBasket extends JFrame {
         try {
             Map<Integer,Integer>counts=denominationCounts();String fingerprint=counts.toString()+"|"+targetAmount;
             if(pendingUpdateKey==null||!fingerprint.equals(pendingUpdateFingerprint)){pendingUpdateFingerprint=fingerprint;pendingUpdateKey=UUID.randomUUID().toString();}
-            long updateId=LanApiClient.updateChangeBasket(counts,pendingUpdateKey);pendingUpdateKey=null;pendingUpdateFingerprint=null;
+            String mutationKey=pendingUpdateKey;
+            UiTaskRunner.submit(this,"change-basket.update",()->LanApiClient.updateChangeBasket(counts,mutationKey),updateId->{pendingUpdateKey=null;pendingUpdateFingerprint=null;
             SessionDataCache.invalidate("change-basket:state");
             JOptionPane.showMessageDialog(
                     this,
@@ -273,6 +280,7 @@ public class ChangeBasket extends JFrame {
                     "Update Change",
                     JOptionPane.INFORMATION_MESSAGE
             );
+            },ex->JOptionPane.showMessageDialog(this,"Failed to save change basket update: "+ex.getMessage(),"Change Basket",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save change basket update: " + ex.getMessage(), "Change Basket", JOptionPane.ERROR_MESSAGE);
         }

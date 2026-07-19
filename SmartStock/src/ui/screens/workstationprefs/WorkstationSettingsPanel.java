@@ -7,6 +7,7 @@ import ui.helpers.ThemeManager;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -204,18 +205,8 @@ public class WorkstationSettingsPanel extends JPanel {
             return;
         }
 
-        try {
-            String savedDeviceId = LanApiClient.updateWorkstationDeviceCode(deviceIdField.getText());
-            JOptionPane.showMessageDialog(this, "Workstation ID saved as " + savedDeviceId + ".");
-            loadSettings();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to save workstation settings.\n\n" + ex.getMessage(),
-                    "Workstation Settings",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
+        String requested=deviceIdField.getText();Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"workstation.save-device-code",()->LanApiClient.updateWorkstationDeviceCode(requested),saved->{SessionDataCache.invalidate("workstation:");JOptionPane.showMessageDialog(this,"Workstation ID saved as "+saved+".");loadSettings();},ex->JOptionPane.showMessageDialog(this,"Failed to save workstation settings.\n\n"+ex.getMessage(),"Workstation Settings",JOptionPane.ERROR_MESSAGE));
     }
 
     private void saveStoreTimezone() {
@@ -233,14 +224,8 @@ public class WorkstationSettingsPanel extends JPanel {
             return;
         }
 
-        try {
-            timezone = LanApiClient.updateWorkstationTimezone(timezone);
-            SessionManager.setCurrentLocationTimezone(timezone);
-            JOptionPane.showMessageDialog(this, "Store timezone saved.");
-            loadSettings();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to save store timezone.\n\n" + ex.getMessage(), "Store Timezone", JOptionPane.ERROR_MESSAGE);
-        }
+        String requestedTimezone=timezone;Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"workstation.save-timezone",()->LanApiClient.updateWorkstationTimezone(requestedTimezone),saved->{SessionManager.setCurrentLocationTimezone(saved);SessionDataCache.invalidate("workstation:");JOptionPane.showMessageDialog(this,"Store timezone saved.");loadSettings();},ex->JOptionPane.showMessageDialog(this,"Failed to save store timezone.\n\n"+ex.getMessage(),"Store Timezone",JOptionPane.ERROR_MESSAGE));
     }
 
     private void saveAppearance() {

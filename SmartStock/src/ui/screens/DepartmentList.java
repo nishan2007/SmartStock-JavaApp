@@ -5,6 +5,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
@@ -218,13 +219,8 @@ public class DepartmentList extends JFrame {
                 pendingSaveFingerprint = fingerprint;
                 pendingSaveKey = UUID.randomUUID().toString();
             }
-            LanApiClient.saveDepartment(request, pendingSaveKey);
-            SessionDataCache.invalidate("departments:");
-            pendingSaveKey = null;
-            pendingSaveFingerprint = null;
-            clearEditor();
-            loadDepartments();
-            JOptionPane.showMessageDialog(this, "Department saved.");
+            String mutationKey = pendingSaveKey;
+            UiTaskRunner.submit(this,"departments.save",()->{LanApiClient.saveDepartment(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("departments:");pendingSaveKey=null;pendingSaveFingerprint=null;clearEditor();loadDepartments();JOptionPane.showMessageDialog(this,"Department saved.");},ex->JOptionPane.showMessageDialog(this,"Failed to save department: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save department: " + ex.getMessage(),
                     "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);

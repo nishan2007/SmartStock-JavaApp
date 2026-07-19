@@ -13,6 +13,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -124,8 +125,13 @@ public class BalanceDraw extends JFrame {
         refreshButton.addActionListener(e -> loadState());
         backButton.addActionListener(e -> NavigationManager.showMainMenu(this));
 
-        loadState();
-        WindowHelper.configurePosWindow(this);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent event) {
+                WindowHelper.configurePosWindow(BalanceDraw.this);
+                loadState();
+            }
+        });
     }
 
     private JPanel buildHeaderPanel() {
@@ -276,12 +282,8 @@ public class BalanceDraw extends JFrame {
     }
 
     private void startDraw() {
-        try {
-            activeSession = LanApiClient.openCashDrawer(mutationKey("open"));clearMutationKey();
-            loadState();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to start draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
-        }
+        String key=mutationKey("open");
+        UiTaskRunner.submit(this,"cash-drawer.open",()->LanApiClient.openCashDrawer(key),session->{activeSession=session;clearMutationKey();SessionDataCache.invalidate("cash-drawer:");loadState();},ex->JOptionPane.showMessageDialog(this,"Failed to start draw: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
     }
 
     private void confirmHandover() {
@@ -322,9 +324,8 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try {
-            CashDrawerHandover handover = LanApiClient.handoverCashDrawer(activeSession.sessionId(),countedCash,null,
-                    mutationKey("handover|"+activeSession.sessionId()+"|"+countedCash));clearMutationKey();
+        long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+countedCash);
+        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,key),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             JOptionPane.showMessageDialog(
                     this,
                     "Handover confirmed.\nFrom: " + displayName(handover.fromUserName())
@@ -332,9 +333,7 @@ public class BalanceDraw extends JFrame {
                             + "\nCounted: " + CURRENCY.format(handover.countedCash())
             );
             loadState();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to confirm handover: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to confirm handover: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
     }
 
     private void closeDraw() {
@@ -381,9 +380,8 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        try {
-            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(activeSession.sessionId(),countedCash,null,
-                    mutationKey("close|"+activeSession.sessionId()+"|"+countedCash));clearMutationKey();
+        long sessionId=activeSession.sessionId();String key=mutationKey("close|"+sessionId+"|"+countedCash);
+        UiTaskRunner.submit(this,"cash-drawer.close",()->LanApiClient.closeCashDrawer(sessionId,countedCash,null,key),result->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             CashDrawerSession closed=result.session();String handlers=String.join(", ",result.handlers());
             JOptionPane.showMessageDialog(
                     this,
@@ -396,9 +394,7 @@ public class BalanceDraw extends JFrame {
                             + "\nCash Handlers: " + (handlers.isBlank() ? "None" : handlers)
             );
             loadState();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to close draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
-        }
+        },ex->JOptionPane.showMessageDialog(this,"Failed to close draw: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
     }
 
     private void editClosedDraw() {
@@ -406,12 +402,14 @@ public class BalanceDraw extends JFrame {
             JOptionPane.showMessageDialog(this, "You do not have permission to correct closed draws.", "Balance Draw", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        try {
-            List<ClosedDrawOption> options = LanApiClient.loadRecentCashDrawers()
+        UiTaskRunner.submit(this,"cash-drawer.closed-list",()->LanApiClient.loadRecentCashDrawers()
                     .stream()
                     .filter(session -> !session.isOpen())
                     .map(ClosedDrawOption::new)
-                    .toList();
+                    .toList(),this::showClosedDrawEditor,ex->JOptionPane.showMessageDialog(this,"Failed to load closed draws: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void showClosedDrawEditor(List<ClosedDrawOption> options) {
             if (options.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No closed draw sessions were found for this store.", "Edit Closed Draw", JOptionPane.INFORMATION_MESSAGE);
                 return;
@@ -451,8 +449,8 @@ public class BalanceDraw extends JFrame {
                 return;
             }
 
-            CashDrawerSession revised = LanApiClient.reviseCashDrawer(selected.session().sessionId(),correctedCount,notesArea.getText(),
-                    mutationKey("revise|"+selected.session().sessionId()+"|"+correctedCount+"|"+notesArea.getText()));clearMutationKey();
+            long sessionId=selected.session().sessionId();String notes=notesArea.getText();String key=mutationKey("revise|"+sessionId+"|"+correctedCount+"|"+notes);
+            UiTaskRunner.submit(this,"cash-drawer.revise",()->LanApiClient.reviseCashDrawer(sessionId,correctedCount,notes,key),revised->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             JOptionPane.showMessageDialog(
                     this,
                     "Closed draw corrected.\nExpected: " + CURRENCY.format(revised.expectedCash())
@@ -464,9 +462,7 @@ public class BalanceDraw extends JFrame {
                     JOptionPane.INFORMATION_MESSAGE
             );
             loadState();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Failed to correct closed draw: " + ex.getMessage(), "Balance Draw", JOptionPane.ERROR_MESSAGE);
-        }
+            },ex->JOptionPane.showMessageDialog(this,"Failed to correct closed draw: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
     }
 
     private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){

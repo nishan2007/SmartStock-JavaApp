@@ -115,12 +115,7 @@ public class SyncStatus extends JFrame {
             return;
         }
         long conflictId = Long.parseLong(String.valueOf(conflictModel.getValueAt(table.convertRowIndexToModel(row), 0)));
-        try {
-            LanApiClient.resolveSyncConflict(conflictId);
-            refresh();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Resolve Conflict", JOptionPane.ERROR_MESSAGE);
-        }
+        UiTaskRunner.submit(this,"sync-status.resolve",()->{LanApiClient.resolveSyncConflict(conflictId);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("sync-status:");refresh();},ex->JOptionPane.showMessageDialog(this,ex.getMessage(),"Resolve Conflict",JOptionPane.ERROR_MESSAGE));
     }
 
     private static Object instant(long epochMillis) {

@@ -8,6 +8,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -356,12 +357,12 @@ public class CustomerAccounts extends JFrame {
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
-            LanApiClient.SavedCustomerAccount saved=LanApiClient.saveCustomerAccount(request,pendingSaveKey);
-            SessionDataCache.invalidate("customer-accounts:");
-            pendingSaveKey=null;pendingSaveFingerprint=null;accountNumberField.setText(saved.accountNumber());
+            String mutationKey=pendingSaveKey;
+            UiTaskRunner.submit(this,"customer-accounts.create",()->LanApiClient.saveCustomerAccount(request,mutationKey),saved->{SessionDataCache.invalidate("customer-accounts:");pendingSaveKey=null;pendingSaveFingerprint=null;accountNumberField.setText(saved.accountNumber());
             JOptionPane.showMessageDialog(this, "Customer account added.");
             clearFields();
             loadCustomers();
+            },ex->JOptionPane.showMessageDialog(this,"Failed to add customer account: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to add customer account: " + ex.getMessage());
         }
@@ -405,9 +406,11 @@ public class CustomerAccounts extends JFrame {
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
-            LanApiClient.saveCustomerAccount(request,pendingSaveKey);SessionDataCache.invalidate("customer-accounts:");pendingSaveKey=null;pendingSaveFingerprint=null;
+            String mutationKey=pendingSaveKey;
+            UiTaskRunner.submit(this,"customer-accounts.update",()->{LanApiClient.saveCustomerAccount(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("customer-accounts:");pendingSaveKey=null;pendingSaveFingerprint=null;
             JOptionPane.showMessageDialog(this, "Customer account updated.");
             loadCustomers();
+            },ex->JOptionPane.showMessageDialog(this,"Failed to update customer account: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update customer account: " + ex.getMessage());
         }
@@ -458,14 +461,14 @@ public class CustomerAccounts extends JFrame {
                 addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference);String fingerprint=request.toString();
         try {
             if(pendingAdjustmentKey==null||!fingerprint.equals(pendingAdjustmentFingerprint)){pendingAdjustmentKey=UUID.randomUUID().toString();pendingAdjustmentFingerprint=fingerprint;}
-            LanApiClient.CustomerAccountAdjustmentResult result=LanApiClient.adjustCustomerAccount(request,pendingAdjustmentKey);
-            SessionDataCache.invalidate("customer-accounts:");
-            pendingAdjustmentKey=null;pendingAdjustmentFingerprint=null;
+            String mutationKey=pendingAdjustmentKey;Integer customerId=selectedCustomerId;
+            UiTaskRunner.submit(this,"customer-accounts.adjust",()->LanApiClient.adjustCustomerAccount(request,mutationKey),result->{SessionDataCache.invalidate("customer-accounts:");pendingAdjustmentKey=null;pendingAdjustmentFingerprint=null;
             if(addCharge)JOptionPane.showMessageDialog(this,"Charge added.");else{
                 JOptionPane.showMessageDialog(this,"Payment recorded. Payment ID: "+result.paymentId());
-                openPaymentReceipt(selectedCustomerId,(int)result.transactionId());
+                openPaymentReceipt(customerId,(int)result.transactionId());
             }
             loadCustomers();
+            },ex->JOptionPane.showMessageDialog(this,"Failed to update account balance: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update account balance: " + ex.getMessage());
         }

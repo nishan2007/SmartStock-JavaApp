@@ -28,6 +28,7 @@ import java.io.File;
 import java.io.IOException;
 import java.awt.image.BufferedImage;
 import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
@@ -38,6 +39,7 @@ public class MainMenu extends JFrame {
     private static final Map<String, ImageIcon> MENU_ICON_CACHE = new ConcurrentHashMap<>();
     private static boolean drawStartPromptShownThisAppSession;
     private static final int MENU_ICON_SIZE = 74;
+    private static final ImageIcon FALLBACK_MENU_ICON = createFallbackIcon();
     private static final int MENU_TILE_WIDTH = 315;
     private static final int MENU_TILE_MIN_WIDTH = 248;
     private static final int MENU_TILE_MAX_WIDTH = 345;
@@ -85,6 +87,10 @@ public class MainMenu extends JFrame {
     private final JButton workstationPreferencesButton;
     private final JButton logoutButton;
     private final Set<String> urgentPopupKeysShown = new HashSet<>();
+    private final List<MenuIconRequest> pendingMenuIcons = new ArrayList<>();
+    private RibbonHeaderPanel ribbonHeaderPanel;
+    private JLabel companyLogoLabel;
+    private boolean customCompanyLogoApplied;
     private Timer notificationRefreshTimer;
 
     public MainMenu() {
@@ -94,8 +100,6 @@ public class MainMenu extends JFrame {
         setMinimumSize(new Dimension(900, 650));
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
-
-        setJMenuBar(AppMenuBar.create(this, "MainMenu"));
 
         boolean dark = ThemeManager.isDarkModeEnabled();
         Color backgroundColor = backgroundColor();
@@ -122,41 +126,60 @@ public class MainMenu extends JFrame {
 
         JPanel headerPanel = createHeaderPanel(titleLabel, subtitleLabel);
 
-        makeSaleButton = createMenuButton("Make a Sale", "Create a new sale transaction", loadIcon("src/ICONS/MainMenuMakeSale.png"));
-        returnSaleButton = createMenuButton("Returns", "Return items from a completed sale", loadIcon("src/ICONS/MainMenuReturns.png"));
-        balanceDrawButton = createMenuButton("Balance Draw", "Start, count, and close the cash drawer", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
-        changeBasketButton = createMenuButton("Change Basket", "Count the store change basket against its target", loadIcon("src/ICONS/MainMenuBalanceDraw.png"));
-        balanceSheetButton = createMenuButton("Balance Sheet", "Review income, expenses, assets, and liabilities", loadIcon("src/ICONS/MainMenuBalanceSheet.png"));
-        ordersManagerDashboardButton = createMenuButton("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", loadIcon("src/ICONS/MainMenuOrdersDashboard.png"));
-        reportsButton = createMenuButton("Reports", "Analyze sales, products, employees, cash flow, and expenses", loadIcon("src/ICONS/MainMenuEndOfDay.png"));
-        enterInventoryButton = createMenuButton("Receiving Inventory", "Add received stock to inventory", loadIcon("src/ICONS/MainMenuReceivingInventory.png"));
-        receivingHistoryButton = createMenuButton("Receiving History", "Review received inventory", loadIcon("src/ICONS/MainMenuReceivingHistory.png"));
-        storeTransferButton = createMenuButton("Store Transfer", "Move stock between stores", loadIcon("src/ICONS/MainMenuStoreTransfer.png"));
-        customOrderItemsButton = createMenuButton("Custom Order Items", "Manage printable items and stock levels", loadIcon("src/ICONS/MainMenuCustomOrderItems.png"));
-        departmentListButton = createMenuButton("Departments", "Manage item departments", loadIcon("src/ICONS/MainMenuDepartments.png"));
-        vendorListButton = createMenuButton("Vendors", "Manage product vendors", loadIcon("src/ICONS/MainMenuVendors.png"));
-        viewSalesButton = createMenuButton("View Sales", "Review previous transactions", loadIcon("src/ICONS/MainMenuViewSales.png"));
-        customerAccountsButton = createMenuButton("Customers", "Manage customer credit accounts", loadIcon("src/ICONS/MainMenuCustomers.png"));
-        customerTransactionHistoryButton = createMenuButton("Customer History", "Open full transaction history for a customer", loadIcon("src/ICONS/MainMenuCustomerHistory.png"));
-        invoicesButton = createMenuButton("Quotations & Invoices", "Create quotes, take payments, and post deliveries", loadIcon("src/ICONS/MainMenuInvoices.png"));
-        customOrdersButton = createMenuButton("Customer Orders", "Take a new customized customer order", loadIcon("src/ICONS/MainMenuCustomOrders.png"));
-        ordersButton = createMenuButton("Orders", "Lookup, assign, and deliver custom orders", loadIcon("src/ICONS/MainMenuOrders.png"));
-        viewInventoryButton = createMenuButton("View Inventory", "View current inventory levels", loadIcon("src/ICONS/MainMenuViewInventory.png"));
-        priceTagPrintingButton = createMenuButton("Price Tag Printing", "Select normal or custom items and print sticker tags", loadIcon("src/ICONS/MainMenuViewInventory.png"));
-        addItemButton = createMenuButton("Add Item", "Add a new product to inventory", loadIcon("src/ICONS/MainMenuAddItem.png"));
-        editItemsButton = createMenuButton("Edit Items", "Update product information", loadIcon("src/ICONS/MainMenuEditItems.png"));
-        timeClockButton = createMenuButton("Time Clock", "Clock employees in and out", loadIcon("src/ICONS/MainMenuTimeClock.png"));
-        payrollDashboardButton = createMenuButton("Payroll", "Review pay periods and time records", loadIcon("src/ICONS/MainMenuPayroll.png"));
-        weeklyScheduleButton = createMenuButton("Weekly Schedule", "See who is working each day", loadIcon("src/ICONS/MainMenuEmployees.png"));
-        employeeManagementButton = createMenuButton("Employees", "Manage employee accounts", loadIcon("src/ICONS/MainMenuEmployees.png"));
-        rolesPermissionsButton = createMenuButton("Roles & Permissions", "Configure user access", loadIcon("src/ICONS/MainMenuRolesPermissions.png"));
-        deviceManagementButton = createMenuButton("Device Management", "Review devices and approve or block sign-ins", loadIcon("src/ICONS/MainMenuDeviceManagement.png"));
-        machineManagementButton = createMenuButton("Machines", "Create, update, and delete machine records", loadIcon("src/ICONS/MainMenuMachines.png"));
-        partsManagementButton = createMenuButton("Parts", "Create, update, and delete maintenance parts", loadIcon("src/ICONS/MainMenuParts.png"));
-        maintenanceManagementButton = createMenuButton("Maintenance", "Manage machines, parts, service logs, and problem tickets", loadIcon("src/ICONS/MainMenuMaintenance.png"));
-        companyCustomizationButton = createMenuButton("Company Preferences", "Company identity and receipts", loadIcon("src/ICONS/MainMenuCompanyPreferences.png"));
-        workstationPreferencesButton = createMenuButton("Workstation Preferences", "Device-level workstation and printing behavior", loadIcon("src/ICONS/MainMenuWorkstationPreferences.png"));
+        makeSaleButton = createMenuButtonLazy("Make a Sale", "Create a new sale transaction", "src/ICONS/MainMenuMakeSale.png");
+        returnSaleButton = createMenuButtonLazy("Returns", "Return items from a completed sale", "src/ICONS/MainMenuReturns.png");
+        balanceDrawButton = createMenuButtonLazy("Balance Draw", "Start, count, and close the cash drawer", "src/ICONS/MainMenuBalanceDraw.png");
+        changeBasketButton = createMenuButtonLazy("Change Basket", "Count the store change basket against its target", "src/ICONS/MainMenuBalanceDraw.png");
+        balanceSheetButton = createMenuButtonLazy("Balance Sheet", "Review income, expenses, assets, and liabilities", "src/ICONS/MainMenuBalanceSheet.png");
+        ordersManagerDashboardButton = createMenuButtonLazy("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", "src/ICONS/MainMenuOrdersDashboard.png");
+        reportsButton = createMenuButtonLazy("Reports", "Analyze sales, products, employees, cash flow, and expenses", "src/ICONS/MainMenuEndOfDay.png");
+        enterInventoryButton = createMenuButtonLazy("Receiving Inventory", "Add received stock to inventory", "src/ICONS/MainMenuReceivingInventory.png");
+        receivingHistoryButton = createMenuButtonLazy("Receiving History", "Review received inventory", "src/ICONS/MainMenuReceivingHistory.png");
+        storeTransferButton = createMenuButtonLazy("Store Transfer", "Move stock between stores", "src/ICONS/MainMenuStoreTransfer.png");
+        customOrderItemsButton = createMenuButtonLazy("Custom Order Items", "Manage printable items and stock levels", "src/ICONS/MainMenuCustomOrderItems.png");
+        departmentListButton = createMenuButtonLazy("Departments", "Manage item departments", "src/ICONS/MainMenuDepartments.png");
+        vendorListButton = createMenuButtonLazy("Vendors", "Manage product vendors", "src/ICONS/MainMenuVendors.png");
+        viewSalesButton = createMenuButtonLazy("View Sales", "Review previous transactions", "src/ICONS/MainMenuViewSales.png");
+        customerAccountsButton = createMenuButtonLazy("Customers", "Manage customer credit accounts", "src/ICONS/MainMenuCustomers.png");
+        customerTransactionHistoryButton = createMenuButtonLazy("Customer History", "Open full transaction history for a customer", "src/ICONS/MainMenuCustomerHistory.png");
+        invoicesButton = createMenuButtonLazy("Quotations & Invoices", "Create quotes, take payments, and post deliveries", "src/ICONS/MainMenuInvoices.png");
+        customOrdersButton = createMenuButtonLazy("Customer Orders", "Take a new customized customer order", "src/ICONS/MainMenuCustomOrders.png");
+        ordersButton = createMenuButtonLazy("Orders", "Lookup, assign, and deliver custom orders", "src/ICONS/MainMenuOrders.png");
+        viewInventoryButton = createMenuButtonLazy("View Inventory", "View current inventory levels", "src/ICONS/MainMenuViewInventory.png");
+        priceTagPrintingButton = createMenuButtonLazy("Price Tag Printing", "Select normal or custom items and print sticker tags", "src/ICONS/MainMenuViewInventory.png");
+        addItemButton = createMenuButtonLazy("Add Item", "Add a new product to inventory", "src/ICONS/MainMenuAddItem.png");
+        editItemsButton = createMenuButtonLazy("Edit Items", "Update product information", "src/ICONS/MainMenuEditItems.png");
+        timeClockButton = createMenuButtonLazy("Time Clock", "Clock employees in and out", "src/ICONS/MainMenuTimeClock.png");
+        payrollDashboardButton = createMenuButtonLazy("Payroll", "Review pay periods and time records", "src/ICONS/MainMenuPayroll.png");
+        weeklyScheduleButton = createMenuButtonLazy("Weekly Schedule", "See who is working each day", "src/ICONS/MainMenuEmployees.png");
+        employeeManagementButton = createMenuButtonLazy("Employees", "Manage employee accounts", "src/ICONS/MainMenuEmployees.png");
+        rolesPermissionsButton = createMenuButtonLazy("Roles & Permissions", "Configure user access", "src/ICONS/MainMenuRolesPermissions.png");
+        deviceManagementButton = createMenuButtonLazy("Device Management", "Review devices and approve or block sign-ins", "src/ICONS/MainMenuDeviceManagement.png");
+        machineManagementButton = createMenuButtonLazy("Machines", "Create, update, and delete machine records", "src/ICONS/MainMenuMachines.png");
+        partsManagementButton = createMenuButtonLazy("Parts", "Create, update, and delete maintenance parts", "src/ICONS/MainMenuParts.png");
+        maintenanceManagementButton = createMenuButtonLazy("Maintenance", "Manage machines, parts, service logs, and problem tickets", "src/ICONS/MainMenuMaintenance.png");
+        companyCustomizationButton = createMenuButtonLazy("Company Preferences", "Company identity and receipts", "src/ICONS/MainMenuCompanyPreferences.png");
+        workstationPreferencesButton = createMenuButtonLazy("Workstation Preferences", "Device-level workstation and printing behavior", "src/ICONS/MainMenuWorkstationPreferences.png");
+        logoutButton = new JButton("Logout");
+        logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+        logoutButton.setFocusPainted(false);
+        logoutButton.setPreferredSize(new Dimension(130, 34));
+        logoutButton.setBackground(dark ? new Color(45, 45, 45) : surfaceColor);
+        logoutButton.setForeground(textColor);
 
+        JPanel menuHostPanel = new JPanel(new BorderLayout());
+        menuHostPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        menuHostPanel.setBackground(backgroundColor);
+        JLabel preparingMenuLabel = new JLabel("Preparing menu...", SwingConstants.CENTER);
+        preparingMenuLabel.setFont(new Font("SansSerif", Font.PLAIN, 16));
+        preparingMenuLabel.setForeground(mutedColor);
+        menuHostPanel.add(preparingMenuLabel, BorderLayout.CENTER);
+        mainPanel.add(headerPanel, BorderLayout.NORTH);
+        mainPanel.add(menuHostPanel, BorderLayout.CENTER);
+
+        Timer menuBuildTimer = new Timer(75, event -> {
+            if (!isDisplayable()) return;
+        setJMenuBar(AppMenuBar.create(this, "MainMenu"));
         JPanel leftSectionStackPanel = new JPanel() {
             @Override
             public Dimension getMaximumSize() {
@@ -259,13 +282,6 @@ public class MainMenu extends JFrame {
             }
         });
 
-        logoutButton = new JButton("Logout");
-        logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
-        logoutButton.setFocusPainted(false);
-        logoutButton.setPreferredSize(new Dimension(130, 34));
-        logoutButton.setBackground(dark ? new Color(45, 45, 45) : surfaceColor);
-        logoutButton.setForeground(textColor);
-
         JPanel footerPanel = new JPanel(new BorderLayout());
         footerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         footerPanel.setBackground(backgroundColor);
@@ -283,20 +299,43 @@ public class MainMenu extends JFrame {
         contentPanel.add(sectionScrollPane, BorderLayout.CENTER);
         contentPanel.add(footerPanel, BorderLayout.SOUTH);
 
-        mainPanel.add(headerPanel, BorderLayout.NORTH);
-        mainPanel.add(contentPanel, BorderLayout.CENTER);
+        menuHostPanel.removeAll();
+        menuHostPanel.add(contentPanel, BorderLayout.CENTER);
+        WindowHelper.configurePosWindow(this);
+        menuHostPanel.revalidate();
+        menuHostPanel.repaint();
+        });
+        menuBuildTimer.setRepeats(false);
+        menuBuildTimer.start();
 
         applyPermissions();
         add(mainPanel, BorderLayout.CENTER);
         wireActions();
         wireWindowSessionHandling();
-        WindowHelper.configurePosWindow(this);
         SwingUtilities.invokeLater(() -> {
+            if (!isDisplayable()) return;
+            loadLocalMenuAssets();
+            loadCompanyLogo(companyLogoLabel);
             refreshNotifications(true);
             startNotificationRefreshTimer();
             promptToStartDrawIfNeeded();
         });
     }
+    private JButton createMenuButtonLazy(String title, String description, String path) {
+        String fileName = new File(path).getName();
+        JButton button = new MenuTileButton(DeckersPalette.ORANGE);
+        button.setText(title);
+        button.setFont(new Font("SansSerif", Font.BOLD, 16));
+        button.setFocusPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(MENU_TILE_WIDTH, MENU_TILE_HEIGHT));
+        button.setMinimumSize(new Dimension(MENU_TILE_WIDTH, MENU_TILE_HEIGHT));
+        button.setMaximumSize(new Dimension(MENU_TILE_MAX_WIDTH, 134));
+        button.putClientProperty("SmartStock.menuDescription", description);
+        pendingMenuIcons.add(new MenuIconRequest(button, title, description, path, fileName));
+        return button;
+    }
+
     private ImageIcon loadIcon(String path) {
         String fileName = new File(path).getName();
         ImageIcon cached = MENU_ICON_CACHE.get(fileName);
@@ -316,7 +355,7 @@ public class MainMenu extends JFrame {
         }
 
         if (icon.getIconWidth() <= 0) {
-            ImageIcon fallback = createFallbackIcon();
+            ImageIcon fallback = FALLBACK_MENU_ICON;
             MENU_ICON_CACHE.putIfAbsent(fileName, fallback);
             return fallback;
         }
@@ -327,7 +366,7 @@ public class MainMenu extends JFrame {
         return scaled;
     }
 
-    private ImageIcon createFallbackIcon() {
+    private static ImageIcon createFallbackIcon() {
         java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(MENU_ICON_SIZE, MENU_ICON_SIZE, java.awt.image.BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -341,12 +380,13 @@ public class MainMenu extends JFrame {
     }
 
     private JPanel createHeaderPanel(JLabel titleLabel, JLabel subtitleLabel) {
-        JPanel headerPanel = new RibbonHeaderPanel();
+        ribbonHeaderPanel = new RibbonHeaderPanel();
+        JPanel headerPanel = ribbonHeaderPanel;
         headerPanel.setLayout(new BorderLayout(24, 0));
         headerPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         headerPanel.setBackground(backgroundColor());
 
-        JLabel companyLogoLabel = createLogoLabel("Company");
+        companyLogoLabel = createLogoLabel("Deckers");
 
         JPanel companyLogoPanel = createLogoPanel(companyLogoLabel, "Company Logo");
 
@@ -369,9 +409,28 @@ public class MainMenu extends JFrame {
         centerGroup.add(titlePanel);
         headerPanel.add(centerGroup, BorderLayout.CENTER);
 
-        setDeckersLogo(companyLogoLabel);
-        loadCompanyLogo(companyLogoLabel);
         return headerPanel;
+    }
+
+    private void loadLocalMenuAssets() {
+        List<MenuIconRequest> requests = List.copyOf(pendingMenuIcons);
+        UiTaskRunner.submit(this, "main-menu.local-assets", () -> {
+            Map<String, ImageIcon> icons = new java.util.LinkedHashMap<>();
+            for (MenuIconRequest request : requests) {
+                icons.computeIfAbsent(request.fileName(), ignored -> loadIcon(request.path()));
+            }
+            return new MenuLocalAssets(icons, ribbonHeaderPanel.loadRibbonImage(),
+                    DeckersLogoManager.loadDeckersLogoIcon(getClass()));
+        }, assets -> {
+            for (MenuIconRequest request : requests) {
+                ImageIcon icon = assets.icons().getOrDefault(request.fileName(), FALLBACK_MENU_ICON);
+                hydrateMenuButton(request.button(), request.title(), request.description(), icon);
+            }
+            ribbonHeaderPanel.setRibbonImage(assets.ribbon());
+            if (!customCompanyLogoApplied && assets.deckersLogo() != null) {
+                setLogoImage(companyLogoLabel, assets.deckersLogo().getImage(), 280, 100);
+            }
+        }, ignored -> { });
     }
 
     private JLabel createLogoLabel(String fallbackText) {
@@ -417,6 +476,7 @@ public class MainMenu extends JFrame {
                 return CompanyCustomizationManager.loadCompanyLogo(settings);
             },logo->{
                     if (logo != null) {
+                        customCompanyLogoApplied = true;
                         SessionDataCache.put("main-menu.company-logo",logo);
                         setLogoImage(companyLogoLabel, logo, 280, 100);
                     }
@@ -521,6 +581,10 @@ public class MainMenu extends JFrame {
         JPanel textPanel = findNamedPanel(button, "menuButtonTextPanel");
         JLabel descriptionLabel = findNamedLabel(button, "menuButtonDescription");
         if (iconLabel == null || textPanel == null || descriptionLabel == null) {
+            button.putClientProperty("SmartStock.requestVerticalMenuButton", Boolean.TRUE);
+            button.setPreferredSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
+            button.setMinimumSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
+            button.setMaximumSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
             return;
         }
 
@@ -670,13 +734,18 @@ public class MainMenu extends JFrame {
     }
 
     private static class RibbonHeaderPanel extends JPanel {
-        private final BufferedImage ribbonImage;
+        private BufferedImage ribbonImage;
         private BufferedImage scaledRibbonImage;
         private int scaledRibbonWidth;
         private int scaledRibbonHeight;
 
         private RibbonHeaderPanel() {
-            ribbonImage = loadRibbonImage();
+        }
+
+        private void setRibbonImage(BufferedImage image) {
+            ribbonImage = image;
+            scaledRibbonImage = null;
+            repaint();
         }
 
         @Override
@@ -755,6 +824,11 @@ public class MainMenu extends JFrame {
             }
         }
     }
+
+    private record MenuIconRequest(JButton button, String title, String description,
+                                   String path, String fileName) { }
+    private record MenuLocalAssets(Map<String, ImageIcon> icons, BufferedImage ribbon,
+                                   ImageIcon deckersLogo) { }
 
     private static class MenuTileButton extends JButton {
         private Color accentColor;
@@ -1679,6 +1753,14 @@ public class MainMenu extends JFrame {
 
     private JButton createMenuButton(String title, String description, Icon icon) {
         JButton button = new MenuTileButton(DeckersPalette.ORANGE);
+        hydrateMenuButton(button, title, description, icon);
+        return button;
+    }
+
+    private void hydrateMenuButton(JButton button, String title, String description, Icon icon) {
+        boolean vertical = Boolean.TRUE.equals(button.getClientProperty("SmartStock.requestVerticalMenuButton"));
+        button.removeAll();
+        button.setText(null);
         button.setLayout(new BorderLayout(14, 10));
         button.setFocusPainted(false);
         button.setContentAreaFilled(false);
@@ -1722,8 +1804,12 @@ public class MainMenu extends JFrame {
         button.add(iconLabel, BorderLayout.WEST);
         button.add(textPanel, BorderLayout.CENTER);
         updateMenuButtonText(button);
-
-        return button;
+        if (vertical) {
+            button.putClientProperty("SmartStock.verticalMenuButton", null);
+            applyVerticalMenuButtonLayout(button);
+        }
+        button.revalidate();
+        button.repaint();
     }
 
     private boolean hasCompanyPreferencesPermission() {

@@ -2,6 +2,7 @@ package ui.screens;
 
 import data.DatabaseConfig;
 import data.DatabaseMode;
+import managers.NavigationManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import services.AppUpdateService;
@@ -251,10 +252,7 @@ public class Login extends JFrame {
     }
 
     private void openMainMenu() {
-        MainMenu mainMenu = new MainMenu();
-        WindowHelper.showPosWindow(mainMenu, this);
-        AppUpdateService.checkForUpdatesAsync(mainMenu, false);
-        dispose();
+        NavigationManager.showMainMenuAfterLogin(this);
     }
 
     private static String rootCauseMessage(Exception exception) {

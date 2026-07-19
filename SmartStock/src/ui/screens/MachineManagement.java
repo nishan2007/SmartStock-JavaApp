@@ -6,6 +6,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.UiDebouncer;
 import ui.helpers.WindowHelper;
 
@@ -282,10 +283,9 @@ public class MachineManagement extends JFrame {
         }
         try {
             LocationOption location = (LocationOption) locationBox.getSelectedItem();
-            LanApiClient.saveMachine(new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(typeField),location==null?null:location.id,location==null?null:location.name,String.valueOf(statusBox.getSelectedItem()),parseDate(purchaseDateField),parseDate(warrantyDateField),parseDate(lastServiceDateField),parseDate(nextServiceDateField),nullable(notesArea)),java.util.UUID.randomUUID().toString());
-            SessionDataCache.invalidate("machine-");
-            clearEditor();
-            loadMachines();
+            LanMachineService.Machine request = new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(typeField),location==null?null:location.id,location==null?null:location.name,String.valueOf(statusBox.getSelectedItem()),parseDate(purchaseDateField),parseDate(warrantyDateField),parseDate(lastServiceDateField),parseDate(nextServiceDateField),nullable(notesArea));
+            String mutationKey = java.util.UUID.randomUUID().toString();
+            UiTaskRunner.submit(this,"machine.save",()->{LanApiClient.saveMachine(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("machine-");clearEditor();loadMachines();},ex->showError("save machine",ex));
         } catch (Exception ex) {
             showError("save machine", ex);
         }
@@ -306,14 +306,9 @@ public class MachineManagement extends JFrame {
         if (result != JOptionPane.YES_OPTION) {
             return;
         }
-        try {
-            LanApiClient.updateMachineLink("DELETE",selectedMachineId,null,null,null,java.util.UUID.randomUUID().toString());
-            SessionDataCache.invalidate("machine-");
-            clearEditor();
-            loadMachines();
-        } catch (Exception ex) {
-            showError("delete machine", ex);
-        }
+        Integer machineId = selectedMachineId;
+        String mutationKey = java.util.UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"machine.delete",()->{LanApiClient.updateMachineLink("DELETE",machineId,null,null,null,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("machine-");clearEditor();loadMachines();},ex->showError("delete machine",ex));
     }
 
     private void clearEditor() {
@@ -489,7 +484,7 @@ public class MachineManagement extends JFrame {
         JOptionPane.showMessageDialog(this, message, "Machine List", JOptionPane.WARNING_MESSAGE);
     }
 
-    private void showError(String action, Exception ex) {
+    private void showError(String action, Throwable ex) {
         JOptionPane.showMessageDialog(this, "Could not " + action + ".\n\n" + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
     }
 

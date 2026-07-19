@@ -49,6 +49,8 @@ import java.awt.*;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.io.File;
@@ -60,6 +62,7 @@ import java.time.LocalDateTime;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -197,7 +200,7 @@ public class CompanyCustomization extends JFrame {
     private final Set<String> badgeSelectedTemplateElementIds = new LinkedHashSet<>();
     private final Map<String, JCheckBox> badgeElementVisibilityBoxes = new LinkedHashMap<>();
     private boolean updatingBadgeFontControls = false;
-    private final JComboBox<String> badgeFontFamilyBox = new JComboBox<>(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+    private final JComboBox<String> badgeFontFamilyBox = new JComboBox<>(new String[]{"SansSerif"});
     private final JComboBox<String> badgeFontStyleBox = new JComboBox<>(new String[]{"Regular", "Bold", "Italic", "Bold Italic"});
     private final JComboBox<String> badgeFontWeightBox = new JComboBox<>(new String[]{"Regular", "Medium", "Semi Bold", "Bold", "Extra Bold", "Black"});
     private final JSpinner badgeFontMaxSizeSpinner = new JSpinner(new SpinnerNumberModel(44, 8, 96, 1));
@@ -238,6 +241,11 @@ public class CompanyCustomization extends JFrame {
     private final JEditorPane sampleInvoicePane = createSalesDocumentPreviewPane();
     private final JEditorPane sampleSalesDeliveryPane = createSalesDocumentPreviewPane();
     private final JPanel rightContentPanel = new JPanel(new CardLayout());
+    private final Map<String, JComponent> preferenceCardPlaceholders = new LinkedHashMap<>();
+    private final Set<String> builtPreferenceCards = new HashSet<>();
+    private final Set<String> pendingPreferenceCards = new HashSet<>();
+    private String selectedPreferenceCardKey;
+    private boolean badgeFontsLoading;
     private final JCheckBox priceTagShowCompanyBox = new JCheckBox("Show company name");
     private final JCheckBox priceTagShowNameBox = new JCheckBox("Show item name");
     private final JCheckBox priceTagShowPriceBox = new JCheckBox("Show price");
@@ -260,12 +268,14 @@ public class CompanyCustomization extends JFrame {
     private CompanyCustomizationManager.SaleSafetySettings loadedSaleSafetySettings;
     private CompanyCustomizationManager.CustomOrderSettings loadedCustomOrderSettings;
     private CompanyBackupScheduler.BackupScheduleSettings loadedBackupSettings;
+    private final String initialPreferenceSection;
 
     public CompanyCustomization() {
         this(NAV_COMPANY_IDENTITY);
     }
 
     public CompanyCustomization(String initialSection) {
+        initialPreferenceSection = firstPermittedSection(initialSection);
         setTitle("Company Preferences");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(900, 640);
@@ -281,7 +291,7 @@ public class CompanyCustomization extends JFrame {
         titleLabel.setForeground(new Color(32, 41, 57));
         rootPanel.add(titleLabel, BorderLayout.NORTH);
 
-        addPermittedCards();
+        addPermittedCardPlaceholders();
 
         JSplitPane mainSplitPane = new JSplitPane(
                 JSplitPane.HORIZONTAL_SPLIT,
@@ -325,8 +335,13 @@ public class CompanyCustomization extends JFrame {
         configureActionButtons();
         saveButton.setEnabled(false);
 
-        loadSettings();
-        routeNavigationKey(firstPermittedSection(initialSection));
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent event) {
+                loadSettings();
+                routeNavigationKey(initialPreferenceSection);
+            }
+        });
         WindowHelper.configurePosWindow(this);
     }
 
@@ -405,54 +420,100 @@ public class CompanyCustomization extends JFrame {
 
     private void routeNavigationKey(String key) {
         String permittedKey = firstPermittedSection(key);
+        String cardKey = canonicalCardKey(permittedKey);
+        selectedPreferenceCardKey = cardKey;
         CardLayout cardLayout = (CardLayout) rightContentPanel.getLayout();
-        cardLayout.show(rightContentPanel, permittedKey);
+        cardLayout.show(rightContentPanel, cardKey);
         selectNavigationPath(permittedKey);
+        if (pendingPreferenceCards.add(cardKey)) {
+            SwingUtilities.invokeLater(() -> {
+                if (!isDisplayable()) {
+                    pendingPreferenceCards.remove(cardKey);
+                    return;
+                }
+                ensurePreferenceCardBuilt(cardKey);
+            });
+        }
     }
 
-    private void addPermittedCards() {
-        if (canAccessPreferenceSection(NAV_COMPANY_IDENTITY)) {
-            rightContentPanel.add(buildCompanyIdentityScreen(), NAV_COMPANY_IDENTITY);
+    private void addPermittedCardPlaceholders() {
+        for (String key : allPreferenceSections()) {
+            if (!canAccessPreferenceSection(key)) continue;
+            String cardKey = canonicalCardKey(key);
+            if (preferenceCardPlaceholders.containsKey(cardKey)) continue;
+            JPanel placeholder = new JPanel(new GridBagLayout());
+            placeholder.setBackground(Color.WHITE);
+            JLabel loadingLabel = new JLabel("Preparing " + cardKey + "...");
+            loadingLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+            loadingLabel.setForeground(new Color(91, 101, 117));
+            placeholder.add(loadingLabel);
+            preferenceCardPlaceholders.put(cardKey, placeholder);
+            rightContentPanel.add(placeholder, cardKey);
         }
-        if (canAccessPreferenceSection(NAV_EMPLOYEE_BADGES)) {
-            rightContentPanel.add(buildEmployeeBadgesScreen(), NAV_EMPLOYEE_BADGES);
+    }
+
+    private void ensurePreferenceCardBuilt(String cardKey) {
+        if (builtPreferenceCards.contains(cardKey)) {
+            pendingPreferenceCards.remove(cardKey);
+            return;
         }
-        if (canAccessPreferenceSection(NAV_PRICE_TAG_TEMPLATE)) {
-            rightContentPanel.add(buildPriceTagTemplateScreen(), NAV_PRICE_TAG_TEMPLATE);
+        long started = System.nanoTime();
+        JComponent card = switch (cardKey) {
+            case NAV_COMPANY_IDENTITY -> buildCompanyIdentityScreen();
+            case NAV_EMPLOYEE_BADGES -> buildEmployeeBadgesScreen();
+            case NAV_PRICE_TAG_TEMPLATE -> buildPriceTagTemplateScreen();
+            case NAV_LOCATIONS -> buildLocationsEmbeddedScreen();
+            case NAV_CASH_DRAWER_MANAGER -> buildCashDrawerEmbeddedScreen();
+            case NAV_BACKUPS -> buildBackupSchedulerScreen();
+            case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
+            case NAV_SALE_RECEIPT_FORMATTING -> buildSaleReceiptPreferencesScreen();
+            case NAV_ACCOUNT_PAYMENT_RECEIPTS -> buildAccountPaymentReceiptPreferencesScreen();
+            case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> buildCustomOrderDepositRefundScreen();
+            case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> buildCustomOrderSlipPreferencesScreen();
+            case NAV_QUOTATION_ORDER_PRINTING -> buildQuotationInvoicePrintPreferencesScreen();
+            default -> throw new IllegalArgumentException("Unknown preference section: " + cardKey);
+        };
+        JComponent placeholder = preferenceCardPlaceholders.get(cardKey);
+        if (placeholder != null) rightContentPanel.remove(placeholder);
+        rightContentPanel.add(card, cardKey);
+        builtPreferenceCards.add(cardKey);
+        pendingPreferenceCards.remove(cardKey);
+        if (cardKey.equals(selectedPreferenceCardKey)) {
+            ((CardLayout) rightContentPanel.getLayout()).show(rightContentPanel, cardKey);
         }
-        if (canAccessPreferenceSection(NAV_LOCATIONS)) {
-            rightContentPanel.add(buildLocationsEmbeddedScreen(), NAV_LOCATIONS);
-        }
-        if (canAccessPreferenceSection(NAV_CASH_DRAWER_MANAGER)) {
-            rightContentPanel.add(buildCashDrawerEmbeddedScreen(), NAV_CASH_DRAWER_MANAGER);
-        }
-        if (canAccessPreferenceSection(NAV_BACKUPS)) {
-            rightContentPanel.add(buildBackupSchedulerScreen(), NAV_BACKUPS);
-        }
-        if (canAccessPreferenceSection(NAV_TIME_CLOCK_SAFETY)) {
-            rightContentPanel.add(buildTimeClockSafetyScreen(), NAV_TIME_CLOCK_SAFETY);
-        }
-        if (canAccessPreferenceSection(NAV_SALE)) {
-            rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE);
-        }
-        if (canAccessPreferenceSection(NAV_SALE_RECEIPT_FORMATTING)) {
-            rightContentPanel.add(buildSaleReceiptPreferencesScreen(), NAV_SALE_RECEIPT_FORMATTING);
-        }
-        if (canAccessPreferenceSection(NAV_ACCOUNT_PAYMENT_RECEIPTS)) {
-            rightContentPanel.add(buildAccountPaymentReceiptPreferencesScreen(), NAV_ACCOUNT_PAYMENT_RECEIPTS);
-        }
-        if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_DEPOSIT_REFUND)) {
-            rightContentPanel.add(buildCustomOrderDepositRefundScreen(), NAV_CUSTOM_ORDER_DEPOSIT_REFUND);
-        }
-        if (canAccessPreferenceSection(NAV_CUSTOM_ORDERS)) {
-            rightContentPanel.add(buildCustomOrderSlipPreferencesScreen(), NAV_CUSTOM_ORDERS);
-        }
-        if (canAccessPreferenceSection(NAV_CUSTOM_ORDER_SLIP_FORMATTING)) {
-            rightContentPanel.add(buildCustomOrderSlipPreferencesScreen(), NAV_CUSTOM_ORDER_SLIP_FORMATTING);
-        }
-        if (canAccessPreferenceSection(NAV_QUOTATION_ORDER_PRINTING)) {
-            rightContentPanel.add(buildQuotationInvoicePrintPreferencesScreen(), NAV_QUOTATION_ORDER_PRINTING);
-        }
+        rightContentPanel.revalidate();
+        rightContentPanel.repaint();
+        ui.helpers.PerformanceDiagnostics.record("screen-card", cardKey, started, true, -1);
+        if (NAV_EMPLOYEE_BADGES.equals(cardKey)) loadBadgeFontFamilies();
+    }
+
+    private void loadBadgeFontFamilies() {
+        if (badgeFontsLoading) return;
+        badgeFontsLoading = true;
+        String selected = String.valueOf(badgeFontFamilyBox.getSelectedItem());
+        UiTaskRunner.submit(this, "company-preferences.badge-fonts",
+                () -> GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames(),
+                families -> {
+                    badgeFontsLoading = false;
+                    badgeFontFamilyBox.setModel(new DefaultComboBoxModel<>(families));
+                    badgeFontFamilyBox.setSelectedItem(selected);
+                }, ignored -> badgeFontsLoading = false);
+    }
+
+    private String canonicalCardKey(String key) {
+        if (NAV_SALE.equals(key)) return NAV_SALE_RECEIPT_FORMATTING;
+        if (NAV_CUSTOM_ORDERS.equals(key)) return NAV_CUSTOM_ORDER_SLIP_FORMATTING;
+        return key;
+    }
+
+    private String[] allPreferenceSections() {
+        return new String[]{
+                NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE,
+                NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
+                NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS,
+                NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
+                NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
+        };
     }
 
     private void configureActionButtons() {

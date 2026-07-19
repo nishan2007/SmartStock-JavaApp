@@ -380,9 +380,9 @@ public class MaintenanceManagement extends JFrame {
         }
 
         try {
-            LanApiClient.saveMachine(new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(machineTypeField),null,nullable(machineLocationField),selected(machineStatusBox),parseOptionalDate(purchaseDateField),parseOptionalDate(warrantyDateField),parseOptionalDate(lastServiceDateField),parseOptionalDate(nextServiceDateField),nullable(machineNotesArea)),java.util.UUID.randomUUID().toString());
-            clearMachineEditor();
-            refreshAll();
+            LanMachineService.Machine request = new LanMachineService.Machine(selectedMachineId,name,nullable(assetTagField),nullable(serialNumberField),nullable(manufacturerField),nullable(modelField),nullable(machineTypeField),null,nullable(machineLocationField),selected(machineStatusBox),parseOptionalDate(purchaseDateField),parseOptionalDate(warrantyDateField),parseOptionalDate(lastServiceDateField),parseOptionalDate(nextServiceDateField),nullable(machineNotesArea));
+            String mutationKey = java.util.UUID.randomUUID().toString();
+            mutateAsync("maintenance.save-machine",()->LanApiClient.saveMachine(request,mutationKey),()->{clearMachineEditor();refreshAll();},"save machine");
         } catch (Exception ex) {
             showDatabaseError("save machine", ex);
         }
@@ -396,9 +396,9 @@ public class MaintenanceManagement extends JFrame {
         }
 
         try {
-            LanApiClient.saveMaintenancePart(new LanApiClient.MaintenancePart(selectedPartId,name,nullable(partNumberField),nullable(categoryField),decimal(quantityField,"On hand"),decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),partActiveBox.isSelected(),nullable(partNotesArea)),java.util.UUID.randomUUID().toString());
-            clearPartEditor();
-            loadParts();
+            LanApiClient.MaintenancePart request = new LanApiClient.MaintenancePart(selectedPartId,name,nullable(partNumberField),nullable(categoryField),decimal(quantityField,"On hand"),decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),partActiveBox.isSelected(),nullable(partNotesArea));
+            String mutationKey = java.util.UUID.randomUUID().toString();
+            mutateAsync("maintenance.save-part",()->LanApiClient.saveMaintenancePart(request,mutationKey),()->{clearPartEditor();loadParts();},"save part");
         } catch (Exception ex) {
             showDatabaseError("save part", ex);
         }
@@ -412,10 +412,9 @@ public class MaintenanceManagement extends JFrame {
         }
 
         try {
-            LanApiClient.saveMaintenanceWorkflow("SAVE_LOG",new LanMaintenanceWorkflowService.Log(selectedLogId,machine.id,parseRequiredDate(logDateField,"Service date"),selected(logTypeBox),nullable(technicianField),decimal(laborHoursField,"Labor hours"),moneyDecimal(logCostField,"Cost"),nullable(logSummaryArea),nullable(logDetailsArea),nullable(partsUsedArea)),java.util.UUID.randomUUID().toString());
-            clearLogEditor();
-            loadLogs();
-            loadMachines();
+            LanMaintenanceWorkflowService.Log request = new LanMaintenanceWorkflowService.Log(selectedLogId,machine.id,parseRequiredDate(logDateField,"Service date"),selected(logTypeBox),nullable(technicianField),decimal(laborHoursField,"Labor hours"),moneyDecimal(logCostField,"Cost"),nullable(logSummaryArea),nullable(logDetailsArea),nullable(partsUsedArea));
+            String mutationKey = java.util.UUID.randomUUID().toString();
+            mutateAsync("maintenance.save-log",()->LanApiClient.saveMaintenanceWorkflow("SAVE_LOG",request,mutationKey),()->{clearLogEditor();loadLogs();loadMachines();},"save maintenance log");
         } catch (Exception ex) {
             showDatabaseError("save maintenance log", ex);
         }
@@ -440,9 +439,9 @@ public class MaintenanceManagement extends JFrame {
         }
 
         try {
-            LanApiClient.saveMaintenanceWorkflow("SAVE_TICKET",new LanMaintenanceWorkflowService.Ticket(selectedTicketId,machine==null?null:machine.id,selected(priorityBox),status,nullable(assignedToField),parseOptionalDate(dueDateField),problem,resolutionSummary.isBlank()?null:resolutionSummary,nullable(ticketNotesArea),createdByField.getText()),java.util.UUID.randomUUID().toString());
-            clearTicketEditor();
-            loadTickets();
+            LanMaintenanceWorkflowService.Ticket request = new LanMaintenanceWorkflowService.Ticket(selectedTicketId,machine==null?null:machine.id,selected(priorityBox),status,nullable(assignedToField),parseOptionalDate(dueDateField),problem,resolutionSummary.isBlank()?null:resolutionSummary,nullable(ticketNotesArea),createdByField.getText());
+            String mutationKey = java.util.UUID.randomUUID().toString();
+            mutateAsync("maintenance.save-ticket",()->LanApiClient.saveMaintenanceWorkflow("SAVE_TICKET",request,mutationKey),()->{clearTicketEditor();loadTickets();},"save ticket");
         } catch (Exception ex) {
             showDatabaseError("save ticket", ex);
         }
@@ -472,14 +471,9 @@ public class MaintenanceManagement extends JFrame {
             return;
         }
 
-        try {
-            LanApiClient.closeMaintenanceTicket(selectedTicketId,java.util.UUID.randomUUID().toString());
-            clearTicketEditor();
-            ticketFilterBox.setSelectedItem("Ticket History");
-            loadTickets();
-        } catch (Exception ex) {
-            showDatabaseError("close resolved ticket", ex);
-        }
+        Integer ticketId = selectedTicketId;
+        String mutationKey = java.util.UUID.randomUUID().toString();
+        mutateAsync("maintenance.close-ticket",()->{LanApiClient.closeMaintenanceTicket(ticketId,mutationKey);return Boolean.TRUE;},()->{clearTicketEditor();ticketFilterBox.setSelectedItem("Ticket History");loadTickets();},"close resolved ticket");
     }
 
     private void setTicketActionState() {
@@ -790,7 +784,12 @@ public class MaintenanceManagement extends JFrame {
         JOptionPane.showMessageDialog(this, message, "Maintenance Management", JOptionPane.WARNING_MESSAGE);
     }
 
-    private void showDatabaseError(String action, Exception ex) {
+    private <T> void mutateAsync(String key, java.util.concurrent.Callable<T> mutation,
+                                 Runnable success, String action) {
+        UiTaskRunner.submit(this,key,mutation,ignored->success.run(),ex->showDatabaseError(action,ex));
+    }
+
+    private void showDatabaseError(String action, Throwable ex) {
         JOptionPane.showMessageDialog(this, "Could not " + action + ".\n\n" + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
     }
 

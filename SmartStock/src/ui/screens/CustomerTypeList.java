@@ -6,6 +6,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -205,12 +206,8 @@ public class CustomerTypeList extends JFrame {
                 pendingSaveFingerprint = fingerprint;
                 pendingSaveKey = UUID.randomUUID().toString();
             }
-            LanApiClient.saveCustomerType(request, pendingSaveKey);
-            pendingSaveKey = null;
-            pendingSaveFingerprint = null;
-            clearEditor();
-            loadCustomerTypes();
-            JOptionPane.showMessageDialog(this, "Customer type saved.");
+            String mutationKey = pendingSaveKey;
+            UiTaskRunner.submit(this,"customer-types.save",()->{LanApiClient.saveCustomerType(request,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("customer-types:");pendingSaveKey=null;pendingSaveFingerprint=null;clearEditor();loadCustomerTypes();JOptionPane.showMessageDialog(this,"Customer type saved.");},ex->JOptionPane.showMessageDialog(this,"Failed to save customer type: "+ex.getMessage(),"SmartStock Server Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save customer type: " + ex.getMessage(),
                     "SmartStock Server Error", JOptionPane.ERROR_MESSAGE);

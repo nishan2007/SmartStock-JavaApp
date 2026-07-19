@@ -23,6 +23,7 @@ import java.util.Properties;
 public final class ThemeManager {
     private static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "device.properties");
     private static final String DARK_MODE_KEY = "dark_mode";
+    private static volatile Boolean cachedDarkMode;
 
     private static final Color LIGHT_BACKGROUND = new Color(245, 247, 250);
     private static final Color LIGHT_SURFACE = Color.WHITE;
@@ -47,9 +48,14 @@ public final class ThemeManager {
     }
 
     public static boolean isDarkModeEnabled() {
+        Boolean cached = cachedDarkMode;
+        if (cached != null) return cached;
         try {
-            return Boolean.parseBoolean(loadProperties().getProperty(DARK_MODE_KEY, "false"));
+            boolean enabled = Boolean.parseBoolean(loadProperties().getProperty(DARK_MODE_KEY, "false"));
+            cachedDarkMode = enabled;
+            return enabled;
         } catch (IOException ex) {
+            cachedDarkMode = Boolean.FALSE;
             return false;
         }
     }
@@ -58,6 +64,7 @@ public final class ThemeManager {
         Properties properties = loadProperties();
         properties.setProperty(DARK_MODE_KEY, String.valueOf(enabled));
         saveProperties(properties);
+        cachedDarkMode = enabled;
         applyLookAndFeelDefaults();
         applyToOpenWindows();
     }

@@ -6,6 +6,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -208,14 +209,8 @@ public class PartsManagement extends JFrame {
         }
         LanApiClient.MaintenancePart request=new LanApiClient.MaintenancePart(selectedPartId,name,nullable(partNumberField),nullable(categoryField),decimal(quantityField,"On hand"),
                 decimal(reorderPointField,"Reorder point"),decimal(reorderQuantityField,"Reorder quantity"),moneyDecimal(unitCostField,"Unit cost"),nullable(vendorField),nullable(binLocationField),activeBox.isSelected(),nullable(notesArea));
-        try {
-            LanApiClient.saveMaintenancePart(request,key(request.toString()));clearKey();
-            SessionDataCache.invalidate("maintenance-parts:");
-            clearEditor();
-            loadParts();
-        } catch (Exception ex) {
-            showError("save part", ex);
-        }
+        String mutationKey=key(request.toString());
+        UiTaskRunner.submit(this,"maintenance-parts.save",()->LanApiClient.saveMaintenancePart(request,mutationKey),ignored->{clearKey();SessionDataCache.invalidate("maintenance-parts:");clearEditor();loadParts();},ex->showError("save part",ex));
     }
 
     private void deletePart() {
@@ -233,14 +228,8 @@ public class PartsManagement extends JFrame {
         if (result != JOptionPane.YES_OPTION) {
             return;
         }
-        try {
-            LanApiClient.deleteMaintenancePart(selectedPartId,key("delete|"+selectedPartId));clearKey();
-            SessionDataCache.invalidate("maintenance-parts:");
-            clearEditor();
-            loadParts();
-        } catch (Exception ex) {
-            showError("delete part", ex);
-        }
+        Integer partId=selectedPartId;String mutationKey=key("delete|"+partId);
+        UiTaskRunner.submit(this,"maintenance-parts.delete",()->{LanApiClient.deleteMaintenancePart(partId,mutationKey);return Boolean.TRUE;},ignored->{clearKey();SessionDataCache.invalidate("maintenance-parts:");clearEditor();loadParts();},ex->showError("delete part",ex));
     }
     private String key(String f){if(pendingKey==null||!f.equals(pendingFingerprint)){pendingKey=UUID.randomUUID().toString();pendingFingerprint=f;}return pendingKey;}private void clearKey(){pendingKey=null;pendingFingerprint=null;}
 
@@ -312,7 +301,7 @@ public class PartsManagement extends JFrame {
         JOptionPane.showMessageDialog(this, message, "Parts List", JOptionPane.WARNING_MESSAGE);
     }
 
-    private void showError(String action, Exception ex) {
+    private void showError(String action, Throwable ex) {
         JOptionPane.showMessageDialog(this, "Could not " + action + ".\n\n" + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
     }
 }
