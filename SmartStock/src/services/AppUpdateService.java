@@ -286,9 +286,21 @@ public final class AppUpdateService {
 
     private static void launchUpdaterAndExit(Path manifestPath) throws IOException {
         Path runner = manifestPath.getParent().resolve("smartstock-updater-runner.jar");
-        new ProcessBuilder(javaBinary().toString(), "-cp", runner.toString(), "app.SmartStockUpdater", manifestPath.toString())
-                .directory(manifestPath.getParent().toFile())
-                .start();
+        Path appBundle = findContainingMacAppBundle(currentAppJar());
+        Path nativeUpdater = appBundle == null ? null
+                : appBundle.resolve("Contents").resolve("MacOS").resolve("SmartStockUpdater");
+        ProcessBuilder process;
+        if (nativeUpdater != null && Files.isExecutable(nativeUpdater)) {
+            process = new ProcessBuilder(nativeUpdater.toString(), manifestPath.toString());
+        } else {
+            Path java = javaBinary();
+            if (!Files.isExecutable(java)) {
+                throw new IOException("No updater launcher or Java executable was found at " + java + ".");
+            }
+            process = new ProcessBuilder(java.toString(), "-cp", runner.toString(),
+                    "app.SmartStockUpdater", manifestPath.toString());
+        }
+        process.directory(manifestPath.getParent().toFile()).start();
         System.exit(0);
     }
 
@@ -327,7 +339,13 @@ public final class AppUpdateService {
 
     private static Path javaBinary() {
         String executable = isWindows() ? "java.exe" : "java";
-        return Path.of(System.getProperty("java.home"), "bin", executable);
+        Path bundled = Path.of(System.getProperty("java.home"), "bin", executable);
+        if (Files.isExecutable(bundled)) return bundled;
+        if (detectPlatform().equals("mac")) {
+            Path systemJava = Path.of("/usr/bin/java");
+            if (Files.isExecutable(systemJava)) return systemJava;
+        }
+        return bundled;
     }
 
     static int compareVersions(String left, String right) {

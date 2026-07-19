@@ -11,6 +11,7 @@ DMG_STAGING_DIR="$WORK_DIR/dmg-root"
 JPACKAGE_INPUT_DIR="$WORK_DIR/jpackage-input"
 MAC_ICON_PATH="$WORK_DIR/${APP_NAME}.icns"
 MAC_DARK_ICON_PATH="$WORK_DIR/${APP_NAME}Dark.icns"
+UPDATER_LAUNCHER_PROPERTIES="$WORK_DIR/updater-launcher.properties"
 
 clear_extended_attributes() {
   local target="$1"
@@ -109,6 +110,10 @@ mkdir -p "$JPACKAGE_INPUT_DIR/dependency"
 cp "$JAR_PATH" "$JPACKAGE_INPUT_DIR/"
 cp -R "$TARGET_DIR/dependency/." "$JPACKAGE_INPUT_DIR/dependency/"
 build_macos_icons
+cat > "$UPDATER_LAUNCHER_PROPERTIES" <<EOF
+main-jar=$JAR_NAME
+main-class=app.SmartStockUpdater
+EOF
 
 if ! command -v jpackage >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -131,6 +136,7 @@ JPACKAGE_OUTPUT="$(jpackage \
   --app-version "$VERSION" \
   --icon "$MAC_ICON_PATH" \
   --mac-package-identifier "com.smartstock.desktop" \
+  --add-launcher "SmartStockUpdater=$UPDATER_LAUNCHER_PROPERTIES" \
   --add-modules "java.base,java.desktop,java.management,java.net.http,java.prefs,java.sql,jdk.httpserver,jdk.unsupported" \
   --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
 JPACKAGE_STATUS=$?
