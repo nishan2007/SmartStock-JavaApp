@@ -3,6 +3,7 @@ package ui.screens;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.LanApiClient;
+import services.LanApiServer;
 import services.LanCutoverPolicy;
 import managers.SupabaseSessionManager;
 import ui.design.DeckersLogoManager;
@@ -53,6 +54,7 @@ public class WelcomeFrame extends JFrame {
     private final JButton refreshStatusBtn = new JButton("Refresh System Status");
     private final JButton setupBtn = new JButton("Initial Database Setup");
     private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
+    private final JButton serverAddressBtn = new JButton("Set SmartStock Server Address");
     private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Log In");
     private Timer displayRefreshTimer;
@@ -121,6 +123,7 @@ public class WelcomeFrame extends JFrame {
 
         setContentPane(root);
         pairRegisterBtn.setVisible(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && !LanApiClient.isPaired());
+        serverAddressBtn.setVisible(DatabaseConfig.load().mode() == DatabaseMode.CLIENT);
         setupBtn.setVisible(!(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && LanCutoverPolicy.isEnforced()));
         refreshModeLabel();
         refreshSystemStats();
@@ -162,6 +165,7 @@ public class WelcomeFrame extends JFrame {
         styleWelcomeButton(syncStatusBtn, DeckersPalette.MAGENTA);
         styleWelcomeButton(setupBtn, DeckersPalette.PURPLE);
         styleWelcomeButton(pairRegisterBtn, DeckersPalette.PURPLE);
+        styleWelcomeButton(serverAddressBtn, DeckersPalette.LIME);
 
         panel.add(title);
         panel.add(Box.createVerticalStrut(12));
@@ -182,6 +186,8 @@ public class WelcomeFrame extends JFrame {
         panel.add(setupBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(pairRegisterBtn);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(serverAddressBtn);
         panel.add(Box.createVerticalGlue());
         return panel;
     }
@@ -239,6 +245,7 @@ public class WelcomeFrame extends JFrame {
         refreshStatusBtn.addActionListener(e -> refreshSystemStatus());
         setupBtn.addActionListener(e -> openDatabaseSetup());
         pairRegisterBtn.addActionListener(e -> pairRegister());
+        serverAddressBtn.addActionListener(e -> configureServerAddress());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> openLogin());
     }
@@ -285,6 +292,29 @@ public class WelcomeFrame extends JFrame {
                 }
             }
         }.execute();
+    }
+
+    private void configureServerAddress() {
+        String current = LanApiClient.baseUri().getHost() + ":" + LanApiClient.baseUri().getPort();
+        String value = JOptionPane.showInputDialog(
+                this,
+                "Enter the SmartStock server address shown on the server Mac.\n"
+                        + "Example: 192.168.10.47:8443",
+                current);
+        if (value == null || value.isBlank()) return;
+        String clean = value.trim();
+        int separator = clean.lastIndexOf(':');
+        String host = separator > 0 ? clean.substring(0, separator).trim() : clean;
+        int port = LanApiServer.DEFAULT_PORT;
+        try {
+            if (separator > 0) port = Integer.parseInt(clean.substring(separator + 1).trim());
+            LanApiClient.configureEndpoint(host, port);
+            statusLabel.setText("Status: SmartStock server set to " + host + ":" + port + ". Refreshing...");
+            refreshSystemStatus();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, getRootCauseMessage(ex),
+                    "SmartStock Server Address", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void openDatabaseSetup() {

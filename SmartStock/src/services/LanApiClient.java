@@ -127,7 +127,9 @@ public final class LanApiClient {
                     socket.receive(packet);
                     JsonObject json = JsonParser.parseString(new String(packet.getData(), packet.getOffset(),
                             packet.getLength(), StandardCharsets.UTF_8)).getAsJsonObject();
-                    DiscoveredServer result = GSON.fromJson(json, DiscoveredServer.class);
+                    DiscoveredServer advertised = GSON.fromJson(json, DiscoveredServer.class);
+                    DiscoveredServer result = discoveredServerAtSource(
+                            advertised, packet.getAddress().getHostAddress());
                     if (results.stream().noneMatch(item -> item.host().equals(result.host()) && item.port() == result.port())) {
                         results.add(result);
                     }
@@ -137,6 +139,13 @@ public final class LanApiClient {
             }
         }
         return results;
+    }
+
+    static DiscoveredServer discoveredServerAtSource(DiscoveredServer advertised, String sourceHost) {
+        if (advertised == null) return null;
+        String reachableHost = sourceHost == null || sourceHost.isBlank() ? advertised.host() : sourceHost;
+        return new DiscoveredServer(advertised.service(), reachableHost, advertised.port(),
+                advertised.certificateFingerprint(), advertised.pairingProof(), advertised.previousPairingProof());
     }
 
     public static ServiceHealth checkHealth() throws Exception {
