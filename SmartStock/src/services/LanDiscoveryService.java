@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -35,7 +34,9 @@ final class LanDiscoveryService implements AutoCloseable {
                     socket.receive(packet);
                     String request = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
                     if (!REQUEST.equals(request)) continue;
-                    String host = InetAddress.getLocalHost().getHostAddress();
+                    // Advertise the name covered by the TLS certificate. A numeric DHCP
+                    // address is rejected when it is not present in the certificate SAN.
+                    String host = LanTlsIdentity.tlsHostName();
                     var proofs = identity.pairingProofs();
                     byte[] response = GSON.toJson(Map.of(
                             "service", "SmartStock LAN Service",

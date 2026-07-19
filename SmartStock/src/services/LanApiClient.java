@@ -143,7 +143,10 @@ public final class LanApiClient {
 
     static DiscoveredServer discoveredServerAtSource(DiscoveredServer advertised, String sourceHost) {
         if (advertised == null) return null;
-        String reachableHost = sourceHost == null || sourceHost.isBlank() ? advertised.host() : sourceHost;
+        // Keep the certificate hostname. The packet address is only a fallback for an
+        // older response that omitted its host; replacing DNS with an IP breaks TLS SAN checks.
+        String reachableHost = advertised.host() == null || advertised.host().isBlank()
+                ? sourceHost : advertised.host();
         return new DiscoveredServer(advertised.service(), reachableHost, advertised.port(),
                 advertised.certificateFingerprint(), advertised.pairingProof(), advertised.previousPairingProof());
     }

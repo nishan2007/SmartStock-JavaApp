@@ -70,6 +70,12 @@ public final class LanTlsIdentity {
         return fingerprint;
     }
 
+    /** DNS name embedded in the generated certificate and safe for HTTPS verification. */
+    public static String tlsHostName() throws Exception {
+        String hostname = InetAddress.getLocalHost().getHostName().replaceAll("[^A-Za-z0-9.-]", "");
+        return hostname.isBlank() ? "smartstock-server" : hostname;
+    }
+
     /** Changes every ten minutes and accepts the immediately previous window during setup. */
     public String currentPairingPhrase() {
         return pairingPhrase(Instant.now().getEpochSecond() / 600L);
@@ -106,14 +112,14 @@ public final class LanTlsIdentity {
         String executable = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
                 ? "keytool.exe" : "keytool";
         Path keytool = Path.of(javaHome, "bin", executable);
-        String hostname = InetAddress.getLocalHost().getHostName().replaceAll("[^A-Za-z0-9.-]", "");
+        String hostname = tlsHostName();
         ProcessBuilder builder = new ProcessBuilder(
                 keytool.toString(), "-genkeypair",
                 "-alias", ALIAS,
                 "-keyalg", "RSA", "-keysize", "3072", "-sigalg", "SHA256withRSA",
                 "-validity", "825",
-                "-dname", "CN=" + (hostname.isBlank() ? "SmartStock Server" : hostname) + ", OU=SmartStock LAN, O=SmartStock",
-                "-ext", "SAN=dns:localhost,dns:" + (hostname.isBlank() ? "smartstock-server" : hostname) + ",ip:127.0.0.1",
+                "-dname", "CN=" + hostname + ", OU=SmartStock LAN, O=SmartStock",
+                "-ext", "SAN=dns:localhost,dns:" + hostname + ",ip:127.0.0.1",
                 "-storetype", "PKCS12", "-keystore", KEYSTORE.toString(),
                 "-storepass", password, "-keypass", password, "-noprompt"
         );
