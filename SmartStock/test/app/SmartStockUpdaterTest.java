@@ -36,4 +36,18 @@ class SmartStockUpdaterTest {
         assertEquals(List.of("/usr/bin/open", "-n", app.toString()),
                 SmartStockUpdater.macOpenCommand(app));
     }
+
+    @Test
+    void rewritesBackgroundSyncLaunchersForUpdatedJar() {
+        Path macAppDir = Path.of("/Users/test/.smartstock/sync-service/app");
+        assertEquals("#!/usr/bin/env bash\nset -euo pipefail\n"
+                        + "cd '/Users/test/.smartstock/sync-service/app'\n"
+                        + "exec java -jar 'inventory-management-1.0.11.jar' --sync-service\n",
+                SmartStockUpdater.syncLauncherContent(false, macAppDir, "inventory-management-1.0.11.jar"));
+
+        Path windowsAppDir = Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app");
+        assertEquals("@echo off\r\ncd /d \"C:\\Users\\test\\.smartstock\\sync-service\\app\"\r\n"
+                        + "java -jar \"inventory-management-1.0.11.jar\" --sync-service\r\n",
+                SmartStockUpdater.syncLauncherContent(true, windowsAppDir, "inventory-management-1.0.11.jar"));
+    }
 }

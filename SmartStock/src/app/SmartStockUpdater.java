@@ -295,6 +295,43 @@ public final class SmartStockUpdater {
                 }
             }
         }
+        Path serviceJar = findReleaseJar(syncServiceAppDir);
+        if (serviceJar != null) {
+            updateSyncServiceLauncher(syncServiceAppDir, serviceJar.getFileName().toString());
+        }
+    }
+
+    private static void updateSyncServiceLauncher(Path syncServiceAppDir, String jarName) throws IOException {
+        Path serviceDir = syncServiceAppDir.getParent();
+        if (serviceDir == null) return;
+        if (isMac()) {
+            Path launcher = serviceDir.resolve("run-smartstock-sync-service.command");
+            Files.writeString(launcher, syncLauncherContent(false, syncServiceAppDir, jarName));
+            try {
+                Files.setPosixFilePermissions(launcher, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            } catch (UnsupportedOperationException ignored) {
+                launcher.toFile().setExecutable(true, true);
+            }
+        } else if (isWindows()) {
+            Path launcher = serviceDir.resolve("run-smartstock-sync-service.cmd");
+            Files.writeString(launcher, syncLauncherContent(true, syncServiceAppDir, jarName));
+        }
+    }
+
+    static String syncLauncherContent(boolean windows, Path appDir, String jarName) {
+        if (windows) {
+            return "@echo off\r\n"
+                    + "cd /d \"" + appDir + "\"\r\n"
+                    + "java -jar \"" + jarName + "\" --sync-service\r\n";
+        }
+        return "#!/usr/bin/env bash\n"
+                + "set -euo pipefail\n"
+                + "cd " + shellQuote(appDir.toString()) + "\n"
+                + "exec java -jar " + shellQuote(jarName) + " --sync-service\n";
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     private static void unzip(Path zip, Path targetDir) throws IOException {
