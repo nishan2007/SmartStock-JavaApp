@@ -18,6 +18,7 @@ public class ManagedDevice {
     private final String lastUserName;
     private final String lastStoreName;
     private final boolean approved;
+    private final boolean persistentLoginAllowed;
     private final boolean blocked;
     private final boolean allowSales;
     private final boolean allowOrders;
@@ -50,6 +51,7 @@ public class ManagedDevice {
             String lastUserName,
             String lastStoreName,
             boolean approved,
+            boolean persistentLoginAllowed,
             boolean blocked,
             boolean allowSales,
             boolean allowOrders,
@@ -81,6 +83,7 @@ public class ManagedDevice {
         this.lastUserName = lastUserName;
         this.lastStoreName = lastStoreName;
         this.approved = approved;
+        this.persistentLoginAllowed = persistentLoginAllowed;
         this.blocked = blocked;
         this.allowSales = allowSales;
         this.allowOrders = allowOrders;
@@ -113,6 +116,7 @@ public class ManagedDevice {
     public String getLastUserName() { return lastUserName; }
     public String getLastStoreName() { return lastStoreName; }
     public boolean isApproved() { return approved; }
+    public boolean isPersistentLoginAllowed() { return persistentLoginAllowed; }
     public boolean isBlocked() { return blocked; }
     public boolean isAllowSales() { return allowSales; }
     public boolean isAllowOrders() { return allowOrders; }
@@ -146,6 +150,6 @@ public class ManagedDevice {
         if (!approved) {
             return "Pending Approval";
         }
-        return "Stay Signed In";
+        return "Approved";
     }
 }

@@ -295,7 +295,8 @@ public final class LanApiClient {
     public static JsonObject refreshSession() throws Exception {
         JsonObject data = post("/v1/sessions/refresh", new JsonObject(), true, true);
         if (data.has("sessionToken")) {
-            saveEmployeeSession(data.get("sessionToken").getAsString());
+            saveEmployeeSession(data.get("sessionToken").getAsString(),
+                    data.has("persistentLoginAllowed") && data.get("persistentLoginAllowed").getAsBoolean());
         }
         return data;
     }
@@ -303,7 +304,8 @@ public final class LanApiClient {
     public static LoginResult refreshLoginSession() throws Exception {
         JsonObject data = post("/v1/sessions/refresh", new JsonObject(), true, true);
         if (data.has("sessionToken")) {
-            saveEmployeeSession(data.get("sessionToken").getAsString());
+            saveEmployeeSession(data.get("sessionToken").getAsString(),
+                    data.has("persistentLoginAllowed") && data.get("persistentLoginAllowed").getAsBoolean());
         }
         return GSON.fromJson(data, LoginResult.class);
     }
@@ -876,7 +878,8 @@ public final class LanApiClient {
 
     private static LoginResult saveSession(JsonObject data) throws Exception {
         String session = data.get("sessionToken").getAsString();
-        saveEmployeeSession(session);
+        saveEmployeeSession(session,
+                data.has("persistentLoginAllowed") && data.get("persistentLoginAllowed").getAsBoolean());
         return GSON.fromJson(data, LoginResult.class);
     }
 
@@ -1077,8 +1080,9 @@ public final class LanApiClient {
         return value;
     }
 
-    private static void saveEmployeeSession(String session) throws Exception {
-        SecureCredentialStore.write(API_SESSION_SECRET, session);
+    private static void saveEmployeeSession(String session, boolean persistent) throws Exception {
+        if (persistent) SecureCredentialStore.write(API_SESSION_SECRET, session);
+        else SecureCredentialStore.delete(API_SESSION_SECRET);
         cachedEmployeeSession = session;
         resetTransport(false, false);
     }
@@ -1128,7 +1132,8 @@ public final class LanApiClient {
                                    String previousPairingProof) { }
     public record ServiceHealth(boolean online, String certificateFingerprint) { }
     public record LoginResult(String sessionToken, String expiresAt, User user, String[] permissions,
-                              String deviceId, String supabaseAccessToken, String supabaseRefreshToken) { }
+                              String deviceId, String supabaseAccessToken, String supabaseRefreshToken,
+                              boolean persistentLoginAllowed) { }
     public record User(int userId, String username, String fullName, String email, String role,
                        int locationId, String locationName, String locationTimezone) { }
     public record ApprovalResult(String approvalToken, String expiresAt, int approverUserId, String approverName) { }
@@ -1284,7 +1289,7 @@ public final class LanApiClient {
                                        List<CashDrawer>drawers,List<CashDrawerAssignment>assignments,BigDecimal changeBasketTarget) { }
     public record CashDrawerSaveRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,
                                         Map<Integer,Integer>floatMix,boolean active) { }
-    public record DeviceAdminUpdate(String action,String deviceId,boolean approved,boolean allowSales,boolean allowOrders,String notes,String deviceName,String receiptCode) { }
+    public record DeviceAdminUpdate(String action,String deviceId,boolean approved,boolean persistentLoginAllowed,boolean allowSales,boolean allowOrders,String notes,String deviceName,String receiptCode) { }
     public record DeviceSecurityStatus(boolean healthy,boolean tls,String credentialStore,int pendingCredentials,int issuedCredentials,
                                        int claimedCredentials,int blockedDevices,int broadAuthenticatedPolicies,int exposedTablesWithoutRls,
                                        int publicSecurityDefiners,long latestAuditEpochMillis,long latestBackupEpochMillis,String pairingPhrase,

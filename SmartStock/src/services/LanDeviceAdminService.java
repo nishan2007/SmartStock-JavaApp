@@ -16,7 +16,7 @@ final class LanDeviceAdminService{
     static Map<String,Object>sessions(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);return map("sessions",DeviceManagementService.getDeviceSessionHistory(c,required(b,"deviceId"),25));}
     static Map<String,Object>update(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);String action=required(b,"action"),id=required(b,"deviceId");
         switch(action){
-            case "ACCESS"->DeviceManagementService.updateDeviceApproval(c,id,userId,bool(b,"approved"),bool(b,"allowSales"),bool(b,"allowOrders"),text(b,"notes"));
+            case "ACCESS"->DeviceManagementService.updateDeviceApproval(c,id,userId,bool(b,"approved"),bool(b,"persistentLoginAllowed"),bool(b,"allowSales"),bool(b,"allowOrders"),text(b,"notes"));
             case "BLOCK"->{DeviceManagementService.blockDevice(c,id,userId,text(b,"notes"));DeviceCredentialService.revokeCredential(c,id,userId);}
             case "NAME"->DeviceManagementService.updateDeviceFriendlyName(c,id,required(b,"deviceName"));
             case "RECEIPT_CODE"->DeviceManagementService.updateDeviceReceiptCode(c,id,required(b,"receiptCode"));

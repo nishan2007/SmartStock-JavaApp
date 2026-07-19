@@ -178,7 +178,11 @@ public class Login extends JFrame {
             SessionManager.setCurrentAccessToken(result.supabaseAccessToken());
             SessionManager.setCurrentRefreshToken(result.supabaseRefreshToken());
             SupabaseSessionManager.setSession(result.supabaseAccessToken(), result.supabaseRefreshToken());
-            SupabaseSessionManager.savePersistedSession(user.userId(), user.locationId());
+            if (result.persistentLoginAllowed()) {
+                SupabaseSessionManager.savePersistedSession(user.userId(), user.locationId());
+            } else {
+                SupabaseSessionManager.clearPersistedSession();
+            }
         } else {
             // A restored LAN employee session does not contain Supabase tokens. Keep the
             // separately persisted Storage session only when it belongs to this same user

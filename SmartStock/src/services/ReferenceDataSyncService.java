@@ -3719,6 +3719,7 @@ public final class ReferenceDataSyncService {
         List<String> desired = List.of(
                 "is_approved",
                 "is_blocked",
+                "allow_persistent_login",
                 "allow_sales",
                 "allow_orders",
                 "approved_at",

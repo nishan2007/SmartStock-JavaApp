@@ -35,6 +35,7 @@ public final class DeviceManagementService {
                        COALESCE(last_user.full_name, last_user.username, '') AS last_user_name,
                        COALESCE(last_store.name, '') AS last_store_name,
                        COALESCE(d.is_approved, false) AS is_approved,
+                       COALESCE(d.allow_persistent_login, false) AS allow_persistent_login,
                        COALESCE(d.is_blocked, false) AS is_blocked,
                        COALESCE(d.allow_sales, true) AS allow_sales,
                        COALESCE(d.allow_orders, true) AS allow_orders,
@@ -96,6 +97,7 @@ public final class DeviceManagementService {
                         rs.getString("last_user_name"),
                         rs.getString("last_store_name"),
                         rs.getBoolean("is_approved"),
+                        rs.getBoolean("allow_persistent_login"),
                         rs.getBoolean("is_blocked"),
                         rs.getBoolean("allow_sales"),
                         rs.getBoolean("allow_orders"),
@@ -162,6 +164,7 @@ public final class DeviceManagementService {
             String deviceId,
             Integer actingUserId,
             boolean approved,
+            boolean allowPersistentLogin,
             boolean allowSales,
             boolean allowOrders,
             String notes
@@ -169,6 +172,7 @@ public final class DeviceManagementService {
         String sql = """
                 UPDATE devices
                 SET is_approved = ?,
+                    allow_persistent_login = ?,
                     is_blocked = FALSE,
                     allow_sales = ?,
                     allow_orders = ?,
@@ -182,27 +186,29 @@ public final class DeviceManagementService {
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setBoolean(1, approved);
-            ps.setBoolean(2, allowSales);
-            ps.setBoolean(3, allowOrders);
+            ps.setBoolean(2, approved && allowPersistentLogin);
+            ps.setBoolean(3, allowSales);
+            ps.setBoolean(4, allowOrders);
             if (approved) {
-                ps.setTimestamp(4, new java.sql.Timestamp(System.currentTimeMillis()));
+                ps.setTimestamp(5, new java.sql.Timestamp(System.currentTimeMillis()));
             } else {
-                ps.setNull(4, Types.TIMESTAMP);
+                ps.setNull(5, Types.TIMESTAMP);
             }
 
             if (actingUserId == null) {
-                ps.setNull(5, Types.INTEGER);
+                ps.setNull(6, Types.INTEGER);
             } else {
-                ps.setInt(5, actingUserId);
+                ps.setInt(6, actingUserId);
             }
-            ps.setString(6, normalizeNotes(notes));
-            ps.setObject(7, UUID.fromString(deviceId));
+            ps.setString(7, normalizeNotes(notes));
+            ps.setObject(8, UUID.fromString(deviceId));
             ps.executeUpdate();
         }
 
         SyncOutboxService.recordEvent(conn, "DEVICE_ACCESS_UPDATED", Map.of(
                 "device_id", deviceId,
                 "is_approved", approved,
+                "allow_persistent_login", approved && allowPersistentLogin,
                 "is_blocked", false,
                 "allow_sales", allowSales,
                 "allow_orders", allowOrders
@@ -214,6 +220,7 @@ public final class DeviceManagementService {
                 UPDATE devices
                 SET is_blocked = TRUE,
                     is_approved = FALSE,
+                    allow_persistent_login = FALSE,
                     allow_sales = FALSE,
                     allow_orders = FALSE,
                     blocked_at = CURRENT_TIMESTAMP,
@@ -249,6 +256,7 @@ public final class DeviceManagementService {
         SyncOutboxService.recordEvent(conn, "DEVICE_ACCESS_UPDATED", Map.of(
                 "device_id", deviceId,
                 "is_approved", false,
+                "allow_persistent_login", false,
                 "is_blocked", true,
                 "allow_sales", false,
                 "allow_orders", false

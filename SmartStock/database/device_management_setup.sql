@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS devices (
     last_login_user_id INTEGER REFERENCES users(user_id),
     last_store_id INTEGER REFERENCES locations(location_id),
     is_approved BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_persistent_login BOOLEAN NOT NULL DEFAULT FALSE,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     approved_at TIMESTAMPTZ,
     approved_by_user_id INTEGER REFERENCES users(user_id),
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS devices (
 
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE devices
+ADD COLUMN IF NOT EXISTS allow_persistent_login BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS approved_by_user_id INTEGER REFERENCES users(user_id);

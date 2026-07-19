@@ -70,7 +70,8 @@ class ResponsiveLoadingArchitectureTest {
         String client = Files.readString(SOURCE_ROOT.resolve("services/LanApiClient.java"));
         assertTrue(client.contains("cachedPinnedClient"));
         assertTrue(client.contains("if (existing != null) return existing"));
-        assertTrue(client.contains("saveEmployeeSession(String session)"));
+        assertTrue(client.contains("saveEmployeeSession(String session, boolean persistent)"));
+        assertTrue(client.contains("else SecureCredentialStore.delete(API_SESSION_SECRET)"));
         assertTrue(client.contains("resetTransport(false, false)"));
         String base = Files.readString(Path.of("database/base_schema_setup.sql"));
         String runtime = Files.readString(SOURCE_ROOT.resolve("services/BaseSchemaInstaller.java"));

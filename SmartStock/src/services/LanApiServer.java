@@ -94,6 +94,7 @@ public final class LanApiServer implements AutoCloseable {
         LanApiServer api = new LanApiServer(https, executor, identity, discovery);
         api.installRoutes();
         try (Connection connection = DB.getConnection()) {
+            DeviceCredentialSchemaInstaller.ensureSchema(connection);
             LanApiSchemaInstaller.ensureSchema(connection);
         }
         https.start();
@@ -486,7 +487,8 @@ public final class LanApiServer implements AutoCloseable {
             }
             String sessionToken = issueSession(connection, device, user, source);
             List<String> permissions = loadPermissions(connection, user.userId());
-            return ApiResult.ok(sessionResponse(sessionToken, user, permissions, device.deviceId(), supabaseTokens));
+            return ApiResult.ok(sessionResponse(sessionToken, user, permissions, device.deviceId(), supabaseTokens,
+                    persistentLoginAllowed(connection, device.deviceId())));
         }
     }
 
@@ -596,7 +598,8 @@ public final class LanApiServer implements AutoCloseable {
         try (Connection connection = DB.getConnection()) {
             List<String> permissions = loadPermissions(connection, session.userId());
             AuthenticatedUser user = loadUser(connection, session.userId(), session.locationId());
-            return ApiResult.ok(sessionResponse(session.plainToken(), user, permissions, device.deviceId(), null));
+            return ApiResult.ok(sessionResponse(session.plainToken(), user, permissions, device.deviceId(), null,
+                    persistentLoginAllowed(connection, device.deviceId())));
         }
     }
 
@@ -2583,18 +2586,30 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private Map<String, Object> sessionResponse(String token, AuthenticatedUser user, List<String> permissions,
-                                                UUID deviceId, SupabasePasswordResult supabaseTokens) {
+                                                UUID deviceId, SupabasePasswordResult supabaseTokens,
+                                                boolean persistentLoginAllowed) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("sessionToken", token);
         result.put("expiresAt", Instant.now().plus(SESSION_LIFETIME).toString());
         result.put("user", user);
         result.put("permissions", permissions);
         result.put("deviceId", deviceId.toString());
+        result.put("persistentLoginAllowed", persistentLoginAllowed);
         if (supabaseTokens != null && supabaseTokens.status() == SupabasePasswordStatus.SUCCESS) {
             result.put("supabaseAccessToken", supabaseTokens.accessToken());
             result.put("supabaseRefreshToken", supabaseTokens.refreshToken());
         }
         return result;
+    }
+
+    private boolean persistentLoginAllowed(Connection connection, UUID deviceId) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT COALESCE(allow_persistent_login, FALSE) FROM devices WHERE device_id = ?")) {
+            ps.setObject(1, deviceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
+        }
     }
 
     private static String optionalJsonString(JsonObject json, String key) {

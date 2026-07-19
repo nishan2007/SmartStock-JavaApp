@@ -54,6 +54,7 @@ public class DeviceManagement extends JFrame {
     private final JComboBox<String> filterCombo = new JComboBox<>(new String[]{
             "All Devices",
             "Pending Approval",
+            "Approved",
             "Stay Signed In",
             "Blocked"
     });
@@ -61,7 +62,8 @@ public class DeviceManagement extends JFrame {
     private final JTextArea notesArea = new JTextArea(3, 32);
     private final JTextField deviceNameField = new JTextField();
     private final JTextField receiptCodeField = new JTextField("0001");
-    private final JCheckBox staySignedInBox = new JCheckBox("Allow this device to stay signed in after the app is closed");
+    private final JCheckBox approvedBox = new JCheckBox("Approve this device to use SmartStock");
+    private final JCheckBox staySignedInBox = new JCheckBox("Allow employee account to stay signed in after the app is closed");
     private final JCheckBox allowSalesBox = new JCheckBox("Allow Sales");
     private final JCheckBox allowOrdersBox = new JCheckBox("Allow Orders");
     private final JLabel summaryLabel = new JLabel("Loading devices...");
@@ -142,6 +144,8 @@ public class DeviceManagement extends JFrame {
         ));
         deviceNameField.setFont(new Font("SansSerif", Font.PLAIN, 13));
         receiptCodeField.setFont(new Font("Monospaced", Font.BOLD, 13));
+        approvedBox.setOpaque(false);
+        approvedBox.setFont(new Font("SansSerif", Font.BOLD, 13));
         staySignedInBox.setOpaque(false);
         staySignedInBox.setFont(new Font("SansSerif", Font.BOLD, 13));
         allowSalesBox.setOpaque(false);
@@ -165,7 +169,7 @@ public class DeviceManagement extends JFrame {
         codePanel.add(new JLabel("Receipt Device Code"), BorderLayout.WEST);
         codePanel.add(receiptCodeField, BorderLayout.CENTER);
         codePanel.add(saveCodeButton, BorderLayout.EAST);
-        JLabel notesLabel = new JLabel("Stay signed in / block note");
+        JLabel notesLabel = new JLabel("Device access / block note");
         notesLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         JPanel noteHeaderPanel = new JPanel();
         noteHeaderPanel.setLayout(new BoxLayout(noteHeaderPanel, BoxLayout.Y_AXIS));
@@ -174,6 +178,8 @@ public class DeviceManagement extends JFrame {
         noteHeaderPanel.add(Box.createVerticalStrut(8));
         noteHeaderPanel.add(codePanel);
         noteHeaderPanel.add(Box.createVerticalStrut(8));
+        noteHeaderPanel.add(approvedBox);
+        noteHeaderPanel.add(Box.createVerticalStrut(6));
         noteHeaderPanel.add(staySignedInBox);
         noteHeaderPanel.add(Box.createVerticalStrut(6));
         noteHeaderPanel.add(allowSalesBox);
@@ -224,12 +230,14 @@ public class DeviceManagement extends JFrame {
         rotateCredentialButton.addActionListener(e -> rotateSelectedCredential());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveApprovalButton.addActionListener(e -> saveApprovalSetting());
+        approvedBox.addActionListener(e -> setButtonState());
         saveNameButton.addActionListener(e -> saveDeviceName());
         saveCodeButton.addActionListener(e -> saveDeviceCode());
         blockButton.addActionListener(e -> blockSelectedDevice());
         deviceTable.getSelectionModel().addListSelectionListener(this::handleSelectionChanged);
 
         detailsArea.setText("Select a device to see its full details.");
+        approvedBox.setSelected(false);
         staySignedInBox.setSelected(false);
         setButtonState();
         loadDevices();
@@ -281,6 +289,7 @@ public class DeviceManagement extends JFrame {
             detailsArea.setText("No devices matched the current filter.");
             notesArea.setText("");
             deviceNameField.setText("");
+            approvedBox.setSelected(false);
             staySignedInBox.setSelected(false);
             allowSalesBox.setSelected(false);
             allowOrdersBox.setSelected(false);
@@ -297,7 +306,8 @@ public class DeviceManagement extends JFrame {
         }
         return switch (filter) {
             case "Pending Approval" -> !device.isApproved() && !device.isBlocked();
-            case "Stay Signed In" -> device.isApproved() && !device.isBlocked();
+            case "Approved" -> device.isApproved() && !device.isBlocked();
+            case "Stay Signed In" -> device.isApproved() && device.isPersistentLoginAllowed() && !device.isBlocked();
             case "Blocked" -> device.isBlocked();
             default -> true;
         };
@@ -335,6 +345,7 @@ public class DeviceManagement extends JFrame {
             detailsArea.setText("Select a device to see its full details.");
             notesArea.setText("");
             deviceNameField.setText("");
+            approvedBox.setSelected(false);
             staySignedInBox.setSelected(false);
             allowSalesBox.setSelected(false);
             allowOrdersBox.setSelected(false);
@@ -352,7 +363,8 @@ public class DeviceManagement extends JFrame {
         deviceNameField.setText(fieldText(device.getDeviceName()));
         receiptCodeField.setText(fieldText(device.getReceiptDeviceCode()));
         notesArea.setText(device.getStatusNotes() == null ? "" : device.getStatusNotes());
-        staySignedInBox.setSelected(device.isApproved() && !device.isBlocked());
+        approvedBox.setSelected(device.isApproved() && !device.isBlocked());
+        staySignedInBox.setSelected(device.isPersistentLoginAllowed() && !device.isBlocked());
         allowSalesBox.setSelected(device.isAllowSales() && !device.isBlocked());
         allowOrdersBox.setSelected(device.isAllowOrders() && !device.isBlocked());
         loadSessionHistory(device.getDeviceId());
@@ -376,8 +388,9 @@ public class DeviceManagement extends JFrame {
                 + "Latest Login: " + formatTimestamp(device.getLatestLoginTime()) + "\n"
                 + "Latest Logout: " + formatTimestamp(device.getLatestLogoutTime()) + "\n"
                 + "Latest Session Status: " + defaultText(device.getLatestSessionStatus()) + "\n"
-                + "Stay Signed In Enabled At: " + formatTimestamp(device.getApprovedAt()) + "\n"
-                + "Stay Signed In Enabled By: " + defaultText(device.getApprovedByName()) + "\n"
+                + "Approved At: " + formatTimestamp(device.getApprovedAt()) + "\n"
+                + "Approved By: " + defaultText(device.getApprovedByName()) + "\n"
+                + "Persistent Employee Login: " + yesNo(device.isPersistentLoginAllowed()) + "\n"
                 + "Blocked At: " + formatTimestamp(device.getBlockedAt()) + "\n"
                 + "Blocked By: " + defaultText(device.getBlockedByName()) + "\n"
                 + "OS: " + defaultText(device.getOsName()) + " " + defaultText(device.getOsVersion()) + "\n"
@@ -408,11 +421,13 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        boolean allowStaySignedIn = staySignedInBox.isSelected();
+        boolean approved = approvedBox.isSelected();
+        boolean allowStaySignedIn = approved && staySignedInBox.isSelected();
         boolean allowSales = allowSalesBox.isSelected();
         boolean allowOrders = allowOrdersBox.isSelected();
         String message = "Save device access settings?\n\n"
-                + "Stay Signed In: " + yesNo(allowStaySignedIn) + "\n"
+                + "Device Approved: " + yesNo(approved) + "\n"
+                + "Employee Stays Signed In: " + yesNo(allowStaySignedIn) + "\n"
                 + "Allow Sales: " + yesNo(allowSales) + "\n"
                 + "Allow Orders: " + yesNo(allowOrders) + "\n\n";
 
@@ -428,13 +443,13 @@ public class DeviceManagement extends JFrame {
             return;
         }
 
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",selectedDevice.getDeviceId(),allowStaySignedIn,
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",selectedDevice.getDeviceId(),approved,allowStaySignedIn,
                 allowSales,allowOrders,notesArea.getText(),null,null);
         try {
             LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             if (selectedDevice.getDeviceId() != null
                     && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())) {
-                if (allowStaySignedIn) {
+                if (approved && allowStaySignedIn) {
                     SupabaseSessionManager.savePersistedSession(
                             SessionManager.getCurrentUserId(),
                             SessionManager.getCurrentLocationId()
@@ -475,7 +490,7 @@ public class DeviceManagement extends JFrame {
         boolean isCurrentDevice = selectedDevice.getDeviceId() != null
                 && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId());
 
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,notesArea.getText(),null,null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,false,notesArea.getText(),null,null);
         try {
             LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
 
@@ -509,7 +524,7 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,null,null,receiptCodeField.getText());
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,false,null,null,receiptCodeField.getText());
         try {
             LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             loadDevices();
@@ -529,7 +544,7 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,null,deviceNameField.getText(),null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,false,null,deviceNameField.getText(),null);
         try {
             LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             loadDevices();
@@ -551,7 +566,7 @@ public class DeviceManagement extends JFrame {
                 "Rotate this register's secure device credential?\n\nThe register will claim it automatically. Its current credential remains valid during the safe overlap window.",
                 "Rotate Device Credential", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) return;
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,null,null,null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,false,null,null,null);
         try {
             LanApiClient.updateManagedDevice(request,mutationKey(request.toString()));clearMutationKey();SessionDataCache.invalidate("devices:list");
             JOptionPane.showMessageDialog(this,
@@ -612,7 +627,7 @@ public class DeviceManagement extends JFrame {
             if (device.isBlocked()) {
                 blocked++;
             } else if (device.isApproved()) {
-                staySignedIn++;
+                if (device.isPersistentLoginAllowed()) staySignedIn++;
             } else {
                 pending++;
             }
@@ -636,7 +651,8 @@ public class DeviceManagement extends JFrame {
 
     private void setButtonState() {
         boolean hasSelection = selectedDevice != null;
-        staySignedInBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        approvedBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        staySignedInBox.setEnabled(hasSelection && approvedBox.isSelected() && !selectedDevice.isBlocked());
         allowSalesBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         allowOrdersBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveApprovalButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
