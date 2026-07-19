@@ -12,6 +12,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 
 import javax.print.PrintException;
@@ -180,7 +181,12 @@ public class ReceiptPreview extends JFrame {
             return;
         }
         try {
-            EmailOutboxService.QueueResult result = EmailOutboxService.queueSaleReceipt(receiptData.getSaleId(), recipient.trim(), false);
+            String requestedRecipient = recipient.trim();
+            EmailOutboxService.QueueResult result = ResponsiveTask.await(this,
+                    "Queueing receipt email...",
+                    () -> EmailOutboxService.queueSaleReceipt(
+                            receiptData.getSaleId(), requestedRecipient, false));
+            if (result == null) return;
             if (result.queued()) {
                 JOptionPane.showMessageDialog(this, "Receipt email queued. Outbox #" + result.outboxId() + ".");
             } else {

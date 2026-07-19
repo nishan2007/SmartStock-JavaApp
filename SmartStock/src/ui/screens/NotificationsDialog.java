@@ -8,11 +8,11 @@ import ui.helpers.ThemeManager;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -161,48 +161,31 @@ public class NotificationsDialog extends JDialog {
 
     private void markReadSelected() {
         List<AppNotification> selected = selectedNotifications();
-        if (selected.isEmpty()) {
-            return;
-        }
-        try {
-            for (AppNotification notification : selected) {
-                NotificationService.markRead(notification.notificationKey());
-            }
-            refresh();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
-        }
+        mutateSelected("read", selected, notification -> NotificationService.markRead(notification.notificationKey()));
     }
 
     private void snoozeSelected() {
         List<AppNotification> selected = selectedNotifications();
-        if (selected.isEmpty()) {
-            return;
-        }
-        try {
-            for (AppNotification notification : selected) {
-                NotificationService.snooze(notification.notificationKey(), 60);
-            }
-            refresh();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
-        }
+        mutateSelected("snooze", selected, notification -> NotificationService.snooze(notification.notificationKey(), 60));
     }
 
     private void clearSelected() {
         List<AppNotification> selected = selectedNotifications();
-        if (selected.isEmpty()) {
-            return;
-        }
-        try {
-            for (AppNotification notification : selected) {
-                NotificationService.clear(notification.notificationKey());
-            }
-            refresh();
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
-        }
+        mutateSelected("clear", selected, notification -> NotificationService.clear(notification.notificationKey()));
     }
+
+    private void mutateSelected(String action, List<AppNotification> selected, NotificationMutation mutation) {
+        if (selected.isEmpty()) return;
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "notifications." + action, () -> {
+            for (AppNotification notification : selected) mutation.run(notification);
+            return Boolean.TRUE;
+        }, ignored -> refresh(), failure -> loadingState.failed(failure.getMessage(), false,
+                () -> mutateSelected(action, selected, mutation)));
+    }
+
+    @FunctionalInterface
+    private interface NotificationMutation { void run(AppNotification notification) throws Exception; }
 
     public static void navigate(JFrame parent, String actionTarget) {
         if (parent == null || actionTarget == null || actionTarget.isBlank()) {

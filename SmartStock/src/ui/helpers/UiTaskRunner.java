@@ -49,6 +49,27 @@ public final class UiTaskRunner {
         Objects.requireNonNull(background, "background");
         Objects.requireNonNull(success, "success");
         Objects.requireNonNull(failure, "failure");
+        if (!owner.isDisplayable()) {
+            Runnable defer = () -> {
+                if (owner.isDisplayable()) {
+                    submit(owner, key, background, success, failure);
+                    return;
+                }
+                WindowAdapter listener = new WindowAdapter() {
+                    @Override public void windowOpened(WindowEvent event) {
+                        owner.removeWindowListener(this);
+                        submit(owner, key, background, success, failure);
+                    }
+
+                    @Override public void windowClosed(WindowEvent event) {
+                        owner.removeWindowListener(this);
+                    }
+                };
+                owner.addWindowListener(listener);
+            };
+            if (SwingUtilities.isEventDispatchThread()) defer.run(); else SwingUtilities.invokeLater(defer);
+            return;
+        }
         installDisposalCancellation(owner);
         submitInternal(owner,owner::isDisplayable,key,background,success,failure);
     }

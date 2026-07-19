@@ -2,10 +2,14 @@ package ui.screens.customorders;
 
 import services.CustomOrderDataService;
 import services.CustomOrderDataService.CustomerOption;
+import ui.components.LoadingStatePanel;
+import ui.helpers.CachedUiLoader;
+import ui.helpers.SessionDataCache;
+import ui.helpers.UiDebouncer;
 
 import javax.swing.*;
 import java.awt.*;
-import java.sql.SQLException;
+import java.util.List;
 
 public class CustomerInfoPanel extends JPanel {
     private final JTextField nameField = new JTextField();
@@ -17,6 +21,7 @@ public class CustomerInfoPanel extends JPanel {
     private final JList<CustomerOption> searchList = new JList<>(searchModel);
     private CustomerOption selectedCustomer;
     private boolean updatingSearch;
+    private final LoadingStatePanel searchLoadingState = new LoadingStatePanel();
 
     public CustomerInfoPanel() {
         super(new GridBagLayout());
@@ -91,22 +96,7 @@ public class CustomerInfoPanel extends JPanel {
         scrollPane.setPreferredSize(new Dimension(360, 180));
         searchPopup.add(scrollPane);
 
-        nameField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                searchFromNameField();
-            }
-
-            @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                searchFromNameField();
-            }
-
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                searchFromNameField();
-            }
-        });
+        UiDebouncer.bind(nameField, 300, this::searchFromNameField);
         nameField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
             public void focusGained(java.awt.event.FocusEvent e) {
@@ -154,22 +144,20 @@ public class CustomerInfoPanel extends JPanel {
             selectedCustomer = null;
             phoneField.setText("");
         }
-        SwingUtilities.invokeLater(() -> {
-            loadCustomers(text);
-            showCustomerPopup();
-        });
+        loadCustomers(text);
     }
 
     private void loadCustomers(String search) {
-        searchModel.clear();
-        try {
-            for (CustomerOption customer : CustomOrderDataService.searchCustomers(search)) {
-                searchModel.addElement(customer);
-            }
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Failed to load customers: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
-        }
+        String query=search==null?"":search.trim();
+        CachedUiLoader.loadAfterDisplay(this,"custom-orders.customer-search","custom-orders:customers:"+query,
+                CustomerSearchSnapshot.class, SessionDataCache.SCREEN_TTL,searchLoadingState,
+                ()->new CustomerSearchSnapshot(CustomOrderDataService.searchCustomers(query)),snapshot->{
+                    if(!nameField.getText().trim().equals(query))return;
+                    searchModel.clear();snapshot.customers().forEach(searchModel::addElement);showCustomerPopup();
+                });
     }
+
+    private record CustomerSearchSnapshot(List<CustomerOption> customers) { }
 
     private void showCustomerPopup() {
         if (!nameField.isShowing()) {

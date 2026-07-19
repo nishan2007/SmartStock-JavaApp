@@ -306,19 +306,24 @@ public class MainMenu extends JFrame {
         menuHostPanel.repaint();
         });
         menuBuildTimer.setRepeats(false);
-        menuBuildTimer.start();
 
         applyPermissions();
         add(mainPanel, BorderLayout.CENTER);
         wireActions();
         wireWindowSessionHandling();
-        SwingUtilities.invokeLater(() -> {
-            if (!isDisplayable()) return;
-            loadLocalMenuAssets();
-            loadCompanyLogo(companyLogoLabel);
-            refreshNotifications(true);
-            startNotificationRefreshTimer();
-            promptToStartDrawIfNeeded();
+        addWindowListener(new WindowAdapter() {
+            private boolean initialized;
+
+            @Override public void windowOpened(WindowEvent event) {
+                if (initialized) return;
+                initialized = true;
+                menuBuildTimer.start();
+                loadLocalMenuAssets();
+                loadCompanyLogo(companyLogoLabel);
+                refreshNotifications(true);
+                startNotificationRefreshTimer();
+                promptToStartDrawIfNeeded();
+            }
         });
     }
     private JButton createMenuButtonLazy(String title, String description, String path) {
@@ -1533,23 +1538,28 @@ public class MainMenu extends JFrame {
             }
             urgentPopupKeysShown.add(notification.notificationKey());
             int choice = showUrgentNotificationDialog(notification);
-            try {
-                if (choice == 0) {
-                    NotificationService.markSeen(notification);
-                    NotificationsDialog.navigate(this, notification.actionTarget());
-                } else if (choice == 1) {
-                    NotificationService.snooze(notification.notificationKey(), 60);
-                    refreshNotifications(false);
-                } else if (choice == 2) {
-                    NotificationService.markRead(notification.notificationKey());
-                    refreshNotifications(false);
-                }
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, ex.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE);
-            }
+            if (choice == 0) mutateUrgentNotification("seen", () -> NotificationService.markSeen(notification),
+                    () -> NotificationsDialog.navigate(this, notification.actionTarget()));
+            else if (choice == 1) mutateUrgentNotification("snooze",
+                    () -> NotificationService.snooze(notification.notificationKey(), 60),
+                    () -> refreshNotifications(false));
+            else if (choice == 2) mutateUrgentNotification("read",
+                    () -> NotificationService.markRead(notification.notificationKey()),
+                    () -> refreshNotifications(false));
             return;
         }
     }
+
+    private void mutateUrgentNotification(String action, NotificationMutation mutation, Runnable success) {
+        UiTaskRunner.submit(this, "main-menu.notification-" + action, () -> {
+            mutation.run();
+            return Boolean.TRUE;
+        }, ignored -> success.run(), failure -> JOptionPane.showMessageDialog(this,
+                failure.getMessage(), "Notifications", JOptionPane.ERROR_MESSAGE));
+    }
+
+    @FunctionalInterface
+    private interface NotificationMutation { void run() throws Exception; }
 
     private int showUrgentNotificationDialog(AppNotification notification) {
         final int[] choice = {-1};

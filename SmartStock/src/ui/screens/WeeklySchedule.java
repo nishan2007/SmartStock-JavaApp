@@ -22,6 +22,7 @@ import ui.design.DeckersSwing;
 import ui.helpers.WindowHelper;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -49,6 +50,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 public class WeeklySchedule extends JFrame {
     private enum ScheduleViewMode {
@@ -309,6 +312,7 @@ public class WeeklySchedule extends JFrame {
     private record LocationSnapshot(List<StoreLocation> locations) { }
     private record ScheduleSnapshot(Map<LocalDate,List<Assignment>> assignments,
                                     Map<LocalDate,Holiday> holidays,String locationName) { }
+    private record EmployeePickerData(List<Employee> employees,List<Shift> shifts) { }
 
     private void renderDays(Map<LocalDate, List<Assignment>> assignments, Map<LocalDate, Holiday> holidays) {
         daysPanel.removeAll();
@@ -518,12 +522,7 @@ public class WeeklySchedule extends JFrame {
                         + "Auto Schedule will leave this date blank, but manual scheduling remains available.",
                 currentName);
         if (name == null) return;
-        try {
-            EmployeeScheduleService.saveHoliday(date, name);
-            loadPeriod();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to save the holiday", ex);
-        }
+        scheduleTask("holiday-save",()->{EmployeeScheduleService.saveHoliday(date,name);return Boolean.TRUE;},ignored->loadPeriod(),"Failed to save the holiday",()->editHoliday(date,holiday));
     }
 
     private void removeHoliday(LocalDate date, Holiday holiday) {
@@ -532,12 +531,7 @@ public class WeeklySchedule extends JFrame {
                         + "Existing manual assignments will not be changed.",
                 "Remove Holiday", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.YES_OPTION) return;
-        try {
-            EmployeeScheduleService.removeHoliday(date);
-            loadPeriod();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to remove the holiday", ex);
-        }
+        scheduleTask("holiday-remove",()->{EmployeeScheduleService.removeHoliday(date);return Boolean.TRUE;},ignored->loadPeriod(),"Failed to remove the holiday",()->removeHoliday(date,holiday));
     }
 
     private JPanel buildAssignmentRow(Assignment assignment) {
@@ -610,95 +604,48 @@ public class WeeklySchedule extends JFrame {
     }
 
     private void showEmployeePicker(LocalDate date, List<Assignment> currentAssignments) {
-        try {
-            Set<Integer> alreadyScheduled = new HashSet<>();
-            currentAssignments.forEach(assignment -> alreadyScheduled.add(assignment.userId()));
-            List<Employee> available = EmployeeScheduleService.loadActiveEmployees(locationId).stream()
-                    .filter(employee -> !alreadyScheduled.contains(employee.userId())).toList();
-            List<Shift> shifts = EmployeeScheduleService.loadShifts(locationId, false);
-            if (available.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "All active employees are already scheduled for this day.",
-                        "No Employees Available", JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-            if (shifts.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "This store has no active shifts. Use Manage Shifts to add or reactivate one.",
-                        "No Shifts Available", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
+        int requestedLocation=locationId;
+        Set<Integer> alreadyScheduled=new HashSet<>();currentAssignments.forEach(assignment->alreadyScheduled.add(assignment.userId()));
+        scheduleTask("employee-picker",()->{
+            var employees=UiTaskRunner.supplyAsync(()->EmployeeScheduleService.loadActiveEmployees(requestedLocation));
+            var shifts=UiTaskRunner.supplyAsync(()->EmployeeScheduleService.loadShifts(requestedLocation,false));
+            return new EmployeePickerData(employees.join().stream().filter(employee->!alreadyScheduled.contains(employee.userId())).toList(),shifts.join());
+        },data->showEmployeePickerDialog(requestedLocation,date,data),"Failed to load employees and shifts",()->showEmployeePicker(date,currentAssignments));
+    }
 
-            JList<Employee> employeeList = createEmployeeList(available);
-            JComboBox<Shift> shiftBox = createShiftBox(shifts);
-            LunchStartControl lunchControl = new LunchStartControl(LocalTime.of(12, 30));
-            JPanel picker = new JPanel(new BorderLayout(0, 10));
-            JPanel fields = new JPanel(new GridLayout(0, 1, 4, 4));
-            fields.add(new JLabel("Select an active employee:"));
-            fields.add(new JLabel("Shift:"));
-            fields.add(shiftBox);
-            fields.add(lunchControl.panel());
-            picker.add(fields, BorderLayout.NORTH);
-            picker.add(new JScrollPane(employeeList), BorderLayout.CENTER);
-            int result = JOptionPane.showConfirmDialog(this, picker,
-                    "Add employee • " + selectedLocation.name() + " • " + DAY_DATE.format(date),
-                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-            if (result != JOptionPane.OK_OPTION) return;
-            Employee selectedEmployee = employeeList.getSelectedValue();
-            Shift selectedShift = (Shift) shiftBox.getSelectedItem();
-            LocalTime lunchStart = lunchControl.selectedTime();
-            if (selectedEmployee == null || selectedShift == null || lunchStart == null) {
-                JOptionPane.showMessageDialog(this, "Select an employee, shift, and valid lunch time.",
-                        "Schedule Details Needed", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            EmployeeScheduleService.addEmployees(locationId, date, List.of(selectedEmployee),
-                    selectedShift.shiftId(), lunchStart);
-            loadPeriod();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to add the employee", ex);
-        }
+    private void showEmployeePickerDialog(int requestedLocation,LocalDate date,EmployeePickerData data){
+        if(data.employees().isEmpty()){JOptionPane.showMessageDialog(this,"All active employees are already scheduled for this day.","No Employees Available",JOptionPane.INFORMATION_MESSAGE);return;}
+        if(data.shifts().isEmpty()){JOptionPane.showMessageDialog(this,"This store has no active shifts. Use Manage Shifts to add or reactivate one.","No Shifts Available",JOptionPane.WARNING_MESSAGE);return;}
+        JList<Employee> employeeList=createEmployeeList(data.employees());JComboBox<Shift> shiftBox=createShiftBox(data.shifts());LunchStartControl lunchControl=new LunchStartControl(LocalTime.of(12,30));
+        JPanel picker=new JPanel(new BorderLayout(0,10));JPanel fields=new JPanel(new GridLayout(0,1,4,4));fields.add(new JLabel("Select an active employee:"));fields.add(new JLabel("Shift:"));fields.add(shiftBox);fields.add(lunchControl.panel());picker.add(fields,BorderLayout.NORTH);picker.add(new JScrollPane(employeeList),BorderLayout.CENTER);
+        int result=JOptionPane.showConfirmDialog(this,picker,"Add employee • "+selectedLocation.name()+" • "+DAY_DATE.format(date),JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);if(result!=JOptionPane.OK_OPTION)return;
+        Employee selectedEmployee=employeeList.getSelectedValue();Shift selectedShift=(Shift)shiftBox.getSelectedItem();LocalTime lunchStart=lunchControl.selectedTime();
+        if(selectedEmployee==null||selectedShift==null||lunchStart==null){JOptionPane.showMessageDialog(this,"Select an employee, shift, and valid lunch time.","Schedule Details Needed",JOptionPane.WARNING_MESSAGE);return;}
+        scheduleTask("employee-add",()->{EmployeeScheduleService.addEmployees(requestedLocation,date,List.of(selectedEmployee),selectedShift.shiftId(),lunchStart);return Boolean.TRUE;},ignored->loadPeriod(),"Failed to add the employee",()->showEmployeePickerDialog(requestedLocation,date,data));
     }
 
     private void editAssignment(Assignment assignment) {
-        try {
-            List<Shift> shifts = EmployeeScheduleService.loadShifts(locationId, false);
-            if (shifts.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "This store has no active shifts.", "No Shifts Available", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            JComboBox<Shift> shiftBox = createShiftBox(shifts);
-            if (assignment.shiftId() != null) selectShift(shiftBox, assignment.shiftId());
-            LunchStartControl lunchControl = new LunchStartControl(assignment.lunchStartTime());
-            JPanel panel = new JPanel(new GridLayout(0, 1, 5, 5));
-            panel.add(new JLabel("Shift:"));
-            panel.add(shiftBox);
-            panel.add(lunchControl.panel());
-            int result = JOptionPane.showConfirmDialog(this, panel,
-                    "Edit assignment • " + assignment.displayName(),
-                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-            if (result != JOptionPane.OK_OPTION) return;
-            Shift shift = (Shift) shiftBox.getSelectedItem();
-            LocalTime lunch = lunchControl.selectedTime();
-            if (shift == null || lunch == null) {
-                JOptionPane.showMessageDialog(this, "Select a shift and valid lunch time.",
-                        "Schedule Details Needed", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            EmployeeScheduleService.updateAssignment(locationId, assignment.userId(), assignment.workDate(),
-                    shift.shiftId(), lunch);
-            loadPeriod();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to update the assignment", ex);
-        }
+        int requestedLocation=locationId;
+        scheduleTask("assignment-shifts",()->EmployeeScheduleService.loadShifts(requestedLocation,false),shifts->showAssignmentEditor(requestedLocation,assignment,shifts),"Failed to load shifts",()->editAssignment(assignment));
+    }
+
+    private void showAssignmentEditor(int requestedLocation,Assignment assignment,List<Shift> shifts){
+        if(shifts.isEmpty()){JOptionPane.showMessageDialog(this,"This store has no active shifts.","No Shifts Available",JOptionPane.WARNING_MESSAGE);return;}
+        JComboBox<Shift> shiftBox=createShiftBox(shifts);if(assignment.shiftId()!=null)selectShift(shiftBox,assignment.shiftId());LunchStartControl lunchControl=new LunchStartControl(assignment.lunchStartTime());
+        JPanel panel=new JPanel(new GridLayout(0,1,5,5));panel.add(new JLabel("Shift:"));panel.add(shiftBox);panel.add(lunchControl.panel());
+        int result=JOptionPane.showConfirmDialog(this,panel,"Edit assignment • "+assignment.displayName(),JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);if(result!=JOptionPane.OK_OPTION)return;
+        Shift shift=(Shift)shiftBox.getSelectedItem();LocalTime lunch=lunchControl.selectedTime();if(shift==null||lunch==null){JOptionPane.showMessageDialog(this,"Select a shift and valid lunch time.","Schedule Details Needed",JOptionPane.WARNING_MESSAGE);return;}
+        scheduleTask("assignment-update",()->{EmployeeScheduleService.updateAssignment(requestedLocation,assignment.userId(),assignment.workDate(),shift.shiftId(),lunch);return Boolean.TRUE;},ignored->loadPeriod(),"Failed to update the assignment",()->showAssignmentEditor(requestedLocation,assignment,shifts));
     }
 
     private void showAutoSchedulePreview() {
-        Set<Integer> selectedEmployeeIds;
-        try {
-            selectedEmployeeIds = selectAutoScheduleEmployees();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to load employees for Auto Schedule", ex);
-            return;
-        }
+        int requestedLocation=locationId;
+        scheduleTask("auto-schedule-employees",()->EmployeeScheduleService.loadActiveEmployees(requestedLocation),
+                this::showAutoSchedulePreviewWithEmployees,"Failed to load employees for Auto Schedule",this::showAutoSchedulePreview);
+    }
+
+    private void showAutoSchedulePreviewWithEmployees(List<Employee> employees) {
+        Set<Integer> selectedEmployeeIds=selectAutoScheduleEmployees(employees);
         if (selectedEmployeeIds == null) return;
         if (selectedEmployeeIds.isEmpty()) {
             JOptionPane.showMessageDialog(this,
@@ -860,17 +807,15 @@ public class WeeklySchedule extends JFrame {
                         + "Holidays, shifts, other stores, and other schedule periods will not change.",
                 "Clear Current Schedule", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.YES_OPTION) return;
-        try {
-            int removed = EmployeeScheduleService.clearSchedule(locationId, periodStart, periodEnd);
+        int requestedLocation=locationId;LocalDate requestedStart=periodStart,requestedEnd=periodEnd;
+        scheduleTask("clear",()->EmployeeScheduleService.clearSchedule(requestedLocation,requestedStart,requestedEnd),removed->{
             loadPeriod();
             JOptionPane.showMessageDialog(this,
                     removed == 0
                             ? "There were no assignments to clear in this period."
                             : removed + " schedule assignment" + (removed == 1 ? " was" : "s were") + " removed.",
                     "Schedule Cleared", JOptionPane.INFORMATION_MESSAGE);
-        } catch (SQLException ex) {
-            showScheduleError("Failed to clear the current schedule", ex);
-        }
+        },"Failed to clear the current schedule",this::clearVisibleSchedule);
     }
 
     private void exportVisibleSchedule() {
@@ -904,36 +849,32 @@ public class WeeklySchedule extends JFrame {
             if (overwrite != JOptionPane.YES_OPTION) return;
         }
 
+        File exportOutput=output;int requestedLocation=locationId;LocalDate requestedStart=periodStart,requestedEnd=periodEnd;
+        String storeName=selectedLocation.name();int columns=selectedViewMode()==ScheduleViewMode.SEMI_MONTHLY?8:7;boolean compact=selectedDisplayMode()==ScheduleDisplayMode.COMPACT;
         setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        try {
+        scheduleTask("export",()->{
             Map<LocalDate, List<Assignment>> assignments =
-                    EmployeeScheduleService.loadRange(locationId, periodStart, periodEnd);
-            Map<LocalDate, Holiday> exportHolidays = EmployeeScheduleService.loadHolidays(periodStart, periodEnd);
+                    EmployeeScheduleService.loadRange(requestedLocation,requestedStart,requestedEnd);
+            Map<LocalDate, Holiday> exportHolidays = EmployeeScheduleService.loadHolidays(requestedStart,requestedEnd);
             BufferedImage companyLogo = CompanyCustomizationManager.loadCompanyLogo(
                     CompanyCustomizationManager.loadReceiptSettings());
-            int columns = selectedViewMode() == ScheduleViewMode.SEMI_MONTHLY ? 8 : 7;
-            boolean compact = selectedDisplayMode() == ScheduleDisplayMode.COMPACT;
             if (pdf) {
-                ScheduleExportService.writePdf(output, selectedLocation.name(), periodStart, periodEnd,
+                ScheduleExportService.writePdf(exportOutput,storeName,requestedStart,requestedEnd,
                         columns, compact, assignments, exportHolidays, companyLogo);
             } else {
-                ScheduleExportService.writePng(output, selectedLocation.name(), periodStart, periodEnd,
+                ScheduleExportService.writePng(exportOutput,storeName,requestedStart,requestedEnd,
                         columns, compact, assignments, exportHolidays, companyLogo);
             }
-            JOptionPane.showMessageDialog(this,
-                    "Schedule exported successfully.\n" + output.getAbsolutePath(),
-                    "Export Complete", JOptionPane.INFORMATION_MESSAGE);
-        } catch (SQLException | IOException ex) {
-            JOptionPane.showMessageDialog(this,
-                    "Failed to export the schedule:\n" + ex.getMessage(),
-                    "Export Error", JOptionPane.ERROR_MESSAGE);
-        } finally {
+            return exportOutput;
+        },completed->{
             setCursor(Cursor.getDefaultCursor());
-        }
+            JOptionPane.showMessageDialog(this,
+                    "Schedule exported successfully.\n" + completed.getAbsolutePath(),
+                    "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+        },"Failed to export the schedule",()->{setCursor(Cursor.getDefaultCursor());exportVisibleSchedule();});
     }
 
-    private Set<Integer> selectAutoScheduleEmployees() throws SQLException {
-        List<Employee> employees = EmployeeScheduleService.loadActiveEmployees(locationId);
+    private Set<Integer> selectAutoScheduleEmployees(List<Employee> employees) {
         if (employees.isEmpty()) {
             JOptionPane.showMessageDialog(this,
                     "This store has no active employees available for automatic scheduling.",
@@ -1034,6 +975,25 @@ public class WeeklySchedule extends JFrame {
         return message == null || message.isBlank() ? current.toString() : message;
     }
 
+    private <T> void scheduleTask(String key, Callable<T> background, Consumer<T> success,
+                                  String errorMessage, Runnable retry) {
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "weekly-schedule." + key, background, result -> {
+            loadingState.ready(java.time.Instant.now());
+            success.accept(result);
+        }, failure -> {
+            setCursor(Cursor.getDefaultCursor());
+            loadingState.failed(errorMessage + ": " + rootMessage(failure), false, retry);
+        });
+    }
+
+    private static String rootMessage(Throwable failure) {
+        Throwable current=failure;
+        while(current.getCause()!=null)current=current.getCause();
+        String message=current.getMessage();
+        return message==null||message.isBlank()?current.toString():message;
+    }
+
     private void showShiftManager() {
         JDialog dialog = new JDialog(this, "Manage Shifts • " + selectedLocation.name(), Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setLayout(new BorderLayout(10, 10));
@@ -1054,15 +1014,12 @@ public class WeeklySchedule extends JFrame {
                 return label;
             }
         });
-        Runnable reload = () -> {
-            try {
-                model.clear();
-                EmployeeScheduleService.loadShifts(locationId, true).forEach(model::addElement);
-                if (!model.isEmpty() && list.getSelectedIndex() < 0) list.setSelectedIndex(0);
-            } catch (SQLException ex) {
-                showScheduleError("Failed to load shifts", ex);
-            }
-        };
+        int requestedLocation=locationId;
+        Runnable[] reloadHolder = new Runnable[1];
+        Runnable reload = () -> scheduleTask("shift-list",()->EmployeeScheduleService.loadShifts(requestedLocation,true),shifts->{
+            if(!dialog.isDisplayable())return;model.clear();shifts.forEach(model::addElement);if(!model.isEmpty()&&list.getSelectedIndex()<0)list.setSelectedIndex(0);
+        },"Failed to load shifts",()->reloadHolder[0].run());
+        reloadHolder[0] = reload;
 
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         JButton add = new JButton("Add");
@@ -1075,21 +1032,15 @@ public class WeeklySchedule extends JFrame {
             DeckersSwing.styleUtilityButton(button, ACCENT);
             actions.add(button);
         }
-        add.addActionListener(e -> { if (editShift(null)) reload.run(); });
-        edit.addActionListener(e -> { Shift shift = list.getSelectedValue(); if (shift != null && editShift(shift)) reload.run(); });
+        add.addActionListener(e -> editShift(requestedLocation,null,model,reload));
+        edit.addActionListener(e -> { Shift shift = list.getSelectedValue(); if (shift != null) editShift(requestedLocation,shift,model,reload); });
         toggle.addActionListener(e -> {
             Shift shift = list.getSelectedValue();
             if (shift == null) return;
-            try {
-                EmployeeScheduleService.saveShift(locationId, shift.shiftId(), shift.name(), shift.startTime(),
-                        shift.endTime(), !shift.active(), shift.displayOrder(), false);
-                reload.run();
-            } catch (SQLException ex) {
-                showScheduleError("Failed to update the shift", ex);
-            }
+            scheduleTask("shift-toggle",()->{EmployeeScheduleService.saveShift(requestedLocation,shift.shiftId(),shift.name(),shift.startTime(),shift.endTime(),!shift.active(),shift.displayOrder(),false);return Boolean.TRUE;},ignored->reload.run(),"Failed to update the shift",reload);
         });
-        up.addActionListener(e -> moveShift(model, list, -1));
-        down.addActionListener(e -> moveShift(model, list, 1));
+        up.addActionListener(e -> moveShift(requestedLocation,model,list,-1,reload));
+        down.addActionListener(e -> moveShift(requestedLocation,model,list,1,reload));
         close.addActionListener(e -> dialog.dispose());
         dialog.add(new JScrollPane(list), BorderLayout.CENTER);
         dialog.add(actions, BorderLayout.SOUTH);
@@ -1100,7 +1051,7 @@ public class WeeklySchedule extends JFrame {
         loadPeriod();
     }
 
-    private boolean editShift(Shift shift) {
+    private void editShift(int requestedLocation,Shift shift,DefaultListModel<Shift> model,Runnable reload) {
         JTextField name = new JTextField(shift == null ? "" : shift.name(), 18);
         JTextField start = new JTextField(shift == null ? "" : DISPLAY_TIME.format(shift.startTime()), 10);
         JTextField end = new JTextField(shift == null ? "" : DISPLAY_TIME.format(shift.endTime()), 10);
@@ -1110,13 +1061,13 @@ public class WeeklySchedule extends JFrame {
         form.add(new JLabel("Ends:")); form.add(end);
         int result = JOptionPane.showConfirmDialog(this, form, shift == null ? "Add Shift" : "Edit Shift",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) return false;
+        if (result != JOptionPane.OK_OPTION) return;
         LocalTime startTime = parseTime(start.getText());
         LocalTime endTime = parseTime(end.getText());
         if (startTime == null || endTime == null) {
             JOptionPane.showMessageDialog(this, "Enter times such as 7:00 AM and 4:00 PM.",
                     "Valid Times Needed", JOptionPane.WARNING_MESSAGE);
-            return false;
+            return;
         }
         boolean propagate = false;
         if (shift != null && (!name.getText().trim().equals(shift.name())
@@ -1124,26 +1075,16 @@ public class WeeklySchedule extends JFrame {
             int choice = JOptionPane.showConfirmDialog(this,
                     "Update today's and future assignments that use this shift?\nPast assignments will not change.",
                     "Update Scheduled Assignments", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
-            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return false;
+            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return;
             propagate = choice == JOptionPane.YES_OPTION;
         }
-        try {
-            int order = shift == null ? nextShiftOrder() : shift.displayOrder();
-            EmployeeScheduleService.saveShift(locationId, shift == null ? null : shift.shiftId(), name.getText(),
-                    startTime, endTime, shift == null || shift.active(), order, propagate);
-            return true;
-        } catch (SQLException ex) {
-            showScheduleError("Failed to save the shift", ex);
-            return false;
-        }
+        int order=shift==null?nextShiftOrder(model):shift.displayOrder();boolean shouldPropagate=propagate;String shiftName=name.getText();
+        scheduleTask("shift-save",()->{EmployeeScheduleService.saveShift(requestedLocation,shift==null?null:shift.shiftId(),shiftName,startTime,endTime,shift==null||shift.active(),order,shouldPropagate);return Boolean.TRUE;},ignored->reload.run(),"Failed to save the shift",reload);
     }
 
-    private int nextShiftOrder() throws SQLException {
-        return EmployeeScheduleService.loadShifts(locationId, true).stream()
-                .mapToInt(Shift::displayOrder).max().orElse(0) + 10;
-    }
+    private static int nextShiftOrder(DefaultListModel<Shift> model){int maximum=0;for(int index=0;index<model.size();index++)maximum=Math.max(maximum,model.get(index).displayOrder());return maximum+10;}
 
-    private void moveShift(DefaultListModel<Shift> model, JList<Shift> list, int direction) {
+    private void moveShift(int requestedLocation,DefaultListModel<Shift> model, JList<Shift> list, int direction,Runnable reload) {
         int from = list.getSelectedIndex();
         int to = from + direction;
         if (from < 0 || to < 0 || to >= model.size()) return;
@@ -1152,11 +1093,7 @@ public class WeeklySchedule extends JFrame {
         list.setSelectedIndex(to);
         List<UUID> ids = new ArrayList<>();
         for (int index = 0; index < model.size(); index++) ids.add(model.get(index).shiftId());
-        try {
-            EmployeeScheduleService.updateShiftOrder(locationId, ids);
-        } catch (SQLException ex) {
-            showScheduleError("Failed to reorder shifts", ex);
-        }
+        scheduleTask("shift-order",()->{EmployeeScheduleService.updateShiftOrder(requestedLocation,ids);return Boolean.TRUE;},ignored->{},"Failed to reorder shifts",reload);
     }
 
     private void removeAssignment(Assignment assignment) {
@@ -1165,12 +1102,8 @@ public class WeeklySchedule extends JFrame {
                         + assignment.workDate().getDayOfWeek().toString().toLowerCase() + "?",
                 "Remove from Schedule", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.YES_OPTION) return;
-        try {
-            EmployeeScheduleService.removeEmployee(locationId, assignment.userId(), assignment.workDate());
-            loadPeriod();
-        } catch (SQLException ex) {
-            showScheduleError("Failed to remove the employee", ex);
-        }
+        int requestedLocation=locationId;
+        scheduleTask("remove-employee",()->{EmployeeScheduleService.removeEmployee(requestedLocation,assignment.userId(),assignment.workDate());return Boolean.TRUE;},ignored->loadPeriod(),"Failed to remove the employee",()->removeAssignment(assignment));
     }
 
     private JList<Employee> createEmployeeList(List<Employee> employees) {

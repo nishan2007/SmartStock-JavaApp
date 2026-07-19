@@ -5,6 +5,7 @@ import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 import services.EmailOutboxService;
 
@@ -154,12 +155,19 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             return;
         }
         try {
-            EmailOutboxService.QueueResult result = switch (emailDocumentType) {
-                case "QUOTATION" -> EmailOutboxService.queueQuotation(emailDocumentId, recipient.trim(), false);
-                case "INVOICE" -> EmailOutboxService.queueInvoice(emailDocumentId, recipient.trim(), false);
-                case "DELIVERY_BILL" -> EmailOutboxService.queueDeliveryBill(emailDocumentId, recipient.trim(), false);
-                default -> EmailOutboxService.QueueResult.skipped("This document cannot be emailed.");
-            };
+            String requestedRecipient = recipient.trim();
+            EmailOutboxService.QueueResult result = ResponsiveTask.await(this,
+                    "Queueing document email...", () -> switch (emailDocumentType) {
+                        case "QUOTATION" -> EmailOutboxService.queueQuotation(
+                                emailDocumentId, requestedRecipient, false);
+                        case "INVOICE" -> EmailOutboxService.queueInvoice(
+                                emailDocumentId, requestedRecipient, false);
+                        case "DELIVERY_BILL" -> EmailOutboxService.queueDeliveryBill(
+                                emailDocumentId, requestedRecipient, false);
+                        default -> EmailOutboxService.QueueResult.skipped(
+                                "This document cannot be emailed.");
+                    });
+            if (result == null) return;
             if (result.queued()) {
                 JOptionPane.showMessageDialog(this, "Email queued. Outbox #" + result.outboxId() + ".");
             } else {

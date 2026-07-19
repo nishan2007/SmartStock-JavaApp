@@ -13,6 +13,7 @@ import ui.components.AppMenuBar;
 import ui.components.VendorSelector;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
+import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -426,15 +427,25 @@ public class BalanceSheet extends JFrame {
         }
 
         try {
-            long submissionId = BalanceSheetService.submitBalanceSheet(from, to, StoreTimeZoneHelper.getStoreZoneId(), notesArea.getText(), matchedDrawerSessionIds);
-            services.EmailOutboxService.QueueResult emailResult;
-            try {
-                emailResult = services.EmailOutboxService.queueBalanceSheetSubmission(submissionId);
-            } catch (Exception emailEx) {
-                emailResult = services.EmailOutboxService.QueueResult.skipped("The email copy could not be queued: " + emailEx.getMessage());
-            }
+            String storeZoneId = StoreTimeZoneHelper.getStoreZoneId();
+            String notes = notesArea.getText();
+            List<Long> drawerSessionIds = List.copyOf(matchedDrawerSessionIds);
+            SubmissionResult submitted = ResponsiveTask.await(this, "Submitting balance sheet...", () -> {
+                long submissionId = BalanceSheetService.submitBalanceSheet(
+                        from, to, storeZoneId, notes, drawerSessionIds);
+                services.EmailOutboxService.QueueResult emailResult;
+                try {
+                    emailResult = services.EmailOutboxService.queueBalanceSheetSubmission(submissionId);
+                } catch (Exception emailEx) {
+                    emailResult = services.EmailOutboxService.QueueResult.skipped(
+                            "The email copy could not be queued: " + emailEx.getMessage());
+                }
+                return new SubmissionResult(submissionId, emailResult);
+            });
+            if (submitted == null) return;
             loadSubmissionHistory();
-            loadSubmissionById(submissionId);
+            loadSubmissionById(submitted.submissionId());
+            services.EmailOutboxService.QueueResult emailResult = submitted.emailResult();
             String message = emailResult.queued()
                     ? "Balance sheet submitted and the email copy was queued."
                     : "Balance sheet submitted.\n\nEmail copy not sent: " + emailResult.message();
@@ -443,6 +454,9 @@ public class BalanceSheet extends JFrame {
             JOptionPane.showMessageDialog(this, "Failed to submit balance sheet: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+    private record SubmissionResult(long submissionId,
+                                    services.EmailOutboxService.QueueResult emailResult) { }
 
     private void loadSubmissionHistory() {
         Object selected = savedSheetBox.getSelectedItem();
@@ -662,7 +676,7 @@ public class BalanceSheet extends JFrame {
         }
 
         try {
-            BalanceSheetService.addManualExpense(new ExpenseEntry(
+            ExpenseEntry expense = new ExpenseEntry(
                     date,
                     category,
                     blankToNull(payeeField.getText()),
@@ -671,7 +685,12 @@ public class BalanceSheet extends JFrame {
                     String.valueOf(methodBox.getSelectedItem()),
                     blankToNull(referenceField.getText()),
                     String.valueOf(statusBox.getSelectedItem())
-            ));
+            );
+            Boolean saved = ResponsiveTask.await(this, "Saving expense...", () -> {
+                BalanceSheetService.addManualExpense(expense);
+                return Boolean.TRUE;
+            });
+            if (saved == null) return;
             loadSheet();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to log expense: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -709,7 +728,7 @@ public class BalanceSheet extends JFrame {
         }
 
         try {
-            BalanceSheetService.addManualExpense(new ExpenseEntry(
+            ExpenseEntry payable = new ExpenseEntry(
                     date,
                     "Accounts Payable",
                     accountName,
@@ -718,7 +737,12 @@ public class BalanceSheet extends JFrame {
                     "OTHER",
                     null,
                     "UNPAID"
-            ));
+            );
+            Boolean saved = ResponsiveTask.await(this, "Saving account payable...", () -> {
+                BalanceSheetService.addManualExpense(payable);
+                return Boolean.TRUE;
+            });
+            if (saved == null) return;
             loadSheet();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to log account payable: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -732,7 +756,9 @@ public class BalanceSheet extends JFrame {
             return;
         }
         try {
-            List<BalanceSheetService.PayableOption> payables = BalanceSheetService.listUnpaidPayables(from, to);
+            List<BalanceSheetService.PayableOption> payables = ResponsiveTask.await(this,
+                    "Loading account payables...", () -> BalanceSheetService.listUnpaidPayables(from, to));
+            if (payables == null) return;
             if (payables.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No unpaid account payables were found for this date range.", "Pay Account Payable", JOptionPane.INFORMATION_MESSAGE);
                 return;
@@ -772,13 +798,14 @@ public class BalanceSheet extends JFrame {
                 return;
             }
 
-            BalanceSheetService.recordPayablePayment(
-                    selected.expenseId(),
-                    paymentDate,
-                    amount,
-                    String.valueOf(methodBox.getSelectedItem()),
-                    blankToNull(referenceField.getText())
-            );
+            String method = String.valueOf(methodBox.getSelectedItem());
+            String reference = blankToNull(referenceField.getText());
+            Boolean paid = ResponsiveTask.await(this, "Recording payable payment...", () -> {
+                BalanceSheetService.recordPayablePayment(
+                        selected.expenseId(), paymentDate, amount, method, reference);
+                return Boolean.TRUE;
+            });
+            if (paid == null) return;
             loadSheet();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to pay account payable: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -810,7 +837,9 @@ public class BalanceSheet extends JFrame {
         }
 
         try {
-            List<ExpenseOption> rows = BalanceSheetService.listDeletableExpenses(from, to, status);
+            List<ExpenseOption> rows = ResponsiveTask.await(this, "Loading balance-sheet rows...",
+                    () -> BalanceSheetService.listDeletableExpenses(from, to, status));
+            if (rows == null) return;
             if (rows.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No manually entered rows were found for this balance sheet.", title, JOptionPane.INFORMATION_MESSAGE);
                 return;
@@ -843,7 +872,11 @@ public class BalanceSheet extends JFrame {
                 return;
             }
 
-            BalanceSheetService.deleteManualExpense(selected.expenseId(), from, to, status);
+            Boolean deleted = ResponsiveTask.await(this, "Deleting balance-sheet row...", () -> {
+                BalanceSheetService.deleteManualExpense(selected.expenseId(), from, to, status);
+                return Boolean.TRUE;
+            });
+            if (deleted == null) return;
             loadSheet();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to delete row: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -862,7 +895,9 @@ public class BalanceSheet extends JFrame {
         }
 
         try {
-            List<ChequeDepositOption> cheques = BalanceSheetService.listPendingChequeDeposits();
+            List<ChequeDepositOption> cheques = ResponsiveTask.await(this,
+                    "Loading pending cheques...", BalanceSheetService::listPendingChequeDeposits);
+            if (cheques == null) return;
             if (cheques.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No pending cheques are available to deposit.", "Deposit Cheque", JOptionPane.INFORMATION_MESSAGE);
                 return;
@@ -897,7 +932,12 @@ public class BalanceSheet extends JFrame {
                 return;
             }
 
-            BalanceSheetService.markChequeDeposited(selected, notesArea.getText());
+            String notes = notesArea.getText();
+            Boolean deposited = ResponsiveTask.await(this, "Recording cheque deposit...", () -> {
+                BalanceSheetService.markChequeDeposited(selected, notes);
+                return Boolean.TRUE;
+            });
+            if (deposited == null) return;
             loadSheet();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to mark cheque deposited: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);

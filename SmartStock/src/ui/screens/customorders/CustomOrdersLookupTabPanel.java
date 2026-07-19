@@ -9,6 +9,7 @@ import java.awt.*;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 class CustomOrdersLookupTabPanel extends JPanel {
     final JTextField searchField;
@@ -111,11 +112,13 @@ class CustomOrdersLookupTabPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Select an order first.");
                 return;
             }
-            if (handler.applyLookupPayment(orderId, amountField.getText().trim(), methodBox.getSelectedItem().toString(), referenceField.getText().trim(), this)) {
-                handler.loadLookupOrders(model, searchField.getText().trim());
-                handler.refreshRelatedOrders();
-                handler.loadOrderDetails(orderId, detailsArea);
-            }
+            payButton.setEnabled(false);
+            handler.applyLookupPayment(orderId, amountField.getText().trim(),
+                    methodBox.getSelectedItem().toString(), referenceField.getText().trim(), this,
+                    success -> {
+                        payButton.setEnabled(true);
+                        if (success) refreshAfterMutation(handler, orderId);
+                    });
         });
         refundButton.addActionListener(e -> {
             Long orderId = handler.selectedLookupOrderId(table, model);
@@ -123,27 +126,29 @@ class CustomOrdersLookupTabPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Select an order first.");
                 return;
             }
-            List<LineReturnOption> lines = handler.loadReturnableLines(orderId);
-            if (lines.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "There are no refundable order lines left on this order.");
-                return;
-            }
-            RefundRequest refundRequest = promptLineRefund(lines);
-            if (refundRequest == null) {
-                return;
-            }
-            if (handler.applyLookupLineRefund(
-                    orderId,
-                    refundRequest.lines(),
-                    methodBox.getSelectedItem().toString(),
-                    referenceField.getText().trim(),
-                    refundRequest.reason(),
-                    this
-            )) {
-                handler.loadLookupOrders(model, searchField.getText().trim());
-                handler.refreshRelatedOrders();
-                handler.loadOrderDetails(orderId, detailsArea);
-            }
+            refundButton.setEnabled(false);
+            handler.loadReturnableLines(orderId, lines -> {
+                if (lines == null) {
+                    refundButton.setEnabled(true);
+                    return;
+                }
+                if (lines.isEmpty()) {
+                    refundButton.setEnabled(true);
+                    JOptionPane.showMessageDialog(this, "There are no refundable order lines left on this order.");
+                    return;
+                }
+                RefundRequest refundRequest = promptLineRefund(lines);
+                if (refundRequest == null) {
+                    refundButton.setEnabled(true);
+                    return;
+                }
+                handler.applyLookupLineRefund(orderId, refundRequest.lines(),
+                        methodBox.getSelectedItem().toString(), referenceField.getText().trim(),
+                        refundRequest.reason(), this, success -> {
+                            refundButton.setEnabled(true);
+                            if (success) refreshAfterMutation(handler, orderId);
+                        });
+            });
         });
         productionButton.addActionListener(e -> {
             Long orderId = handler.selectedLookupOrderId(table, model);
@@ -151,20 +156,28 @@ class CustomOrdersLookupTabPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Select an order first.");
                 return;
             }
-            List<ProductionLineOption> lines = handler.loadProductionLines(orderId);
-            if (lines.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "There are no order lines to update.");
-                return;
-            }
-            ProductionUpdateRequest request = promptProductionUpdate(lines);
-            if (request == null) {
-                return;
-            }
-            if (handler.updateProductionLines(orderId, request.lineIds(), request.status(), request.notes(), this)) {
-                handler.loadLookupOrders(model, searchField.getText().trim());
-                handler.refreshRelatedOrders();
-                handler.loadOrderDetails(orderId, detailsArea);
-            }
+            productionButton.setEnabled(false);
+            handler.loadProductionLines(orderId, lines -> {
+                if (lines == null) {
+                    productionButton.setEnabled(true);
+                    return;
+                }
+                if (lines.isEmpty()) {
+                    productionButton.setEnabled(true);
+                    JOptionPane.showMessageDialog(this, "There are no order lines to update.");
+                    return;
+                }
+                ProductionUpdateRequest request = promptProductionUpdate(lines);
+                if (request == null) {
+                    productionButton.setEnabled(true);
+                    return;
+                }
+                handler.updateProductionLines(orderId, request.lineIds(), request.status(), request.notes(), this,
+                        success -> {
+                            productionButton.setEnabled(true);
+                            if (success) refreshAfterMutation(handler, orderId);
+                        });
+            });
         });
         deliveredButton.addActionListener(e -> {
             Long orderId = handler.selectedLookupOrderId(table, model);
@@ -172,20 +185,28 @@ class CustomOrdersLookupTabPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Select an order first.");
                 return;
             }
-            List<LineDeliveryOption> lines = handler.loadDeliverableLines(orderId);
-            if (lines.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "There are no order lines left to deliver.");
-                return;
-            }
-            LineDeliveryRequest deliveryRequest = promptLineDelivery(lines);
-            if (deliveryRequest == null) {
-                return;
-            }
-            if (handler.markLookupLinesDelivered(orderId, deliveryRequest.lineIds(), deliveryRequest.notes(), this)) {
-                handler.loadLookupOrders(model, searchField.getText().trim());
-                handler.refreshRelatedOrders();
-                handler.loadOrderDetails(orderId, detailsArea);
-            }
+            deliveredButton.setEnabled(false);
+            handler.loadDeliverableLines(orderId, lines -> {
+                if (lines == null) {
+                    deliveredButton.setEnabled(true);
+                    return;
+                }
+                if (lines.isEmpty()) {
+                    deliveredButton.setEnabled(true);
+                    JOptionPane.showMessageDialog(this, "There are no order lines left to deliver.");
+                    return;
+                }
+                LineDeliveryRequest deliveryRequest = promptLineDelivery(lines);
+                if (deliveryRequest == null) {
+                    deliveredButton.setEnabled(true);
+                    return;
+                }
+                handler.markLookupLinesDelivered(orderId, deliveryRequest.lineIds(), deliveryRequest.notes(), this,
+                        success -> {
+                            deliveredButton.setEnabled(true);
+                            if (success) refreshAfterMutation(handler, orderId);
+                        });
+            });
         });
         closeButton.addActionListener(e -> {
             Window window = SwingUtilities.getWindowAncestor(this);
@@ -199,6 +220,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
         add(searchPanel, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         add(actionPanel, BorderLayout.SOUTH);
+    }
+
+    private void refreshAfterMutation(Handler handler, Long orderId) {
+        handler.loadLookupOrders(model, searchField.getText().trim());
+        handler.refreshRelatedOrders();
+        handler.loadOrderDetails(orderId, detailsArea);
     }
 
     private RefundRequest promptLineRefund(List<LineReturnOption> lines) {
@@ -514,16 +541,19 @@ class CustomOrdersLookupTabPanel extends JPanel {
         void loadLookupOrders(DefaultTableModel model, String search);
         Long selectedLookupOrderId(JTable table, DefaultTableModel model);
         void loadOrderDetails(Long orderId, JTextArea detailsArea);
-        List<LineReturnOption> loadReturnableLines(Long orderId);
-        List<LineDeliveryOption> loadDeliverableLines(Long orderId);
+        void loadReturnableLines(Long orderId, Consumer<List<LineReturnOption>> completion);
+        void loadDeliverableLines(Long orderId, Consumer<List<LineDeliveryOption>> completion);
         BigDecimal parseNullableMoneyValue(Object value);
-        boolean applyLookupPayment(Long orderId, String amountText, String method, String reference, Component parent);
-        boolean applyLookupRefund(Long orderId, String amountText, String method, String reference, String reason, Component parent);
-        boolean applyLookupLineRefund(Long orderId, List<LineReturnRequest> lines, String method, String reference, String reason, Component parent);
-        boolean markLookupOrderDelivered(Long orderId, Component parent);
-        boolean markLookupLinesDelivered(Long orderId, List<Long> lineIds, String notes, Component parent);
-        List<ProductionLineOption> loadProductionLines(Long orderId);
-        boolean updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus, String notes, Component parent);
+        void applyLookupPayment(Long orderId, String amountText, String method, String reference,
+                                Component parent, Consumer<Boolean> completion);
+        void applyLookupLineRefund(Long orderId, List<LineReturnRequest> lines, String method,
+                                   String reference, String reason, Component parent,
+                                   Consumer<Boolean> completion);
+        void markLookupLinesDelivered(Long orderId, List<Long> lineIds, String notes,
+                                      Component parent, Consumer<Boolean> completion);
+        void loadProductionLines(Long orderId, Consumer<List<ProductionLineOption>> completion);
+        void updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus,
+                                   String notes, Component parent, Consumer<Boolean> completion);
         boolean canRefundPayments();
         boolean canDeliverOrderLines();
         boolean canUpdateProduction();

@@ -136,7 +136,8 @@ class ResponsiveLoadingArchitectureTest {
         assertTrue(client.contains("post(\"/v1/schedule/snapshot\""));
         assertTrue(server.contains("/v1/schedule/snapshot"));
         assertTrue(screen.contains("EmployeeScheduleService.loadPeriod"));
-        assertFalse(screen.contains("UiTaskRunner.supplyAsync"));
+        assertTrue(screen.contains("UiTaskRunner.supplyAsync(()->EmployeeScheduleService.loadActiveEmployees"));
+        assertTrue(screen.contains("UiTaskRunner.supplyAsync(()->EmployeeScheduleService.loadShifts"));
         assertTrue(client.contains("INVALID_SERVER_RESPONSE"));
         String scheduleService = Files.readString(SOURCE_ROOT.resolve("services/ServerEmployeeScheduleService.java"));
         assertTrue(scheduleService.contains("synchronized (SCHEMA_LOCK)"));
@@ -174,5 +175,39 @@ class ResponsiveLoadingArchitectureTest {
         assertTrue(preferences.contains("company-preferences.badge-fonts"));
         assertFalse(preferences.contains("new JComboBox<>(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames())"));
         assertTrue(theme.contains("cachedDarkMode"));
+    }
+
+    @Test
+    void deferredScreensDoNotStartJobsUntilTheirRealWindowIsDisplayable() throws Exception {
+        String runner = Files.readString(SOURCE_ROOT.resolve("ui/helpers/UiTaskRunner.java"));
+        String loader = Files.readString(SOURCE_ROOT.resolve("ui/helpers/CachedUiLoader.java"));
+        String mainMenu = Files.readString(SOURCE_ROOT.resolve("ui/screens/MainMenu.java"));
+
+        assertTrue(runner.contains("if (!owner.isDisplayable())"));
+        assertTrue(runner.contains("windowOpened(WindowEvent event)"));
+        assertTrue(loader.contains("if (!owner.isDisplayable())"));
+        assertTrue(mainMenu.contains("menuBuildTimer.start();"));
+        assertTrue(mainMenu.contains("@Override public void windowOpened(WindowEvent event)"));
+        assertFalse(mainMenu.contains("SwingUtilities.invokeLater(() -> {\n            if (!isDisplayable()) return;\n            loadLocalMenuAssets();"));
+    }
+
+    @Test
+    void managerApprovalVerificationRunsAwayFromTheEdt() throws Exception {
+        String approval = Files.readString(SOURCE_ROOT.resolve("services/ManagerApprovalService.java"));
+        assertTrue(approval.contains("SwingWorker<ApprovalResult, Void>"));
+        assertTrue(approval.contains("doInBackground()"));
+        assertTrue(approval.contains("verifyAwayFromEdt"));
+    }
+
+    @Test
+    void customOrderAndNotificationMutationsUseBackgroundJobs() throws Exception {
+        String orders = Files.readString(SOURCE_ROOT.resolve("ui/screens/customorders/CustomOrders.java"));
+        String catalog = Files.readString(SOURCE_ROOT.resolve("ui/screens/customorders/CustomOrderItems.java"));
+        String notifications = Files.readString(SOURCE_ROOT.resolve("ui/screens/NotificationsDialog.java"));
+        assertTrue(orders.contains("custom-orders.mutation."));
+        assertTrue(orders.contains("custom-orders.save"));
+        assertTrue(catalog.contains("custom-catalog.save-item"));
+        assertTrue(catalog.contains("custom-catalog.save-variant"));
+        assertTrue(notifications.contains("UiTaskRunner.submit(this, \"notifications.\" + action"));
     }
 }

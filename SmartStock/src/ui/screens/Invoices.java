@@ -7,6 +7,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -182,87 +183,12 @@ public class Invoices extends JFrame {
         private InvoiceSnapshot joined() { return this; }
     }
 
-    private void loadQuotations() {
-        quotationModel.setRowCount(0);
-        try {
-            for (QuotationInvoiceViewService.QuotationSummary row : QuotationInvoiceViewService.listQuotations()) {
-                quotationModel.addRow(new Object[]{
-                        row.quotationId(),
-                        row.quotationNumber(),
-                        row.customerName(),
-                        row.status(),
-                        row.validUntil(),
-                        row.totalAmount()
-                });
-            }
-        } catch (SQLException ex) {
-            showError("Failed to load quotations", ex);
-        }
-    }
-
-    private void loadInvoices() {
-        invoiceModel.setRowCount(0);
-        try {
-            for (QuotationInvoiceViewService.InvoiceSummary row : QuotationInvoiceViewService.listInvoices()) {
-                invoiceModel.addRow(new Object[]{
-                        row.invoiceId(),
-                        row.invoiceNumber(),
-                        row.customerName(),
-                        row.status(),
-                        row.paymentStatus(),
-                        row.balanceDue(),
-                        row.quotationNumber()
-                });
-            }
-        } catch (SQLException ex) {
-            showError("Failed to load invoices", ex);
-        }
-    }
-
-    private void loadDeliveries() {
-        deliveryModel.setRowCount(0);
-        try {
-            for (QuotationInvoiceViewService.DeliverySummary row : QuotationInvoiceViewService.listDeliveries()) {
-                deliveryModel.addRow(new Object[]{
-                        row.deliveryEventId(),
-                        row.deliveryNumber(),
-                        row.invoiceNumber(),
-                        row.customerName(),
-                        row.deliveryMethod(),
-                        row.balanceDue(),
-                        row.createdAt()
-                });
-            }
-        } catch (SQLException ex) {
-            showError("Failed to load deliveries", ex);
-        }
-    }
-
-    private void loadAudit() {
-        auditModel.setRowCount(0);
-        try {
-            for (QuotationInvoiceViewService.AuditEntry row : QuotationInvoiceViewService.listAudit()) {
-                auditModel.addRow(new Object[]{
-                        row.createdAt(),
-                        row.document(),
-                        row.actionType(),
-                        row.fieldName(),
-                        row.oldValue(),
-                        row.newValue(),
-                        row.userName(),
-                        row.reason()
-                });
-            }
-        } catch (SQLException ex) {
-            showError("Failed to load audit", ex);
-        }
-    }
-
     private void addPayment() {
         Long invoiceId = selectedId(invoiceTable);
         if (invoiceId == null) return;
         try {
-            QuotationInvoiceViewService.InvoiceFinancials financials = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
+            QuotationInvoiceViewService.InvoiceFinancials financials = ResponsiveTask.await(this,"Loading invoice balance...",()->QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
+            if(financials==null)return;
             if (financials.balanceDue().compareTo(BigDecimal.ZERO) <= 0) {
                 JOptionPane.showMessageDialog(this, "Sales invoice " + financials.invoiceNumber() + " has no remaining balance.");
                 return;
@@ -285,7 +211,9 @@ public class Invoices extends JFrame {
                 JOptionPane.showMessageDialog(this, "Payment amount must be greater than zero.", "Invoices", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            QuotationInvoiceService.PaymentReceiptRef receiptRef = QuotationInvoiceService.recordPayment(invoiceId, paymentAmount, (String) method.getSelectedItem(), reference.getText());
+            String selectedMethod=(String)method.getSelectedItem(),paymentReference=reference.getText();
+            QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,paymentAmount,selectedMethod,paymentReference));
+            if(receiptRef==null)return;
             openPaymentReceipt(receiptRef);
             refreshAll();
         } catch (Exception ex) {
@@ -342,7 +270,8 @@ public class Invoices extends JFrame {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
-            QuotationInvoiceViewService.QuotationEditData quotation = QuotationInvoiceViewService.loadQuotationForEdit(quotationId);
+            QuotationInvoiceViewService.QuotationEditData quotation = ResponsiveTask.await(this,"Loading quotation...",()->QuotationInvoiceViewService.loadQuotationForEdit(quotationId));
+            if(quotation==null)return;
             if (!"DRAFT".equals(quotation.status())) {
                 JOptionPane.showMessageDialog(this, "Only draft quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -352,7 +281,7 @@ public class Invoices extends JFrame {
             if (editor.created) {
                 refreshAll();
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("Failed to load draft quotation", ex);
         }
     }
@@ -361,10 +290,14 @@ public class Invoices extends JFrame {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
-            QuotationInvoiceService.issueQuotation(quotationId);
+            Boolean issued = ResponsiveTask.await(this, "Issuing quotation...", () -> {
+                QuotationInvoiceService.issueQuotation(quotationId);
+                return Boolean.TRUE;
+            });
+            if (issued == null) return;
             refreshAll();
             openQuotationPrintDialog(quotationId);
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("Failed to issue quotation", ex);
         }
     }
@@ -373,7 +306,8 @@ public class Invoices extends JFrame {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
-            QuotationInvoiceService.InvoiceResult result = QuotationInvoiceService.acceptQuotation(quotationId);
+            QuotationInvoiceService.InvoiceResult result = ResponsiveTask.await(this,"Accepting quotation...",()->QuotationInvoiceService.acceptQuotation(quotationId));
+            if(result==null)return;
             promptForAcceptedQuotationPayment(result.invoiceId());
             Long deliveryEventId = promptForAcceptedQuotationDelivery(result.invoiceId());
             refreshAll();
@@ -381,38 +315,46 @@ public class Invoices extends JFrame {
             if (deliveryEventId != null) {
                 openDeliveryPrintDialog(deliveryEventId);
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("Failed to accept quotation", ex);
         }
     }
 
     private void promptForAcceptedQuotationPayment(long invoiceId) {
         try {
-            QuotationInvoiceViewService.InvoiceFinancials financials = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
+            QuotationInvoiceViewService.InvoiceFinancials financials = ResponsiveTask.await(this,"Loading invoice balance...",()->QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
+            if(financials==null)return;
             Quotations.PaymentPrompt prompt = new Quotations.PaymentPrompt(this, financials);
             prompt.setVisible(true);
             Quotations.PaymentInput payment = prompt.paymentInput();
             boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
-                    QuotationInvoiceService.PaymentReceiptRef receiptRef = QuotationInvoiceService.recordPayment(invoiceId, payment.amount(), payment.method(), payment.reference());
+                    QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,payment.amount(),payment.method(),payment.reference()));
+                    if(receiptRef==null)return;
                     paymentRecorded = true;
                     openPaymentReceipt(receiptRef);
-                } catch (SQLException ex) {
+                } catch (Exception ex) {
                     showError("Payment was not recorded; remaining balance will be placed on account if possible", ex);
                 }
             }
-            QuotationInvoiceViewService.InvoiceFinancials updated = QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId);
+            QuotationInvoiceViewService.InvoiceFinancials updated = ResponsiveTask.await(this,"Refreshing invoice balance...",()->QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
+            if(updated==null)return;
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
-                QuotationInvoiceService.chargeInvoiceToAccount(invoiceId, "Remaining balance from accepted quotation.");
+                ResponsiveTask.await(this, "Charging remaining balance to account...", () -> {
+                    QuotationInvoiceService.chargeInvoiceToAccount(invoiceId,
+                            "Remaining balance from accepted quotation.");
+                    return Boolean.TRUE;
+                });
             }
-        } catch (SQLException ex) {
+        } catch (Exception ex) {
             showError("Failed to place remaining balance on customer account", ex);
         }
     }
 
-    private Long promptForAcceptedQuotationDelivery(long invoiceId) throws SQLException {
-        if (QuotationInvoiceViewService.listDeliverableLines(invoiceId).isEmpty()) {
+    private Long promptForAcceptedQuotationDelivery(long invoiceId) throws Exception {
+        List<QuotationInvoiceViewService.DeliverableLine> deliverable=ResponsiveTask.await(this,"Loading deliverable lines...",()->QuotationInvoiceViewService.listDeliverableLines(invoiceId));
+        if(deliverable==null||deliverable.isEmpty()) {
             return null;
         }
         int choice = JOptionPane.showConfirmDialog(
@@ -568,13 +510,9 @@ public class Invoices extends JFrame {
                 return;
             }
             try {
-                QuotationInvoiceService.DeliveryResult result = QuotationInvoiceService.postDelivery(
-                        invoiceId,
-                        String.valueOf(methodBox.getSelectedItem()),
-                        receiverField.getText(),
-                        notesField.getText(),
-                        lines
-                );
+                String method=String.valueOf(methodBox.getSelectedItem()),receiver=receiverField.getText(),notes=notesField.getText();
+                QuotationInvoiceService.DeliveryResult result = ResponsiveTask.await(this,"Posting delivery...",()->QuotationInvoiceService.postDelivery(invoiceId,method,receiver,notes,lines));
+                if(result==null)return;
                 created = true;
                 deliveryEventId = result.deliveryEventId();
                 JOptionPane.showMessageDialog(this, "Posted delivery " + result.deliveryNumber() + ".");

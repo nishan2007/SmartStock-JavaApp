@@ -2,6 +2,9 @@ package services;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.Arrays;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class ManagerApprovalService {
     private ManagerApprovalService() {
@@ -69,22 +72,89 @@ public final class ManagerApprovalService {
             throw new IllegalStateException("Override reason is required.");
         }
 
-        if (LanApiClient.isPaired()) {
-            try {
-                String approvalResource = resourceIdentity == null || resourceIdentity.isBlank()
-                        ? actionLabel + "|" + reason
-                        : RefundApprovalIdentity.withReason(resourceIdentity, reason);
-                LanApiClient.ApprovalResult approval = LanApiClient.requestManagerApproval(
-                        loginIdentifier, password, requiredPermission,
-                        actionLabel, approvalResource);
-                return new ApprovalResult(approval.approverUserId(), approval.approverName(), reason,
-                        approval.approvalToken());
-            } catch (Exception ex) {
-                throw new IllegalStateException("Manager approval could not be verified by the SmartStock server: "
-                        + ex.getMessage(), ex);
-            }
+        if (!LanApiClient.isPaired()) {
+            Arrays.fill(password, '\0');
+            throw new IllegalStateException("This installation must be paired before manager approval can be used.");
         }
-        throw new IllegalStateException("This installation must be paired before manager approval can be used.");
+        String approvalResource = resourceIdentity == null || resourceIdentity.isBlank()
+                ? actionLabel + "|" + reason
+                : RefundApprovalIdentity.withReason(resourceIdentity, reason);
+        return verifyAwayFromEdt(parent, loginIdentifier, password, requiredPermission,
+                actionLabel, approvalResource, reason);
+    }
+
+    private static ApprovalResult verifyAwayFromEdt(Component parent, String loginIdentifier,
+                                                     char[] password, String requiredPermission,
+                                                     String actionLabel, String approvalResource,
+                                                     String reason) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            return verify(loginIdentifier, password, requiredPermission, actionLabel, approvalResource, reason);
+        }
+
+        Window owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
+        JDialog progress = new JDialog(owner, "Verifying Manager Approval",
+                Dialog.ModalityType.APPLICATION_MODAL);
+        progress.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        JLabel status = new JLabel("Verifying approval with the SmartStock server...", SwingConstants.CENTER);
+        status.setBorder(BorderFactory.createEmptyBorder(18, 24, 12, 24));
+        JButton cancel = new JButton("Cancel");
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actions.add(cancel);
+        progress.add(status, BorderLayout.CENTER);
+        progress.add(actions, BorderLayout.SOUTH);
+        progress.pack();
+        progress.setLocationRelativeTo(parent);
+
+        AtomicReference<ApprovalResult> approval = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        SwingWorker<ApprovalResult, Void> worker = new SwingWorker<>() {
+            @Override protected ApprovalResult doInBackground() {
+                return verify(loginIdentifier, password, requiredPermission,
+                        actionLabel, approvalResource, reason);
+            }
+
+            @Override protected void done() {
+                try {
+                    approval.set(get());
+                } catch (CancellationException cancelled) {
+                    failure.set(cancelled);
+                } catch (Exception ex) {
+                    failure.set(ex.getCause() == null ? ex : ex.getCause());
+                } finally {
+                    progress.dispose();
+                }
+            }
+        };
+        cancel.addActionListener(event -> {
+            worker.cancel(true);
+            progress.dispose();
+        });
+        worker.execute();
+        progress.setVisible(true);
+
+        Throwable problem = failure.get();
+        if (problem instanceof CancellationException) return null;
+        if (problem != null) {
+            if (problem instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException(problem.getMessage(), problem);
+        }
+        return approval.get();
+    }
+
+    private static ApprovalResult verify(String loginIdentifier, char[] password,
+                                         String requiredPermission, String actionLabel,
+                                         String approvalResource, String reason) {
+        try {
+            LanApiClient.ApprovalResult approval = LanApiClient.requestManagerApproval(
+                    loginIdentifier, password, requiredPermission, actionLabel, approvalResource);
+            return new ApprovalResult(approval.approverUserId(), approval.approverName(), reason,
+                    approval.approvalToken());
+        } catch (Exception ex) {
+            throw new IllegalStateException("Manager approval could not be verified by the SmartStock server: "
+                    + ex.getMessage(), ex);
+        } finally {
+            Arrays.fill(password, '\0');
+        }
     }
 
     public record ApprovalResult(int approvedByUserId, String approvedByName, String reason,

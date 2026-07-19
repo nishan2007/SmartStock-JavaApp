@@ -5,6 +5,8 @@ import ui.components.LoadingStatePanel;
 import javax.swing.SwingUtilities;
 import javax.swing.JComponent;
 import java.awt.Window;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -28,6 +30,20 @@ public final class CachedUiLoader {
                                 Consumer<T> apply) {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(() -> load(owner, jobKey, cacheKey, type, ttl, state, background, apply));
+            return;
+        }
+        if (!owner.isDisplayable()) {
+            WindowAdapter listener = new WindowAdapter() {
+                @Override public void windowOpened(WindowEvent event) {
+                    owner.removeWindowListener(this);
+                    load(owner, jobKey, cacheKey, type, ttl, state, background, apply);
+                }
+
+                @Override public void windowClosed(WindowEvent event) {
+                    owner.removeWindowListener(this);
+                }
+            };
+            owner.addWindowListener(listener);
             return;
         }
         Optional<SessionDataCache.CachedValue<T>> cached = SessionDataCache.get(cacheKey, type, ttl);

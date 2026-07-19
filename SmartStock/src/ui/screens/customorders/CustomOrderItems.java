@@ -13,6 +13,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.ProductImageHelper;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -27,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /** Custom-order catalog editor backed entirely by the authenticated store service. */
@@ -64,23 +66,80 @@ public final class CustomOrderItems extends JFrame {
     private void renderPresets(Long id){presetModel.setRowCount(0);if(id==null)return;for(var x:state.presets())if(x.materialId()==id)presetModel.addRow(new Object[]{x.presetId(),x.name(),x.pricingMode(),money(x.price()),x.active()});}
 
     private void selectItem(){Long id=selectedId(itemTable,itemModel);if(id==null)return;var x=state.items().stream().filter(i->i.itemId()==id).findFirst().orElse(null);if(x==null)return;itemId=id;name.setText(x.name());sku.setText(x.sku());barcode.setText(x.barcode());description.setText(x.description());department.setSelectedDepartment(x.categoryId(),x.categoryName());classification.setValues(x.categoryId(),x.itemType(),x.brand());image.setImageUrl(x.imageUrl());productType.setSelectedItem(x.productType());pricingType.setSelectedItem(x.pricingType());price.setText(money(x.fixedPrice()));areaUnit.setSelectedItem(x.areaPriceUnit());dimensionUnit.setSelectedItem(x.dimensionUnit());maxWidth.setText(money(x.maxWidth()));maxLength.setText(money(x.maxLength()));quantity.setText(money(x.quantity()));reorder.setText(money(x.reorderLevel()));variants.setSelected(x.hasVariants());active.setSelected(x.active());extraBarcodes.setText(String.join("\n",x.extraBarcodes()));fieldState();}
-    private void saveItem(){try{Integer categoryId=department.getSelectedDepartmentId();if(categoryId==null)throw new IllegalArgumentException("Select a department.");String imageUrl=variants.isSelected()?"":ProductImageHelper.uploadLocalImageIfNeeded(image.getImageUrl());image.setImageUrl(imageUrl);List<String>codes=new ArrayList<>(new LinkedHashSet<>(List.of(extraBarcodes.getText().split("\\R"))));codes.removeIf(String::isBlank);var r=new LanCustomOrderCatalogAdminService.ItemSave(itemId,name.getText(),barcode.getText(),description.getText(),imageUrl,(String)productType.getSelectedItem(),(String)pricingType.getSelectedItem(),decimal(price,"price",false),(String)areaUnit.getSelectedItem(),(String)dimensionUnit.getSelectedItem(),decimal(maxWidth,"maximum width",false),decimal(maxLength,"maximum length",false),variants.isSelected(),decimal(quantity,"quantity",true),decimal(reorder,"reorder level",true),active.isSelected(),categoryId,classification.itemTypeName(),classification.brandName(),codes);itemId=mutate("SAVE_ITEM","item",r);refresh();selectRow(itemTable,itemModel,itemId);info("Custom item saved.");}catch(Exception e){error("Custom item was not saved",e);}}
+    private void saveItem(){
+        try{
+            Integer categoryId=department.getSelectedDepartmentId();
+            if(categoryId==null)throw new IllegalArgumentException("Select a department.");
+            Long targetId=itemId;
+            boolean hasVariants=variants.isSelected();
+            String sourceImage=hasVariants?"":image.getImageUrl();
+            List<String>codes=new ArrayList<>(new LinkedHashSet<>(List.of(extraBarcodes.getText().split("\\R"))));
+            codes.removeIf(String::isBlank);
+            String itemName=name.getText(),primaryBarcode=barcode.getText(),itemDescription=description.getText();
+            String selectedProductType=(String)productType.getSelectedItem(),selectedPricingType=(String)pricingType.getSelectedItem();
+            String selectedAreaUnit=(String)areaUnit.getSelectedItem(),selectedDimensionUnit=(String)dimensionUnit.getSelectedItem();
+            BigDecimal itemPrice=decimal(price,"price",false),width=decimal(maxWidth,"maximum width",false),length=decimal(maxLength,"maximum length",false);
+            BigDecimal itemQuantity=decimal(quantity,"quantity",true),reorderLevel=decimal(reorder,"reorder level",true);
+            boolean isActive=active.isSelected();
+            String itemType=classification.itemTypeName(),brand=classification.brandName();
+            UiTaskRunner.submit(this,"custom-catalog.save-item",()->{
+                String imageUrl=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage);
+                var request=new LanCustomOrderCatalogAdminService.ItemSave(targetId,itemName,primaryBarcode,itemDescription,imageUrl,selectedProductType,selectedPricingType,itemPrice,selectedAreaUnit,selectedDimensionUnit,width,length,hasVariants,itemQuantity,reorderLevel,isActive,categoryId,itemType,brand,codes);
+                return new ItemMutationResult(mutate("SAVE_ITEM","item",request),imageUrl);
+            },result->{itemId=result.id();image.setImageUrl(result.imageUrl());refresh();info("Custom item saved.");},failure->error("Custom item was not saved",asException(failure)));
+        }catch(Exception e){error("Custom item was not saved",e);}
+    }
     private void clearItem(){itemId=null;itemTable.clearSelection();name.setText("");sku.setText("");barcode.setText("");description.setText("");extraBarcodes.setText("");department.setSelectedDepartmentByName("Custom");classification.clearSelection();image.setImageUrl("");productType.setSelectedItem("INVENTORY");pricingType.setSelectedItem("VARIABLE");price.setText("");maxWidth.setText("");maxLength.setText("");quantity.setText("0");reorder.setText("0");variants.setSelected(false);active.setSelected(true);fieldState();}
     private void fieldState(){boolean inventory="INVENTORY".equals(productType.getSelectedItem()),has=variants.isSelected(),area="AREA".equals(pricingType.getSelectedItem()),priced=!"VARIABLE".equals(pricingType.getSelectedItem())&&!has;price.setEnabled(priced);quantity.setEnabled(inventory&&!has);reorder.setEnabled(inventory&&!has);areaUnit.setEnabled(area);dimensionUnit.setEnabled(area);maxWidth.setEnabled(area);maxLength.setEnabled(area);image.setEnabled(!has);}
 
-    private void variantsDialog(){if(itemId==null){info("Save or select an item first.");return;}JDialog d=new JDialog(this,"Sizes / Variants - "+name.getText(),true);d.setSize(900,500);DefaultTableModel m=model("ID","Name","SKU","Barcode","Price","Qty","Reorder","Active");JTable t=new JTable(m);JTextField n=new JTextField(),bc=new JTextField(),pr=new JTextField(),q=new JTextField("0"),re=new JTextField("0");ProductImageHelper.ImageSelector img=ProductImageHelper.createImageSelector(d);JCheckBox a=new JCheckBox("Active",true);final Long[]vid={null};Runnable load=()->{m.setRowCount(0);var item=state.items().stream().filter(x->x.itemId()==itemId).findFirst().orElse(null);if(item!=null)for(var x:item.variants())m.addRow(new Object[]{x.variantId(),x.name(),x.sku(),x.barcode(),money(x.fixedPrice()),x.quantity(),x.reorderLevel(),x.active()});};t.getSelectionModel().addListSelectionListener(e->{if(e.getValueIsAdjusting())return;int row=t.getSelectedRow();if(row<0)return;row=t.convertRowIndexToModel(row);vid[0]=Long.valueOf(m.getValueAt(row,0).toString());var x=state.items().stream().flatMap(i->i.variants().stream()).filter(v->v.variantId()==vid[0]).findFirst().orElse(null);if(x!=null){n.setText(x.name());bc.setText(x.barcode());pr.setText(money(x.fixedPrice()));q.setText(money(x.quantity()));re.setText(money(x.reorderLevel()));img.setImageUrl(x.imageUrl());a.setSelected(x.active());}});JPanel f=form();row(f,0,"Name",n);row(f,1,"Barcode",bc);row(f,2,"Price",pr);row(f,3,"Image",img);row(f,4,"Quantity",q);row(f,5,"Reorder",re);row(f,6,"",a);JButton save=new JButton("Save"),clear=new JButton("Clear"),off=new JButton("Deactivate");Runnable reset=()->{vid[0]=null;t.clearSelection();n.setText("");bc.setText("");pr.setText("");q.setText("0");re.setText("0");img.setImageUrl("");a.setSelected(true);};save.addActionListener(e->{try{String url=ProductImageHelper.uploadLocalImageIfNeeded(img.getImageUrl());var r=new LanCustomOrderCatalogAdminService.VariantSave(vid[0],itemId,n.getText(),bc.getText(),url,decimal(pr,"price",false),decimal(q,"quantity",true),decimal(re,"reorder level",true),a.isSelected());mutate("SAVE_VARIANT","variant",r);refresh();load.run();reset.run();}catch(Exception ex){error("Variant was not saved",ex);}});clear.addActionListener(e->reset.run());off.addActionListener(e->{if(vid[0]!=null){deactivate("DEACTIVATE_VARIANT","variantId",vid[0],"variant");refresh();load.run();reset.run();}});JPanel b=new JPanel(new GridLayout(1,3,6,6));b.add(save);b.add(clear);b.add(off);row(f,7,"",b);JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(f));split.setResizeWeight(.6);d.add(split);load.run();d.setLocationRelativeTo(this);d.setVisible(true);refresh();}
+    private void variantsDialog(){
+        if(itemId==null){info("Save or select an item first.");return;}
+        long selectedItemId=itemId;
+        JDialog d=new JDialog(this,"Sizes / Variants - "+name.getText(),true);
+        d.setSize(900,500);
+        DefaultTableModel m=model("ID","Name","SKU","Barcode","Price","Qty","Reorder","Active");
+        JTable t=new JTable(m);
+        JTextField n=new JTextField(),bc=new JTextField(),pr=new JTextField(),q=new JTextField("0"),re=new JTextField("0");
+        ProductImageHelper.ImageSelector img=ProductImageHelper.createImageSelector(d);
+        JCheckBox a=new JCheckBox("Active",true);
+        final Long[]vid={null};
+        Runnable load=()->{m.setRowCount(0);var item=state.items().stream().filter(x->x.itemId()==selectedItemId).findFirst().orElse(null);if(item!=null)for(var x:item.variants())m.addRow(new Object[]{x.variantId(),x.name(),x.sku(),x.barcode(),money(x.fixedPrice()),x.quantity(),x.reorderLevel(),x.active()});};
+        t.getSelectionModel().addListSelectionListener(e->{if(e.getValueIsAdjusting())return;int tableRow=t.getSelectedRow();if(tableRow<0)return;tableRow=t.convertRowIndexToModel(tableRow);vid[0]=Long.valueOf(m.getValueAt(tableRow,0).toString());var selected=state.items().stream().flatMap(i->i.variants().stream()).filter(v->v.variantId()==vid[0]).findFirst().orElse(null);if(selected!=null){n.setText(selected.name());bc.setText(selected.barcode());pr.setText(money(selected.fixedPrice()));q.setText(money(selected.quantity()));re.setText(money(selected.reorderLevel()));img.setImageUrl(selected.imageUrl());a.setSelected(selected.active());}});
+        JPanel f=form();row(f,0,"Name",n);row(f,1,"Barcode",bc);row(f,2,"Price",pr);row(f,3,"Image",img);row(f,4,"Quantity",q);row(f,5,"Reorder",re);row(f,6,"",a);
+        JButton save=new JButton("Save"),clear=new JButton("Clear"),off=new JButton("Deactivate");
+        Runnable reset=()->{vid[0]=null;t.clearSelection();n.setText("");bc.setText("");pr.setText("");q.setText("0");re.setText("0");img.setImageUrl("");a.setSelected(true);};
+        save.addActionListener(e->{
+            try{
+                Long variantId=vid[0];String variantName=n.getText(),variantBarcode=bc.getText(),sourceImage=img.getImageUrl();
+                BigDecimal variantPrice=decimal(pr,"price",false),variantQuantity=decimal(q,"quantity",true),variantReorder=decimal(re,"reorder level",true);boolean isActive=a.isSelected();
+                save.setEnabled(false);off.setEnabled(false);
+                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive);return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
+            }catch(Exception ex){error("Variant was not saved",ex);}
+        });
+        clear.addActionListener(e->reset.run());
+        off.addActionListener(e->{
+            Long variantId=vid[0];if(variantId==null){JOptionPane.showMessageDialog(d,"Select a variant first.");return;}
+            if(JOptionPane.showConfirmDialog(d,"Deactivate this variant?","Confirm",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+            JsonObject body=new JsonObject();body.addProperty("variantId",variantId);save.setEnabled(false);off.setEnabled(false);
+            UiTaskRunner.submit(d,"custom-catalog.deactivate-variant",()->LanApiClient.updateCustomCatalogAdmin("DEACTIVATE_VARIANT",body,UUID.randomUUID().toString()),ignored->{d.dispose();refresh();},failure->{save.setEnabled(true);off.setEnabled(true);error("The variant was not deactivated",asException(failure));});
+        });
+        JPanel buttons=new JPanel(new GridLayout(1,3,6,6));buttons.add(save);buttons.add(clear);buttons.add(off);row(f,7,"",buttons);
+        JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(f));split.setResizeWeight(.6);d.add(split);load.run();d.setLocationRelativeTo(this);d.setVisible(true);refresh();
+    }
 
     private void selectMaterial(){materialId=selectedId(materialTable,materialModel);if(materialId==null)return;var x=state.materials().stream().filter(v->v.materialId()==materialId).findFirst().orElse(null);if(x!=null){materialName.setText(x.name());materialDescription.setText(x.description());materialActive.setSelected(x.active());clearPreset();renderPresets(materialId);}}
-    private void saveMaterial(){try{materialId=mutate("SAVE_MATERIAL","material",new LanCustomOrderCatalogAdminService.MaterialSave(materialId,materialName.getText(),materialDescription.getText(),materialActive.isSelected()));refresh();info("Print material saved.");}catch(Exception e){error("Print material was not saved",e);}}
+    private void saveMaterial(){try{var request=new LanCustomOrderCatalogAdminService.MaterialSave(materialId,materialName.getText(),materialDescription.getText(),materialActive.isSelected());mutateAsync("save-material","SAVE_MATERIAL","material",request,id->{materialId=id;refresh();info("Print material saved.");},"Print material was not saved");}catch(Exception e){error("Print material was not saved",e);}}
     private void clearMaterial(){materialId=null;materialTable.clearSelection();materialName.setText("");materialDescription.setText("");materialActive.setSelected(true);clearPreset();renderPresets(null);}
     private void selectPreset(){presetId=selectedId(presetTable,presetModel);if(presetId==null)return;var x=state.presets().stream().filter(v->v.presetId()==presetId).findFirst().orElse(null);if(x!=null){presetName.setText(x.name());presetMode.setSelectedItem(x.pricingMode());presetPrice.setText(money(x.price()));presetActive.setSelected(x.active());}}
-    private void savePreset(){try{if(materialId==null)throw new IllegalStateException("Select a print material first.");presetId=mutate("SAVE_PRESET","preset",new LanCustomOrderCatalogAdminService.PresetSave(presetId,materialId,presetName.getText(),(String)presetMode.getSelectedItem(),decimal(presetPrice,"price",true),presetActive.isSelected()));refresh();renderPresets(materialId);info("Print preset saved.");}catch(Exception e){error("Print preset was not saved",e);}}
+    private void savePreset(){try{if(materialId==null)throw new IllegalStateException("Select a print material first.");Long selectedMaterial=materialId;var request=new LanCustomOrderCatalogAdminService.PresetSave(presetId,selectedMaterial,presetName.getText(),(String)presetMode.getSelectedItem(),decimal(presetPrice,"price",true),presetActive.isSelected());mutateAsync("save-preset","SAVE_PRESET","preset",request,id->{presetId=id;refresh();info("Print preset saved.");},"Print preset was not saved");}catch(Exception e){error("Print preset was not saved",e);}}
     private void clearPreset(){presetId=null;presetTable.clearSelection();presetName.setText("");presetPrice.setText("");presetMode.setSelectedItem("FIXED_PRESET");presetActive.setSelected(true);}
     private void selectPlacement(){placementId=selectedId(placementTable,placementModel);if(placementId==null)return;var x=state.placements().stream().filter(v->v.placementId()==placementId).findFirst().orElse(null);if(x!=null){placementName.setText(x.name());placementOrder.setText(String.valueOf(x.sortOrder()));placementActive.setSelected(x.active());}}
-    private void savePlacement(){try{placementId=mutate("SAVE_PLACEMENT","placement",new LanCustomOrderCatalogAdminService.PlacementSave(placementId,placementName.getText(),integer(placementOrder,"sort order"),placementActive.isSelected()));refresh();info("Design placement saved.");}catch(Exception e){error("Design placement was not saved",e);}}
+    private void savePlacement(){try{var request=new LanCustomOrderCatalogAdminService.PlacementSave(placementId,placementName.getText(),integer(placementOrder,"sort order"),placementActive.isSelected());mutateAsync("save-placement","SAVE_PLACEMENT","placement",request,id->{placementId=id;refresh();info("Design placement saved.");},"Design placement was not saved");}catch(Exception e){error("Design placement was not saved",e);}}
     private void clearPlacement(){placementId=null;placementTable.clearSelection();placementName.setText("");placementOrder.setText("0");placementActive.setSelected(true);}
-    private void deactivate(String action,String field,Long id,String label){if(id==null){info("Select a "+label+" first.");return;}if(JOptionPane.showConfirmDialog(this,"Deactivate this "+label+"?","Confirm",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;try{JsonObject b=new JsonObject();b.addProperty(field,id);LanApiClient.updateCustomCatalogAdmin(action,b,UUID.randomUUID().toString());refresh();}catch(Exception e){error("The "+label+" was not deactivated",e);}}
+    private void deactivate(String action,String field,Long id,String label){if(id==null){info("Select a "+label+" first.");return;}if(JOptionPane.showConfirmDialog(this,"Deactivate this "+label+"?","Confirm",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;JsonObject body=new JsonObject();body.addProperty(field,id);UiTaskRunner.submit(this,"custom-catalog.deactivate-"+label,()->LanApiClient.updateCustomCatalogAdmin(action,body,UUID.randomUUID().toString()),ignored->refresh(),failure->error("The "+label+" was not deactivated",asException(failure)));}
+    private void mutateAsync(String key,String action,String field,Object value,Consumer<Long> success,String failureMessage){UiTaskRunner.submit(this,"custom-catalog."+key,()->mutate(action,field,value),success,failure->error(failureMessage,asException(failure)));}
     private long mutate(String action,String field,Object value)throws Exception{JsonObject b=new JsonObject();b.add(field,GSON.toJsonTree(value));return LanApiClient.updateCustomCatalogAdmin(action,b,UUID.randomUUID().toString());}
+    private static Exception asException(Throwable failure){return failure instanceof Exception exception?exception:new Exception(failure);}
 
     private static DefaultTableModel model(String...columns){return new DefaultTableModel(columns,0){@Override public boolean isCellEditable(int r,int c){return false;}};}
     private static JPanel form(){JPanel p=new JPanel(new GridBagLayout());p.setBorder(new EmptyBorder(8,8,8,8));return p;}private static void row(JPanel p,int y,String label,Component c){GridBagConstraints g=new GridBagConstraints();g.insets=new Insets(4,4,4,4);g.gridy=y;g.gridx=0;g.anchor=GridBagConstraints.WEST;p.add(new JLabel(label),g);g.gridx=1;g.weightx=1;g.fill=GridBagConstraints.HORIZONTAL;p.add(c,g);}
@@ -88,4 +147,5 @@ public final class CustomOrderItems extends JFrame {
     private static Long selectedId(JTable t,DefaultTableModel m){int r=t.getSelectedRow();if(r<0)return null;r=t.convertRowIndexToModel(r);return Long.valueOf(m.getValueAt(r,0).toString());}private static void selectRow(JTable t,DefaultTableModel m,Long id){if(id==null)return;for(int r=0;r<m.getRowCount();r++)if(id.toString().equals(String.valueOf(m.getValueAt(r,0)))){int v=t.convertRowIndexToView(r);if(v>=0)t.setRowSelectionInterval(v,v);return;}}
     private static String money(BigDecimal v){return v==null?"":v.stripTrailingZeros().toPlainString();}private static BigDecimal decimal(JTextField f,String label,boolean required){String v=f.getText().trim();if(v.isBlank()){if(required)throw new IllegalArgumentException("Enter "+label+".");return null;}try{return new BigDecimal(v);}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}private static int integer(JTextField f,String label){try{return Integer.parseInt(f.getText().trim());}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}
     private static DocumentListener listener(Runnable r){return new DocumentListener(){public void insertUpdate(DocumentEvent e){r.run();}public void removeUpdate(DocumentEvent e){r.run();}public void changedUpdate(DocumentEvent e){r.run();}};}private void info(String m){JOptionPane.showMessageDialog(this,m);}private void error(String m,Exception e){JOptionPane.showMessageDialog(this,m+".\n\n"+(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage()),"Custom Order Catalog",JOptionPane.ERROR_MESSAGE);}
+    private record ItemMutationResult(long id,String imageUrl){}
 }

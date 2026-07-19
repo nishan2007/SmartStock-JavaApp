@@ -12,6 +12,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 
 import javax.print.PrintException;
@@ -206,7 +207,12 @@ public class AccountPaymentReceiptPreview extends JFrame {
             return;
         }
         try {
-            EmailOutboxService.QueueResult result = EmailOutboxService.queueAccountPaymentReceipt(receiptData, recipient.trim(), false);
+            String requestedRecipient = recipient.trim();
+            EmailOutboxService.QueueResult result = ResponsiveTask.await(this,
+                    "Queueing payment receipt email...",
+                    () -> EmailOutboxService.queueAccountPaymentReceipt(
+                            receiptData, requestedRecipient, false));
+            if (result == null) return;
             if (result.queued()) {
                 JOptionPane.showMessageDialog(this, "Payment receipt email queued. Outbox #" + result.outboxId() + ".");
             } else {

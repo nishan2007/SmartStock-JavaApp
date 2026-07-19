@@ -9,6 +9,7 @@ import services.SyncWorker;
 import services.PostgresRuntimeService;
 import services.LocalServerRepairService;
 import ui.helpers.ThemeManager;
+import ui.helpers.ResponsiveTask;
 
 import javax.swing.*;
 import java.awt.*;
@@ -226,7 +227,11 @@ public class DatabaseSetup extends JFrame {
         saveConfig();
         statusLabel.setText("Status: Testing local connection...");
         try {
-            ServerProvisioningService.testLocalConnection();
+            Boolean connected = ResponsiveTask.await(this, "Testing local database...", () -> {
+                ServerProvisioningService.testLocalConnection();
+                return Boolean.TRUE;
+            });
+            if (connected == null) return;
             statusLabel.setText("Status: Local database connected.");
         } catch (Exception ex) {
             statusLabel.setText("Status: Local connection failed.");
@@ -238,7 +243,11 @@ public class DatabaseSetup extends JFrame {
         saveConfig();
         statusLabel.setText("Status: Testing cloud connection...");
         try {
-            ServerProvisioningService.testCloudConnection();
+            Boolean connected = ResponsiveTask.await(this, "Testing cloud database...", () -> {
+                ServerProvisioningService.testCloudConnection();
+                return Boolean.TRUE;
+            });
+            if (connected == null) return;
             statusLabel.setText("Status: Cloud database connected.");
         } catch (Exception ex) {
             statusLabel.setText("Status: Cloud connection failed.");
@@ -491,7 +500,10 @@ public class DatabaseSetup extends JFrame {
             if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
                 throw new IllegalStateException("Switch Mode to SERVER before starting server mode.");
             }
-            PostgresRuntimeService.CommandResult syncServiceResult = PostgresRuntimeService.ensureSyncServiceInstalled();
+            PostgresRuntimeService.CommandResult syncServiceResult = ResponsiveTask.await(this,
+                    "Starting SmartStock server services...",
+                    PostgresRuntimeService::ensureSyncServiceInstalled);
+            if (syncServiceResult == null) return;
             if (!syncServiceResult.success()) {
                 throw new IllegalStateException("Background sync service install failed.\n\n" + syncServiceResult.output());
             }

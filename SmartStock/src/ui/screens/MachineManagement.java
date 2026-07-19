@@ -333,34 +333,17 @@ public class MachineManagement extends JFrame {
         partNotesField.setText("");
     }
 
-    private void loadPartOptions() {
-        partBox.removeAllItems();
-        try {for(var part:LanApiClient.loadMachineState("").parts())partBox.addItem(new PartOption(part.id(),part.name(),part.partNumber()));}
-        catch (Exception ex) {
-            showError("load parts", ex);
-        }
-    }
-
-    private void loadLocationOptions() {
-        locationBox.removeAllItems();
-        locationBox.addItem(new LocationOption(null, "Unassigned"));
-
-        try {for(var location:LanApiClient.loadMachineState("").locations())locationBox.addItem(new LocationOption(location.id(),location.name()));}
-        catch (Exception ex) {
-            showError("load stores", ex);
-        }
-    }
-
     private void loadAssociatedParts() {
         associatedPartsModel.setRowCount(0);
         if (selectedMachineId == null) {
             return;
         }
-
-        try {populateAssociatedParts(LanApiClient.loadMachineDetail(selectedMachineId).parts());}
-        catch (Exception ex) {
-            showError("load associated parts", ex);
-        }
+        Integer machineId = selectedMachineId;
+        CachedUiLoader.load(this, "machine-parts.selection", "machine-detail:" + machineId,
+                LanMachineService.Detail.class, SessionDataCache.SCREEN_TTL, loadingState,
+                () -> LanApiClient.loadMachineDetail(machineId), detail -> {
+                    if (java.util.Objects.equals(selectedMachineId, machineId)) populateAssociatedParts(detail.parts());
+                });
     }
 
     private void addAssociatedPart() {
@@ -374,13 +357,12 @@ public class MachineManagement extends JFrame {
             return;
         }
 
-        try {
-            LanApiClient.updateMachineLink("LINK",selectedMachineId,selectedPart.id,null,nullable(partNotesField),java.util.UUID.randomUUID().toString());
+        Integer machineId=selectedMachineId;String notes=nullable(partNotesField);String mutationKey=java.util.UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"machine.link-part",()->{LanApiClient.updateMachineLink("LINK",machineId,selectedPart.id,null,notes,mutationKey);return Boolean.TRUE;},ignored->{
+            SessionDataCache.invalidate("machine-detail:"+machineId);
             partNotesField.setText("");
             loadAssociatedParts();
-        } catch (Exception ex) {
-            showError("associate part", ex);
-        }
+        },ex->showError("associate part",ex));
     }
 
     private void removeAssociatedPart() {
@@ -392,12 +374,11 @@ public class MachineManagement extends JFrame {
         int modelRow = associatedPartsTable.convertRowIndexToModel(row);
         Long machinePartId = ((Number) associatedPartsModel.getValueAt(modelRow, 0)).longValue();
 
-        try {
-            LanApiClient.updateMachineLink("UNLINK",null,null,machinePartId,null,java.util.UUID.randomUUID().toString());
+        Integer machineId=selectedMachineId;String mutationKey=java.util.UUID.randomUUID().toString();
+        UiTaskRunner.submit(this,"machine.unlink-part",()->{LanApiClient.updateMachineLink("UNLINK",null,null,machinePartId,null,mutationKey);return Boolean.TRUE;},ignored->{
+            SessionDataCache.invalidate("machine-detail:"+machineId);
             loadAssociatedParts();
-        } catch (Exception ex) {
-            showError("remove associated part", ex);
-        }
+        },ex->showError("remove associated part",ex));
     }
 
     private static void addFormRow(JPanel panel, GridBagConstraints gbc, int row, String label, Component field) {

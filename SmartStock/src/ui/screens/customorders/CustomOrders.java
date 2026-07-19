@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /** Register-side custom-order workflow. All persistence is performed by the store service. */
@@ -166,11 +167,17 @@ public class CustomOrders extends JFrame {
             CustomerOption selected=guidedOrder.customerInfoPanel.getSelectedCustomer();
             List<OrderLineRequest>requests=lines.stream().map(CartLine::request).toList();
             OrderSaveRequest request=new OrderSaveRequest(selected,customer,phone,due,total,paid,total.subtract(paid),method,guidedOrder.paymentReferenceField.getText(),paid.signum()==0?"UNPAID":paid.compareTo(total)==0?"PAID":"PARTIAL",SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName(),SessionManager.getCurrentLocationId(),SessionManager.getCurrentLocationName(),SessionManager.getCurrentDeviceId(),"",required,depositReason,null,null,guidedOrder.orderNotesArea.getText(),requests,depositToken);
-            String number=CustomOrderDataService.saveCustomOrder(request);
-            JOptionPane.showMessageDialog(this,"Custom order "+number+" saved.");
-            try{EmailOutboxService.queueCustomOrderConfirmation(number,true);}catch(Exception ignored){}
-            if(JOptionPane.showConfirmDialog(this,"Print the order slip now?","Order Saved",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION)CustomOrderSlipPrinter.print(number);
-            clearOrder();loadOrders();
+            loadingState.loading(false, java.time.Instant.now());
+            UiTaskRunner.submit(this,"custom-orders.save",()->{
+                String number=CustomOrderDataService.saveCustomOrder(request);
+                try{EmailOutboxService.queueCustomOrderConfirmation(number,true);}catch(Exception ignored){}
+                return number;
+            },number->{
+                loadingState.ready(java.time.Instant.now());
+                JOptionPane.showMessageDialog(this,"Custom order "+number+" saved.");
+                if(JOptionPane.showConfirmDialog(this,"Print the order slip now?","Order Saved",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION)printSlipAsync(number);
+                clearOrder();loadOrders();
+            },failure->loadingState.failed(failure.getMessage(),false,this::saveOrder));
         }catch(Exception e){error(e);}
     }
     private void clearOrder(){lines.clear();guidedOrder.orderLineModel.setRowCount(0);guidedOrder.customerInfoPanel.clear();guidedOrder.dueDateEnabledBox.setSelected(false);guidedOrder.dueDateField.setText("");guidedOrder.dueDateField.setEnabled(false);guidedOrder.orderNotesArea.setText("");guidedOrder.upfrontPaymentField.setText("0");guidedOrder.paymentReferenceField.setText("");guidedOrder.depositOverrideReasonField.setText("");selectedPaymentMethod=null;guidedOrder.paymentMethodGroup.clearSelection();guidedOrder.showLinesStep();clearLine();updateTotal();}
@@ -213,18 +220,130 @@ public class CustomOrders extends JFrame {
                 failure -> loadingState.failed(failure.getMessage(), false,
                         () -> printSlipAsync(orderNumber)));
     }
-    private CustomOrdersLookupTabPanel.Handler handler(){return new CustomOrdersLookupTabPanel.Handler(){public void loadLookupOrders(DefaultTableModel m,String s){loadLookupOrdersAsync(m,s);}public Long selectedLookupOrderId(JTable t,DefaultTableModel m){return selected(t,m);}public void loadOrderDetails(Long id,JTextArea a){loadDetails(id,a);}public List<CustomOrdersLookupTabPanel.LineReturnOption>loadReturnableLines(Long id){try{var j=LanApiClient.customOrderWorkflowRead("RETURNS",id,null);List<LanCustomOrderWorkflowService.ReturnLine>r=GSON.fromJson(j.get("lines"),new TypeToken<List<LanCustomOrderWorkflowService.ReturnLine>>(){}.getType());return r.stream().map(x->new CustomOrdersLookupTabPanel.LineReturnOption(x.lineId(),x.item(),x.variant(),x.lineTotal(),x.returned(),x.remaining())).toList();}catch(Exception e){error(e);return List.of();}}public List<CustomOrdersLookupTabPanel.LineDeliveryOption>loadDeliverableLines(Long id){try{var j=LanApiClient.customOrderWorkflowRead("DELIVERIES",id,null);List<LanCustomOrderWorkflowService.DeliveryLine>r=GSON.fromJson(j.get("lines"),new TypeToken<List<LanCustomOrderWorkflowService.DeliveryLine>>(){}.getType());return r.stream().map(x->new CustomOrdersLookupTabPanel.LineDeliveryOption(x.lineId(),x.item(),x.variant(),x.deliveryStatus(),x.returnStatus())).toList();}catch(Exception e){error(e);return List.of();}}public List<CustomOrdersLookupTabPanel.ProductionLineOption>loadProductionLines(Long id){try{var j=LanApiClient.customOrderWorkflowRead("PRODUCTION",id,null);List<LanCustomOrderWorkflowService.ProductionLine>r=GSON.fromJson(j.get("lines"),new TypeToken<List<LanCustomOrderWorkflowService.ProductionLine>>(){}.getType());return r.stream().map(x->new CustomOrdersLookupTabPanel.ProductionLineOption(x.lineId(),x.item(),x.variant(),productionLabel(x.productionStatus()),x.deliveryStatus())).toList();}catch(Exception e){error(e);return List.of();}}public BigDecimal parseNullableMoneyValue(Object v){try{return new BigDecimal(String.valueOf(v).replace(",",""));}catch(Exception e){return null;}}public boolean applyLookupPayment(Long id,String a,String m,String ref,Component p){JsonObject b=mutation("PAYMENT",id);try{b.addProperty("amount",new BigDecimal(a));b.addProperty("method",m);b.addProperty("reference",ref);return execute(b,"Payment applied.");}catch(Exception e){error(e);return false;}}public boolean applyLookupRefund(Long id,String a,String m,String ref,String reason,Component p){return false;}public boolean applyLookupLineRefund(Long id,List<CustomOrdersLookupTabPanel.LineReturnRequest>r,String m,String ref,String reason,Component p){try{List<LanCustomOrderWorkflowService.ReturnRequest>returns=r.stream().map(x->new LanCustomOrderWorkflowService.ReturnRequest(x.lineId(),x.refundAmount(),x.partial(),x.restockAction())).toList();JsonObject b=mutation("LINE_RETURN",id);b.add("returns",GSON.toJsonTree(returns));b.addProperty("method",m);b.addProperty("reference",ref);b.addProperty("reason",reason);return executeRefundWithApproval(b);}catch(Exception e){error(e);return false;}}public boolean markLookupOrderDelivered(Long id,Component p){return execute(mutation("DELIVER_ORDER",id),"Order marked delivered.");}public boolean markLookupLinesDelivered(Long id,List<Long>ids,String notes,Component p){JsonObject b=mutation("DELIVER_LINES",id);b.add("lineIds",GSON.toJsonTree(ids));b.addProperty("notes",notes);return execute(b,"Selected lines delivered.");}public boolean updateProductionLines(Long id,List<Long>ids,String status,String notes,Component p){JsonObject b=mutation("PRODUCTION",id);b.add("lineIds",GSON.toJsonTree(ids));b.addProperty("status",status);b.addProperty("notes",notes);return execute(b,"Production updated.");}public boolean canRefundPayments(){return can("CUSTOM_ORDER_LINE_RETURNS")||can("CUSTOM_ORDER_REFUNDS")||can("CUSTOM_ORDER_OVERRIDES");}public boolean canDeliverOrderLines(){return can("CUSTOM_ORDER_LINE_DELIVERY")||can("CUSTOM_ORDER_OVERRIDES");}public boolean canUpdateProduction(){return can("CUSTOM_ORDER_PRODUCTION_STEPS")||can("CUSTOM_ORDER_OVERRIDES");}public void refreshRelatedOrders(){loadOrders();}};}
-    private boolean execute(JsonObject b,String message){try{LanApiClient.customOrderWorkflowMutation(b,UUID.randomUUID().toString());JOptionPane.showMessageDialog(this,message);loadOrders();return true;}catch(Exception e){error(e);return false;}}
-    private boolean executeRefundWithApproval(JsonObject body){
-        try{
-            LanApiClient.customOrderWorkflowMutation(body,UUID.randomUUID().toString());
-        }catch(LanApiClient.LanApiException e){
-            if(!"APPROVAL_REQUIRED".equals(e.code())){error(e);return false;}
-            ManagerApprovalService.ApprovalResult approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval","Reason for custom order refund approval:");
-            if(approval==null)return false;body.addProperty("approvalToken",approval.lanApprovalToken());body.addProperty("approvalReason",approval.reason());
-            try{LanApiClient.customOrderWorkflowMutation(body,UUID.randomUUID().toString());}catch(Exception retry){error(retry);return false;}
-        }catch(Exception e){error(e);return false;}
-        JOptionPane.showMessageDialog(this,"Line return recorded.");loadOrders();return true;
+    private CustomOrdersLookupTabPanel.Handler handler() {
+        return new CustomOrdersLookupTabPanel.Handler() {
+            public void loadLookupOrders(DefaultTableModel model, String search) { loadLookupOrdersAsync(model, search); }
+            public Long selectedLookupOrderId(JTable table, DefaultTableModel model) { return selected(table, model); }
+            public void loadOrderDetails(Long id, JTextArea area) { loadDetails(id, area); }
+            public void loadReturnableLines(Long id, Consumer<List<CustomOrdersLookupTabPanel.LineReturnOption>> completion) { loadReturnableLinesAsync(id, completion); }
+            public void loadDeliverableLines(Long id, Consumer<List<CustomOrdersLookupTabPanel.LineDeliveryOption>> completion) { loadDeliverableLinesAsync(id, completion); }
+            public void loadProductionLines(Long id, Consumer<List<CustomOrdersLookupTabPanel.ProductionLineOption>> completion) { loadProductionLinesAsync(id, completion); }
+            public BigDecimal parseNullableMoneyValue(Object value) { try { return new BigDecimal(String.valueOf(value).replace(",", "")); } catch (Exception ex) { return null; } }
+            public void applyLookupPayment(Long id, String amount, String method, String reference, Component parent, Consumer<Boolean> completion) {
+                try {
+                    JsonObject body = mutation("PAYMENT", id);
+                    body.addProperty("amount", new BigDecimal(amount));
+                    body.addProperty("method", method);
+                    body.addProperty("reference", reference);
+                    executeAsync(body, "Payment applied.", completion);
+                } catch (Exception ex) { error(ex); completion.accept(false); }
+            }
+            public void applyLookupLineRefund(Long id, List<CustomOrdersLookupTabPanel.LineReturnRequest> requests, String method, String reference, String reason, Component parent, Consumer<Boolean> completion) {
+                List<LanCustomOrderWorkflowService.ReturnRequest> returns = requests.stream()
+                        .map(request -> new LanCustomOrderWorkflowService.ReturnRequest(request.lineId(), request.refundAmount(), request.partial(), request.restockAction()))
+                        .toList();
+                JsonObject body = mutation("LINE_RETURN", id);
+                body.add("returns", GSON.toJsonTree(returns));
+                body.addProperty("method", method);
+                body.addProperty("reference", reference);
+                body.addProperty("reason", reason);
+                executeRefundWithApprovalAsync(body, completion);
+            }
+            public void markLookupLinesDelivered(Long id, List<Long> ids, String notes, Component parent, Consumer<Boolean> completion) {
+                JsonObject body = mutation("DELIVER_LINES", id);
+                body.add("lineIds", GSON.toJsonTree(ids));
+                body.addProperty("notes", notes);
+                executeAsync(body, "Selected lines delivered.", completion);
+            }
+            public void updateProductionLines(Long id, List<Long> ids, String status, String notes, Component parent, Consumer<Boolean> completion) {
+                JsonObject body = mutation("PRODUCTION", id);
+                body.add("lineIds", GSON.toJsonTree(ids));
+                body.addProperty("status", status);
+                body.addProperty("notes", notes);
+                executeAsync(body, "Production updated.", completion);
+            }
+            public boolean canRefundPayments() { return can("CUSTOM_ORDER_LINE_RETURNS") || can("CUSTOM_ORDER_REFUNDS") || can("CUSTOM_ORDER_OVERRIDES"); }
+            public boolean canDeliverOrderLines() { return can("CUSTOM_ORDER_LINE_DELIVERY") || can("CUSTOM_ORDER_OVERRIDES"); }
+            public boolean canUpdateProduction() { return can("CUSTOM_ORDER_PRODUCTION_STEPS") || can("CUSTOM_ORDER_OVERRIDES"); }
+            public void refreshRelatedOrders() { loadOrders(); }
+        };
+    }
+
+    private void loadReturnableLinesAsync(Long id, Consumer<List<CustomOrdersLookupTabPanel.LineReturnOption>> completion) {
+        UiTaskRunner.submit(this, "custom-orders.return-lines", () -> {
+            var json = LanApiClient.customOrderWorkflowRead("RETURNS", id, null);
+            List<LanCustomOrderWorkflowService.ReturnLine> rows = GSON.fromJson(json.get("lines"), new TypeToken<List<LanCustomOrderWorkflowService.ReturnLine>>() { }.getType());
+            return rows.stream().map(row -> new CustomOrdersLookupTabPanel.LineReturnOption(row.lineId(), row.item(), row.variant(), row.lineTotal(), row.returned(), row.remaining())).toList();
+        }, completion, failure -> failInline("Could not load refundable lines.", failure, () -> loadReturnableLinesAsync(id, completion), completion));
+    }
+
+    private void loadDeliverableLinesAsync(Long id, Consumer<List<CustomOrdersLookupTabPanel.LineDeliveryOption>> completion) {
+        UiTaskRunner.submit(this, "custom-orders.delivery-lines", () -> {
+            var json = LanApiClient.customOrderWorkflowRead("DELIVERIES", id, null);
+            List<LanCustomOrderWorkflowService.DeliveryLine> rows = GSON.fromJson(json.get("lines"), new TypeToken<List<LanCustomOrderWorkflowService.DeliveryLine>>() { }.getType());
+            return rows.stream().map(row -> new CustomOrdersLookupTabPanel.LineDeliveryOption(row.lineId(), row.item(), row.variant(), row.deliveryStatus(), row.returnStatus())).toList();
+        }, completion, failure -> failInline("Could not load deliverable lines.", failure, () -> loadDeliverableLinesAsync(id, completion), completion));
+    }
+
+    private void loadProductionLinesAsync(Long id, Consumer<List<CustomOrdersLookupTabPanel.ProductionLineOption>> completion) {
+        UiTaskRunner.submit(this, "custom-orders.production-lines", () -> {
+            var json = LanApiClient.customOrderWorkflowRead("PRODUCTION", id, null);
+            List<LanCustomOrderWorkflowService.ProductionLine> rows = GSON.fromJson(json.get("lines"), new TypeToken<List<LanCustomOrderWorkflowService.ProductionLine>>() { }.getType());
+            return rows.stream().map(row -> new CustomOrdersLookupTabPanel.ProductionLineOption(row.lineId(), row.item(), row.variant(), productionLabel(row.productionStatus()), row.deliveryStatus())).toList();
+        }, completion, failure -> failInline("Could not load production lines.", failure, () -> loadProductionLinesAsync(id, completion), completion));
+    }
+
+    private <T> void failInline(String message, Throwable failure, Runnable retry, Consumer<T> completion) {
+        loadingState.failed(message + " " + failure.getMessage(), false, retry);
+        completion.accept(null);
+    }
+
+    private void executeAsync(JsonObject body, String message, Consumer<Boolean> completion) {
+        String action = body.get("action").getAsString().toLowerCase();
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "custom-orders.mutation." + action, () -> {
+            LanApiClient.customOrderWorkflowMutation(body, UUID.randomUUID().toString());
+            return Boolean.TRUE;
+        }, ignored -> {
+            loadingState.ready(java.time.Instant.now());
+            JOptionPane.showMessageDialog(this, message);
+            completion.accept(true);
+        }, failure -> {
+            loadingState.failed(failure.getMessage(), false, () -> executeAsync(body, message, completion));
+            completion.accept(false);
+        });
+    }
+
+    private void executeRefundWithApprovalAsync(JsonObject body, Consumer<Boolean> completion) {
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "custom-orders.mutation.line-return", () -> {
+            LanApiClient.customOrderWorkflowMutation(body, UUID.randomUUID().toString());
+            return Boolean.TRUE;
+        }, ignored -> finishRefund(completion), failure -> {
+            if (!(failure instanceof LanApiClient.LanApiException apiFailure) || !"APPROVAL_REQUIRED".equals(apiFailure.code())) {
+                loadingState.failed(failure.getMessage(), false, () -> executeRefundWithApprovalAsync(body, completion));
+                completion.accept(false);
+                return;
+            }
+            try {
+                ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(this,
+                        "CUSTOM_ORDER_REFUND_APPROVAL", "Custom Order Refund Approval",
+                        "Reason for custom order refund approval:");
+                if (approval == null) { completion.accept(false); return; }
+                body.addProperty("approvalToken", approval.lanApprovalToken());
+                body.addProperty("approvalReason", approval.reason());
+                executeAsync(body, "Line return recorded.", completion);
+            } catch (Exception ex) {
+                error(ex);
+                completion.accept(false);
+            }
+        });
+    }
+
+    private void finishRefund(Consumer<Boolean> completion) {
+        loadingState.ready(java.time.Instant.now());
+        JOptionPane.showMessageDialog(this, "Line return recorded.");
+        completion.accept(true);
     }
     private static JsonObject mutation(String action,long order){JsonObject b=new JsonObject();b.addProperty("action",action);b.addProperty("orderId",order);return b;}
 
