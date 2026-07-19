@@ -5,6 +5,7 @@ import data.DatabaseConfig;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
@@ -162,11 +163,74 @@ public final class PostgresRuntimeService {
     }
 
     public static CommandResult ensureSyncServiceInstalled() throws Exception {
+        boolean repairedLauncher = repairInstalledSyncLauncherIfNeeded();
         CommandResult status = syncServiceStatus();
         if (isSyncServiceInstalled(status.output())) {
+            if (repairedLauncher) {
+                restartInstalledSyncService();
+            }
             return new CommandResult(true, "SmartStock background sync service is already installed.\n\n" + status.output());
         }
         return installSyncService();
+    }
+
+    private static boolean repairInstalledSyncLauncherIfNeeded() throws Exception {
+        Path currentJar = currentPackagedJar();
+        if (currentJar == null) return false;
+        Path serviceDir = Path.of(System.getProperty("user.home"), ".smartstock", "sync-service");
+        Path serviceAppDir = serviceDir.resolve("app");
+        if (!Files.isDirectory(serviceAppDir)) return false;
+        Path serviceJar = serviceAppDir.resolve(currentJar.getFileName().toString());
+        if (!Files.exists(serviceJar)) {
+            Files.copy(currentJar, serviceJar);
+        }
+        boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        Path launcher = serviceDir.resolve(windows
+                ? "run-smartstock-sync-service.cmd" : "run-smartstock-sync-service.command");
+        String expected = installedSyncLauncherContent(windows, serviceAppDir, currentJar.getFileName().toString());
+        String existing = Files.exists(launcher) ? Files.readString(launcher) : "";
+        if (expected.equals(existing)) return false;
+        Files.writeString(launcher, expected);
+        if (!windows) {
+            try {
+                Files.setPosixFilePermissions(launcher,
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            } catch (UnsupportedOperationException ignored) {
+                launcher.toFile().setExecutable(true, true);
+            }
+        }
+        return true;
+    }
+
+    private static Path currentPackagedJar() {
+        try {
+            var source = PostgresRuntimeService.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) return null;
+            Path path = Path.of(source.getLocation().toURI()).toAbsolutePath().normalize();
+            String name = path.getFileName() == null ? "" : path.getFileName().toString();
+            return name.startsWith("inventory-management-") && name.endsWith(".jar") ? path : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    static String installedSyncLauncherContent(boolean windows, Path appDir, String jarName) {
+        if (windows) {
+            return "@echo off\r\ncd /d \"" + appDir + "\"\r\n"
+                    + "java -jar \"" + jarName + "\" --sync-service\r\n";
+        }
+        return "#!/usr/bin/env bash\nset -euo pipefail\n"
+                + "cd " + shellSingleQuoted(appDir.toString()) + "\n"
+                + "exec java -jar " + shellSingleQuoted(jarName) + " --sync-service\n";
+    }
+
+    private static void restartInstalledSyncService() throws Exception {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (os.contains("win")) {
+            runPowerShell("schtasks /Run /TN SmartStockServerService", Duration.ofSeconds(30));
+        } else {
+            runShell("launchctl kickstart -k \"gui/$(id -u)/com.smartstock.sync\"", Duration.ofSeconds(30));
+        }
     }
 
     public static CommandResult syncServiceStatus() throws Exception {
