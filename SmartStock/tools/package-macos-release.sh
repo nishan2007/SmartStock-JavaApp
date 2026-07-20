@@ -87,7 +87,10 @@ build_macos_icons() {
 cd "$ROOT_DIR"
 "$ROOT_DIR/tools/lan-api-cutover-check.sh"
 "$ROOT_DIR/tools/security-check.sh"
-mvn package
+# Release bundles must be built from a clean output directory. A plain
+# `mvn package` can retain resources that were renamed or removed from src,
+# silently bloating the updater archive with stale files.
+mvn clean package
 
 JAR_PATH="$(ls -t "$TARGET_DIR"/inventory-management-*.jar | head -n 1)"
 JAR_NAME="$(basename "$JAR_PATH")"
