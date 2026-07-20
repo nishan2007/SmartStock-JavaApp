@@ -162,7 +162,10 @@ clear_extended_attributes "$APP_BUNDLE"
 codesign --force --deep --sign - "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
-ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+# The currently installed updater extracts this archive with ditto. Excluding
+# resource forks and extended attributes prevents FinderInfo/AppleDouble data
+# from being restored onto the staged bundle and invalidating its signature.
+ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_BUNDLE" "$ZIP_PATH"
 
 if command -v hdiutil >/dev/null 2>&1; then
   rm -rf "$DMG_STAGING_DIR"

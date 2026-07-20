@@ -210,4 +210,10 @@ class ResponsiveLoadingArchitectureTest {
         assertTrue(catalog.contains("custom-catalog.save-variant"));
         assertTrue(notifications.contains("UiTaskRunner.submit(this, \"notifications.\" + action"));
     }
+
+    @Test
+    void macReleaseArchiveExcludesMetadataThatBreaksUpdateSignatures() throws Exception {
+        String packaging = Files.readString(Path.of("tools/package-macos-release.sh"));
+        assertTrue(packaging.contains("ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl"));
+    }
 }
