@@ -35,6 +35,10 @@ class SmartStockUpdaterTest {
         Path app = Path.of("/Applications/SmartStock.app");
         assertEquals(List.of("/usr/bin/open", "-n", app.toString()),
                 SmartStockUpdater.macOpenCommand(app));
+        assertEquals(List.of("/usr/bin/xattr", "-rc", app.toString()),
+                SmartStockUpdater.macXattrCommand(app));
+        assertEquals(List.of("/usr/bin/codesign", "--verify", "--deep", "--strict", app.toString()),
+                SmartStockUpdater.macCodesignVerifyCommand(app));
     }
 
     @Test

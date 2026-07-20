@@ -126,6 +126,7 @@ public final class SmartStockUpdater {
         Path previousBundle = parent.resolve("." + currentBundle.getFileName() + ".previous-" + nonce);
         try {
             copyMacBundle(newBundle, stagedBundle);
+            prepareMacBundleForInstall(stagedBundle);
             validateMacBundle(stagedBundle);
             if (Files.exists(currentBundle)) {
                 moveMacBundle(currentBundle, previousBundle);
@@ -152,6 +153,40 @@ public final class SmartStockUpdater {
         Path appDir = bundle.resolve("Contents").resolve("app");
         if (!Files.isExecutable(executable) || findReleaseJar(appDir) == null) {
             throw new IOException("The staged Mac app is incomplete and was not installed.");
+        }
+    }
+
+    private static void prepareMacBundleForInstall(Path bundle) throws IOException {
+        if (!isMac()) return;
+        runRequiredCommand(macXattrCommand(bundle), "Could not clear Mac update metadata");
+        runRequiredCommand(macCodesignVerifyCommand(bundle), "The downloaded Mac app signature is invalid");
+    }
+
+    static List<String> macXattrCommand(Path appBundle) {
+        return List.of("/usr/bin/xattr", "-rc", appBundle.toString());
+    }
+
+    static List<String> macCodesignVerifyCommand(Path appBundle) {
+        return List.of("/usr/bin/codesign", "--verify", "--deep", "--strict", appBundle.toString());
+    }
+
+    private static void runRequiredCommand(List<String> command, String failureMessage) throws IOException {
+        try {
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            String output;
+            try (InputStream input = process.getInputStream()) {
+                output = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            if (!process.waitFor(2, TimeUnit.MINUTES)) {
+                process.destroyForcibly();
+                throw new IOException(failureMessage + ": timed out.");
+            }
+            if (process.exitValue() != 0) {
+                throw new IOException(failureMessage + (output.isBlank() ? "." : ": " + output));
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException(failureMessage + ": interrupted.", ex);
         }
     }
 
