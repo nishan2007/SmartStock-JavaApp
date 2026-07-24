@@ -2,9 +2,13 @@ package ui.screens;
 
 import data.DatabaseConfig;
 import data.DatabaseMode;
+import data.EnvironmentProfile;
 import services.LanApiClient;
 import services.LanApiServer;
-import services.LanCutoverPolicy;
+import services.PcscNfcService;
+import services.ServerStoreSetupService;
+import services.ServerSupabaseCredentials;
+import services.ServerFirstAdministratorService;
 import managers.SupabaseSessionManager;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
@@ -39,6 +43,7 @@ import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Insets;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 
 public class WelcomeFrame extends JFrame {
@@ -53,7 +58,8 @@ public class WelcomeFrame extends JFrame {
     private final JLabel deckersLogoLabel = new JLabel("Deckers", SwingConstants.CENTER);
     private final JLabel smartStockLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
     private final JButton refreshStatusBtn = new JButton("Refresh System Status");
-    private final JButton setupBtn = new JButton("Initial Database Setup");
+    private final JButton setupBtn = new JButton("Guided Setup");
+    private final JButton environmentBtn = new JButton("Switch Environment");
     private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
     private final JButton serverAddressBtn = new JButton("Set SmartStock Server Address");
     private final JButton syncStatusBtn = new JButton("Sync Status");
@@ -62,11 +68,21 @@ public class WelcomeFrame extends JFrame {
     private Timer systemStatusRefreshTimer;
     private boolean systemStatusRefreshInProgress;
     private boolean initialSetupWindowOpened;
+    private volatile boolean nfcMonitorRunning;
+    private volatile boolean loginAvailable;
+    private final boolean openedAfterConnectionLoss;
     private String lastGreetingKey = "";
-    private record SystemStatus(String localStatus, String onlineStatus, String message, boolean canLogin) {}
+    private record SystemStatus(String localStatus, String onlineStatus, String message,
+                                boolean canLogin, boolean setupRequired,
+                                boolean setupVisible) {}
 
     public WelcomeFrame() {
+        this(false);
+    }
+
+    public WelcomeFrame(boolean openedAfterConnectionLoss) {
         super("SmartStock Welcome");
+        this.openedAfterConnectionLoss = openedAfterConnectionLoss;
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(960, 650);
         setMinimumSize(new Dimension(860, 600));
@@ -123,9 +139,11 @@ public class WelcomeFrame extends JFrame {
         root.add(centerPanel, BorderLayout.CENTER);
 
         setContentPane(root);
-        pairRegisterBtn.setVisible(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && !LanApiClient.isPaired());
-        serverAddressBtn.setVisible(DatabaseConfig.load().mode() == DatabaseMode.CLIENT);
-        setupBtn.setVisible(!(DatabaseConfig.load().mode() == DatabaseMode.CLIENT && LanCutoverPolicy.isEnforced()));
+        boolean apiClientMode = DatabaseConfig.load().mode() == DatabaseMode.CLIENT
+                || DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN;
+        pairRegisterBtn.setVisible(apiClientMode && !LanApiClient.isPaired());
+        serverAddressBtn.setVisible(apiClientMode);
+        setupBtn.setVisible(isInitialSetupRequired(DatabaseConfig.load()));
         refreshModeLabel();
         refreshSystemStats();
         updateGreeting();
@@ -134,6 +152,10 @@ public class WelcomeFrame extends JFrame {
         wireWindowTimers();
         wireActions();
         continueBtn.setEnabled(false);
+        if (openedAfterConnectionLoss) {
+            setTitle("SmartStock Welcome - Server Connection Lost");
+            statusLabel.setText("Status: Connection lost. SmartStock is locked until the server reconnects.");
+        }
         ThemeManager.applyToWindow(this);
         if (DatabaseConfig.hasConfigFile()) {
             SwingUtilities.invokeLater(this::refreshSystemStatus);
@@ -165,6 +187,7 @@ public class WelcomeFrame extends JFrame {
         styleWelcomeButton(refreshStatusBtn, DeckersPalette.ORANGE);
         styleWelcomeButton(syncStatusBtn, DeckersPalette.MAGENTA);
         styleWelcomeButton(setupBtn, DeckersPalette.PURPLE);
+        styleWelcomeButton(environmentBtn, DeckersPalette.CORAL);
         styleWelcomeButton(pairRegisterBtn, DeckersPalette.PURPLE);
         styleWelcomeButton(serverAddressBtn, DeckersPalette.LIME);
 
@@ -185,6 +208,8 @@ public class WelcomeFrame extends JFrame {
         panel.add(syncStatusBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(setupBtn);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(environmentBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(pairRegisterBtn);
         panel.add(Box.createVerticalStrut(8));
@@ -244,7 +269,8 @@ public class WelcomeFrame extends JFrame {
 
     private void wireActions() {
         refreshStatusBtn.addActionListener(e -> refreshSystemStatus());
-        setupBtn.addActionListener(e -> openDatabaseSetup());
+        setupBtn.addActionListener(e -> openGuidedSetup());
+        environmentBtn.addActionListener(e -> openEnvironmentSetup());
         pairRegisterBtn.addActionListener(e -> pairRegister());
         serverAddressBtn.addActionListener(e -> configureServerAddress());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
@@ -252,11 +278,13 @@ public class WelcomeFrame extends JFrame {
     }
 
     private void pairRegister() {
+        boolean remote = DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN;
         String phrase = JOptionPane.showInputDialog(
                 this,
-                "On the SmartStock server, open Device Management > Security Status.\n"
+                (remote ? "On the Remote Admin gateway, obtain the current enrollment phrase.\n"
+                        : "On the SmartStock server, open Device Management > Security Status.\n")
                         + "Enter the temporary administrator pairing phrase shown there:",
-                "One-Time Register Pairing",
+                remote ? "One-Time Remote Admin Enrollment" : "One-Time Register Pairing",
                 JOptionPane.PLAIN_MESSAGE
         );
         if (phrase == null || phrase.isBlank()) return;
@@ -288,8 +316,9 @@ public class WelcomeFrame extends JFrame {
                     statusLabel.setText("Status: Pairing was not completed.");
                     JOptionPane.showMessageDialog(WelcomeFrame.this,
                             "This register could not be paired.\n\n" + message
-                                    + "\n\nConfirm both Macs are on the same network, then request a new phrase from Device Management > Security Status.",
-                            "Register Pairing", JOptionPane.ERROR_MESSAGE);
+                                    + (remote ? "\n\nConfirm the public gateway address and request a new gateway enrollment phrase."
+                                    : "\n\nConfirm both Macs are on the same network, then request a new phrase from Device Management > Security Status."),
+                            remote ? "Remote Admin Enrollment" : "Register Pairing", JOptionPane.ERROR_MESSAGE);
                 }
             }
         }.execute();
@@ -330,6 +359,31 @@ public class WelcomeFrame extends JFrame {
         setup.setVisible(true);
         setup.toFront();
         setup.requestFocus();
+    }
+
+    private void openGuidedSetup() {
+        DatabaseConfig config = DatabaseConfig.load();
+        if (DatabaseConfig.hasConfigFile() && config.mode() == DatabaseMode.SERVER) {
+            ServerSetupWizard setup = new ServerSetupWizard(this);
+            setup.setVisible(true);
+            setup.toFront();
+            setup.requestFocus();
+            return;
+        }
+        openEnvironmentSetup();
+    }
+
+    private void openEnvironmentSetup() {
+        InitialSetupWizard setup = new InitialSetupWizard(this);
+        setup.setVisible(true);
+        setup.toFront();
+        setup.requestFocus();
+    }
+
+    void refreshAfterSetup() {
+        refreshModeLabel();
+        refreshSystemStats();
+        refreshSystemStatus();
     }
 
     private void styleWelcomeButton(JButton button, Color accent) {
@@ -393,7 +447,13 @@ public class WelcomeFrame extends JFrame {
     private void wireWindowTimers() {
         addWindowListener(new WindowAdapter() {
             @Override
+            public void windowOpened(WindowEvent e) {
+                startWelcomeNfcMonitor();
+            }
+
+            @Override
             public void windowClosed(WindowEvent e) {
+                nfcMonitorRunning = false;
                 stopWelcomeTimers();
             }
         });
@@ -424,9 +484,14 @@ public class WelcomeFrame extends JFrame {
 
     private void refreshModeLabel() {
         DatabaseConfig config = DatabaseConfig.load();
-        String dbText = config.jdbcUrl() == null || config.jdbcUrl().isBlank() ? "Not configured" : config.jdbcUrl();
-        modeLabel.setText("<html><b>Mode:</b> " + escapeHtml(config.mode().name())
-                + "<br><b>Primary DB:</b> " + escapeHtml(dbText) + "</html>");
+        String dbText = config.mode() == DatabaseMode.REMOTE_ADMIN
+                ? LanApiClient.baseUri().toString()
+                : config.jdbcUrl() == null || config.jdbcUrl().isBlank() ? "Not configured" : config.jdbcUrl();
+        modeLabel.setText("<html><b>Environment:</b> "
+                + escapeHtml(EnvironmentProfile.active().displayName())
+                + "<br><b>Mode:</b> " + escapeHtml(config.mode().name())
+                + "<br><b>" + (config.mode() == DatabaseMode.REMOTE_ADMIN ? "Gateway" : "Primary DB")
+                + ":</b> " + escapeHtml(dbText) + "</html>");
     }
 
     private void refreshSystemStats() {
@@ -455,6 +520,7 @@ public class WelcomeFrame extends JFrame {
         }
         statusLabel.setText("Status: Checking saved sign-in...");
         continueBtn.setEnabled(false);
+        loginAvailable = false;
         refreshStatusBtn.setEnabled(false);
 
         SwingWorker<String, Void> worker = new SwingWorker<>() {
@@ -481,16 +547,18 @@ public class WelcomeFrame extends JFrame {
                 if (errorMessage == null || errorMessage.isBlank()) {
                     statusLabel.setText("Status: Saved sign-in found. Click Log In to continue.");
                     continueBtn.setEnabled(true);
+                    loginAvailable = true;
                     return;
                 }
 
                 statusLabel.setText("Status: Database setup required");
                 continueBtn.setEnabled(false);
+                loginAvailable = false;
                 JOptionPane.showMessageDialog(
                         WelcomeFrame.this,
                         "Saved sign-in was found, but the database is not ready yet.\n\n"
                                 + errorMessage
-                                + "\n\nRun Initial Database Setup if this workstation is being installed.",
+                                + "\n\nRun Guided Setup if this workstation is being installed.",
                         "Database Setup Required",
                         JOptionPane.WARNING_MESSAGE
                 );
@@ -521,7 +589,8 @@ public class WelcomeFrame extends JFrame {
         refreshModeLabel();
         refreshSystemStats();
         DatabaseConfig config = DatabaseConfig.load();
-        String connectionLabel = config.mode() == DatabaseMode.CLIENT ? "SmartStock Server: " : "Local DB: ";
+        String connectionLabel = config.mode() == DatabaseMode.REMOTE_ADMIN ? "Cloud Gateway: "
+                : config.mode() == DatabaseMode.CLIENT ? "SmartStock Server: " : "Local DB: ";
         setupBtn.setVisible(isInitialSetupRequired(config));
         if (!DatabaseConfig.hasConfigFile()) {
             systemStatusRefreshInProgress = false;
@@ -529,8 +598,9 @@ public class WelcomeFrame extends JFrame {
             onlineDbLabel.setText("Online DB: Setup required");
             localDbLabel.setForeground(DeckersPalette.CORAL);
             onlineDbLabel.setForeground(DeckersPalette.CORAL);
-            statusLabel.setText("Status: Initial Database Setup is required on this Mac.");
+            statusLabel.setText("Status: Guided Setup is required on this computer.");
             continueBtn.setEnabled(false);
+            loginAvailable = false;
             refreshStatusBtn.setEnabled(true);
             return;
         }
@@ -541,6 +611,7 @@ public class WelcomeFrame extends JFrame {
             onlineDbLabel.setForeground(DeckersPalette.muted());
             statusLabel.setText("Status: Refreshing system status...");
             continueBtn.setEnabled(false);
+            loginAvailable = false;
         }
         refreshStatusBtn.setEnabled(false);
 
@@ -549,9 +620,32 @@ public class WelcomeFrame extends JFrame {
             protected SystemStatus doInBackground() {
                 String localStatus = checkLocalDb(config);
                 String onlineStatus = checkOnlineDb(config);
-                boolean canLogin = localStatus.startsWith("Online") && LanApiClient.isPaired();
-                String message = canLogin ? "Ready for login" : "SmartStock Server Service needs attention";
-                return new SystemStatus(localStatus, onlineStatus, message, canLogin);
+                boolean setupRequired = isInitialSetupRequired(config);
+                if (!setupRequired && config.mode() == DatabaseMode.SERVER) {
+                    try {
+                        ServerStoreSetupService.Store store =
+                                ServerStoreSetupService.find(String.valueOf(config.locationId()));
+                        setupRequired = store == null || store.locationId() != config.locationId();
+                        if (!setupRequired) setupRequired = !ServerFirstAdministratorService.isComplete();
+                    } catch (Exception ex) {
+                        setupRequired = true;
+                    }
+                }
+                boolean firstLoginPending = !setupRequired
+                        && config.mode() == DatabaseMode.SERVER
+                        && ServerFirstAdministratorService.requiresFirstOnlineLogin();
+                boolean canLogin = !setupRequired
+                        && localStatus.startsWith("Online")
+                        && LanApiClient.isPaired();
+                String message = canLogin
+                        ? firstLoginPending
+                        ? "First administrator must sign in online once"
+                        : "Ready for login"
+                        : setupRequired
+                        ? "Guided Setup is incomplete"
+                        : "SmartStock Server Service needs attention";
+                return new SystemStatus(localStatus, onlineStatus, message, canLogin,
+                        setupRequired, setupRequired || firstLoginPending);
             }
 
             @Override
@@ -560,10 +654,18 @@ public class WelcomeFrame extends JFrame {
                 refreshStatusBtn.setEnabled(true);
                 try {
                     SystemStatus result = get();
+                    setupBtn.setVisible(result.setupVisible());
                     updateStatusLabel(localDbLabel, connectionLabel + result.localStatus(), result.localStatus());
                     updateStatusLabel(onlineDbLabel, "Online DB: " + result.onlineStatus(), result.onlineStatus());
-                    statusLabel.setText("Status: " + result.message());
+                    if (openedAfterConnectionLoss && !result.canLogin()) {
+                        statusLabel.setText("Status: Connection lost. SmartStock is locked until the server reconnects.");
+                    } else if (openedAfterConnectionLoss) {
+                        statusLabel.setText("Status: Server connection restored. Log in to continue.");
+                    } else {
+                        statusLabel.setText("Status: " + result.message());
+                    }
                     continueBtn.setEnabled(result.canLogin());
+                    loginAvailable = result.canLogin();
                 } catch (Exception ex) {
                     localDbLabel.setText(connectionLabel + "Failed");
                     onlineDbLabel.setText("Online DB: Failed");
@@ -571,6 +673,7 @@ public class WelcomeFrame extends JFrame {
                     onlineDbLabel.setForeground(DeckersPalette.CORAL);
                     statusLabel.setText("Status: " + getRootCauseMessage(ex));
                     continueBtn.setEnabled(false);
+                    loginAvailable = false;
                 }
             }
         };
@@ -579,11 +682,24 @@ public class WelcomeFrame extends JFrame {
     }
 
     private boolean isInitialSetupRequired(DatabaseConfig config) {
-        if (!DatabaseConfig.hasConfigFile()) return true;
-        if (config.mode() == DatabaseMode.CLIENT) {
+        return isSetupRequired(config, DatabaseConfig.hasConfigFile(),
+                ServerSupabaseCredentials.isConfigured());
+    }
+
+    static boolean isSetupRequired(DatabaseConfig config, boolean configFileExists) {
+        return isSetupRequired(config, configFileExists, true);
+    }
+
+    static boolean isSetupRequired(DatabaseConfig config, boolean configFileExists,
+                                   boolean serverCredentialConfigured) {
+        if (!configFileExists || config == null) return true;
+        if (config.mode() == DatabaseMode.CLIENT || config.mode() == DatabaseMode.REMOTE_ADMIN) {
             return config.locationId() == null || config.serverHost() == null || config.serverHost().isBlank();
         }
-        return !config.hasPrimaryConnection() || config.hasUnresolvedCredentialPlaceholders();
+        return config.locationId() == null
+                || !config.hasPrimaryConnection()
+                || !serverCredentialConfigured
+                || config.hasUnresolvedCredentialPlaceholders();
     }
 
     private String checkLocalDb(DatabaseConfig config) {
@@ -615,10 +731,11 @@ public class WelcomeFrame extends JFrame {
         onlineDbLabel.setText("Online DB: Setup required");
         localDbLabel.setForeground(DeckersPalette.CORAL);
         onlineDbLabel.setForeground(DeckersPalette.CORAL);
-        statusLabel.setText("Status: Choose a database mode to finish setup.");
+        statusLabel.setText("Status: Choose how this computer will be used.");
         continueBtn.setEnabled(false);
+        loginAvailable = false;
         refreshStatusBtn.setEnabled(true);
-        openDatabaseSetup();
+        openGuidedSetup();
     }
 
     private void updateStatusLabel(JLabel label, String text, String status) {
@@ -640,7 +757,42 @@ public class WelcomeFrame extends JFrame {
     }
 
     private void openLogin() {
-        new Login().setVisible(true);
+        openLogin(null);
+    }
+
+    private void openLogin(PcscNfcService.ReadResult card) {
+        if (!loginAvailable) return;
+        nfcMonitorRunning = false;
+        new Login(card).setVisible(true);
         dispose();
+    }
+
+    private void startWelcomeNfcMonitor() {
+        if (nfcMonitorRunning) return;
+        nfcMonitorRunning = true;
+        Thread monitor = new Thread(() -> {
+            while (nfcMonitorRunning && isDisplayable()) {
+                try {
+                    if (!PcscNfcService.hasReader()) {
+                        Thread.sleep(750);
+                        continue;
+                    }
+                    PcscNfcService.ReadResult card = PcscNfcService.read(Duration.ofSeconds(2));
+                    SwingUtilities.invokeLater(() -> {
+                        if (nfcMonitorRunning && isDisplayable() && loginAvailable) openLogin(card);
+                    });
+                    if (loginAvailable) return;
+                } catch (PcscNfcService.NoCardPresentException ignored) {
+                    // Keep listening while the welcome screen is open.
+                } catch (Exception ex) {
+                    try { Thread.sleep(1_500); } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }, "smartstock-nfc-welcome");
+        monitor.setDaemon(true);
+        monitor.start();
     }
 }

@@ -7,6 +7,8 @@ import services.ManagerApprovalService;
 import services.RefundApprovalIdentity;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
@@ -72,8 +74,8 @@ public class ReturnSale extends JFrame {
     public ReturnSale(Integer saleId) {
         setTitle("Process Return");
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
-        setLayout(new BorderLayout(14, 14));
-        setJMenuBar(AppMenuBar.create(this, "ReturnSale"));
+        setLayout(new BorderLayout());
+        setJMenuBar(AppMenuBar.create(this, "ReturnSale", loadingState));
 
         itemModel = new DefaultTableModel(
                 new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned",
@@ -94,9 +96,10 @@ public class ReturnSale extends JFrame {
         saleSearchTimer = new Timer(300, e -> refreshSaleSearchResults());
         saleSearchTimer.setRepeats(false);
 
-        JPanel root = new JPanel(new BorderLayout(14, 14));
-        root.setBorder(new EmptyBorder(18, 18, 18, 18));
-        root.setBackground(new Color(245, 247, 250));
+        JPanel root = new JPanel(new BorderLayout(0, 14));
+        root.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        root.setBorder(new EmptyBorder(16, 18, 18, 18));
+        root.setBackground(DeckersPalette.background());
         root.add(buildHeaderPanel(), BorderLayout.NORTH);
         root.add(buildTablePanel(), BorderLayout.CENTER);
         root.add(buildFooterPanel(), BorderLayout.SOUTH);
@@ -117,26 +120,44 @@ public class ReturnSale extends JFrame {
     }
 
     private JPanel buildHeaderPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
+        JPanel panel = new JPanel(new BorderLayout(0, 12));
         panel.setOpaque(false);
         JLabel titleLabel = new JLabel("Process Return");
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
-        titleLabel.setForeground(new Color(31, 41, 55));
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        preserveForeground(titleLabel, DeckersPalette.text());
+        JLabel subtitleLabel = new JLabel("Find a completed sale, select the items, and issue the refund.");
+        subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        preserveForeground(subtitleLabel, DeckersPalette.muted());
+
+        JPanel titlePanel = new JPanel();
+        titlePanel.setOpaque(false);
+        titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
+        titlePanel.add(titleLabel);
+        titlePanel.add(Box.createVerticalStrut(4));
+        titlePanel.add(subtitleLabel);
+
+        JPanel hero = new JPanel(new BorderLayout());
+        DeckersSwing.styleBand(hero, DeckersPalette.ORANGE, new Insets(16, 18, 16, 18));
+        hero.add(titlePanel, BorderLayout.WEST);
 
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
-        searchPanel.setOpaque(false);
+        DeckersSwing.styleBand(searchPanel, DeckersPalette.MAGENTA, new Insets(10, 14, 10, 14));
         saleSearchField.setToolTipText("Sale ID or receipt number");
+        saleSearchField.putClientProperty("JTextField.placeholderText", "Enter a sale ID or receipt number");
+        DeckersSwing.styleField(saleSearchField);
         JButton loadButton = new JButton("Load Sale");
-        searchPanel.add(new JLabel("Sale / Receipt:"), BorderLayout.WEST);
+        DeckersSwing.styleUtilityButton(loadButton, DeckersPalette.MAGENTA);
+        searchPanel.add(DeckersSwing.metaLabel("Sale / Receipt"), BorderLayout.WEST);
         searchPanel.add(saleSearchField, BorderLayout.CENTER);
         searchPanel.add(loadButton, BorderLayout.EAST);
 
-        saleInfoLabel.setForeground(new Color(71, 85, 105));
-        JPanel top = new JPanel(new BorderLayout(12, 8));
-        top.setOpaque(false);
-        top.add(titleLabel, BorderLayout.NORTH);
-        top.add(searchPanel, BorderLayout.CENTER);
-        top.add(saleInfoLabel, BorderLayout.SOUTH);
+        saleInfoLabel.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        preserveForeground(saleInfoLabel, DeckersPalette.muted());
+        saleInfoLabel.setBorder(new EmptyBorder(0, 6, 0, 0));
+        JPanel lookup = new JPanel(new BorderLayout(0, 8));
+        lookup.setOpaque(false);
+        lookup.add(searchPanel, BorderLayout.NORTH);
+        lookup.add(saleInfoLabel, BorderLayout.SOUTH);
 
         loadButton.addActionListener(e -> loadSale());
         saleSearchField.addActionListener(e -> loadSale());
@@ -146,7 +167,8 @@ public class ReturnSale extends JFrame {
             @Override public void changedUpdate(DocumentEvent e) { scheduleSaleSearch(); }
         });
         setupSaleSearchPopup();
-        panel.add(top, BorderLayout.CENTER);
+        panel.add(hero, BorderLayout.NORTH);
+        panel.add(lookup, BorderLayout.SOUTH);
         return panel;
     }
 
@@ -154,6 +176,7 @@ public class ReturnSale extends JFrame {
         saleSearchTable.setRowHeight(26);
         saleSearchTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         saleSearchTable.getTableHeader().setReorderingAllowed(false);
+        DeckersSwing.styleTable(saleSearchTable, DeckersPalette.MAGENTA);
         configureSaleSearchColumns();
         saleSearchTable.addMouseListener(new MouseAdapter() {
             @Override
@@ -166,7 +189,8 @@ public class ReturnSale extends JFrame {
         JPanel popupPanel = new JPanel(new BorderLayout());
         popupPanel.add(header, BorderLayout.NORTH);
         popupPanel.add(scrollPane, BorderLayout.CENTER);
-        saleSearchPopup.setBorder(BorderFactory.createLineBorder(new Color(148, 163, 184)));
+        saleSearchPopup.setBorder(BorderFactory.createLineBorder(
+                DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
         saleSearchPopup.add(popupPanel);
         saleSearchPopup.setFocusable(false);
     }
@@ -183,35 +207,82 @@ public class ReturnSale extends JFrame {
         saleSearchTable.getColumnModel().getColumn(4).setPreferredWidth(210);
     }
 
-    private JScrollPane buildTablePanel() {
+    private JPanel buildTablePanel() {
         JTable table = new JTable(itemModel);
-        table.setRowHeight(28);
+        DeckersSwing.styleTable(table, DeckersPalette.LIME);
+        table.setFillsViewportHeight(true);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.getTableHeader().setReorderingAllowed(false);
         table.removeColumn(table.getColumnModel().getColumn(0));
         table.removeColumn(table.getColumnModel().getColumn(0));
         table.removeColumn(table.getColumnModel().getColumn(6));
-        return new JScrollPane(table);
+        table.getColumnModel().getColumn(0).setPreferredWidth(120);
+        table.getColumnModel().getColumn(1).setPreferredWidth(360);
+        table.getColumnModel().getColumn(2).setPreferredWidth(80);
+        table.getColumnModel().getColumn(3).setPreferredWidth(90);
+        table.getColumnModel().getColumn(4).setPreferredWidth(90);
+        table.getColumnModel().getColumn(5).setPreferredWidth(110);
+        table.getColumnModel().getColumn(6).setPreferredWidth(110);
+
+        JScrollPane scrollPane = new JScrollPane(table);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
+
+        JLabel sectionTitle = new JLabel("Return Items");
+        sectionTitle.setFont(new Font("SansSerif", Font.BOLD, 16));
+        preserveForeground(sectionTitle, DeckersPalette.text());
+        JLabel sectionHelp = new JLabel("Enter a quantity in the Return Qty column.");
+        sectionHelp.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        preserveForeground(sectionHelp, DeckersPalette.muted());
+        JPanel heading = new JPanel(new BorderLayout());
+        heading.setOpaque(false);
+        heading.setBorder(new EmptyBorder(0, 2, 8, 2));
+        heading.add(sectionTitle, BorderLayout.WEST);
+        heading.add(sectionHelp, BorderLayout.EAST);
+
+        JPanel section = new JPanel(new BorderLayout());
+        DeckersSwing.styleBand(section, DeckersPalette.LIME, new Insets(10, 10, 10, 10));
+        section.add(heading, BorderLayout.NORTH);
+        section.add(scrollPane, BorderLayout.CENTER);
+        return section;
     }
 
     private JPanel buildFooterPanel() {
-        JPanel panel = new JPanel(new BorderLayout(12, 12));
-        panel.setOpaque(false);
+        JPanel panel = new JPanel(new BorderLayout(14, 0));
+        DeckersSwing.styleBand(panel, DeckersPalette.CORAL, new Insets(14, 14, 14, 14));
         reasonArea.setLineWrap(true);
         reasonArea.setWrapStyleWord(true);
+        reasonArea.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        reasonArea.setForeground(DeckersPalette.text());
+        reasonArea.setCaretColor(DeckersPalette.text());
+        reasonArea.setBackground(DeckersPalette.fieldBackground());
+        reasonArea.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        reasonArea.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         JPanel reasonPanel = new JPanel(new BorderLayout(8, 8));
         reasonPanel.setOpaque(false);
-        reasonPanel.add(new JLabel("Reason / Note:"), BorderLayout.NORTH);
-        reasonPanel.add(new JScrollPane(reasonArea), BorderLayout.CENTER);
+        reasonPanel.add(DeckersSwing.metaLabel("Reason / Note"), BorderLayout.NORTH);
+        JScrollPane reasonScroll = new JScrollPane(reasonArea);
+        reasonScroll.setPreferredSize(new Dimension(0, 78));
+        reasonScroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+        reasonPanel.add(reasonScroll, BorderLayout.CENTER);
 
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actionPanel.setOpaque(false);
-        totalReturnLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
-        overrideStatusLabel.setForeground(new Color(71, 85, 105));
+        totalReturnLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        preserveForeground(totalReturnLabel, DeckersPalette.text());
+        overrideStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        preserveForeground(overrideStatusLabel, DeckersPalette.muted());
         JButton returnAllButton = new JButton("Return All Available");
         JButton clearButton = new JButton("Clear Qty");
-        actionPanel.add(new JLabel("Refund Method:"));
+        DeckersSwing.styleUtilityButton(returnAllButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(clearButton, DeckersPalette.PURPLE);
+        DeckersSwing.styleUtilityButton(submitButton, DeckersPalette.LIME);
+        refundMethodBox.setBackground(DeckersPalette.fieldBackground());
+        refundMethodBox.setForeground(DeckersPalette.text());
+        refundMethodBox.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        refundMethodBox.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        actionPanel.add(DeckersSwing.metaLabel("Refund Method"));
         actionPanel.add(refundMethodBox);
-        actionPanel.add(totalReturnLabel);
         actionPanel.add(returnAllButton);
         actionPanel.add(clearButton);
         actionPanel.add(submitButton);
@@ -220,14 +291,24 @@ public class ReturnSale extends JFrame {
         clearButton.addActionListener(e -> clearReturnQty());
         submitButton.addActionListener(e -> submitReturn());
 
+        JPanel summaryPanel = new JPanel(new BorderLayout(0, 10));
+        summaryPanel.setOpaque(false);
+        summaryPanel.add(totalReturnLabel, BorderLayout.NORTH);
+        summaryPanel.add(actionPanel, BorderLayout.CENTER);
+        summaryPanel.add(overrideStatusLabel, BorderLayout.SOUTH);
+
         panel.add(reasonPanel, BorderLayout.CENTER);
+        panel.add(summaryPanel, BorderLayout.EAST);
         JPanel footer = new JPanel(new BorderLayout(8, 6));
         footer.setOpaque(false);
-        footer.add(overrideStatusLabel, BorderLayout.WEST);
-        footer.add(actionPanel, BorderLayout.EAST);
         footer.add(loadingState, BorderLayout.NORTH);
         panel.add(footer, BorderLayout.SOUTH);
         return panel;
+    }
+
+    private static void preserveForeground(JComponent component, Color color) {
+        component.setForeground(color);
+        component.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
     }
 
     private void scheduleSaleSearch() {

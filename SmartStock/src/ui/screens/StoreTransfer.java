@@ -38,6 +38,10 @@ public class StoreTransfer extends JFrame {
     private final JTable incomingTable;
     private final DefaultTableModel incomingItemsModel;
     private final JTable incomingItemsTable;
+    private final DefaultTableModel outgoingModel;
+    private final JTable outgoingTable;
+    private final DefaultTableModel outgoingItemsModel;
+    private final JTable outgoingItemsTable;
     private String pendingCreateKey;
     private String pendingCreateFingerprint;
     private Long pendingReceiveTransferId;
@@ -171,9 +175,20 @@ public class StoreTransfer extends JFrame {
         incomingItemsTable = new JTable(incomingItemsModel);
         incomingItemsTable.setRowHeight(28);
 
+        outgoingModel = readOnlyModel(new Object[]{
+                "Transfer ID", "To Store", "Created", "Items", "Units", "Sent By", "Note"
+        });
+        outgoingTable = new JTable(outgoingModel);
+        outgoingTable.setRowHeight(28);
+        outgoingTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        outgoingItemsModel = readOnlyModel(new Object[]{"Product ID", "SKU", "Name", "Quantity"});
+        outgoingItemsTable = new JTable(outgoingItemsModel);
+        outgoingItemsTable.setRowHeight(28);
+
         JTabbedPane tabbedPane = new JTabbedPane();
         tabbedPane.addTab("Create Transfer", createTransferPanel);
         tabbedPane.addTab("Incoming Transfers", buildIncomingPanel());
+        tabbedPane.addTab("Outgoing Transfers", buildOutgoingPanel());
         add(tabbedPane, BorderLayout.CENTER);
         add(loadingState, BorderLayout.SOUTH);
 
@@ -188,11 +203,55 @@ public class StoreTransfer extends JFrame {
                 loadIncomingTransferItems(getSelectedIncomingTransferId());
             }
         });
+        outgoingTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadOutgoingTransferItems(getSelectedTransferId(outgoingTable, outgoingModel), outgoingItemsModel);
+            }
+        });
 
         loadLocations();
         loadProducts();
         loadIncomingTransfers();
+        loadOutgoingTransfers();
         WindowHelper.configurePosWindow(this);
+    }
+
+    private JPanel buildOutgoingPanel() {
+        JPanel panel = new JPanel(new BorderLayout(12, 12));
+        panel.setBorder(new EmptyBorder(18, 18, 18, 18));
+        panel.setBackground(new Color(245, 247, 250));
+        JLabel titleLabel = new JLabel("Current Outgoing Transfers");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
+        titleLabel.setForeground(new Color(31, 41, 55));
+        JButton refreshButton = new JButton("Refresh");
+        refreshButton.addActionListener(e -> loadOutgoingTransfers());
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.add(titleLabel, BorderLayout.WEST);
+        header.add(refreshButton, BorderLayout.EAST);
+        panel.add(header, BorderLayout.NORTH);
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                new JScrollPane(outgoingTable), buildTransferItemsPanel(outgoingItemsTable));
+        split.setResizeWeight(0.58);
+        split.setBorder(BorderFactory.createEmptyBorder());
+        panel.add(split, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel buildTransferItemsPanel(JTable table) {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setOpaque(false);
+        JLabel label = new JLabel("Selected Transfer Items");
+        label.setFont(new Font("SansSerif", Font.BOLD, 15));
+        panel.add(label, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private static DefaultTableModel readOnlyModel(Object[] columns) {
+        return new DefaultTableModel(columns, 0) {
+            @Override public boolean isCellEditable(int row, int column) { return false; }
+        };
     }
 
     private JPanel buildIncomingPanel() {
@@ -366,7 +425,7 @@ public class StoreTransfer extends JFrame {
                 pendingCreateKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingCreateKey;
-            UiTaskRunner.submit(this,"store-transfer.create",()->LanApiClient.createTransfer(request,mutationKey),result->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");pendingCreateKey=null;pendingCreateFingerprint=null;
+            UiTaskRunner.submit(this,"store-transfer.create",()->LanApiClient.createTransfer(request,mutationKey),result->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");SessionDataCache.invalidate("outgoing-transfer");pendingCreateKey=null;pendingCreateFingerprint=null;
             JOptionPane.showMessageDialog(this,
                     "Transfer sent successfully.\nTransfer ID: " + result.transferId()
                             + "\nThe receiving store must verify it before stock is added.");
@@ -374,6 +433,7 @@ public class StoreTransfer extends JFrame {
             noteArea.setText("");
             loadProducts();
             loadIncomingTransfers();
+            loadOutgoingTransfers();
             },ex->JOptionPane.showMessageDialog(this,"Transfer failed: "+ex.getMessage(),"Transfer Error",JOptionPane.ERROR_MESSAGE));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Transfer failed: " + ex.getMessage(),
@@ -407,6 +467,43 @@ public class StoreTransfer extends JFrame {
         }
     }
 
+    private void loadOutgoingTransfers() {
+        if (SessionManager.getCurrentLocationId() == null) return;
+        CachedUiLoader.load(this, "outgoing-transfers", OutgoingTransfersSnapshot.class,
+                SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new OutgoingTransfersSnapshot(LanApiClient.loadOutgoingTransfers()),
+                this::applyOutgoingTransfers);
+    }
+
+    private void applyOutgoingTransfers(OutgoingTransfersSnapshot snapshot) {
+        outgoingModel.setRowCount(0);
+        outgoingItemsModel.setRowCount(0);
+        for (LanApiClient.OutgoingTransfer transfer : snapshot.transfers()) {
+            outgoingModel.addRow(new Object[]{
+                    transfer.transferId(), transfer.toStore(), formatLocalTimestamp(transfer.createdAtEpochMillis()),
+                    transfer.itemCount(), transfer.unitCount(), transfer.sentBy(), transfer.note()
+            });
+        }
+    }
+
+    private void loadOutgoingTransferItems(Long transferId, DefaultTableModel targetModel) {
+        if (transferId == null) {
+            targetModel.setRowCount(0);
+            return;
+        }
+        CachedUiLoader.load(this, "outgoing-transfer-items.selection", "outgoing-transfer-items:" + transferId,
+                TransferItemsSnapshot.class, SessionDataCache.SCREEN_TTL, loadingState,
+                () -> new TransferItemsSnapshot(LanApiClient.loadTransferItems(transferId)),
+                snapshot -> applyTransferItems(snapshot, targetModel));
+    }
+
+    private static Long getSelectedTransferId(JTable table, DefaultTableModel model) {
+        int selectedRow = table.getSelectedRow();
+        if (selectedRow < 0) return null;
+        int modelRow = table.convertRowIndexToModel(selectedRow);
+        return Long.parseLong(String.valueOf(model.getValueAt(modelRow, 0)));
+    }
+
     private Long getSelectedIncomingTransferId() {
         int selectedRow = incomingTable.getSelectedRow();
         if (selectedRow < 0) {
@@ -428,9 +525,13 @@ public class StoreTransfer extends JFrame {
     }
 
     private void applyTransferItems(TransferItemsSnapshot snapshot) {
-        incomingItemsModel.setRowCount(0);
+        applyTransferItems(snapshot, incomingItemsModel);
+    }
+
+    private static void applyTransferItems(TransferItemsSnapshot snapshot, DefaultTableModel targetModel) {
+        targetModel.setRowCount(0);
         for (LanApiClient.TransferDetailItem item : snapshot.items()) {
-                incomingItemsModel.addRow(new Object[]{
+                targetModel.addRow(new Object[]{
                         item.productId(), item.sku(), item.name(), item.quantity()
                 });
         }
@@ -439,6 +540,7 @@ public class StoreTransfer extends JFrame {
     private record TransferLocationsSnapshot(List<LanApiClient.TransferLocation> locations) { }
     private record TransferProductsSnapshot(List<LanApiClient.TransferProduct> products) { }
     private record IncomingTransfersSnapshot(List<LanApiClient.IncomingTransfer> transfers) { }
+    private record OutgoingTransfersSnapshot(List<LanApiClient.OutgoingTransfer> transfers) { }
     private record TransferItemsSnapshot(List<LanApiClient.TransferDetailItem> items) { }
 
     private void receiveSelectedTransfer() {
@@ -475,7 +577,7 @@ public class StoreTransfer extends JFrame {
                 pendingReceiveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingReceiveKey;
-            UiTaskRunner.submit(this,"store-transfer.receive",()->LanApiClient.receiveTransfer(transferId,mutationKey),response->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");pendingReceiveTransferId=null;pendingReceiveKey=null;
+            UiTaskRunner.submit(this,"store-transfer.receive",()->LanApiClient.receiveTransfer(transferId,mutationKey),response->{SessionDataCache.invalidate("transfer-products:");SessionDataCache.invalidate("incoming-transfer");SessionDataCache.invalidate("outgoing-transfer");pendingReceiveTransferId=null;pendingReceiveKey=null;
             JOptionPane.showMessageDialog(this,
                     "Transfer received successfully.\nReceive ID: " + response.receiveId());
             loadIncomingTransfers();

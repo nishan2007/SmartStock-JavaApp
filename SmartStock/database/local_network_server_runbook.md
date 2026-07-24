@@ -8,21 +8,16 @@ or mixed-client mode.
 
 Use one always-on mini PC per store.
 
-1. Install PostgreSQL 15+.
-2. Create the local database and app roles.
-
-```sql
-CREATE DATABASE smartstock;
-CREATE ROLE smartstock_server LOGIN PASSWORD 'replace-with-a-unique-generated-server-password';
-GRANT ALL PRIVILEGES ON DATABASE smartstock TO smartstock_server;
-```
-
-3. Open SmartStock, choose **Database Setup**, fill in the server settings, then click **Provision Server**.
-
-Provision Server creates the local database, installs the LAN service/session
-schema, verifies cloud sync tables when configured, saves server-only database
-credentials, restricts PostgreSQL to the server machine, disables any legacy
-register roles it finds, and installs the SmartStock Server Service.
+1. Open SmartStock and choose **Guided Setup > Store Server**.
+2. Complete the six-step Server Setup Wizard. It checks or installs PostgreSQL
+   15+, generates the local `smartstock_server` role and password, creates or
+   repairs the database, restricts PostgreSQL to loopback, and installs the
+   SmartStock Server Service.
+3. If PostgreSQL asked for an administrator password during installation,
+   enter it once in **Prepare Local Database**. SmartStock immediately clears
+   that field and securely stores only its generated application credential.
+4. Use **Advanced Settings** only for repair or diagnostics. Registers never
+   receive local database credentials.
 
 If you use the macOS installer, it also saves the generated database credentials here:
 
@@ -54,15 +49,15 @@ If you need to apply the sync tables manually, run:
 psql postgresql://smartstock_server@localhost:5432/smartstock -f SmartStock/database/local_network_sync_setup.sql
 ```
 
-4. On the server machine, **Database Setup** should be:
+For diagnostics, the resulting server configuration should be:
 
 - Mode: `SERVER`
 - Local JDBC URL: `jdbc:postgresql://127.0.0.1:5432/smartstock`
 - Local DB User/Password: server role credentials
-- Cloud JDBC URL/User/Password: Supabase Postgres credentials
-- Sync interval: `60`
+- Normal cloud operation: Supabase HTTPS API only
+- Sync interval: `300` seconds by default
 
-5. Start the server app with:
+The following source-tree launch command is for development diagnostics only:
 
 ```bash
 java -cp target/classes:target/dependency/* app.Main --server
@@ -115,6 +110,14 @@ SmartStock/tools/recover-lan-api-cutover.sh --physical-server-confirm
 - When cloud returns, the server sync worker uploads local outbox events to the cloud sync tables for idempotent processing/review.
 - Open conflicts must be resolved by a manager; the app does not silently overwrite shared records.
 
-## Current v1 Boundary
+## Production Recovery Boundary
 
-This implementation records durable transaction-level events and uploads them to cloud sync tables. The next production-hardening phase should add per-event replay handlers that materialize each uploaded event into the cloud business tables with `sync_id_map` translation.
+Current sync materializes the supported operational tables into the hosted
+database and retains the durable event outbox for idempotency/audit. Do not
+infer backup readiness from a successful sync status alone. Before production
+go-live, provision a separate database whose name ends in
+`_recovery_drill`, restore from the hosted project with
+`ProductionRecoveryDrillMain`, and require the resulting evidence file in
+`ProductionReadinessMain`. Storage objects require a separate export/restore
+check because Supabase database backups contain Storage metadata, not the
+objects themselves.

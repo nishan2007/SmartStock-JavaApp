@@ -75,6 +75,13 @@ public final class BalanceSheetService {
         JsonObject body=new JsonObject();body.addProperty("submissionId",submissionId);return GSON.fromJson(read("SUBMISSION",body).get("sheet"),BalanceSheet.class);
     }
 
+    public static void setBalanceBf(LocalDate periodStart, BigDecimal amount) throws SQLException {
+        JsonObject body=new JsonObject();
+        body.addProperty("periodStart",periodStart.toString());
+        body.addProperty("amount",amount);
+        mutate("SET_BALANCE_BF",body);
+    }
+
     public static DrawSessionRange findDrawSessionRange(String storeZoneId, LocalDate selectedDate) throws SQLException {
         List<DrawSessionRange> ranges=findDrawSessionRanges(storeZoneId,selectedDate,selectedDate);return ranges.isEmpty()?null:ranges.get(0);
     }

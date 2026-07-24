@@ -4,6 +4,7 @@ import managers.SupabaseSessionManager;
 import managers.SessionManager;
 import managers.CompanyCustomizationManager;
 import services.BadgeEncoderService;
+import services.PcscNfcService;
 import services.EmployeeDocumentService;
 import services.BadgePrintService;
 import services.EmployeePhotoService;
@@ -13,6 +14,8 @@ import services.LanEmployeeAdminService;
 import services.EmployeePayrollSettingsService.PeriodType;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
@@ -45,13 +48,12 @@ import java.util.regex.Pattern;
 
 public class EmployeeManagement extends JFrame {
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
-    private static final Color PAGE_BG = new Color(17, 17, 17);
-    private static final Color CARD_BG = new Color(28, 28, 28);
-    private static final Color FIELD_BG = new Color(21, 21, 21);
-    private static final Color BORDER = new Color(67, 67, 67);
-    private static final Color TEXT = new Color(238, 238, 238);
-    private static final Color MUTED_TEXT = new Color(182, 182, 182);
-    private static final Color PRIMARY = new Color(78, 111, 158);
+    private static final Color PAGE_BG = DeckersPalette.background();
+    private static final Color CARD_BG = DeckersPalette.surface();
+    private static final Color FIELD_BG = DeckersPalette.fieldBackground();
+    private static final Color BORDER = DeckersPalette.border();
+    private static final Color TEXT = DeckersPalette.text();
+    private static final Color MUTED_TEXT = DeckersPalette.muted();
 
     private static final class ViewportWidthPanel extends JPanel implements Scrollable {
         private ViewportWidthPanel(LayoutManager layout) {
@@ -98,6 +100,7 @@ public class EmployeeManagement extends JFrame {
     private JTextField firstNameField;
     private JTextField middleNameField;
     private JTextField lastNameField;
+    private JTextField nicknameField;
     private JTextField emailField;
     private JTextField phoneField;
     private JTextField employeePhotoField;
@@ -126,6 +129,7 @@ public class EmployeeManagement extends JFrame {
     private JButton saveBadgePdfButton;
     private JButton writeMagStripeButton;
     private JButton programNfcButton;
+    private JButton testNfcButton;
     private JButton rotateBadgeIdButton;
 
     private Integer selectedUserId = null;
@@ -156,7 +160,7 @@ public class EmployeeManagement extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
 
         employeeModel = new DefaultTableModel(
-                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active", "ID Card Document", "Hire Date", "Deactivation Date"}, 0
+                new Object[]{"User ID", "Username", "Full Name", "First Name", "Middle Name", "Last Name", "Email", "Phone", "Photo", "DOB", "Badge ID", "Badge Prints", "Pay Type", "Salary", "Role", "Active", "ID Card Document", "Hire Date", "Deactivation Date", "Nickname"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -176,7 +180,7 @@ public class EmployeeManagement extends JFrame {
         ));
 
         JPanel searchPanel = new JPanel(new BorderLayout(6, 0));
-        searchPanel.setOpaque(false);
+        DeckersSwing.styleBand(searchPanel, DeckersPalette.MAGENTA, new Insets(8, 10, 8, 10));
         employeeSearchField = new JTextField();
         JLabel searchLabel = new JLabel("Employees");
         searchLabel.setFont(new Font("SansSerif", Font.BOLD, 15));
@@ -188,8 +192,8 @@ public class EmployeeManagement extends JFrame {
         JScrollPane tableScrollPane = new JScrollPane(employeeTable);
         leftPanel.setPreferredSize(new Dimension(430, 0));
         leftPanel.setMinimumSize(new Dimension(320, 0));
-        tableScrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
-        tableScrollPane.getViewport().setBackground(CARD_BG);
+        tableScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        tableScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.ORANGE));
         leftPanel.add(searchPanel, BorderLayout.NORTH);
         leftPanel.add(tableScrollPane, BorderLayout.CENTER);
         styleTable(employeeTable);
@@ -226,6 +230,7 @@ public class EmployeeManagement extends JFrame {
         hideEmployeeColumn(12);
         hideEmployeeColumn(13);
         hideEmployeeColumn(16);
+        hideEmployeeColumn(19);
 
         employeeTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
 
@@ -238,6 +243,7 @@ public class EmployeeManagement extends JFrame {
         firstNameField = new JTextField();
         middleNameField = new JTextField();
         lastNameField = new JTextField();
+        nicknameField = new JTextField();
         emailField = new JTextField();
         phoneField = new JTextField();
         employeePhotoField = new JTextField();
@@ -349,6 +355,15 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 5;
         gbc.weightx = 0;
+        formPanel.add(new JLabel("Nickname (optional):"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(nicknameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        gbc.weightx = 0;
         formPanel.add(new JLabel("Email *:"), gbc);
 
         gbc.gridx = 1;
@@ -356,7 +371,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(emailField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Phone Number (optional):"), gbc);
 
@@ -365,7 +380,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(phoneField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 7;
+        gbc.gridy = 8;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Badge Photo (optional):"), gbc);
 
@@ -374,7 +389,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(buildPhotoSelectorPanel(), gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 9;
         gbc.weightx = 0;
         formPanel.add(new JLabel("ID Card Document (optional):"), gbc);
 
@@ -383,7 +398,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(buildIdCardDocumentSelectorPanel(), gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 9;
+        gbc.gridy = 10;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Date of Birth (optional):"), gbc);
 
@@ -392,7 +407,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(dateOfBirthField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 10;
+        gbc.gridy = 11;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Hire Date *:"), gbc);
 
@@ -401,7 +416,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(hireDateField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 11;
+        gbc.gridy = 12;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Badge ID (auto):"), gbc);
 
@@ -410,7 +425,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(badgeIdField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 12;
+        gbc.gridy = 13;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Pay Type *:"), gbc);
 
@@ -419,7 +434,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(compensationTypeBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 13;
+        gbc.gridy = 14;
         gbc.weightx = 0;
         salaryAmountLabel.setText("Hourly Rate *:");
         formPanel.add(salaryAmountLabel, gbc);
@@ -429,7 +444,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(salaryAmountField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 14;
+        gbc.gridy = 15;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Payroll Period *:"), gbc);
 
@@ -438,7 +453,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(payrollPeriodBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 15;
+        gbc.gridy = 16;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Work Hour Limit *:"), gbc);
 
@@ -447,7 +462,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(workHourLimitField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 16;
+        gbc.gridy = 17;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Payroll Setting:"), gbc);
 
@@ -456,7 +471,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(payrollSettingsStatusLabel, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 17;
+        gbc.gridy = 18;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Role *:"), gbc);
 
@@ -465,7 +480,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(roleBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 18;
+        gbc.gridy = 19;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Status:"), gbc);
 
@@ -474,7 +489,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(activeCheckBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 19;
+        gbc.gridy = 20;
         gbc.weightx = 0;
         formPanel.add(new JLabel("Deactivation Date:"), gbc);
 
@@ -483,11 +498,7 @@ public class EmployeeManagement extends JFrame {
         formPanel.add(deactivationDateField, gbc);
 
         JPanel storePanel = new JPanel(new BorderLayout(6, 6));
-        storePanel.setBackground(CARD_BG);
-        storePanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(10, 10, 10, 10)
-        ));
+        DeckersSwing.styleBand(storePanel, DeckersPalette.LIME, new Insets(10, 10, 10, 10));
         JPanel storeSearchPanel = new JPanel(new BorderLayout(6, 0));
         storeSearchPanel.setOpaque(false);
         JLabel assignedStoresLabel = new JLabel("Assigned Stores *");
@@ -501,8 +512,8 @@ public class EmployeeManagement extends JFrame {
 
         JScrollPane storeScrollPane = new JScrollPane(storeTable);
         storeScrollPane.setPreferredSize(new Dimension(0, 135));
-        storeScrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
-        storeScrollPane.getViewport().setBackground(CARD_BG);
+        storeScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        storeScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
         storePanel.add(storeScrollPane, BorderLayout.CENTER);
 
         TableColumn assignedStoreColumn = storeTable.getColumnModel().getColumn(0);
@@ -513,7 +524,7 @@ public class EmployeeManagement extends JFrame {
         storeIdColumn.setMaxWidth(90);
 
         gbc.gridx = 0;
-        gbc.gridy = 20;
+        gbc.gridy = 21;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.weighty = 0.0;
@@ -542,6 +553,7 @@ public class EmployeeManagement extends JFrame {
         saveBadgePdfButton = new JButton("Save Badge PDF");
         writeMagStripeButton = new JButton("Write Stripe");
         programNfcButton = new JButton("Program NFC/RFID");
+        testNfcButton = new JButton("Test NFC");
         rotateBadgeIdButton = new JButton("Rotate Badge ID");
 
         Dimension compactButtonSize = new Dimension(145, 32);
@@ -562,24 +574,21 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(saveBadgePdfButton);
         topButtonPanel.add(writeMagStripeButton);
         topButtonPanel.add(programNfcButton);
+        topButtonPanel.add(testNfcButton);
         topButtonPanel.add(rotateBadgeIdButton);
 
         bottomButtonPanel.add(clearButton);
         bottomButtonPanel.add(refreshButton);
 
         JPanel rightPanel = new JPanel(new BorderLayout(10, 10));
-        rightPanel.setBackground(CARD_BG);
-        rightPanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(12, 12, 12, 12)
-        ));
+        DeckersSwing.styleBand(rightPanel, DeckersPalette.ORANGE, new Insets(12, 12, 12, 12));
         rightPanel.setPreferredSize(new Dimension(700, 0));
         rightPanel.setMinimumSize(new Dimension(540, 0));
         JLabel detailsTitle = new JLabel("Employee Details");
         detailsTitle.setForeground(TEXT);
         detailsTitle.setFont(new Font("SansSerif", Font.BOLD, 18));
         JPanel rightHeader = new JPanel(new BorderLayout(0, 10));
-        rightHeader.setOpaque(false);
+        DeckersSwing.styleBand(rightHeader, DeckersPalette.PURPLE, new Insets(10, 10, 10, 10));
         rightHeader.add(detailsTitle, BorderLayout.NORTH);
         rightHeader.add(topButtonPanel, BorderLayout.SOUTH);
         JScrollPane formScrollPane = new JScrollPane(formPanel);
@@ -634,6 +643,7 @@ public class EmployeeManagement extends JFrame {
         saveBadgePdfButton.addActionListener(e -> saveSelectedBadgePdf());
         writeMagStripeButton.addActionListener(e -> writeSelectedMagStripe());
         programNfcButton.addActionListener(e -> programSelectedNfc());
+        testNfcButton.addActionListener(e -> testSelectedNfc());
         rotateBadgeIdButton.addActionListener(e -> rotateSelectedBadgeId());
 
         clearButton.addActionListener(new ActionListener() {
@@ -721,6 +731,7 @@ public class EmployeeManagement extends JFrame {
         saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
         programNfcButton.setEnabled(false);
+        testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
         loadRoles();
         loadStoresForUser(null);
@@ -748,11 +759,14 @@ public class EmployeeManagement extends JFrame {
                 firstNameField,
                 middleNameField,
                 lastNameField,
+                nicknameField,
                 emailField,
                 phoneField,
                 employeePhotoField,
                 employeeIdCardDocumentField,
                 dateOfBirthField,
+                hireDateField,
+                deactivationDateField,
                 badgeIdField,
                 salaryAmountField
                 , workHourLimitField
@@ -767,15 +781,9 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void styleTextField(JTextField field) {
-        field.setBackground(FIELD_BG);
-        field.setForeground(TEXT);
-        field.setCaretColor(TEXT);
-        field.setSelectionColor(PRIMARY);
-        field.setSelectedTextColor(Color.WHITE);
-        field.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(5, 7, 5, 7)
-        ));
+        DeckersSwing.styleField(field);
+        field.setSelectionColor(DeckersPalette.tilePressed(DeckersPalette.ORANGE));
+        field.setSelectedTextColor(TEXT);
     }
 
     private void styleComboBox(JComboBox<?> comboBox) {
@@ -785,24 +793,16 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void styleTable(JTable table) {
-        table.setRowHeight(30);
-        table.setShowGrid(false);
-        table.setIntercellSpacing(new Dimension(0, 0));
+        Color accent = table == storeTable ? DeckersPalette.LIME : DeckersPalette.ORANGE;
+        DeckersSwing.styleTable(table, accent);
         table.setFillsViewportHeight(true);
-        table.setBackground(CARD_BG);
-        table.setForeground(TEXT);
-        table.setSelectionBackground(PRIMARY);
-        table.setSelectionForeground(Color.WHITE);
-        table.setGridColor(BORDER);
-        table.getTableHeader().setBackground(new Color(38, 38, 38));
-        table.getTableHeader().setForeground(TEXT);
-        table.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 12));
         table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 Component component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
                 if (!isSelected) {
-                    component.setBackground(row % 2 == 0 ? new Color(31, 31, 31) : new Color(25, 25, 25));
+                    component.setBackground(row % 2 == 0
+                            ? DeckersPalette.tableBody(accent) : DeckersPalette.surface());
                     component.setForeground(TEXT);
                 }
                 setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
@@ -818,7 +818,9 @@ public class EmployeeManagement extends JFrame {
                 label.setForeground(MUTED_TEXT);
                 label.setFont(new Font("SansSerif", Font.BOLD, 12));
             } else if (child instanceof JPanel panel) {
-                panel.setBackground(CARD_BG);
+                if (!Boolean.TRUE.equals(panel.getClientProperty("SmartStock.preserveBackground"))) {
+                    panel.setBackground(CARD_BG);
+                }
                 styleLabels(panel);
             } else if (child instanceof JScrollPane scrollPane) {
                 scrollPane.setBackground(CARD_BG);
@@ -835,15 +837,17 @@ public class EmployeeManagement extends JFrame {
         styleButton(printBadgeButton, false);
         styleButton(saveBadgePdfButton, false);
         styleButton(writeMagStripeButton, false);
+        styleButton(programNfcButton, false);
+        styleButton(testNfcButton, false);
+        styleButton(rotateBadgeIdButton, false);
         styleButton(clearButton, false);
         styleButton(refreshButton, false);
     }
 
     private void styleButton(JButton button, boolean primary) {
-        button.setFocusPainted(false);
-        button.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
-        button.setBackground(primary ? PRIMARY : new Color(82, 82, 82));
-        button.setForeground(Color.WHITE);
+        Color accent = primary ? DeckersPalette.LIME
+                : button == deleteButton ? DeckersPalette.CORAL : DeckersPalette.PURPLE;
+        DeckersSwing.styleUtilityButton(button, accent);
     }
 
     private JPanel buildPhotoSelectorPanel() {
@@ -1198,6 +1202,28 @@ public class EmployeeManagement extends JFrame {
         }
     }
 
+    private void testSelectedNfc() {
+        try {
+            BadgePrintService.EmployeeBadgeData employee = selectedBadgeData();
+            CompanyCustomizationManager.BadgeTemplateSettings settings =
+                    CompanyCustomizationManager.loadBadgeTemplateSettings();
+            JOptionPane.showMessageDialog(this,
+                    "Place the employee NFC card on the ACR122U, then click OK.\nSmartStock will read the card without changing it.",
+                    "Test NFC", JOptionPane.INFORMATION_MESSAGE);
+            PcscNfcService.TestResult result = BadgeEncoderService.testNfc(employee, settings);
+            String status = result.matchesExpectedEmployee()
+                    ? "PASS — this card matches " + employee.displayName() + "."
+                    : "FAIL — this card does not match the selected employee.";
+            JOptionPane.showMessageDialog(this,
+                    status + "\n\nCard UID: " + result.cardUid() + "\nStored badge ID: " + result.payload(),
+                    "Test NFC", result.matchesExpectedEmployee()
+                            ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Could not test the NFC card.\n\n" + ex.getMessage(),
+                    "Test NFC", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void rotateSelectedBadgeId() {
         if (selectedUserId == null) {
             JOptionPane.showMessageDialog(this, "Select an employee first.");
@@ -1269,7 +1295,7 @@ public class EmployeeManagement extends JFrame {
         employeeModel.setRowCount(0);
         for(var row:state.employees()) {
                 employeeModel.addRow(new Object[]{
-                        row.userId(),row.username(),row.fullName(),row.firstName(),row.middleName(),row.lastName(),row.email(),row.phone(),row.photoUrl(),dateText(row.dateOfBirth()),row.badgeId(),row.badgePrintCount(),row.compensationType(),row.salary(),row.role(),row.active(),row.idCardUrl(),dateText(row.hireDate()),dateText(row.deactivationDate())
+                        row.userId(),row.username(),row.fullName(),row.firstName(),row.middleName(),row.lastName(),row.email(),row.phone(),row.photoUrl(),dateText(row.dateOfBirth()),row.badgeId(),row.badgePrintCount(),row.compensationType(),row.salary(),row.role(),row.active(),row.idCardUrl(),dateText(row.hireDate()),dateText(row.deactivationDate()),row.nickname()
                 });
         }
         storeModel.setRowCount(0);
@@ -1307,6 +1333,7 @@ public class EmployeeManagement extends JFrame {
         firstNameField.setText(selectedFirstName);
         middleNameField.setText(selectedMiddleName);
         lastNameField.setText(selectedLastName);
+        nicknameField.setText(employeeModel.getValueAt(selectedRow, 19) == null ? "" : employeeModel.getValueAt(selectedRow, 19).toString());
         updatingGeneratedUsername = false;
         emailField.setText(employeeModel.getValueAt(selectedRow, 6) == null ? "" : employeeModel.getValueAt(selectedRow, 6).toString());
         phoneField.setText(employeeModel.getValueAt(selectedRow, 7) == null ? "" : employeeModel.getValueAt(selectedRow, 7).toString());
@@ -1340,6 +1367,7 @@ public class EmployeeManagement extends JFrame {
         saveBadgePdfButton.setEnabled(true);
         writeMagStripeButton.setEnabled(true);
         programNfcButton.setEnabled(true);
+        testNfcButton.setEnabled(true);
         rotateBadgeIdButton.setEnabled(true);
     }
 
@@ -1349,6 +1377,7 @@ public class EmployeeManagement extends JFrame {
         String firstName = firstNameField.getText().trim();
         String middleName = middleNameField.getText().trim();
         String lastName = lastNameField.getText().trim();
+        String nickname = nicknameField.getText().trim();
         String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
@@ -1387,13 +1416,13 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
-        String requestedUsername=username,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        String requestedUsername=username,requestedEmployeeName=fullName,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
         String mutationKey=UUID.randomUUID().toString();
         UiTaskRunner.submit(this,"employees.create",()->{
-                String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedUsername);
-                String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedUsername);
-                String token=SupabaseSessionManager.getValidAccessToken();
-                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
+                String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
+                String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
+                String token=cloudOrServerCredential();
+                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
                 int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey).get("userId").getAsInt();
                 return new EmployeeSaveResult(newUserId,uploadedPhoto,uploadedDocument);
         },result->{
@@ -1416,6 +1445,7 @@ public class EmployeeManagement extends JFrame {
         String firstName = firstNameField.getText().trim();
         String middleName = middleNameField.getText().trim();
         String lastName = lastNameField.getText().trim();
+        String nickname = nicknameField.getText().trim();
         String fullName = composeFullName(firstName, middleName, lastName);
         String email = emailField.getText().trim();
         String phoneNumber = phoneField.getText().trim();
@@ -1454,15 +1484,15 @@ public class EmployeeManagement extends JFrame {
             JOptionPane.showMessageDialog(this, "Select at least one assigned store.");
             return;
         }
-        String requestedUsername=username,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        String requestedUsername=username,requestedEmployeeName=fullName,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
         Integer targetUserId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
         boolean payrollChanged=payrollPeriodType!=originalPayrollPeriodType||workHourLimit.compareTo(originalWorkHourLimit)!=0;
         UiTaskRunner.submit(this,"employees.update",()->{
-            String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedUsername);
-            String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedUsername);
-            String token = SupabaseSessionManager.getValidAccessToken();
+            String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
+            String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
+            String token = cloudOrServerCredential();
             LanEmployeeAdminService.SaveRequest request = new LanEmployeeAdminService.SaveRequest(
-                    requestedUsername, password, firstName, middleName, lastName, fullName, email, phoneNumber,
+                    requestedUsername, password, firstName, middleName, lastName, fullName, nickname, email, phoneNumber,
                     uploadedPhoto, uploadedDocument, dateOfBirth, hireDate, compensationType, salary,
                     role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, token);
             LanApiClient.updateEmployeeAdmin("UPDATE",targetUserId,request,null,null,mutationKey);
@@ -1497,6 +1527,7 @@ public class EmployeeManagement extends JFrame {
         firstNameField.setText("");
         middleNameField.setText("");
         lastNameField.setText("");
+        nicknameField.setText("");
         updatingGeneratedUsername = false;
         emailField.setText("");
         phoneField.setText("");
@@ -1536,6 +1567,7 @@ public class EmployeeManagement extends JFrame {
         saveBadgePdfButton.setEnabled(false);
         writeMagStripeButton.setEnabled(false);
         programNfcButton.setEnabled(false);
+        testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
         usernameField.requestFocusInWindow();
     }
@@ -2001,13 +2033,22 @@ public class EmployeeManagement extends JFrame {
         }
 
         Integer userId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
-        UiTaskRunner.submit(this,"employees.deactivate",()->{String token=SupabaseSessionManager.getValidAccessToken();LanApiClient.updateEmployeeAdmin("DEACTIVATE",userId,null,null,token,mutationKey);return Boolean.TRUE;},ignored->{
+        UiTaskRunner.submit(this,"employees.deactivate",()->{String token=cloudOrServerCredential();LanApiClient.updateEmployeeAdmin("DEACTIVATE",userId,null,null,token,mutationKey);return Boolean.TRUE;},ignored->{
             SessionDataCache.invalidate("employee-admin:");
             JOptionPane.showMessageDialog(this,
                     "Employee deactivated successfully. Their history was kept for reporting and audit records.");
             clearFields();
             loadEmployees();
         },ex->JOptionPane.showMessageDialog(this,"Failed to deactivate employee: "+ex.getMessage()));
+    }
+
+    private static String cloudOrServerCredential() {
+        try {
+            String token = SupabaseSessionManager.getValidAccessToken();
+            return token == null || token.isBlank() ? "SERVER_CREDENTIAL" : token;
+        } catch (Exception ignored) {
+            return "SERVER_CREDENTIAL";
+        }
     }
 
     private void applyEmployeeFilter() {

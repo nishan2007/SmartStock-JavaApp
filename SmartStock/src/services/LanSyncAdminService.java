@@ -23,6 +23,7 @@ final class LanSyncAdminService {
         SyncSchemaInstaller.ensureSchema(connection);
         SyncWorker.SyncStatus worker = SyncWorker.latestStatus(connection);
         Map<String, Object> result = statusMap(worker);
+        addImageCounts(connection, result);
         result.put("serverWorkerStarted", SyncWorker.isStarted());
         result.put("conflicts", conflicts(connection));
         result.put("audits", audits(connection));
@@ -34,7 +35,9 @@ final class LanSyncAdminService {
         if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
             throw new RuleViolation(409, "SERVER_MODE_REQUIRED", "Cloud synchronization runs on the SmartStock server.");
         }
-        return statusMap(SyncWorker.runOnceNow());
+        Map<String,Object> result = statusMap(SyncWorker.runOnceNow());
+        addImageCounts(connection, result);
+        return result;
     }
 
     static Map<String, Object> resolve(Connection connection, long conflictId, int userId) throws Exception {
@@ -99,6 +102,15 @@ final class LanSyncAdminService {
                 "serviceStatus", service == null ? "Unknown" : service.status(),
                 "serviceMessage", service == null ? "" : service.message(),
                 "serviceLastSeenEpochMillis", service == null ? 0L : epoch(service.lastSeenAt()));
+    }
+
+    private static void addImageCounts(Connection connection, Map<String,Object> result) throws SQLException {
+        ServerImageAssetService.Counts counts = ServerImageAssetService.counts(connection);
+        result.put("imagePendingUploads", counts.pendingUploads());
+        result.put("imageMissingLocal", counts.missingLocal());
+        result.put("imageMissingCloud", counts.missingCloud());
+        result.put("imageUnused", counts.unused());
+        result.put("imageFailedPurges", counts.failedPurges());
     }
 
     private static void requirePermission(Connection connection, int userId) throws Exception {

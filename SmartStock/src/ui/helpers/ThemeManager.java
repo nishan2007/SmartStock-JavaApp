@@ -1,5 +1,6 @@
 package ui.helpers;
 
+import data.EnvironmentProfile;
 import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.border.TitledBorder;
@@ -40,9 +41,14 @@ public final class ThemeManager {
     private static final Color DARK_MUTED = new Color(180, 180, 180);
     private static final Color DARK_BORDER = new Color(75, 75, 75);
     private static final Color DARK_TABLE_HEADER = new Color(38, 38, 38);
-    private static final Color DARK_BUTTON = new Color(88, 88, 88);
-    private static final Color DARK_BUTTON_TEXT = Color.WHITE;
+    // macOS Aqua may ignore a Swing button's requested dark fill and paint its
+    // native light bezel instead. Keep native/default buttons light with dark
+    // text in dark mode so controls added after a window theme pass are still
+    // readable. Explicitly branded buttons retain their own colors.
+    private static final Color DARK_BUTTON = new Color(238, 238, 238);
+    private static final Color DARK_BUTTON_TEXT = new Color(17, 24, 39);
     private static final Color DARK_MENU_BAR = new Color(42, 42, 42);
+    private static final Color DEVELOPMENT_MENU_BAR = new Color(185, 28, 28);
 
     private ThemeManager() {
     }
@@ -80,7 +86,9 @@ public final class ThemeManager {
         Color tableHeader = dark ? DARK_TABLE_HEADER : LIGHT_TABLE_HEADER;
         Color button = dark ? DARK_BUTTON : surface;
         Color buttonText = dark ? DARK_BUTTON_TEXT : text;
-        Color menuBar = dark ? DARK_MENU_BAR : surface;
+        boolean development = EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT;
+        Color menuBar = development ? DEVELOPMENT_MENU_BAR : dark ? DARK_MENU_BAR : surface;
+        Color menuText = development ? Color.WHITE : text;
 
         UIManager.put("Panel.background", background);
         UIManager.put("OptionPane.background", surface);
@@ -124,11 +132,11 @@ public final class ThemeManager {
         UIManager.put("ScrollPane.background", background);
         UIManager.put("Viewport.background", surface);
         UIManager.put("MenuBar.background", menuBar);
-        UIManager.put("MenuBar.foreground", text);
+        UIManager.put("MenuBar.foreground", menuText);
         UIManager.put("MenuBar.selectionBackground", dark ? new Color(64, 64, 64) : new Color(229, 231, 235));
         UIManager.put("MenuBar.selectionForeground", text);
         UIManager.put("Menu.background", menuBar);
-        UIManager.put("Menu.foreground", text);
+        UIManager.put("Menu.foreground", menuText);
         UIManager.put("Menu.selectionBackground", dark ? new Color(64, 64, 64) : new Color(229, 231, 235));
         UIManager.put("Menu.selectionForeground", text);
         UIManager.put("MenuItem.background", surface);
@@ -177,7 +185,9 @@ public final class ThemeManager {
         Color border = dark ? DARK_BORDER : LIGHT_BORDER;
         Color buttonColor = dark ? DARK_BUTTON : surface;
         Color buttonText = dark ? DARK_BUTTON_TEXT : text;
-        Color menuBarColor = dark ? DARK_MENU_BAR : surface;
+        boolean development = EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT;
+        Color menuBarColor = development ? DEVELOPMENT_MENU_BAR : dark ? DARK_MENU_BAR : surface;
+        Color menuText = development ? Color.WHITE : text;
 
         if (component instanceof JPopupMenu popupMenu) {
             if (dark) {
@@ -197,7 +207,7 @@ public final class ThemeManager {
                 menuBar.setUI(new BasicMenuBarUI());
             }
             menuBar.setBackground(menuBarColor);
-            menuBar.setForeground(text);
+            menuBar.setForeground(menuText);
             menuBar.setOpaque(true);
             menuBar.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
         } else if (component instanceof JMenu menu) {
@@ -206,7 +216,7 @@ public final class ThemeManager {
             }
             boolean topLevelMenu = menu.getParent() instanceof JMenuBar;
             menu.setBackground(topLevelMenu ? menuBarColor : surface);
-            menu.setForeground(text);
+            menu.setForeground(topLevelMenu ? menuText : text);
             menu.setOpaque(true);
             menu.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
         } else if (component instanceof JMenuItem menuItem) {
@@ -252,6 +262,11 @@ public final class ThemeManager {
             if (button instanceof JCheckBox || button instanceof JRadioButton) {
                 button.setBackground(background);
                 button.setForeground(text);
+                // Aqua can paint a checkbox/radio button as a light, pill-shaped
+                // native control after a theme switch.  Keeping the label area
+                // transparent prevents light text from disappearing on that fill.
+                button.setOpaque(false);
+                button.setContentAreaFilled(false);
             } else if (Boolean.TRUE.equals(button.getClientProperty("SmartStock.customPaintedButton"))) {
                 button.setOpaque(false);
                 button.setContentAreaFilled(false);
@@ -266,6 +281,7 @@ public final class ThemeManager {
                 button.setBackground(surface);
                 button.setForeground(text);
             }
+            ensureReadableButtonColors(button);
         } else if (component instanceof JLabel label) {
             if (Boolean.TRUE.equals(label.getClientProperty("SmartStock.preserveForeground"))) {
                 return;
@@ -309,6 +325,48 @@ public final class ThemeManager {
         int max = Math.max(color.getRed(), Math.max(color.getGreen(), color.getBlue()));
         int min = Math.min(color.getRed(), Math.min(color.getGreen(), color.getBlue()));
         return max - min <= 24;
+    }
+
+    /**
+     * Keeps text buttons readable even when a screen supplies its own accent.
+     * WCAG's 4.5:1 normal-text threshold is used as a practical Swing UI guard.
+     */
+    public static void ensureReadableButtonColors(AbstractButton button) {
+        if (button == null
+                || Boolean.TRUE.equals(button.getClientProperty("SmartStock.customPaintedButton"))
+                || button.getText() == null
+                || button.getText().isBlank()
+                || button.getBackground() == null) {
+            return;
+        }
+        Color foreground = button.getForeground();
+        if (foreground == null || contrastRatio(foreground, button.getBackground()) < 4.5) {
+            button.setForeground(readableTextColor(button.getBackground()));
+        }
+    }
+
+    public static Color readableTextColor(Color background) {
+        if (background == null) return LIGHT_TEXT;
+        return contrastRatio(Color.BLACK, background) >= contrastRatio(Color.WHITE, background)
+                ? Color.BLACK
+                : Color.WHITE;
+    }
+
+    static double contrastRatio(Color first, Color second) {
+        double lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+        double darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    private static double relativeLuminance(Color color) {
+        return 0.2126 * linearChannel(color.getRed())
+                + 0.7152 * linearChannel(color.getGreen())
+                + 0.0722 * linearChannel(color.getBlue());
+    }
+
+    private static double linearChannel(int channel) {
+        double value = channel / 255.0;
+        return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
     }
 
     private static Properties loadProperties() throws IOException {

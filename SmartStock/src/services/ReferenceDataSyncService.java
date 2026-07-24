@@ -29,6 +29,8 @@ public final class ReferenceDataSyncService {
             "company_info",
             "locations",
             "company_customization",
+            "image_assets",
+            "image_asset_references",
             "users",
             "user_locations",
             "time_clock_auto_close_settings",
@@ -65,6 +67,8 @@ public final class ReferenceDataSyncService {
             "company_info",
             "locations",
             "company_customization",
+            "image_assets",
+            "image_asset_references",
             "customer_types",
             "users",
             "user_locations",
@@ -127,6 +131,7 @@ public final class ReferenceDataSyncService {
             "inventory_movements",
             "customer_account_transactions",
             "customer_account_payment_allocations",
+            "balance_sheet_bf_overrides",
             "balance_sheet_submissions",
             "cheque_bank_deposits",
             "expense_categories",
@@ -157,6 +162,8 @@ public final class ReferenceDataSyncService {
             "company_info",
             "locations",
             "company_customization",
+            "image_assets",
+            "image_asset_references",
             "users",
             "user_locations",
             "time_clock_auto_close_settings",
@@ -216,6 +223,7 @@ public final class ReferenceDataSyncService {
             "inventory_movements",
             "customer_account_transactions",
             "customer_account_payment_allocations",
+            "balance_sheet_bf_overrides",
             "balance_sheet_submissions",
             "cheque_bank_deposits",
             "expense_categories",
@@ -243,7 +251,21 @@ public final class ReferenceDataSyncService {
     private ReferenceDataSyncService() {
     }
 
+    static List<String> cloudPullOrderForApi() {
+        return CLOUD_PULL_ORDER;
+    }
+
+    static List<String> cloudMirrorTablesForApi() {
+        LinkedHashMap<String, Boolean> tables = new LinkedHashMap<>();
+        CLOUD_PULL_ORDER.forEach(table -> tables.put(table, Boolean.TRUE));
+        LOCAL_PUSH_ORDER.forEach(table -> tables.put(table, Boolean.TRUE));
+        TABLES.forEach(table -> tables.put(table, Boolean.TRUE));
+        return List.copyOf(tables.keySet());
+    }
+
     public static int refreshFromCloud(Connection local, Connection cloud) throws SQLException {
+        ServerImageAssetService.ensureSchema(local);
+        ServerImageAssetService.ensureSchema(cloud);
         requireWorkflowSyncIdentitySchema(local, cloud);
         ensureItemDetailsSyncSchema(local, cloud);
         ensureEmailSyncSchema(local, cloud);
@@ -261,6 +283,8 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pullReferenceData(Connection local, Connection cloud) throws SQLException {
+        ServerImageAssetService.ensureSchema(local);
+        ServerImageAssetService.ensureSchema(cloud);
         requireWorkflowSyncIdentitySchema(local, cloud);
         ensureItemDetailsSyncSchema(local, cloud);
         ensureMissingCloudTables(local, cloud);
@@ -285,6 +309,8 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pullExistingLocationHistory(Connection local, Connection cloud, Integer locationId) throws SQLException {
+        ServerImageAssetService.ensureSchema(local);
+        ServerImageAssetService.ensureSchema(cloud);
         requireWorkflowSyncIdentitySchema(local, cloud);
         ensureItemDetailsSyncSchema(local, cloud);
         ensureMissingCloudTables(local, cloud);
@@ -301,6 +327,8 @@ public final class ReferenceDataSyncService {
     }
 
     public static int pushLocalOperationalChanges(Connection local, Connection cloud) throws SQLException {
+        ServerImageAssetService.ensureSchema(local);
+        ServerImageAssetService.ensureSchema(cloud);
         requireWorkflowSyncIdentitySchema(local, cloud);
         ensureItemDetailsSyncSchema(local, cloud);
         ensureEmailSyncSchema(local, cloud);
@@ -337,6 +365,15 @@ public final class ReferenceDataSyncService {
         repairSequences(cloud);
         repairSequences(local);
         return copied;
+    }
+
+    /** Pushes only the server-owned image manifest, without touching operational business rows. */
+    public static int pushImageMetadata(Connection local, Connection cloud) throws SQLException {
+        ServerImageAssetService.ensureSchema(local);
+        ServerImageAssetService.ensureSchema(cloud);
+        int changed = upsertAll(local, cloud, "image_assets");
+        changed += upsertAll(local, cloud, "image_asset_references");
+        return changed;
     }
 
     public static int pushTimeClockSafetyChanges(Connection local, Connection cloud) throws SQLException {
@@ -3236,6 +3273,7 @@ public final class ReferenceDataSyncService {
                             GROUP BY d2.device_id
                         ) session_totals
                         WHERE session_totals.device_id = d.device_id
+                          AND d.session_count IS DISTINCT FROM COALESCE(session_totals.session_count, 0)
                         """);
                 if (!functionExists(conn, "refresh_device_session_count")) {
                     stmt.executeUpdate("""
@@ -3328,6 +3366,7 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_photo_url TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id_card_document_url TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_secret_salt TEXT");
@@ -3366,6 +3405,7 @@ public final class ReferenceDataSyncService {
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS always_print_sale_receipt BOOLEAN NOT NULL DEFAULT FALSE");
             ensureUpdatedAtTableSchema(conn, stmt, "user_locations");
             ServerEmployeeScheduleService.ensureSchema(conn);
             ensureUpdatedAtTableSchema(conn, stmt, "inventory");

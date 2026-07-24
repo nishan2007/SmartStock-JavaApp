@@ -31,7 +31,6 @@ public class ViewSales extends JFrame {
     private JTextField searchField;
     private JTextField fromDateField;
     private JTextField toDateField;
-    private JLabel summaryLabel;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     private final DateTimeFormatter displayDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -44,7 +43,7 @@ public class ViewSales extends JFrame {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(12, 12));
 
-        setJMenuBar(AppMenuBar.create(this,"ViewSales"));
+        setJMenuBar(AppMenuBar.create(this,"ViewSales", loadingState));
 
         JPanel mainPanel = new JPanel(new BorderLayout(12, 12));
         mainPanel.setBorder(new EmptyBorder(14, 14, 14, 14));
@@ -84,13 +83,6 @@ public class ViewSales extends JFrame {
 
         JScrollPane scrollPane = new JScrollPane(salesTable);
         mainPanel.add(scrollPane, BorderLayout.CENTER);
-
-        JPanel bottomPanel = new JPanel(new BorderLayout());
-        summaryLabel = new JLabel("Transactions: 0");
-        summaryLabel.setBorder(new EmptyBorder(6, 2, 0, 2));
-        bottomPanel.add(summaryLabel, BorderLayout.WEST);
-        bottomPanel.add(loadingState, BorderLayout.CENTER);
-        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
 
         loadSales();
         WindowHelper.configurePosWindow(this);
@@ -220,9 +212,6 @@ public class ViewSales extends JFrame {
 
     private void applySales(SalesSnapshot snapshot) {
         salesTableModel.setRowCount(0);
-        BigDecimal grossSales = BigDecimal.ZERO;
-        BigDecimal returnTotal = BigDecimal.ZERO;
-        int transactionCount = 0;
         for (LanApiClient.SalesHistoryRow row : snapshot.rows()) {
                 boolean returnRow = "RETURN".equalsIgnoreCase(row.transactionType());
                 salesTableModel.addRow(new Object[]{
@@ -240,15 +229,7 @@ public class ViewSales extends JFrame {
                         currencyFormat.format(zero(row.totalAmount())),
                         currencyFormat.format(zero(row.netAmount()))
                 });
-                if (returnRow) returnTotal = returnTotal.add(zero(row.returnedAmount()));
-                else grossSales = grossSales.add(zero(row.totalAmount()));
-                transactionCount++;
         }
-        BigDecimal netTotal = grossSales.subtract(returnTotal);
-        summaryLabel.setText("Transactions: " + transactionCount
-                + "    Gross Sales: " + currencyFormat.format(grossSales)
-                + "    Returns: " + currencyFormat.format(returnTotal)
-                + "    Net: " + currencyFormat.format(netTotal));
     }
 
     private record SalesSnapshot(List<LanApiClient.SalesHistoryRow> rows) { }

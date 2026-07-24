@@ -6,7 +6,9 @@ import services.CustomOrderDataService.PrintSizePresetOption;
 import services.CustomOrderDataService.VariantOption;
 
 import javax.swing.*;
+import ui.helpers.ThemeManager;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.basic.BasicComboBoxUI;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.ArrayList;
@@ -83,6 +85,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     private final JPanel stepCards = new JPanel(stepLayout);
     private final List<JToggleButton> stepButtons = new ArrayList<>();
     private JButton saveOrderButton;
+    private JButton saveAndPrintOrderButton;
+    private boolean alwaysPrintOrderSlip;
     private int currentStep;
 
     CustomOrdersNewOrderTabPanel(Handler handler) {
@@ -437,15 +441,19 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         JButton previousButton = new JButton("Back");
         JButton nextButton = new JButton("Next");
         saveOrderButton = new JButton("Create Custom Order");
+        saveAndPrintOrderButton = new JButton("Create & Print Order Slip");
         JButton clearOrderButton = new JButton("Clear Order");
         styleButton(previousButton, PANEL_ALT);
         styleButton(nextButton, ACCENT_DARK);
         styleButton(saveOrderButton, TEAL);
+        styleButton(saveAndPrintOrderButton, TEAL);
         styleButton(clearOrderButton, PANEL_ALT);
         previousButton.addActionListener(e -> moveToStep(currentStep - 1, handler));
         nextButton.addActionListener(e -> moveToStep(currentStep + 1, handler));
-        saveOrderButton.addActionListener(e -> handler.saveOrder());
+        saveOrderButton.addActionListener(e -> handler.saveOrder(false));
+        saveAndPrintOrderButton.addActionListener(e -> handler.saveOrder(true));
         saveOrderButton.setVisible(false);
+        saveAndPrintOrderButton.setVisible(false);
         clearOrderButton.addActionListener(e -> handler.clearOrder());
 
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -455,6 +463,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         panel.add(previousButton);
         panel.add(nextButton);
         panel.add(saveOrderButton);
+        panel.add(saveAndPrintOrderButton);
         return panel;
     }
 
@@ -517,8 +526,16 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
             ));
         }
         if (saveOrderButton != null) {
-            saveOrderButton.setVisible(currentStep == 3);
+            saveOrderButton.setVisible(currentStep == 3 && !alwaysPrintOrderSlip);
         }
+        if (saveAndPrintOrderButton != null) {
+            saveAndPrintOrderButton.setVisible(currentStep == 3);
+        }
+    }
+
+    void setAlwaysPrintOrderSlip(boolean required) {
+        alwaysPrintOrderSlip = required;
+        updateStepButtons();
     }
 
     private void openPrintAddonSheet(Handler handler) {
@@ -589,7 +606,16 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         button.setForeground(TEXT);
         button.setBorder(BorderFactory.createLineBorder(BORDER));
         button.setPreferredSize(new Dimension("ACCOUNT".equals(method) ? 110 : 92, 38));
-        button.addActionListener(e -> handler.selectPaymentMethod(method));
+        button.setActionCommand(method);
+        button.addItemListener(e -> {
+            boolean selected = button.isSelected();
+            button.setBackground(selected ? ACCENT_DARK : PANEL_ALT);
+            button.setForeground(selected ? Color.WHITE : TEXT);
+            button.setBorder(BorderFactory.createLineBorder(selected ? ACCENT : BORDER, selected ? 2 : 1));
+            if (selected) {
+                handler.selectPaymentMethod(method);
+            }
+        });
         paymentMethodGroup.add(button);
         return button;
     }
@@ -628,6 +654,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
             printAddonTable = new JTable(printAddonModel);
             printAddonTable.setRowHeight(24);
             printAddonTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            styleTable(printAddonTable);
             hideColumn(printAddonTable, 0);
             hideColumn(printAddonTable, 2);
             hideColumn(printAddonTable, 4);
@@ -718,9 +745,30 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     }
 
     private void styleCombo(JComboBox<?> comboBox) {
+        comboBox.setUI(new BasicComboBoxUI());
         comboBox.setBackground(FIELD_BG);
         comboBox.setForeground(TEXT);
+        comboBox.setOpaque(true);
         comboBox.setBorder(BorderFactory.createLineBorder(BORDER));
+        comboBox.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                          boolean isSelected, boolean cellHasFocus) {
+                Component component = super.getListCellRendererComponent(
+                        list, value, index, isSelected, cellHasFocus);
+                component.setBackground(isSelected ? ACCENT_DARK : FIELD_BG);
+                component.setForeground(isSelected ? Color.WHITE : TEXT);
+                if (component instanceof JComponent rendered) {
+                    rendered.setBorder(new EmptyBorder(3, 6, 3, 6));
+                    rendered.setOpaque(true);
+                }
+                list.setBackground(FIELD_BG);
+                list.setForeground(TEXT);
+                list.setSelectionBackground(ACCENT_DARK);
+                list.setSelectionForeground(Color.WHITE);
+                return component;
+            }
+        });
     }
 
     private void setFixedWidth(JComponent component, int width) {
@@ -736,6 +784,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         button.setContentAreaFilled(true);
         button.setBackground(color);
         button.setForeground(Color.WHITE);
+        ThemeManager.ensureReadableButtonColors(button);
         button.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(color.brighter()), new EmptyBorder(5, 14, 5, 14)));
     }
 
@@ -810,7 +859,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         Runnable upfrontChanged();
         boolean canLeaveStep(int step);
         void enterStep(int step);
-        void saveOrder();
+        void saveOrder(boolean printOrderSlip);
         void clearOrder();
     }
 }

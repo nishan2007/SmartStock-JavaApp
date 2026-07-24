@@ -39,6 +39,7 @@ public class Quotations extends JFrame {
     private static final int LINE_COL_OVERRIDE_REASON = 9;
     private static final int LINE_COL_OVERRIDE_BY_USER_ID = 10;
     private static final int LINE_COL_OVERRIDE_BY_NAME = 11;
+    private static final int LINE_COL_OVERRIDE_TOKEN = 12;
     private static final Color INPUT_BACKGROUND = new Color(248, 250, 252);
     private static final Color INPUT_FOREGROUND = new Color(17, 24, 39);
     private static final Color INPUT_SELECTION = new Color(37, 99, 235);
@@ -411,7 +412,7 @@ public class Quotations extends JFrame {
     }
 
     private static void hideInternalLineColumns(JTable table) {
-        for (int modelIndex = LINE_COL_ORIGINAL_UNIT; modelIndex <= LINE_COL_OVERRIDE_BY_NAME; modelIndex++) {
+        for (int modelIndex = LINE_COL_ORIGINAL_UNIT; modelIndex <= LINE_COL_OVERRIDE_TOKEN; modelIndex++) {
             int viewIndex = table.convertColumnIndexToView(modelIndex);
             if (viewIndex >= 0) {
                 table.removeColumn(table.getColumnModel().getColumn(viewIndex));
@@ -495,7 +496,7 @@ public class Quotations extends JFrame {
         private final JTextArea notesArea = new JTextArea(3, 40);
         private final DefaultTableModel lineModel = new DefaultTableModel(new String[]{
                 "Product ID", "Item", "SKU", "Qty", "Unit", "Disc %", "Delivery", "Notes",
-                "Original Unit", "Override Reason", "Override By User ID", "Override By"
+                "Original Unit", "Override Reason", "Override By User ID", "Override By", "Override Token"
         }, 0);
         private final JLabel statusLabel = new JLabel(" ");
         private final Long editQuotationId;
@@ -583,7 +584,8 @@ public class Quotations extends JFrame {
                         editor.line.originalUnitPrice(),
                         editor.line.priceOverrideReason(),
                         editor.line.priceOverrideByUserId(),
-                        editor.line.priceOverrideByName()
+                        editor.line.priceOverrideByName(),
+                        editor.line.priceOverrideApprovalToken()
                 });
             }
         }
@@ -612,6 +614,7 @@ public class Quotations extends JFrame {
                 lineModel.setValueAt(editor.line.priceOverrideReason(), modelRow, 9);
                 lineModel.setValueAt(editor.line.priceOverrideByUserId(), modelRow, 10);
                 lineModel.setValueAt(editor.line.priceOverrideByName(), modelRow, 11);
+                lineModel.setValueAt(editor.line.priceOverrideApprovalToken(), modelRow, 12);
             }
         }
 
@@ -637,7 +640,8 @@ public class Quotations extends JFrame {
                     String.valueOf(lineModel.getValueAt(row, 7)),
                     blankToNull(String.valueOf(lineModel.getValueAt(row, 9))),
                     nullableInteger(lineModel.getValueAt(row, 10)),
-                    blankToNull(String.valueOf(lineModel.getValueAt(row, 11)))
+                    blankToNull(String.valueOf(lineModel.getValueAt(row, 11))),
+                    blankToNull(String.valueOf(lineModel.getValueAt(row, 12)))
             );
         }
 
@@ -658,7 +662,8 @@ public class Quotations extends JFrame {
                         line.originalUnitPrice() == null ? line.unitPrice() : line.originalUnitPrice(),
                         line.priceOverrideReason(),
                         line.priceOverrideByUserId(),
-                        line.priceOverrideByName()
+                        line.priceOverrideByName(),
+                        null
                 });
             }
         }
@@ -697,7 +702,8 @@ public class Quotations extends JFrame {
                         String.valueOf(lineModel.getValueAt(i, 7)),
                         blankToNull(String.valueOf(lineModel.getValueAt(i, 9))),
                         nullableInteger(lineModel.getValueAt(i, 10)),
-                        blankToNull(String.valueOf(lineModel.getValueAt(i, 11)))
+                        blankToNull(String.valueOf(lineModel.getValueAt(i, 11))),
+                        blankToNull(String.valueOf(lineModel.getValueAt(i, 12)))
                 ));
             }
             LocalDate validUntil;
@@ -965,6 +971,7 @@ public class Quotations extends JFrame {
                 String overrideReason = existingOverrideReason();
                 Integer overrideByUserId = existingOverrideByUserId();
                 String overrideByName = existingOverrideByName();
+                String overrideApprovalToken = existingOverrideApprovalToken();
                 boolean priceOverridden = product != null && enteredPrice.compareTo(originalUnitPrice) != 0;
                 if (priceOverridden && !canChangeSaleItemPrice()) {
                     boolean existingApprovalStillMatches = line != null
@@ -984,6 +991,7 @@ public class Quotations extends JFrame {
                         overrideReason = approval.reason();
                         overrideByUserId = approval.approvedByUserId();
                         overrideByName = approval.approvedByName();
+                        overrideApprovalToken = approval.lanApprovalToken();
                     }
                 } else if (priceOverridden && canChangeSaleItemPrice()) {
                     boolean existingApprovalStillMatches = line != null
@@ -994,16 +1002,18 @@ public class Quotations extends JFrame {
                         overrideReason = null;
                         overrideByUserId = null;
                         overrideByName = null;
+                        overrideApprovalToken = null;
                     }
                 } else if (!priceOverridden) {
                     overrideReason = null;
                     overrideByUserId = null;
                     overrideByName = null;
+                    overrideApprovalToken = null;
                 }
                 line = new LineInput(product, itemName, skuField.getText(), Integer.parseInt(qtyField.getText().trim()),
                         enteredPrice, originalUnitPrice, parseMoney(discountField.getText()),
                         String.valueOf(deliveryBox.getSelectedItem()), notesField.getText(),
-                        overrideReason, overrideByUserId, overrideByName);
+                        overrideReason, overrideByUserId, overrideByName, overrideApprovalToken);
                 dispose();
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, ex.getMessage(), "Line", JOptionPane.ERROR_MESSAGE);
@@ -1020,6 +1030,10 @@ public class Quotations extends JFrame {
 
         private String existingOverrideByName() {
             return line == null ? null : line.priceOverrideByName();
+        }
+
+        private String existingOverrideApprovalToken() {
+            return line == null ? null : line.priceOverrideApprovalToken();
         }
 
         private void fillProduct() {
@@ -1160,7 +1174,8 @@ public class Quotations extends JFrame {
     private record LineInput(QuotationInvoiceViewService.ProductOption product, String itemName, String sku, int quantity,
                              BigDecimal unitPrice, BigDecimal originalUnitPrice, BigDecimal discountPercent,
                              String deliveryMethod, String notes, String priceOverrideReason,
-                             Integer priceOverrideByUserId, String priceOverrideByName) {
+                             Integer priceOverrideByUserId, String priceOverrideByName,
+                             String priceOverrideApprovalToken) {
     }
 
     record PaymentInput(BigDecimal amount, String method, String reference) {

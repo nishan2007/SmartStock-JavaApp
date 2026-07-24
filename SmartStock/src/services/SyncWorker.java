@@ -93,6 +93,7 @@ public final class SyncWorker {
         try (Connection local = DB.getConnection()) {
             SyncSchemaInstaller.ensureSchema(local);
             EmailSchemaInstaller.ensureSchema(local);
+            ServerImageAssetService.ensureSchema(local);
             Optional<SyncLockService.SyncLease> lease = SyncLockService.tryAcquire(local, ownerLabel);
             if (lease.isEmpty()) {
                 SyncLockService.LockInfo lock = SyncLockService.currentLock(local);
@@ -102,31 +103,62 @@ public final class SyncWorker {
             }
             try (SyncLockService.SyncLease ignored = lease.get()) {
                 int automaticClosures = TimeClockAutoCloseService.processExpiredOpenPunches(local);
-                try (Connection cloud = DB.getCloudConnection()) {
-                    SyncSchemaInstaller.ensureSchema(cloud);
-                    EmailSchemaInstaller.ensureSchema(cloud);
-                    ignored.heartbeat();
-                    int timeClockSafetyPushes = ReferenceDataSyncService.pushTimeClockSafetyChanges(local, cloud);
-                    ignored.heartbeat();
-                    int holidaySyncChanges = ReferenceDataSyncService.syncScheduleHolidayChanges(local, cloud);
-                    ignored.heartbeat();
-                    int devicePushes = ReferenceDataSyncService.syncDevicesByUpdatedAt(local, cloud);
-                    ignored.heartbeat();
-                    int rowPushes = ReferenceDataSyncService.pushLocalOperationalChanges(local, cloud);
-                    ignored.heartbeat();
-                    int eventPushes = pushBatch(local, cloud);
-                    int pushed = rowPushes + devicePushes + timeClockSafetyPushes
-                            + holidaySyncChanges + eventPushes;
-                    ImageCacheWarmupService.warmLocalCache(local);
-                    SyncServiceStatusService.mark(local, "Running", "Cloud reachable");
-                    String message = automaticClosures == 0 ? "Cloud reachable"
-                            : "Cloud reachable; automatically closed " + automaticClosures + " stale time clock record"
-                            + (automaticClosures == 1 ? "" : "s") + ".";
-                    latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
-                            countPending(local), countFailed(local), countConflicts(local), null,
-                            SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));
+                ServerImageAssetService.SyncResult imageSync =
+                        ServerImageAssetService.synchronize(local);
+                ignored.heartbeat();
+                int pushed;
+                int downloadedEvents = 0;
+                int mirroredRows = 0;
+                if (!ServerSupabaseCredentials.isConfigured() || config.locationId() == null) {
+                    throw new SQLException(
+                            "Supabase Server Key and Store Location ID are required for cloud synchronization.");
                 }
+                CloudRowMirrorService.MirrorResult mirror =
+                        CloudRowMirrorService.synchronize(local, config.locationId());
+                mirroredRows = mirror.uploaded();
+                ignored.heartbeat();
+                CloudSyncApi.ExchangeResult exchange =
+                        CloudSyncApi.exchange(local, config.locationId());
+                pushed = mirror.uploaded() + exchange.acknowledged();
+                downloadedEvents = exchange.downloaded();
+                ImageCacheWarmupService.warmLocalCache(local);
+                SyncServiceStatusService.mark(local, "Running", "Cloud reachable");
+                String imageMessage = imageSync.uploaded() + imageSync.repaired() == 0 ? ""
+                        : "; images uploaded=" + imageSync.uploaded()
+                        + ", repaired=" + imageSync.repaired();
+                String mirrorMessage = mirroredRows == 0 ? ""
+                        : "; materialized rows=" + mirroredRows;
+                String deltaMessage = downloadedEvents == 0 ? ""
+                        : "; cloud deltas downloaded=" + downloadedEvents;
+                String message = (automaticClosures == 0 ? "Cloud reachable"
+                        : "Cloud reachable; automatically closed " + automaticClosures
+                        + " stale time clock record"
+                        + (automaticClosures == 1 ? "" : "s"))
+                        + imageMessage + mirrorMessage + deltaMessage + ".";
+                latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
+                        countPending(local), countFailed(local), countConflicts(local), null,
+                        SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));
             }
+        }
+    }
+
+    private static void markCloudStoreOnline(Connection cloud, Integer locationId) throws SQLException {
+        if (locationId == null) return;
+        try (PreparedStatement ps = cloud.prepareStatement("""
+                INSERT INTO store_sync_status(location_id,status,message,last_success_at,last_seen_at,updated_at)
+                VALUES (?, 'Online', 'Store synchronized successfully', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(location_id) DO UPDATE SET status=EXCLUDED.status,message=EXCLUDED.message,
+                    last_success_at=CURRENT_TIMESTAMP,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                """)) {
+            ps.setInt(1, locationId);
+            ps.executeUpdate();
+        }
+        try (PreparedStatement ps = cloud.prepareStatement("""
+                UPDATE remote_admin_commands SET status='APPLIED_STORE',applied_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP WHERE location_id=? AND status='PENDING_STORE'
+                """)) {
+            ps.setInt(1, locationId);
+            ps.executeUpdate();
         }
     }
 

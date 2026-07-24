@@ -40,9 +40,6 @@ DB_USER="${SMARTSTOCK_DB_USER:-smartstock_server}"
 DB_PASSWORD="${SMARTSTOCK_DB_PASSWORD:-}"
 DB_PORT="${SMARTSTOCK_DB_PORT:-5432}"
 SYNC_INTERVAL="${SMARTSTOCK_SYNC_INTERVAL:-60}"
-CLOUD_JDBC_URL="${SMARTSTOCK_CLOUD_JDBC_URL:-}"
-CLOUD_DB_USER="${SMARTSTOCK_CLOUD_DB_USER:-}"
-CLOUD_DB_PASSWORD="${SMARTSTOCK_CLOUD_DB_PASSWORD:-}"
 CREDENTIALS_PATH="${HOME}/.smartstock/database-credentials.txt"
 CONFIG_PATH="${HOME}/.smartstock/database.properties"
 BACKUP_SUFFIX="$(date +%Y%m%d-%H%M%S)"
@@ -73,39 +70,6 @@ clean_placeholder() {
     printf ''
   else
     printf '%s' "$value"
-  fi
-}
-
-properties_get() {
-  local key="$1"
-  local file="$2"
-  awk -F= -v wanted="$key" '
-    $0 !~ /^[[:space:]]*#/ && $1 == wanted {
-      sub(/^[^=]*=/, "")
-      print
-      exit
-    }
-  ' "$file" | tr -d '\r'
-}
-
-load_existing_cloud_config() {
-  if [[ ! -f "$CONFIG_PATH" ]]; then
-    return
-  fi
-  if [[ -z "$CLOUD_JDBC_URL" ]]; then
-    CLOUD_JDBC_URL="$(properties_get "cloud.jdbc.url" "$CONFIG_PATH")"
-  fi
-  if [[ -z "$CLOUD_DB_USER" ]]; then
-    CLOUD_DB_USER="$(properties_get "cloud.db.user" "$CONFIG_PATH")"
-    if looks_like_placeholder "$CLOUD_DB_USER"; then
-      CLOUD_DB_USER="$(security find-generic-password -w -s com.smartstock.database -a cloud-db-user 2>/dev/null || true)"
-    fi
-  fi
-  if [[ -z "$CLOUD_DB_PASSWORD" ]]; then
-    CLOUD_DB_PASSWORD="$(properties_get "cloud.db.password" "$CONFIG_PATH")"
-    if looks_like_placeholder "$CLOUD_DB_PASSWORD"; then
-      CLOUD_DB_PASSWORD="$(security find-generic-password -w -s com.smartstock.database -a cloud-db-password 2>/dev/null || true)"
-    fi
   fi
 }
 
@@ -385,19 +349,6 @@ db.user=\${SMARTSTOCK_SECURE_DB_USER}
 db.password=\${SMARTSTOCK_SECURE_DB_PASSWORD}
 sync.interval.seconds=${SYNC_INTERVAL}
 EOF
-  if [[ -n "$CLOUD_JDBC_URL" || -n "$CLOUD_DB_USER" || -n "$CLOUD_DB_PASSWORD" ]]; then
-    if [[ -n "$CLOUD_DB_USER" ]]; then
-      security add-generic-password -U -s com.smartstock.database -a cloud-db-user -w "$CLOUD_DB_USER" >/dev/null
-    fi
-    if [[ -n "$CLOUD_DB_PASSWORD" ]]; then
-      security add-generic-password -U -s com.smartstock.database -a cloud-db-password -w "$CLOUD_DB_PASSWORD" >/dev/null
-    fi
-    cat >> "$CONFIG_PATH" <<EOF
-cloud.jdbc.url=${CLOUD_JDBC_URL}
-cloud.db.user=\${SMARTSTOCK_SECURE_CLOUD_DB_USER}
-cloud.db.password=\${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}
-EOF
-  fi
   chmod 600 "$CONFIG_PATH"
 }
 
@@ -601,7 +552,6 @@ EOF
 
 backup_existing_files
 if [[ "$(printf '%s' "$MODE" | tr '[:lower:]-' '[:upper:]_')" == "SERVER" ]]; then
-  load_existing_cloud_config
   load_or_create_credentials
   install_dependencies
   start_postgres

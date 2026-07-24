@@ -4,6 +4,27 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="$ROOT_DIR/target"
 RELEASE_DIR="$TARGET_DIR/release"
+SMARTSTOCK_ENVIRONMENT="${SMARTSTOCK_ENVIRONMENT:-development}"
+SUPABASE_URL="${SUPABASE_URL:-}"
+SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:-}"
+
+case "$SMARTSTOCK_ENVIRONMENT" in
+  development|test|production) ;;
+  *)
+    echo "SMARTSTOCK_ENVIRONMENT must be development, test, or production." >&2
+    exit 1
+    ;;
+esac
+if [[ "$SMARTSTOCK_ENVIRONMENT" == "production" ]]; then
+  if [[ -z "$SUPABASE_URL" || -z "$SUPABASE_PUBLISHABLE_KEY" ]]; then
+    echo "Production packaging requires SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY." >&2
+    exit 1
+  fi
+  if [[ "$SUPABASE_URL" == *"wbffhygkttoaaodjcvuh"* ]]; then
+    echo "Refusing to package production against the development Supabase project." >&2
+    exit 1
+  fi
+fi
 
 cd "$ROOT_DIR"
 "$ROOT_DIR/tools/lan-api-cutover-check.sh"
@@ -28,6 +49,9 @@ cp "$JAR_PATH" "$RELEASE_DIR/payload/"
 cp -R "$TARGET_DIR/dependency/." "$RELEASE_DIR/payload/dependency/"
 cat > "$RELEASE_DIR/payload/run-smartstock-client.cmd" <<EOF
 @echo off
+set "SMARTSTOCK_ENVIRONMENT=$SMARTSTOCK_ENVIRONMENT"
+set "SUPABASE_URL=$SUPABASE_URL"
+set "SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLISHABLE_KEY"
 cd /d "%~dp0"
 java -jar "$JAR_NAME" --client
 EOF
@@ -39,6 +63,8 @@ SmartStock Register
 3. An administrator pairs the register once. Employees then use the normal login.
 
 This register package contains no PostgreSQL or cloud database credential.
+The Supabase URL and publishable key are public client configuration; no
+service-role key is included.
 EOF
 
 (

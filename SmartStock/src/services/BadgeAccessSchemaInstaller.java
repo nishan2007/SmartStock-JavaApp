@@ -17,6 +17,7 @@ public final class BadgeAccessSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE IF EXISTS company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_payload TEXT NOT NULL DEFAULT '{badge_id}'");
             stmt.executeUpdate("ALTER TABLE IF EXISTS company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_writer_command TEXT NOT NULL DEFAULT ''");
             stmt.executeUpdate("ALTER TABLE IF EXISTS company_customization ADD COLUMN IF NOT EXISTS badge_template_nfc_verify_command TEXT NOT NULL DEFAULT ''");
+            stmt.executeUpdate("ALTER TABLE IF EXISTS company_customization ADD COLUMN IF NOT EXISTS require_badge_pin_login BOOLEAN NOT NULL DEFAULT TRUE");
             stmt.executeUpdate("ALTER TABLE IF EXISTS company_customization ALTER COLUMN badge_template_back_instructions SET DEFAULT 'Scan, swipe, or tap this badge for SmartStock access.'");
             stmt.executeUpdate("""
                     UPDATE company_customization

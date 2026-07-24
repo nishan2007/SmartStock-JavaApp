@@ -109,7 +109,7 @@ public final class SmartStockUpdater {
     }
 
     private static void backupMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
-        Files.createDirectories(backupDir);
+        prepareSingleRollbackDirectory(backupDir);
         if (Files.exists(currentBundle)) {
             copyMacBundle(currentBundle, backupDir.resolve(currentBundle.getFileName().toString()));
         }
@@ -256,7 +256,7 @@ public final class SmartStockUpdater {
     }
 
     private static void backupCurrentApp(Path appDir, Path backupDir) throws IOException {
-        Files.createDirectories(backupDir);
+        prepareSingleRollbackDirectory(backupDir);
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path source : stream.toList()) {
                 String name = source.getFileName().toString();
@@ -265,6 +265,13 @@ public final class SmartStockUpdater {
                 }
             }
         }
+    }
+
+    static void prepareSingleRollbackDirectory(Path backupDir) throws IOException {
+        if (Files.exists(backupDir)) {
+            deleteRecursively(backupDir);
+        }
+        Files.createDirectories(backupDir);
     }
 
     private static void replaceApp(Path appDir, Path payloadDir) throws IOException {

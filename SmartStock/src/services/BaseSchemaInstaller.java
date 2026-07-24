@@ -97,6 +97,7 @@ public final class BaseSchemaInstaller {
                         middle_name TEXT,
                         last_name TEXT,
                         full_name TEXT NOT NULL,
+                        nickname TEXT,
                         email TEXT,
                         phone TEXT,
                         employee_photo_url TEXT,
@@ -144,6 +145,7 @@ public final class BaseSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_photo_url TEXT");
+            stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id_card_document_url TEXT");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE");
             stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS hire_date DATE");
@@ -629,7 +631,6 @@ public final class BaseSchemaInstaller {
                       )
                     ON CONFLICT (role_id, permission_id) DO NOTHING
                     """);
-            stmt.executeUpdate("INSERT INTO locations (name, receipt_store_code, timezone) SELECT 'Default Store', '0001', 'America/New_York' WHERE NOT EXISTS (SELECT 1 FROM locations)");
             ServerEmployeeScheduleService.ensureSchema(conn);
         }
     }

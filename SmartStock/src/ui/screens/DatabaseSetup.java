@@ -3,11 +3,16 @@ package ui.screens;
 import data.DatabaseConfig;
 import data.DatabaseCredentials;
 import data.DatabaseMode;
+import data.EnvironmentProfile;
 import services.ServerProvisioningService;
 import services.LanApiClient;
 import services.SyncWorker;
 import services.PostgresRuntimeService;
 import services.LocalServerRepairService;
+import services.ServerSupabaseCredentials;
+import services.ServerStoreSetupService;
+import services.SupabaseProjectConfig;
+import services.ServerFirstAdministratorService;
 import ui.helpers.ThemeManager;
 import ui.helpers.ResponsiveTask;
 
@@ -17,18 +22,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DatabaseSetup extends JFrame {
-    private final JComboBox<DatabaseMode> modeBox = new JComboBox<>(new DatabaseMode[]{DatabaseMode.CLIENT, DatabaseMode.SERVER});
+    private final JComboBox<DatabaseMode> modeBox = new JComboBox<>(DatabaseMode.values());
     private final JTextField jdbcUrlField = new JTextField();
     private final JTextField dbUserField = new JTextField();
     private final JPasswordField dbPasswordField = new JPasswordField();
     private final JTextField serverHostField = new JTextField();
     private final JSpinner serverPortSpinner = new JSpinner(new SpinnerNumberModel(8443, 1, 65535, 1));
     private final JTextField locationIdField = new JTextField();
-    private final JTextField cloudUrlField = new JTextField();
-    private final JTextField cloudUserField = new JTextField();
-    private final JPasswordField cloudPasswordField = new JPasswordField();
+    private final JPasswordField serverCloudCredentialField = new JPasswordField();
+    private final JTextField supabaseProjectUrlField = new JTextField();
+    private final JTextField supabasePublishableKeyField = new JTextField();
+    private final JTextField lanSubnetField = new JTextField();
     private final JSpinner syncIntervalSpinner = new JSpinner(new SpinnerNumberModel(60, 15, 3600, 15));
     private final JLabel statusLabel = new JLabel("Status: Ready");
+    private final JLabel localDbStatusLabel = new JLabel("Local Database: Checking...");
+    private final JLabel lanServiceStatusLabel = new JLabel("LAN Service: Checking...");
     private final List<FormRow> formRows = new ArrayList<>();
     private JButton testButton;
     private JButton testCloudButton;
@@ -40,24 +48,41 @@ public class DatabaseSetup extends JFrame {
     private JButton provisionButton;
     private JButton startServerButton;
     private JButton findServerButton;
+    private JButton saveServerCloudCredentialButton;
+    private JButton startLocalDbButton;
+    private JButton stopLocalDbButton;
+    private JButton startLanServiceButton;
+    private JButton stopLanServiceButton;
+    private JButton refreshServicesButton;
+    private JButton setupStoreButton;
+    private JButton initializeSupabaseButton;
+    private JButton setupFirstAdministratorButton;
+    private JButton advancedSettingsButton;
+    private JTabbedPane setupTabs;
+    private boolean advancedSettingsVisible;
 
     public DatabaseSetup(JFrame owner) {
+        this(owner, null);
+    }
+
+    public DatabaseSetup(JFrame owner, DatabaseMode requestedMode) {
         super("SmartStock Database Setup");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(760, 620);
+        setSize(800, 720);
         setLocationRelativeTo(owner);
 
         DatabaseConfig config = DatabaseConfig.load();
-        modeBox.setSelectedItem(config.mode() == DatabaseMode.SERVER ? DatabaseMode.SERVER : DatabaseMode.CLIENT);
+        modeBox.setSelectedItem(requestedMode == null ? config.mode() : requestedMode);
         jdbcUrlField.setText(config.jdbcUrl());
         dbUserField.setText(config.dbUser());
         dbPasswordField.setText(config.dbPassword());
         serverHostField.setText(config.serverHost());
         serverPortSpinner.setValue(config.mode() == DatabaseMode.SERVER ? config.serverPort() : LanApiClient.baseUri().getPort());
         locationIdField.setText(config.locationId() == null ? "" : String.valueOf(config.locationId()));
-        cloudUrlField.setText(config.cloudJdbcUrl() == null ? "" : config.cloudJdbcUrl());
-        cloudUserField.setText(config.cloudDbUser() == null ? "" : config.cloudDbUser());
-        cloudPasswordField.setText(config.cloudDbPassword() == null ? "" : config.cloudDbPassword());
+        SupabaseProjectConfig publicCloudConfig = SupabaseProjectConfig.load();
+        supabaseProjectUrlField.setText(publicCloudConfig.url());
+        supabasePublishableKeyField.setText(publicCloudConfig.publishableKey());
+        lanSubnetField.setText(SupabaseProjectConfig.loadLanSubnet());
         syncIntervalSpinner.setValue(config.syncIntervalSeconds());
 
         JPanel form = new JPanel(new GridBagLayout());
@@ -68,28 +93,50 @@ public class DatabaseSetup extends JFrame {
 
         int row = 0;
         row = addRow(form, gbc, row, "Mode", modeBox);
-        row = addRow(form, gbc, row, "Local JDBC URL", jdbcUrlField);
-        row = addRow(form, gbc, row, "Local DB User", dbUserField);
-        row = addRow(form, gbc, row, "Local DB Password", dbPasswordField);
+        row = addRow(form, gbc, row, "Local Database Address", jdbcUrlField);
+        row = addRow(form, gbc, row, "Local Database User", dbUserField);
+        row = addRow(form, gbc, row, "Local Database Password", dbPasswordField);
         row = addRow(form, gbc, row, "Server Host", serverHostField);
         row = addRow(form, gbc, row, "Server Port", serverPortSpinner);
-        row = addRow(form, gbc, row, "Store Location ID", locationIdField);
-        row = addRow(form, gbc, row, "Cloud JDBC URL", cloudUrlField);
-        row = addRow(form, gbc, row, "Cloud DB User", cloudUserField);
-        row = addRow(form, gbc, row, "Cloud DB Password", cloudPasswordField);
-        row = addRow(form, gbc, row, "Sync Interval Seconds", syncIntervalSpinner);
+        row = addRow(form, gbc, row, "Store ID or Code", locationIdField);
+        row = addRow(form, gbc, row, "Supabase Project URL", supabaseProjectUrlField);
+        row = addRow(form, gbc, row, "Supabase Publishable Key", supabasePublishableKeyField);
+        row = addRow(form, gbc, row, "Store LAN Subnet", lanSubnetField);
+        serverCloudCredentialField.setToolTipText("Paste an sb_secret_ server key (recommended) or legacy service_role key. It is stored only in " + ServerSupabaseCredentials.secureStoreDescription() + ".");
+        row = addRow(form, gbc, row, "Supabase Server Key", serverCloudCredentialField);
+        row = addRow(form, gbc, row, "Sync Every (Seconds)", syncIntervalSpinner);
+        jdbcUrlField.setToolTipText("Advanced: SmartStock normally creates this loopback PostgreSQL address automatically.");
+        dbUserField.setToolTipText("Advanced: generated by the SmartStock server installer and stored securely.");
+        dbPasswordField.setToolTipText("Advanced: generated by the SmartStock server installer and stored in the operating-system credential store.");
+        supabaseProjectUrlField.setToolTipText("Public HTTPS URL of this environment's Supabase project.");
+        supabasePublishableKeyField.setToolTipText("Public client key from this environment's Supabase project.");
+        lanSubnetField.setToolTipText("Advanced Windows firewall setting. LocalSubnet allows registers on this computer's local private network; use CIDR only for a managed VLAN.");
+        serverHostField.setToolTipText("Address registers use to reach the SmartStock server.");
+        locationIdField.setToolTipText(
+                "Enter an existing numeric location ID or four-digit store code. A new server can create its first store.");
 
         testButton = new JButton("Test Local Connection");
         testCloudButton = new JButton("Test Cloud Connection");
-        installRuntimeButton = new JButton("Install/Start PostgreSQL");
-        installSyncServiceButton = new JButton("Install Background Sync");
-        postgresStatusButton = new JButton("PostgreSQL Status");
-        loadCredentialsButton = new JButton("Load Saved Credentials");
-        repairSyncButton = new JButton("Repair/Sync Local Server");
-        provisionButton = new JButton("Provision Server");
-        startServerButton = new JButton("Start Server Mode");
+        installRuntimeButton = new JButton("Install Database");
+        installSyncServiceButton = new JButton(PostgresRuntimeService.isWindowsRuntime()
+                ? "Complete Windows Server Setup" : "Install LAN & Sync Service");
+        postgresStatusButton = new JButton("View Database Details");
+        loadCredentialsButton = new JButton("Load Credential File");
+        repairSyncButton = new JButton("Repair Schema & Sync Now");
+        provisionButton = new JButton("Initialize New Server");
+        startServerButton = new JButton("Start All Server Services");
         findServerButton = new JButton("Find Network Server");
-        JButton saveButton = new JButton("Save Config");
+        saveServerCloudCredentialButton = new JButton("Save Supabase Server Key");
+        startLocalDbButton = new JButton("Start Local DB");
+        stopLocalDbButton = new JButton("Stop Local DB");
+        startLanServiceButton = new JButton("Start LAN Service");
+        stopLanServiceButton = new JButton("Stop LAN Service");
+        refreshServicesButton = new JButton("Refresh Service Status");
+        setupStoreButton = new JButton("Validate or Create Store");
+        initializeSupabaseButton = new JButton("Initialize Supabase Project");
+        setupFirstAdministratorButton = new JButton("Set Up First Administrator");
+        advancedSettingsButton = new JButton("Show Advanced Settings");
+        JButton saveButton = new JButton("Save Connection Settings");
         JButton closeButton = new JButton("Close");
         testButton.addActionListener(e -> testLocalConnection());
         testCloudButton.addActionListener(e -> testCloudConnection());
@@ -101,41 +148,118 @@ public class DatabaseSetup extends JFrame {
         provisionButton.addActionListener(e -> provisionServer());
         startServerButton.addActionListener(e -> startServerMode());
         findServerButton.addActionListener(e -> findNetworkServer());
-        saveButton.addActionListener(e -> saveConfig());
+        saveServerCloudCredentialButton.addActionListener(e -> saveServerCloudCredential());
+        startLocalDbButton.addActionListener(e -> runServerControl("Starting local database...", PostgresRuntimeService::startPostgres, false));
+        stopLocalDbButton.addActionListener(e -> confirmAndRunServerControl(
+                "Stop the local database? SmartStock and connected registers will be unavailable until it is restarted.",
+                "Stopping local database...", PostgresRuntimeService::stopPostgres));
+        startLanServiceButton.addActionListener(e -> runServerControl("Starting LAN service...", PostgresRuntimeService::startLanService, false));
+        stopLanServiceButton.addActionListener(e -> confirmAndRunServerControl(
+                "Stop the LAN service? Connected registers will immediately lose their SmartStock connection.",
+                "Stopping LAN service...", PostgresRuntimeService::stopLanService));
+        refreshServicesButton.addActionListener(e -> refreshServerServiceStatus());
+        setupStoreButton.addActionListener(e -> setUpStore());
+        initializeSupabaseButton.addActionListener(e -> initializeSupabaseProject());
+        setupFirstAdministratorButton.addActionListener(e -> openFirstAdministratorSetup());
+        advancedSettingsButton.addActionListener(e -> toggleAdvancedSettings());
+        saveButton.addActionListener(e -> {
+            if (selectedMode() == DatabaseMode.SERVER) setUpStore();
+            else saveConfig();
+        });
         closeButton.addActionListener(e -> dispose());
         modeBox.addActionListener(e -> updateModeVisibility());
 
-        JPanel runtimeButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        runtimeButtons.add(installRuntimeButton);
-        runtimeButtons.add(installSyncServiceButton);
-        runtimeButtons.add(postgresStatusButton);
-        runtimeButtons.add(loadCredentialsButton);
-        runtimeButtons.add(findServerButton);
-
-        JPanel repairButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
-        repairButtons.add(repairSyncButton);
-        repairButtons.add(provisionButton);
-        repairButtons.add(startServerButton);
-
         JPanel actionButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        actionButtons.add(advancedSettingsButton);
+        actionButtons.add(findServerButton);
+        actionButtons.add(setupStoreButton);
         actionButtons.add(saveButton);
-        actionButtons.add(testButton);
-        actionButtons.add(testCloudButton);
         actionButtons.add(closeButton);
 
-        JPanel buttons = new JPanel(new GridLayout(3, 1, 0, 2));
-        buttons.add(runtimeButtons);
-        buttons.add(repairButtons);
-        buttons.add(actionButtons);
+        JPanel servicesPanel = new JPanel();
+        servicesPanel.setLayout(new BoxLayout(servicesPanel, BoxLayout.Y_AXIS));
+        servicesPanel.add(serviceSection("Local Database", localDbStatusLabel,
+                "Stores SmartStock data on this server computer. Stop it only for maintenance.",
+                operationRow(startLocalDbButton, "Start PostgreSQL on this computer."),
+                operationRow(stopLocalDbButton, "Stop PostgreSQL; SmartStock becomes unavailable."),
+                operationRow(installRuntimeButton, "Install PostgreSQL and required server tools."),
+                operationRow(postgresStatusButton, "Show the PostgreSQL version and service details."),
+                operationRow(testButton, "Verify SmartStock can connect to the local database.")));
+        servicesPanel.add(Box.createVerticalStrut(10));
+        servicesPanel.add(serviceSection("LAN & Background Sync", lanServiceStatusLabel,
+                "Provides the secure register connection and runs background cloud synchronization.",
+                operationRow(startLanServiceButton, "Connect registers and resume background synchronization."),
+                operationRow(stopLanServiceButton, "Disconnect registers and pause background synchronization."),
+                operationRow(installSyncServiceButton, PostgresRuntimeService.isWindowsRuntime()
+                        ? "Save production settings, request Windows administrator approval, install automatic startup, and restrict port 8443 to the store LAN."
+                        : "Install or update the automatic LAN and sync service.")));
+        servicesPanel.add(Box.createVerticalStrut(10));
+        servicesPanel.add(serviceSection("Supabase Cloud", null,
+                "Used for hosted backups, employee files, updates, email, and synchronization.",
+                operationRow(saveServerCloudCredentialButton, "Securely save this server's Supabase secret key."),
+                operationRow(initializeSupabaseButton, "Install or update the packaged SmartStock cloud schema."),
+                operationRow(testCloudButton, "Verify the server-only Supabase HTTPS API connection.")));
+        servicesPanel.add(Box.createVerticalStrut(10));
+        servicesPanel.add(serviceSection("Setup & Recovery", null,
+                "Administrative tools for first-time setup or repairing this server.",
+                operationRow(loadCredentialsButton, "Load credentials already saved on this computer."),
+                operationRow(provisionButton, "Create and initialize a new SmartStock server database."),
+                operationRow(setupFirstAdministratorButton, "Transfer an existing administrator or create a new one."),
+                operationRow(repairSyncButton, "Repair required schema and run synchronization immediately."),
+                operationRow(startServerButton, "Install and start the database, LAN service, and background sync."),
+                operationRow(refreshServicesButton, "Refresh the Running/Stopped indicators.")));
+
+        setupTabs = new JTabbedPane();
+        setupTabs.addTab("Connection Settings", new JScrollPane(form));
+        setupTabs.addTab("Server Services & Tools", new JScrollPane(servicesPanel));
 
         JPanel root = new JPanel(new BorderLayout(12, 12));
         root.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
-        root.add(form, BorderLayout.CENTER);
-        root.add(statusLabel, BorderLayout.NORTH);
-        root.add(buttons, BorderLayout.SOUTH);
+        root.add(setupTabs, BorderLayout.CENTER);
+        JPanel statusPanel = new JPanel();
+        statusPanel.setLayout(new BoxLayout(statusPanel, BoxLayout.Y_AXIS));
+        statusPanel.add(statusLabel);
+        root.add(statusPanel, BorderLayout.NORTH);
+        root.add(actionButtons, BorderLayout.SOUTH);
         setContentPane(root);
         ThemeManager.applyToWindow(this);
         updateModeVisibility();
+    }
+
+    private JPanel serviceSection(String title, JLabel state, String explanation, JPanel... operations) {
+        JPanel section = new JPanel();
+        section.setLayout(new BoxLayout(section, BoxLayout.Y_AXIS));
+        section.setBorder(BorderFactory.createTitledBorder(title));
+        JLabel explanationLabel = new JLabel("<html>" + explanation + "</html>");
+        explanationLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        section.add(explanationLabel);
+        if (state != null) {
+            state.setAlignmentX(Component.LEFT_ALIGNMENT);
+            state.setBorder(BorderFactory.createEmptyBorder(4, 0, 6, 0));
+            section.add(state);
+        } else {
+            section.add(Box.createVerticalStrut(6));
+        }
+        for (JPanel operation : operations) {
+            operation.setAlignmentX(Component.LEFT_ALIGNMENT);
+            section.add(operation);
+            section.add(Box.createVerticalStrut(4));
+        }
+        section.setAlignmentX(Component.LEFT_ALIGNMENT);
+        section.setMaximumSize(new Dimension(Integer.MAX_VALUE, section.getPreferredSize().height));
+        return section;
+    }
+
+    private JPanel operationRow(JButton button, String explanation) {
+        JPanel row = new JPanel(new BorderLayout(12, 0));
+        button.setPreferredSize(new Dimension(220, button.getPreferredSize().height));
+        button.setToolTipText(explanation);
+        JLabel description = new JLabel("<html>" + explanation + "</html>");
+        row.add(button, BorderLayout.WEST);
+        row.add(description, BorderLayout.CENTER);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE,
+                Math.max(button.getPreferredSize().height, description.getPreferredSize().height) + 4));
+        return row;
     }
 
     private int addRow(JPanel form, GridBagConstraints gbc, int row, String label, JComponent field) {
@@ -155,27 +279,32 @@ public class DatabaseSetup extends JFrame {
         DatabaseMode mode = selectedMode();
         boolean server = mode == DatabaseMode.SERVER;
         boolean client = mode == DatabaseMode.CLIENT;
+        boolean remote = mode == DatabaseMode.REMOTE_ADMIN;
+        boolean serverAdvanced = server && advancedSettingsVisible;
+        setupTabs.setEnabledAt(1, server);
+        if (!server && setupTabs.getSelectedIndex() == 1) setupTabs.setSelectedIndex(0);
         int selectedPort = (Integer) serverPortSpinner.getValue();
         if (server && selectedPort == 8443) serverPortSpinner.setValue(5432);
         if (client && selectedPort == 5432) serverPortSpinner.setValue(8443);
 
-        setRowVisible(modeBox, true);
-        setRowVisible(jdbcUrlField, server);
-        setRowVisible(dbUserField, server);
-        setRowVisible(dbPasswordField, server);
-        setRowVisible(serverHostField, server || client);
-        setRowVisible(serverPortSpinner, server || client);
-        setRowVisible(locationIdField, server || client);
-        setRowVisible(cloudUrlField, server);
-        setRowVisible(cloudUserField, server);
-        setRowVisible(cloudPasswordField, server);
-        setRowVisible(syncIntervalSpinner, server);
+        setRowVisible(modeBox, !server || serverAdvanced);
+        setRowVisible(jdbcUrlField, serverAdvanced);
+        setRowVisible(dbUserField, serverAdvanced);
+        setRowVisible(dbPasswordField, serverAdvanced);
+        setRowVisible(serverHostField, serverAdvanced || client || remote);
+        setRowVisible(serverPortSpinner, serverAdvanced || client || remote);
+        setRowVisible(locationIdField, serverAdvanced || client || remote);
+        setRowVisible(supabaseProjectUrlField, server);
+        setRowVisible(supabasePublishableKeyField, server);
+        setRowVisible(lanSubnetField, serverAdvanced);
+        setRowVisible(serverCloudCredentialField, server);
+        setRowVisible(syncIntervalSpinner, serverAdvanced);
 
-        setRowLabel(jdbcUrlField, "Local JDBC URL");
-        setRowLabel(dbUserField, "Local DB User");
-        setRowLabel(dbPasswordField, "Local DB Password");
-        setRowLabel(serverHostField, client ? "SmartStock Server Host" : "Server Host");
-        setRowLabel(serverPortSpinner, client ? "SmartStock HTTPS Port" : "PostgreSQL Port");
+        setRowLabel(jdbcUrlField, "Local Database Address");
+        setRowLabel(dbUserField, "Local Database User");
+        setRowLabel(dbPasswordField, "Local Database Password");
+        setRowLabel(serverHostField, remote ? "Remote Gateway Address" : client ? "SmartStock Server Address" : "This Server Address");
+        setRowLabel(serverPortSpinner, remote ? "Remote HTTPS Port" : client ? "SmartStock HTTPS Port" : "PostgreSQL Port");
 
         installRuntimeButton.setVisible(server);
         installSyncServiceButton.setVisible(server);
@@ -187,16 +316,50 @@ public class DatabaseSetup extends JFrame {
         testButton.setVisible(server);
         testCloudButton.setVisible(server);
         loadCredentialsButton.setVisible(server);
+        saveServerCloudCredentialButton.setVisible(server);
+        startLocalDbButton.setVisible(server);
+        stopLocalDbButton.setVisible(server);
+        startLanServiceButton.setVisible(server);
+        stopLanServiceButton.setVisible(server);
+        refreshServicesButton.setVisible(server);
+        setupStoreButton.setVisible(server);
+        initializeSupabaseButton.setVisible(server);
+        setupFirstAdministratorButton.setVisible(server);
+        advancedSettingsButton.setVisible(server);
+        localDbStatusLabel.setVisible(server);
+        lanServiceStatusLabel.setVisible(server);
 
         if (client) {
             statusLabel.setText(LanApiClient.isPaired()
                     ? "Status: This register is paired. Employees can log in normally."
                     : "Status: Enter the server host or find it automatically, then an administrator pairs this register once.");
+        } else if (remote) {
+            statusLabel.setText(LanApiClient.isPaired()
+                    ? "Status: Remote Admin device enrolled. Sign in to select a store."
+                    : "Status: Enter the public SmartStock gateway and enroll this trusted device once.");
         } else {
-            statusLabel.setText("Status: Server mode controls local PostgreSQL, cloud sync, and provisioning.");
+            statusLabel.setText(ServerSupabaseCredentials.isConfigured()
+                    ? "Status: Server mode ready; Supabase server credential is securely configured."
+                    : "Status: Server mode requires its Supabase server credential for Storage, images, updates, and other cloud operations.");
         }
         revalidate();
         repaint();
+        if (server) refreshServerServiceStatus();
+    }
+
+    private void toggleAdvancedSettings() {
+        advancedSettingsVisible = !advancedSettingsVisible;
+        advancedSettingsButton.setText(advancedSettingsVisible
+                ? "Hide Advanced Settings" : "Show Advanced Settings");
+        updateModeVisibility();
+        if (advancedSettingsVisible) {
+            statusLabel.setText("Status: Advanced server settings are visible. "
+                    + "SmartStock normally configures these automatically.");
+        } else {
+            statusLabel.setText(ServerSupabaseCredentials.isConfigured()
+                    ? "Status: Server mode ready; Supabase server credential is securely configured."
+                    : "Status: Enter the Supabase project values to continue server setup.");
+        }
     }
 
     private void setRowVisible(JComponent field, boolean visible) {
@@ -243,12 +406,12 @@ public class DatabaseSetup extends JFrame {
         saveConfig();
         statusLabel.setText("Status: Testing cloud connection...");
         try {
-            Boolean connected = ResponsiveTask.await(this, "Testing cloud database...", () -> {
+            Boolean connected = ResponsiveTask.await(this, "Testing Supabase API...", () -> {
                 ServerProvisioningService.testCloudConnection();
                 return Boolean.TRUE;
             });
             if (connected == null) return;
-            statusLabel.setText("Status: Cloud database connected.");
+            statusLabel.setText("Status: Supabase API connected.");
         } catch (Exception ex) {
             statusLabel.setText("Status: Cloud connection failed.");
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Cloud Connection", JOptionPane.ERROR_MESSAGE);
@@ -256,28 +419,176 @@ public class DatabaseSetup extends JFrame {
     }
 
     private void saveConfig() {
+        saveConfigWithLocation(parseLocationIdIfNumeric());
+    }
+
+    private boolean saveConfigWithLocation(Integer locationId) {
+        char[] serverCredential = serverCloudCredentialField.getPassword();
         try {
-            boolean client = selectedMode() == DatabaseMode.CLIENT;
-            if (client) LanApiClient.configureEndpoint(serverHostField.getText(), (Integer) serverPortSpinner.getValue());
+            boolean apiClient = selectedMode() == DatabaseMode.CLIENT || selectedMode() == DatabaseMode.REMOTE_ADMIN;
+            if (apiClient) LanApiClient.configureEndpoint(serverHostField.getText(), (Integer) serverPortSpinner.getValue());
             DatabaseConfig config = DatabaseConfig.fromForm(
                     selectedMode(),
-                    client ? "" : jdbcUrlField.getText().trim(),
-                    client ? "" : dbUserField.getText().trim(),
-                    client ? "" : new String(dbPasswordField.getPassword()),
+                    apiClient ? "" : jdbcUrlField.getText().trim(),
+                    apiClient ? "" : dbUserField.getText().trim(),
+                    apiClient ? "" : new String(dbPasswordField.getPassword()),
                     serverHostField.getText().trim(),
                     (Integer) serverPortSpinner.getValue(),
-                    parseLocationId(),
-                    client ? "" : cloudUrlField.getText().trim(),
-                    client ? "" : cloudUserField.getText().trim(),
-                    client ? "" : new String(cloudPasswordField.getPassword()),
+                    locationId,
                     (Integer) syncIntervalSpinner.getValue()
             );
             config.save();
-            statusLabel.setText("Status: Saved to " + DatabaseConfig.CONFIG_PATH);
+            if (selectedMode() == DatabaseMode.SERVER) {
+                SupabaseProjectConfig.savePublicConfig(
+                        EnvironmentProfile.active(),
+                        supabaseProjectUrlField.getText().trim(),
+                        supabasePublishableKeyField.getText().trim(),
+                        lanSubnetField.getText().trim());
+            }
+            boolean savedServerCredential = selectedMode() == DatabaseMode.SERVER && serverCredential.length > 0;
+            if (savedServerCredential) {
+                ServerSupabaseCredentials.install(serverCredential);
+                serverCloudCredentialField.setText("");
+            }
+            statusLabel.setText(savedServerCredential
+                    ? "Status: Connection settings and Supabase server credential saved securely."
+                    : "Status: Saved to " + DatabaseConfig.configPath());
+            return true;
         } catch (Exception ex) {
             statusLabel.setText("Status: Save failed.");
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Save Database Setup", JOptionPane.ERROR_MESSAGE);
+            return false;
+        } finally {
+            java.util.Arrays.fill(serverCredential, '\0');
         }
+    }
+
+    private void setUpStore() {
+        setUpStore(() -> { });
+    }
+
+    private void setUpStore(Runnable onReady) {
+        String identifier = locationIdField.getText() == null ? "" : locationIdField.getText().trim();
+        if (!saveConfigWithLocation(null)) return;
+
+        ServerStoreSetupService.Store existing;
+        try {
+            existing = ResponsiveTask.await(this, "Checking store assignment...",
+                    () -> ServerStoreSetupService.find(identifier));
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Initialize the server database first, then create or select its store.\n\n"
+                            + rootCauseMessage(ex),
+                    "Store Setup", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (existing != null) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "Assign this server to:\n\n"
+                            + existing.name() + "\n"
+                            + "Store code: " + existing.storeCode() + "\n"
+                            + "Location ID: " + existing.locationId() + "\n"
+                            + "Timezone: " + existing.timezone(),
+                    "Confirm Store Assignment", JOptionPane.YES_NO_OPTION,
+                    JOptionPane.QUESTION_MESSAGE);
+            if (choice == JOptionPane.YES_OPTION) assignStore(existing, onReady);
+            return;
+        }
+
+        String description = identifier.isBlank()
+                ? "No store exists or is selected. Create the first store now?"
+                : "No store was found for \"" + identifier + "\". Create it now?";
+        if (JOptionPane.showConfirmDialog(this, description, "Create Store",
+                JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        JTextField nameField = new JTextField();
+        JTextField codeField = new JTextField(identifier.matches("[0-9]{4}") ? identifier : "");
+        JTextField timezoneField = new JTextField("America/New_York");
+        JTextField addressField = new JTextField();
+        JPanel form = new JPanel(new GridLayout(0, 2, 8, 8));
+        form.add(new JLabel("Store Name:"));
+        form.add(nameField);
+        form.add(new JLabel("Store Code (0001-9999):"));
+        form.add(codeField);
+        form.add(new JLabel("Timezone:"));
+        form.add(timezoneField);
+        form.add(new JLabel("Address (optional):"));
+        form.add(addressField);
+        if (JOptionPane.showConfirmDialog(this, form, "Create First Store",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        try {
+            ServerStoreSetupService.Store created = ResponsiveTask.await(this, "Creating store...",
+                    () -> ServerStoreSetupService.create(nameField.getText(), codeField.getText(),
+                            timezoneField.getText(), addressField.getText()));
+            if (created != null) {
+                assignStore(created, onReady);
+                JOptionPane.showMessageDialog(this,
+                        "Store created and assigned.\n\n"
+                                + created.name() + " (" + created.storeCode() + ")\n"
+                                + "Location ID: " + created.locationId(),
+                        "Store Ready", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
+                    "Create Store", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void assignStore(ServerStoreSetupService.Store store) {
+        assignStore(store, () -> { });
+    }
+
+    private void assignStore(ServerStoreSetupService.Store store, Runnable onReady) {
+        locationIdField.setText(String.valueOf(store.locationId()));
+        if (saveConfigWithLocation(store.locationId())) {
+            statusLabel.setText("Status: Assigned to " + store.name()
+                    + " (" + store.storeCode() + "), location ID " + store.locationId() + ".");
+            onReady.run();
+        }
+    }
+
+    private void initializeSupabaseProject() {
+        if (selectedMode() != DatabaseMode.SERVER) {
+            JOptionPane.showMessageDialog(this,
+                    "Supabase project initialization is available only in SERVER mode.");
+            return;
+        }
+        if (!saveConfigWithLocation(parseLocationIdIfNumeric())) return;
+        if (!ServerSupabaseCredentials.isConfigured()) {
+            JOptionPane.showMessageDialog(this,
+                    "Save the Supabase Server Key before initializing the project.",
+                    "Initialize Supabase", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        SupabaseProjectInitializerDialog dialog =
+                new SupabaseProjectInitializerDialog(this,
+                        () -> setUpStore(this::openFirstAdministratorSetup));
+        dialog.setVisible(true);
+    }
+
+    private void openFirstAdministratorSetup() {
+        if (selectedMode() != DatabaseMode.SERVER) return;
+        if (DatabaseConfig.load().locationId() == null) {
+            setUpStore(this::openFirstAdministratorSetup);
+            return;
+        }
+        if (ServerFirstAdministratorService.isComplete()) {
+            JOptionPane.showMessageDialog(this,
+                    "A linked active administrator already exists for this server.",
+                    "First Administrator", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        FirstAdministratorSetupDialog dialog =
+                new FirstAdministratorSetupDialog(this, () -> {
+                    statusLabel.setText("Status: First administrator ready. "
+                            + "Complete one online login to enable offline access.");
+                });
+        dialog.setVisible(true);
     }
 
     private void loadSavedCredentials() {
@@ -287,7 +598,7 @@ public class DatabaseSetup extends JFrame {
             JOptionPane.showMessageDialog(
                     this,
                     "No saved SmartStock database credentials were found at:\n"
-                            + DatabaseCredentials.CREDENTIALS_PATH
+                            + DatabaseCredentials.activeCredentialsPath()
                             + "\n\nRun the SmartStock installer first, or enter the real database username and password.",
                     "Saved Credentials",
                     JOptionPane.WARNING_MESSAGE
@@ -302,7 +613,7 @@ public class DatabaseSetup extends JFrame {
                 jdbcUrlField.setText(serverUrl);
             }
         }
-        statusLabel.setText("Status: Loaded saved credentials from " + DatabaseCredentials.CREDENTIALS_PATH);
+        statusLabel.setText("Status: Loaded saved credentials from " + DatabaseCredentials.activeCredentialsPath());
     }
 
     private void findNetworkServer() {
@@ -360,6 +671,7 @@ public class DatabaseSetup extends JFrame {
                             result.message(),
                             "Server Provisioned",
                             JOptionPane.INFORMATION_MESSAGE);
+                    setUpStore();
                 } catch (Exception ex) {
                     statusLabel.setText("Status: Provision failed.");
                     JOptionPane.showMessageDialog(DatabaseSetup.this,
@@ -403,18 +715,19 @@ public class DatabaseSetup extends JFrame {
     }
 
     private void installRuntime() {
+        String installDescription = PostgresRuntimeService.isWindowsRuntime()
+                ? "SmartStock will ask for Windows administrator approval, install PostgreSQL 15 or newer if missing, and set it to start automatically."
+                : "SmartStock will use Homebrew to install PostgreSQL 15 or newer if missing and start it automatically.";
         int confirm = JOptionPane.showConfirmDialog(
                 this,
-                "This will use Homebrew to install missing runtime dependencies on this Mac:\n"
-                        + "Java 17, Maven, and PostgreSQL.\n\n"
-                        + "Continue?",
-                "Install SmartStock Runtime",
+                installDescription + "\n\nJava is included with SmartStock. Maven is not required.\n\nContinue?",
+                "Install PostgreSQL",
                 JOptionPane.YES_NO_OPTION
         );
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
-        statusLabel.setText("Status: Installing runtime dependencies...");
+        statusLabel.setText("Status: Installing PostgreSQL...");
         SwingWorker<PostgresRuntimeService.CommandResult, Void> worker = new SwingWorker<>() {
             @Override
             protected PostgresRuntimeService.CommandResult doInBackground() throws Exception {
@@ -426,12 +739,12 @@ public class DatabaseSetup extends JFrame {
                 try {
                     PostgresRuntimeService.CommandResult result = get();
                     statusLabel.setText(result.success()
-                            ? "Status: Runtime dependencies ready."
-                            : "Status: Runtime install failed.");
-                    showCommandOutput("Install Runtime", result.output());
+                            ? "Status: PostgreSQL is ready."
+                            : "Status: PostgreSQL installation failed.");
+                    showCommandOutput("Install PostgreSQL", result.output());
                 } catch (Exception ex) {
-                    statusLabel.setText("Status: Runtime install failed.");
-                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex), "Install Runtime", JOptionPane.ERROR_MESSAGE);
+                    statusLabel.setText("Status: PostgreSQL installation failed.");
+                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex), "Install PostgreSQL", JOptionPane.ERROR_MESSAGE);
                 }
             }
         };
@@ -462,6 +775,10 @@ public class DatabaseSetup extends JFrame {
     }
 
     private void installSyncService() {
+        if (PostgresRuntimeService.isWindowsRuntime()) {
+            installWindowsProductionServer();
+            return;
+        }
         saveConfig();
         statusLabel.setText("Status: Installing background sync service...");
         SwingWorker<PostgresRuntimeService.CommandResult, Void> worker = new SwingWorker<>() {
@@ -485,6 +802,201 @@ public class DatabaseSetup extends JFrame {
             }
         };
         worker.execute();
+    }
+
+    private void installWindowsProductionServer() {
+        if (selectedMode() != DatabaseMode.SERVER) {
+            JOptionPane.showMessageDialog(this,
+                    "Switch Mode to SERVER before completing Windows server setup.");
+            return;
+        }
+        String projectUrl = supabaseProjectUrlField.getText().trim();
+        String publishableKey = supabasePublishableKeyField.getText().trim();
+        String lanSubnet = lanSubnetField.getText().trim();
+        try {
+            SupabaseProjectConfig.resolveForProfile(
+                    EnvironmentProfile.active(), projectUrl, publishableKey);
+            if (!PostgresRuntimeService.validLanSubnetForSetup(lanSubnet)) {
+                throw new IllegalArgumentException(
+                        "Enter LocalSubnet or a private network such as 192.168.1.0/24.");
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
+                    "Production Server Setup", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "SmartStock will now:\n"
+                        + "• Save this production Supabase project\n"
+                        + "• Install automatic Windows startup\n"
+                        + "• Allow port 8443 only from " + lanSubnet + "\n"
+                        + "• Start the LAN and background sync service\n\n"
+                        + "Windows will ask for administrator approval. Continue?",
+                "Complete Windows Server Setup", JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        saveConfig();
+        try {
+            DatabaseConfig database = DatabaseConfig.load();
+            if (!database.hasPrimaryConnection() || database.locationId() == null
+                    || !ServerSupabaseCredentials.isConfigured()) {
+                throw new IllegalStateException(
+                        "Complete the local database, Store Location ID, and Supabase Server Key fields first.");
+            }
+            SupabaseProjectConfig.saveProductionPublicConfig(
+                    projectUrl, publishableKey, lanSubnet);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
+                    "Production Server Setup", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        statusLabel.setText("Status: Waiting for Windows administrator approval...");
+        installSyncServiceButton.setEnabled(false);
+        SwingWorker<PostgresRuntimeService.CommandResult, Void> worker = new SwingWorker<>() {
+            @Override
+            protected PostgresRuntimeService.CommandResult doInBackground() throws Exception {
+                return PostgresRuntimeService.installWindowsServer(
+                        SupabaseProjectConfig.load(), EnvironmentProfile.active(), lanSubnet);
+            }
+
+            @Override
+            protected void done() {
+                installSyncServiceButton.setEnabled(true);
+                try {
+                    PostgresRuntimeService.CommandResult result = get();
+                    statusLabel.setText(result.success()
+                            ? "Status: Windows production server setup completed."
+                            : "Status: Windows production server setup failed.");
+                    showCommandOutput("Complete Windows Server Setup", result.output());
+                    if (result.success()) {
+                        JOptionPane.showMessageDialog(DatabaseSetup.this,
+                                "Windows server setup is complete.\n\n"
+                                        + "Restart this computer, then return here and use Refresh Service Status.",
+                                "Production Server Ready", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                } catch (Exception ex) {
+                    statusLabel.setText("Status: Windows production server setup failed.");
+                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex),
+                            "Production Server Setup", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void saveServerCloudCredential() {
+        if (selectedMode() != DatabaseMode.SERVER) {
+            JOptionPane.showMessageDialog(this, "Switch Mode to SERVER before configuring the server cloud credential.");
+            return;
+        }
+        char[] credential = serverCloudCredentialField.getPassword();
+        try {
+            SupabaseProjectConfig.savePublicConfig(
+                    EnvironmentProfile.active(),
+                    supabaseProjectUrlField.getText().trim(),
+                    supabasePublishableKeyField.getText().trim(),
+                    lanSubnetField.getText().trim());
+            ServerSupabaseCredentials.install(credential);
+            serverCloudCredentialField.setText("");
+            statusLabel.setText("Status: Supabase server credential saved securely for this server computer.");
+            JOptionPane.showMessageDialog(this,
+                    "The Supabase server secret key is stored in " + ServerSupabaseCredentials.secureStoreDescription() + ".\n"
+                            + "Repeat this setup on each computer that runs SmartStock Server mode.",
+                    "Server Cloud Credential", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            statusLabel.setText("Status: Supabase server credential was not saved.");
+            JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
+                    "Server Cloud Credential", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            java.util.Arrays.fill(credential, '\0');
+        }
+    }
+
+    private void confirmAndRunServerControl(String warning, String progress, ServiceCommand command) {
+        int choice = JOptionPane.showConfirmDialog(this, warning, "Confirm Server Service Change",
+                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (choice == JOptionPane.YES_OPTION) runServerControl(progress, command, true);
+    }
+
+    private void runServerControl(String progress, ServiceCommand command, boolean stopping) {
+        if (selectedMode() != DatabaseMode.SERVER) {
+            JOptionPane.showMessageDialog(this, "Switch Mode to SERVER before controlling server services.");
+            return;
+        }
+        setServiceButtonsEnabled(false);
+        statusLabel.setText("Status: " + progress);
+        SwingWorker<PostgresRuntimeService.CommandResult, Void> worker = new SwingWorker<>() {
+            @Override protected PostgresRuntimeService.CommandResult doInBackground() throws Exception { return command.run(); }
+            @Override protected void done() {
+                try {
+                    PostgresRuntimeService.CommandResult result = get();
+                    if (!result.success()) throw new IllegalStateException(result.output());
+                    statusLabel.setText("Status: Server service change completed.");
+                } catch (Exception ex) {
+                    statusLabel.setText("Status: Server service change failed.");
+                    JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex),
+                            "Server Service", JOptionPane.ERROR_MESSAGE);
+                } finally {
+                    setServiceButtonsEnabled(true);
+                    refreshServerServiceStatus();
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void refreshServerServiceStatus() {
+        if (selectedMode() != DatabaseMode.SERVER) return;
+        refreshServicesButton.setEnabled(false);
+        SwingWorker<PostgresRuntimeService.CommandResult[], Void> worker = new SwingWorker<>() {
+            @Override protected PostgresRuntimeService.CommandResult[] doInBackground() throws Exception {
+                return new PostgresRuntimeService.CommandResult[]{
+                        PostgresRuntimeService.postgresStatus(), PostgresRuntimeService.syncServiceStatus()};
+            }
+            @Override protected void done() {
+                try {
+                    PostgresRuntimeService.CommandResult[] results = get();
+                    boolean dbRunning = serviceLooksRunning(results[0].output(), "postgres");
+                    boolean lanRunning = serviceLooksRunning(results[1].output(), "smartstock");
+                    localDbStatusLabel.setText("Local Database: " + (dbRunning ? "Running" : "Stopped"));
+                    lanServiceStatusLabel.setText("LAN Service: " + (lanRunning ? "Running" : "Stopped"));
+                    startLocalDbButton.setEnabled(!dbRunning);
+                    stopLocalDbButton.setEnabled(dbRunning);
+                    startLanServiceButton.setEnabled(!lanRunning);
+                    stopLanServiceButton.setEnabled(lanRunning);
+                } catch (Exception ex) {
+                    localDbStatusLabel.setText("Local Database: Status unavailable");
+                    lanServiceStatusLabel.setText("LAN Service: Status unavailable");
+                } finally {
+                    refreshServicesButton.setEnabled(true);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    static boolean serviceLooksRunning(String output, String serviceName) {
+        String value = output == null ? "" : output.toLowerCase(java.util.Locale.ROOT);
+        if ("postgres".equals(serviceName)) {
+            return value.contains("started") || value.matches("(?s).*postgresql[^\\n]*\\brunning\\b.*");
+        }
+        return value.contains("state = running") || value.matches("(?s).*status:\\s+running.*");
+    }
+
+    private void setServiceButtonsEnabled(boolean enabled) {
+        startLocalDbButton.setEnabled(enabled);
+        stopLocalDbButton.setEnabled(enabled);
+        startLanServiceButton.setEnabled(enabled);
+        stopLanServiceButton.setEnabled(enabled);
+        refreshServicesButton.setEnabled(enabled);
+    }
+
+    @FunctionalInterface
+    private interface ServiceCommand {
+        PostgresRuntimeService.CommandResult run() throws Exception;
     }
 
     private void showCommandOutput(String title, String output) {
@@ -529,12 +1041,15 @@ public class DatabaseSetup extends JFrame {
                 : cause.getMessage();
     }
 
-    private Integer parseLocationId() {
+    private Integer parseLocationIdIfNumeric() {
         String text = locationIdField.getText();
         if (text == null || text.isBlank()) {
             return null;
         }
-        return Integer.parseInt(text.trim());
+        String clean = text.trim();
+        return clean.matches("[0-9]+") && !clean.matches("[0-9]{4}")
+                ? Integer.parseInt(clean)
+                : null;
     }
 
     private record FormRow(JLabel label, JComponent field, String originalLabel) {}

@@ -8,6 +8,7 @@ import Receipt.ReceiptData;
 import Receipt.ReceiptItem;
 import Receipt.CustomOrderSlipData;
 import data.DatabaseConfig;
+import data.EnvironmentProfile;
 import models.DeviceInfo;
 import models.CashDrawer;
 import models.CashDrawerAssignment;
@@ -22,6 +23,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import java.io.IOException;
 import java.net.URI;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -44,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import ui.helpers.BlockingCallGuard;
@@ -51,13 +54,13 @@ import ui.helpers.PerformanceDiagnostics;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
 
-/** Register-side client for the named SmartStock LAN operations. */
+/** Credential-free desktop client for the named SmartStock LAN and remote-gateway operations. */
 public final class LanApiClient {
     private static final Gson GSON = LanJson.create();
-    private static final String API_SESSION_SECRET = "lan-api-employee-session";
-    private static final String API_TOKEN_EXPIRES_SECRET = "lan-api-device-token-expires";
-    private static final String API_HOST_SECRET = "lan-api-server-host";
-    private static final String API_PORT_SECRET = "lan-api-server-port";
+    private static final String API_SESSION_SECRET = EnvironmentProfile.active().secretKey("lan-api-employee-session");
+    private static final String API_TOKEN_EXPIRES_SECRET = EnvironmentProfile.active().secretKey("lan-api-device-token-expires");
+    private static final String API_HOST_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-host");
+    private static final String API_PORT_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-port");
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
     private static final Object TRANSPORT_LOCK = new Object();
     private static volatile URI cachedBaseUri;
@@ -66,8 +69,15 @@ public final class LanApiClient {
     private static volatile String cachedEmployeeSession;
     private static volatile HttpClient cachedPinnedClient;
     private static volatile HttpClient cachedBootstrapClient;
+    private static final AtomicBoolean CONNECTION_LOSS_REPORTED = new AtomicBoolean();
+    private static volatile Runnable connectionLossHandler = () -> { };
 
     private LanApiClient() {
+    }
+
+    /** Installs the register-shell response to a genuine LAN transport outage. */
+    public static void setConnectionLossHandler(Runnable handler) {
+        connectionLossHandler = handler == null ? () -> { } : handler;
     }
 
     public static URI baseUri() {
@@ -130,7 +140,9 @@ public final class LanApiClient {
                     DiscoveredServer advertised = GSON.fromJson(json, DiscoveredServer.class);
                     DiscoveredServer result = discoveredServerAtSource(
                             advertised, packet.getAddress().getHostAddress());
-                    if (results.stream().noneMatch(item -> item.host().equals(result.host()) && item.port() == result.port())) {
+                    if (matchesActiveEnvironment(result)
+                            && results.stream().noneMatch(item -> item.host().equals(result.host())
+                            && item.port() == result.port())) {
                         results.add(result);
                     }
                 } catch (SocketTimeoutException ex) {
@@ -148,7 +160,18 @@ public final class LanApiClient {
         String reachableHost = advertised.host() == null || advertised.host().isBlank()
                 ? sourceHost : advertised.host();
         return new DiscoveredServer(advertised.service(), reachableHost, advertised.port(),
+                advertised.environment(), advertised.storeName(), advertised.storeCode(),
+                advertised.computerName(), advertised.serverId(),
                 advertised.certificateFingerprint(), advertised.pairingProof(), advertised.previousPairingProof());
+    }
+
+    static boolean matchesActiveEnvironment(DiscoveredServer server) {
+        if (server == null) return false;
+        String environment = server.environment();
+        if (environment == null || environment.isBlank()) {
+            return EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT;
+        }
+        return EnvironmentProfile.active().id().equalsIgnoreCase(environment.trim());
     }
 
     public static ServiceHealth checkHealth() throws Exception {
@@ -197,6 +220,7 @@ public final class LanApiClient {
         request.addProperty("deviceName", device.getDeviceName());
         request.addProperty("hostname", device.getHostname());
         request.addProperty("appVersion", device.getAppVersion());
+        request.addProperty("accessMode", DatabaseConfig.load().mode().name());
         request.addProperty("publicKey", publicKey);
         JsonObject data = post("/v1/devices/enroll", request, false, false);
         String challenge = DeviceCredentialService.decryptLanEnvelope(
@@ -290,6 +314,50 @@ public final class LanApiClient {
      */
     public static LoginResult loginWithCredentials(String identifier, char[] secret, int locationId) throws Exception {
         return loginOffline(identifier, secret, locationId);
+    }
+
+    public static List<RemoteStore> loadRemoteStores() throws Exception {
+        JsonObject data = post("/v1/sessions/stores", new JsonObject(), true, true);
+        RemoteStore[] stores = GSON.fromJson(data.getAsJsonArray("stores"), RemoteStore[].class);
+        return stores == null ? List.of() : List.of(stores);
+    }
+
+    public static LoginResult switchRemoteStore(int locationId) throws Exception {
+        JsonObject request = new JsonObject();
+        request.addProperty("locationId", locationId);
+        return saveSession(post("/v1/sessions/switch-store", request, true, true));
+    }
+
+    public static List<RemoteCommand> loadRemoteCommands() throws Exception {
+        JsonObject data = post("/v1/remote/commands", new JsonObject(), true, true);
+        RemoteCommand[] commands = GSON.fromJson(data.getAsJsonArray("commands"), RemoteCommand[].class);
+        return commands == null ? List.of() : List.of(commands);
+    }
+
+    public static BadgeStatus badgeStatus(String badgeId, int locationId) throws Exception {
+        JsonObject request = new JsonObject();
+        request.addProperty("badgeId", badgeId);
+        request.addProperty("locationId", locationId);
+        return GSON.fromJson(post("/v1/sessions/badge-status", request, true, false), BadgeStatus.class);
+    }
+
+    public static boolean isBadgePinConfigured(String badgeId, int locationId) throws Exception {
+        return badgeStatus(badgeId, locationId).pinConfigured();
+    }
+
+    public static LoginResult setupBadgePin(String badgeId, char[] accountPassword,
+                                            char[] pin, int locationId) throws Exception {
+        JsonObject request = new JsonObject();
+        request.addProperty("badgeId", badgeId);
+        request.addProperty("accountPassword", new String(accountPassword));
+        request.addProperty("pin", new String(pin));
+        request.addProperty("locationId", locationId);
+        try {
+            return saveSession(post("/v1/sessions/badge-pin-setup", request, true, false));
+        } finally {
+            java.util.Arrays.fill(accountPassword, '\0');
+            java.util.Arrays.fill(pin, '\0');
+        }
     }
 
     public static JsonObject refreshSession() throws Exception {
@@ -444,6 +512,12 @@ public final class LanApiClient {
     public static List<IncomingTransfer> loadIncomingTransfers()throws Exception{
         JsonObject data=post("/v1/transfers/incoming",new JsonObject(),true,true);
         IncomingTransfer[]rows=GSON.fromJson(data.getAsJsonArray("transfers"),IncomingTransfer[].class);
+        return rows==null?List.of():List.of(rows);
+    }
+
+    public static List<OutgoingTransfer> loadOutgoingTransfers()throws Exception{
+        JsonObject data=post("/v1/transfers/outgoing",new JsonObject(),true,true);
+        OutgoingTransfer[]rows=GSON.fromJson(data.getAsJsonArray("transfers"),OutgoingTransfer[].class);
         return rows==null?List.of():List.of(rows);
     }
 
@@ -622,7 +696,7 @@ public final class LanApiClient {
     public static DeviceSecurityStatus loadDeviceSecurityStatus()throws Exception{return GSON.fromJson(post("/v1/security/status",new JsonObject(),true,true),DeviceSecurityStatus.class);}
     public static List<LocationRecord> loadLocationRecords(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search);JsonObject d=post("/v1/locations/list",r,true,true);LocationRecord[]a=GSON.fromJson(d.getAsJsonArray("locations"),LocationRecord[].class);return a==null?List.of():List.of(a);}
     public static int saveLocationRecord(LocationRecord r,String key)throws Exception{return post("/v1/locations/save",GSON.toJsonTree(r).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key)).get("locationId").getAsInt();}
-    public static EmailProcessingResult processLocationEmailOutbox()throws Exception{JsonObject r=new JsonObject();String token=managers.SupabaseSessionManager.getValidAccessToken();if(token!=null&&!token.isBlank())r.addProperty("supabaseAccessToken",token);return GSON.fromJson(post("/v1/locations/process-email",r,true,true),EmailProcessingResult.class);}
+    public static EmailProcessingResult processLocationEmailOutbox()throws Exception{return GSON.fromJson(post("/v1/locations/process-email",new JsonObject(),true,true),EmailProcessingResult.class);}
     public static ReportDataService.FilterOptions loadReportOptions()throws Exception{return GSON.fromJson(post("/v1/reports/options",new JsonObject(),true,true).get("options"),ReportDataService.FilterOptions.class);}
     public static ReportDataService.Snapshot loadReportSnapshot(ReportDataService.Filters filters,boolean allRevenue)throws Exception{JsonObject r=new JsonObject();r.add("filters",GSON.toJsonTree(filters));r.addProperty("allRevenue",allRevenue);return GSON.fromJson(post("/v1/reports/load",r,true,true).get("snapshot"),ReportDataService.Snapshot.class);}
     public static OrderReport loadOrderReport(java.time.ZonedDateTime from,java.time.ZonedDateTime to)throws Exception{return GSON.fromJson(post("/v1/reports/orders",range(from,to),true,true),OrderReport.class);}
@@ -677,18 +751,30 @@ public final class LanApiClient {
     public static JsonObject customOrderWorkflowMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/workflow/update",request,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject companyCustomizationRead(String action,Integer locationId)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("action",action);if(locationId!=null)r.addProperty("locationId",locationId);
-        if("UPLOADED_IMAGES".equals(action)){String token=managers.SupabaseSessionManager.getValidAccessToken();if(token!=null&&!token.isBlank())r.addProperty("supabaseAccessToken",token);}
         return post("/v1/configuration/read",r,true,true);
     }
+    public static AppUpdateService.AppRelease loadLatestAppRelease(String platform)throws Exception{JsonObject r=new JsonObject();r.addProperty("platform",platform);JsonObject d=post("/v1/cloud/update/latest",r,true,true);return !d.has("release")||d.get("release").isJsonNull()?null:GSON.fromJson(d.get("release"),AppUpdateService.AppRelease.class);}
+    public static String createUpdateDownloadUrl(String bucket,String path)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);return post("/v1/cloud/update/sign",r,true,true).get("url").getAsString();}
+    public static String uploadCloudFile(String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
+    public static byte[] downloadEmployeeCloudFile(String url)throws Exception{JsonObject r=new JsonObject();r.addProperty("url",url);return java.util.Base64.getDecoder().decode(post("/v1/cloud/storage/download",r,true,true).get("bytesBase64").getAsString());}
+    public static byte[] downloadImageAsset(String reference)throws Exception{JsonObject r=new JsonObject();r.addProperty("reference",reference);return java.util.Base64.getDecoder().decode(post("/v1/images/fetch",r,true,true).get("bytesBase64").getAsString());}
+    public static ImageAssetState imageAssets()throws Exception{
+        JsonObject data=post("/v1/images/list",new JsonObject(),true,true);
+        ImageAssetRecord[] rows=GSON.fromJson(data.get("assets"),ImageAssetRecord[].class);
+        ImageAssetCounts counts=GSON.fromJson(data.get("counts"),ImageAssetCounts.class);
+        return new ImageAssetState(rows==null?List.of():List.of(rows),counts);
+    }
+    public static void reconcileImageAssets()throws Exception{post("/v1/images/reconcile",new JsonObject(),true,true);}
+    public static void retainImageAsset(String assetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("assetId",assetId);post("/v1/images/retain",r,true,true);}
+    public static void purgeImageAsset(String assetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("assetId",assetId);post("/v1/images/purge",r,true,true);}
     public static JsonObject companyCustomizationSave(String action,JsonElement settings,Integer locationId,String key)throws Exception{
         requireIdempotencyKey(key,"Configuration idempotency key is required.");JsonObject r=new JsonObject();r.addProperty("action",action);
         if(settings!=null)r.add("settings",settings);if(locationId!=null)r.addProperty("locationId",locationId);
-        if("COMPANY_LOGO".equals(action)||"BADGE_TEMPLATE_IMAGE".equals(action)){String token=managers.SupabaseSessionManager.getValidAccessToken();if(token!=null&&!token.isBlank())r.addProperty("supabaseAccessToken",token);}
         return post("/v1/configuration/update",r,true,true,Map.of("Idempotency-Key",key));
     }
     public static JsonObject balanceSheetRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/read",r,true,true);}
     public static JsonObject balanceSheetMutation(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Balance-sheet idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/update",r,true,true,Map.of("Idempotency-Key",key));}
-    public static JsonObject queueEmail(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Email queue idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);String token=managers.SupabaseSessionManager.getValidAccessToken();if(token!=null&&!token.isBlank())r.addProperty("supabaseAccessToken",token);return post("/v1/email/queue",r,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject queueEmail(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Email queue idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/email/queue",r,true,true,Map.of("Idempotency-Key",key));}
     private static JsonObject copy(JsonObject source){JsonObject out=new JsonObject();if(source!=null)for(var e:source.entrySet())out.add(e.getKey(),e.getValue());return out;}
     public static List<models.AppNotification> loadNotifications()throws Exception{JsonObject d=post("/v1/notifications/list",new JsonObject(),true,true);models.AppNotification[] rows=GSON.fromJson(d.getAsJsonArray("notifications"),models.AppNotification[].class);return rows==null?List.of():List.of(rows);}
     public static void updateNotification(String action,String notificationKey,int minutes,models.AppNotification notification,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("notificationKey",notificationKey);r.addProperty("minutes",minutes);if(notification!=null)r.add("notification",GSON.toJsonTree(notification));post("/v1/notifications/update",r,true,true,Map.of("Idempotency-Key",key));}
@@ -890,7 +976,9 @@ public final class LanApiClient {
                 .timeout(TIMEOUT).GET().build();
         HttpResponse<String> response;
         try {
-            response = untrustedBootstrapClient().send(request,
+            response = (RemoteAdminPolicy.isRemoteAdminClient()
+                    ? HttpClient.newBuilder().connectTimeout(TIMEOUT).build()
+                    : untrustedBootstrapClient()).send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             PerformanceDiagnostics.record("lan", "/v1/health", started, true, -1);
         } catch (Exception ex) {
@@ -898,11 +986,13 @@ public final class LanApiClient {
             throw ex;
         }
         JsonObject data = responseData(response);
-        String presented = peerFingerprint(response.sslSession().orElseThrow()
-                .getPeerCertificates()[0].getEncoded());
         String advertised = data.get("certificateFingerprint").getAsString();
-        if (!LanSecurity.constantTimeEquals(presented, advertised)) {
-            throw new IllegalStateException("The server certificate fingerprint did not match its health response.");
+        if (!RemoteAdminPolicy.isRemoteAdminClient()) {
+            String presented = peerFingerprint(response.sslSession().orElseThrow()
+                    .getPeerCertificates()[0].getEncoded());
+            if (!LanSecurity.constantTimeEquals(presented, advertised)) {
+                throw new IllegalStateException("The server certificate fingerprint did not match its health response.");
+            }
         }
         return new Probe(advertised, optionalString(data, "pairingProof"),
                 optionalString(data, "previousPairingProof"));
@@ -914,6 +1004,7 @@ public final class LanApiClient {
 
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth,
                                    Map<String, String> extraHeaders) throws Exception {
+        RemoteAdminPolicy.requireClientOperationAllowed(path);
         BlockingCallGuard.check("LAN " + path);
         long started = System.nanoTime();
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
@@ -935,6 +1026,7 @@ public final class LanApiClient {
         try {
             HttpResponse<String> response = pinnedClient().send(builder.build(),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            CONNECTION_LOSS_REPORTED.set(false);
             JsonObject data = responseData(response);
             invalidateCachesAfterMutation(path);
             PerformanceDiagnostics.record("lan", path, started, true,
@@ -942,7 +1034,37 @@ public final class LanApiClient {
             return data;
         } catch (Exception ex) {
             PerformanceDiagnostics.record("lan", path, started, false, -1);
+            if (isConnectionFailure(ex)) {
+                reportConnectionLoss();
+                throw new LanApiException("SERVER_UNREACHABLE",
+                        "Connection to the SmartStock server was lost. Return to the welcome screen and wait for it to reconnect.",
+                        true);
+            }
             throw ex;
+        }
+    }
+
+    static boolean isConnectionFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof IOException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static void reportConnectionLoss() {
+        data.DatabaseMode mode = DatabaseConfig.load().mode();
+        if ((mode != data.DatabaseMode.CLIENT && mode != data.DatabaseMode.REMOTE_ADMIN)
+                || !CONNECTION_LOSS_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            connectionLossHandler.run();
+        } catch (RuntimeException ignored) {
+            // The original transport failure must still reach the calling workflow.
         }
     }
 
@@ -993,6 +1115,14 @@ public final class LanApiClient {
     private static HttpClient pinnedClient() throws Exception {
         HttpClient existing = cachedPinnedClient;
         if (existing != null) return existing;
+        if (RemoteAdminPolicy.isRemoteAdminClient()) {
+            synchronized (TRANSPORT_LOCK) {
+                if (cachedPinnedClient == null) {
+                    cachedPinnedClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+                }
+                return cachedPinnedClient;
+            }
+        }
         String expected = fingerprint();
         if (expected == null) throw new LanApiException("SERVER_NOT_VERIFIED", "An administrator must pair this register once.", false);
         synchronized (TRANSPORT_LOCK) {
@@ -1033,6 +1163,8 @@ public final class LanApiClient {
 
     static void resetTransportForTests() {
         resetTransport(true, true);
+        CONNECTION_LOSS_REPORTED.set(false);
+        connectionLossHandler = () -> { };
     }
 
     static HttpClient bootstrapClientForTests() throws Exception {
@@ -1128,8 +1260,29 @@ public final class LanApiClient {
     private record Probe(String certificateFingerprint, String pairingProof, String previousPairingProof) { }
     public record PairingResult(String status, boolean employeeActionRequired) { }
     public record DiscoveredServer(String service, String host, int port,
+                                   String environment, String storeName, String storeCode,
+                                   String computerName, String serverId,
                                    String certificateFingerprint, String pairingProof,
-                                   String previousPairingProof) { }
+                                   String previousPairingProof) {
+        public DiscoveredServer(String service, String host, int port,
+                                String certificateFingerprint, String pairingProof,
+                                String previousPairingProof) {
+            this(service, host, port, null, null, null, null, null,
+                    certificateFingerprint, pairingProof, previousPairingProof);
+        }
+
+        @Override
+        public String toString() {
+            String store = storeName == null || storeName.isBlank() ? "Unassigned Store" : storeName;
+            String code = storeCode == null || storeCode.isBlank() ? "no code" : storeCode;
+            String computer = computerName == null || computerName.isBlank() ? host : computerName;
+            String id = serverId == null || serverId.isBlank() ? "unknown" : serverId;
+            String profile = "production".equalsIgnoreCase(environment)
+                    ? "Production" : "Developer/Test";
+            return store + " (" + code + ") — " + computer + " — "
+                    + host + ":" + port + " — " + profile + " — ID " + id;
+        }
+    }
     public record ServiceHealth(boolean online, String certificateFingerprint) { }
     public record LoginResult(String sessionToken, String expiresAt, User user, String[] permissions,
                               String deviceId, String supabaseAccessToken, String supabaseRefreshToken,
@@ -1137,6 +1290,7 @@ public final class LanApiClient {
     public record User(int userId, String username, String fullName, String email, String role,
                        int locationId, String locationName, String locationTimezone) { }
     public record ApprovalResult(String approvalToken, String expiresAt, int approverUserId, String approverName) { }
+    public record BadgeStatus(boolean pinConfigured, boolean pinRequired) { }
     public record CatalogProduct(int productId, String name, String size, String description, String sku,
                                  BigDecimal price, String productType, Integer categoryId,
                                  int quantityOnHand, String searchableText) { }
@@ -1150,9 +1304,14 @@ public final class LanApiClient {
                                 BigDecimal discountLimit, List<DepartmentVatRate> departmentRates) { }
     public record DepartmentVatRate(int categoryId, BigDecimal ratePercent) { }
     public record HeldCartCreateRequest(String holdName, String paymentMethod, Integer customerId,
-                                        BigDecimal saleDiscountPercent, List<HeldCartCreateLine> lines) { }
+                                        BigDecimal saleDiscountPercent,
+                                        String saleDiscountApprovalToken,
+                                        String saleDiscountOverrideReason,
+                                        List<HeldCartCreateLine> lines) { }
     public record HeldCartCreateLine(int productId, int quantity, BigDecimal unitPrice,
-                                     BigDecimal discountPercent, String discountApprovalToken,
+                                     BigDecimal discountPercent,
+                                     String priceApprovalToken, String priceOverrideReason,
+                                     String discountApprovalToken,
                                      String discountOverrideReason) { }
     public record HeldCartCreated(int heldCartId, BigDecimal total, int itemCount) { }
     public record HeldCartSummary(int heldCartId, long createdAtEpochMillis, String holdName,
@@ -1160,7 +1319,8 @@ public final class LanApiClient {
     public record HeldCartPayload(int heldCartId, Integer customerId, String paymentMethod,
                                   BigDecimal saleDiscountPercent, List<HeldCartItem> items) { }
     public record HeldCartItem(int productId, String productName, String description, String sku,
-                               BigDecimal unitPrice, int quantity, BigDecimal discountPercent,
+                               BigDecimal unitPrice, BigDecimal catalogPrice,
+                               int quantity, BigDecimal discountPercent,
                                String productType, Integer categoryId) { }
     public record SalesHistoryRow(String transactionType, int saleId, Long returnId, String receiptNumber,
                                   long createdAtEpochMillis, String cashierName, String storeName, int itemCount,
@@ -1207,6 +1367,8 @@ public final class LanApiClient {
     public record TransferProduct(int productId,String sku,String name,int availableQuantity) { }
     public record IncomingTransfer(long transferId,String fromStore,long createdAtEpochMillis,String sentBy,String note,
                                    int itemCount,int unitCount) { }
+    public record OutgoingTransfer(long transferId,String toStore,long createdAtEpochMillis,String sentBy,String note,
+                                   int itemCount,int unitCount) { }
     public record TransferDetailItem(int productId,String sku,String name,int quantity) { }
     public record CreateTransferRequest(int destinationLocationId,String note,List<TransferLine>lines) { }
     public record TransferLine(int productId,int quantity) { }
@@ -1244,6 +1406,8 @@ public final class LanApiClient {
                                      String lastError,boolean lockRunning,String lockOwner,
                                      long lockAcquiredEpochMillis,String serviceStatus,String serviceMessage,
                                      long serviceLastSeenEpochMillis,boolean serverWorkerStarted,
+                                     int imagePendingUploads,int imageMissingLocal,int imageMissingCloud,
+                                     int imageUnused,int imageFailedPurges,
                                      List<SyncConflict> conflicts,List<SyncAudit> audits) { }
     public record SyncConflict(long conflictId,String eventType,String conflictType,String status,
                                long createdAtEpochMillis) { }
@@ -1347,6 +1511,13 @@ public final class LanApiClient {
     private record ReceiptItemPayload(String name,String sku,int quantity,BigDecimal originalUnitPrice,
                                       BigDecimal finalUnitPrice,BigDecimal discountPercent,BigDecimal lineTotal) { }
 
+    public record RemoteStore(int locationId, String name, String timezone, String status,
+                              long lastSyncEpochMillis) {
+        @Override public String toString() { return name; }
+    }
+    public record RemoteCommand(String commandId, String operation, String status, String details,
+                                long createdAtEpochMillis, long appliedAtEpochMillis) { }
+
     public static final class LanApiException extends Exception {
         private final String code;
         private final boolean retryable;
@@ -1356,4 +1527,10 @@ public final class LanApiClient {
         public String code() { return code; }
         public boolean retryable() { return retryable; }
     }
+    public record ImageAssetState(List<ImageAssetRecord>assets,ImageAssetCounts counts) { }
+    public record ImageAssetRecord(String assetId,String category,String filename,long byteSize,String lifecycleStatus,
+                                   String localStatus,String cloudStatus,long createdAtEpochMillis,long updatedAtEpochMillis,
+                                   long unusedSinceEpochMillis,String lastError,int referenceCount) { }
+    public record ImageAssetCounts(int pendingUploads,int missingLocal,int missingCloud,int unused,int failedPurges,
+                                   boolean cloudCredentialConfigured) { }
 }

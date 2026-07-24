@@ -1,11 +1,15 @@
 package app;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SmartStockUpdaterTest {
@@ -53,5 +57,20 @@ class SmartStockUpdaterTest {
         assertEquals("@echo off\r\ncd /d \"C:\\Users\\test\\.smartstock\\sync-service\\app\"\r\n"
                         + "java -jar \"inventory-management-1.0.11.jar\" --sync-service\r\n",
                 SmartStockUpdater.syncLauncherContent(true, windowsAppDir, "inventory-management-1.0.11.jar"));
+    }
+
+    @Test
+    void eachUpdateReplacesThePreviousRollback(@TempDir Path tempDir) throws Exception {
+        Path rollback = tempDir.resolve("rollback");
+        Files.createDirectories(rollback);
+        Files.writeString(rollback.resolve("older-copy.txt"), "old");
+
+        SmartStockUpdater.prepareSingleRollbackDirectory(rollback);
+
+        assertTrue(Files.isDirectory(rollback));
+        assertFalse(Files.exists(rollback.resolve("older-copy.txt")));
+        try (var files = Files.list(rollback)) {
+            assertEquals(0, files.count());
+        }
     }
 }

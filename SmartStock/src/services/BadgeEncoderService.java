@@ -11,21 +11,30 @@ public final class BadgeEncoderService {
 
     public static String programNfc(BadgePrintService.EmployeeBadgeData employee,
                                     CompanyCustomizationManager.BadgeTemplateSettings settings) throws Exception {
+        String payload = BadgePrintService.buildTrackData(settings.nfcPayloadTemplate(), employee, settings);
+        String commandTemplate = Objects.requireNonNullElse(settings.nfcWriterCommand(), "").trim();
+        if (commandTemplate.isBlank()) {
+            return PcscNfcService.writeAndVerify(payload);
+        }
         if (!settings.nfcEnabled()) {
             throw new IllegalStateException("RFID/NFC programming is disabled in Company Preferences.");
         }
-        String commandTemplate = Objects.requireNonNullElse(settings.nfcWriterCommand(), "").trim();
-        if (commandTemplate.isBlank()) {
-            throw new IllegalStateException("Set an RFID/NFC writer command in Company Preferences first.");
-        }
-        String payload = BadgePrintService.buildTrackData(settings.nfcPayloadTemplate(), employee, settings);
         return runCommand(commandTemplate, employee, settings, payload, "RFID/NFC writer");
+    }
+
+    public static PcscNfcService.TestResult testNfc(BadgePrintService.EmployeeBadgeData employee,
+                                                     CompanyCustomizationManager.BadgeTemplateSettings settings) throws Exception {
+        String payload = BadgePrintService.buildTrackData(settings.nfcPayloadTemplate(), employee, settings);
+        return PcscNfcService.test(payload);
     }
 
     public static String verifyNfc(BadgePrintService.EmployeeBadgeData employee,
                                    CompanyCustomizationManager.BadgeTemplateSettings settings) throws Exception {
         String commandTemplate = Objects.requireNonNullElse(settings.nfcVerifyCommand(), "").trim();
         if (commandTemplate.isBlank()) {
+            if (PcscNfcService.hasReader()) {
+                return "Direct PC/SC read-back verification passed during programming.";
+            }
             return "RFID/NFC programming completed. No verification command is configured.";
         }
         String payload = BadgePrintService.buildTrackData(settings.nfcPayloadTemplate(), employee, settings);

@@ -1,6 +1,7 @@
 package services;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,6 +30,34 @@ public final class SqlScriptRunner {
 
     public static int runScript(Connection conn, Path script) throws IOException, SQLException {
         String sql = Files.readString(script, StandardCharsets.UTF_8);
+        return runSql(conn, sql);
+    }
+
+    public static int runResource(Connection conn, String resourcePath) throws IOException, SQLException {
+        String cleanPath = resourcePath == null ? "" : resourcePath.replaceFirst("^/+", "");
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) loader = SqlScriptRunner.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream(cleanPath)) {
+            if (input == null) {
+                throw new IOException("Packaged SQL resource was not found: " + cleanPath);
+            }
+            return runSql(conn, new String(input.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    public static String readResource(String resourcePath) throws IOException {
+        String cleanPath = resourcePath == null ? "" : resourcePath.replaceFirst("^/+", "");
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) loader = SqlScriptRunner.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream(cleanPath)) {
+            if (input == null) {
+                throw new IOException("Packaged SQL resource was not found: " + cleanPath);
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    public static int runSql(Connection conn, String sql) throws SQLException {
         int executed = 0;
         try (Statement stmt = conn.createStatement()) {
             for (String statement : splitStatements(sql)) {
@@ -59,7 +88,7 @@ public final class SqlScriptRunner {
         return current;
     }
 
-    private static List<String> splitStatements(String sql) {
+    static List<String> splitStatements(String sql) {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean singleQuote = false;

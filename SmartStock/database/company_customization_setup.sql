@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS company_customization (
     vat_fixed_rate_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
     next_receipt_counter INTEGER NOT NULL DEFAULT 1,
     change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000,
+    always_print_sale_receipt BOOLEAN NOT NULL DEFAULT FALSE,
     account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT',
     account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE,
     account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE,
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS company_customization (
     badge_template_nfc_payload TEXT NOT NULL DEFAULT '{badge_id}',
     badge_template_nfc_writer_command TEXT NOT NULL DEFAULT '',
     badge_template_nfc_verify_command TEXT NOT NULL DEFAULT '',
+    require_badge_pin_login BOOLEAN NOT NULL DEFAULT TRUE,
     badge_template_layout_data TEXT NOT NULL DEFAULT '',
     price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE,
     price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE,
@@ -199,6 +201,8 @@ ADD COLUMN IF NOT EXISTS next_receipt_counter INTEGER NOT NULL DEFAULT 1;
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000;
+ALTER TABLE company_customization
+ADD COLUMN IF NOT EXISTS always_print_sale_receipt BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE company_customization
 ADD COLUMN IF NOT EXISTS account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT';

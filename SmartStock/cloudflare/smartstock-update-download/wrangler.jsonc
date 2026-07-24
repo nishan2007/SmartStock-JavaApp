@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "smartstock-update-download",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-24",
+  "workers_dev": true,
+  "secrets": {
+    "required": [
+      "SMARTSTOCK_UPDATE_SIGNING_SECRET"
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "UPDATE_BUCKET",
+      "bucket_name": "smartstock-updates"
+    }
+  ]
+}

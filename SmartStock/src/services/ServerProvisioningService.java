@@ -15,7 +15,12 @@ import java.util.List;
 
 public final class ServerProvisioningService {
     public static void testLocalConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getConnection()) { } }
-    public static void testCloudConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getCloudConnection()) { } }
+    public static void testCloudConnection() throws Exception {
+        if (!ServerSupabaseCredentials.isConfigured()) {
+            throw new IllegalStateException("Save the Supabase Server Key first.");
+        }
+        CloudSyncManifest.fetch();
+    }
     private ServerProvisioningService() {
     }
 
@@ -34,7 +39,7 @@ public final class ServerProvisioningService {
         }
         if (looksLikeCredentialKey(config.dbUser()) || looksLikeCredentialKey(config.dbPassword())) {
             throw new SQLException("The database fields still contain credential labels like SMARTSTOCK_DB_USER. Click Load Saved Credentials, or paste the actual saved values from "
-                    + DatabaseCredentials.CREDENTIALS_PATH + ".");
+                    + DatabaseCredentials.activeCredentialsPath() + ".");
         }
 
         JdbcParts localParts = JdbcParts.parse(config.jdbcUrl());
@@ -45,6 +50,7 @@ public final class ServerProvisioningService {
         createDatabaseIfMissing(localParts, config.dbUser(), config.dbPassword(), steps);
         try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
             BaseSchemaInstaller.ensureSchema(local);
+            ServerImageAssetService.ensureSchema(local);
             int customOrderStatements = installLocalWorkflowSchemas(local);
             SyncSchemaInstaller.ensureSchema(local);
             SyncSchemaInstaller.ensureSecurityHardening(local);
@@ -54,28 +60,26 @@ public final class ServerProvisioningService {
                     + customOrderStatements + " custom-order statements).");
         }
 
-        if (config.hasCloudConnection()) {
-            try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword());
-                 Connection cloud = DriverManager.getConnection(config.cloudJdbcUrl(), config.cloudDbUser(), config.cloudDbPassword())) {
-                BaseSchemaInstaller.ensureSchema(local);
-                installLocalWorkflowSchemas(local);
-                installWorkflowSyncIdentitySchema(cloud);
-                SyncSchemaInstaller.ensureSchema(cloud);
-                SyncSchemaInstaller.ensureSecurityHardening(cloud);
-                int copiedRows = ReferenceDataSyncService.refreshFromCloud(local, cloud);
-                int historyRows = ReferenceDataSyncService.pullExistingLocationHistory(local, cloud, config.locationId());
-                int cachedImages = ImageCacheWarmupService.warmLocalCache(local);
-                ReceiptCounterSyncService.SeedResult receiptSeed =
-                        ReceiptCounterSyncService.seedFromExistingReceipts(local, cloud, config.locationId());
-                steps.add("Verified cloud connection and installed cloud sync tables.");
-                steps.add("Pulled " + copiedRows + " reference rows from cloud into local database.");
-                steps.add("Pulled " + historyRows + " existing transaction/history rows from cloud into local database.");
-                steps.add("Cached " + cachedImages + " image/logo file(s) locally for offline use.");
-                steps.add("Seeded receipt counter from existing receipts for " + receiptSeed.locationsUpdated()
-                        + " location(s); highest next receipt counter is " + receiptSeed.highestNextCounter() + ".");
+        if (ServerSupabaseCredentials.isConfigured()) {
+            CloudSyncManifest manifest = CloudSyncManifest.fetch();
+            steps.add("Verified the server-only Supabase HTTPS API ("
+                    + manifest.tables().size() + " materialized cloud tables available).");
+            if (config.locationId() != null) {
+                CloudSyncManifest mirror =
+                        CloudSyncManifest.fetchStoreSnapshot(config.locationId());
+                if (!mirror.tables().isEmpty()) {
+                    try (Connection local = DriverManager.getConnection(
+                            config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
+                        int restored = CloudRecoveryService.restoreStoreMirror(
+                                local, config.locationId(), mirror);
+                        steps.add("Hydrated " + restored
+                                + " missing row(s) from this store's cloud mirror.");
+                    }
+                }
             }
         } else {
-            steps.add("Cloud credentials not configured yet; local server can run, but sync will stay offline.");
+            throw new IllegalStateException(
+                    "Save the Supabase Server Key before initializing this server.");
         }
 
         config.save();
@@ -141,7 +145,8 @@ public final class ServerProvisioningService {
         SqlScriptRunner.runScripts(cloud, List.of(
                 "database/workflow_sync_identity_setup.sql",
                 "database/supabase_rpc_security_setup.sql",
-                "database/supabase_rls_hardening_setup.sql"
+                "database/supabase_rls_hardening_setup.sql",
+                "database/migrations/20260723143000_api_only_sync_exchange.sql"
         ));
     }
 

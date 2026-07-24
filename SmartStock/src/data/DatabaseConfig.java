@@ -17,25 +17,30 @@ public record DatabaseConfig(
         String serverHost,
         int serverPort,
         Integer locationId,
-        String cloudJdbcUrl,
-        String cloudDbUser,
-        String cloudDbPassword,
         int syncIntervalSeconds
 ) {
     public static final String PRIMARY_DB_USER_SECRET = "primary-db-user";
     public static final String PRIMARY_DB_PASSWORD_SECRET = "primary-db-password";
-    public static final String CLOUD_DB_USER_SECRET = "cloud-db-user";
-    public static final String CLOUD_DB_PASSWORD_SECRET = "cloud-db-password";
-    public static final Path CONFIG_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "database.properties");
+    private static final Path LEGACY_CONFIG_PATH =
+            Path.of(System.getProperty("user.home"), ".smartstock", "database.properties");
+
+    public static Path configPath() {
+        return EnvironmentProfile.active().file("database.properties");
+    }
 
     public static boolean hasConfigFile() {
-        return Files.isRegularFile(CONFIG_PATH);
+        return Files.isRegularFile(configPath())
+                || (EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT
+                && Files.isRegularFile(LEGACY_CONFIG_PATH));
     }
 
     public static DatabaseConfig load() {
         Properties props = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream input = Files.newInputStream(CONFIG_PATH)) {
+        Path configPath = Files.isRegularFile(configPath()) ? configPath()
+                : EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT
+                ? LEGACY_CONFIG_PATH : configPath();
+        if (Files.exists(configPath)) {
+            try (InputStream input = Files.newInputStream(configPath)) {
                 props.load(input);
             } catch (IOException ex) {
                 ex.printStackTrace();
@@ -49,14 +54,16 @@ public record DatabaseConfig(
         ));
         String host = firstNonBlank(props.getProperty("server.host"), "127.0.0.1");
         int port = parseInt(firstNonBlank(props.getProperty("server.port"), "5432"), 5432);
-        String database = firstNonBlank(props.getProperty("database.name"), "smartstock");
+        String defaultDatabase = EnvironmentProfile.active() == EnvironmentProfile.PRODUCTION
+                ? "smartstock" : "smartstock_dev";
+        String database = firstNonBlank(props.getProperty("database.name"), defaultDatabase);
         String jdbcUrl = firstNonBlank(
                 System.getProperty("smartstock.db.url"),
                 System.getenv("SMARTSTOCK_DB_URL"),
                 props.getProperty("jdbc.url")
         );
 
-        if (mode == DatabaseMode.CLIENT) {
+        if (mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN) {
             // Registers connect only to the SmartStock HTTPS service. Keeping a
             // JDBC URL here would make accidental database fallback possible.
             jdbcUrl = "";
@@ -67,25 +74,20 @@ public record DatabaseConfig(
         String user = firstNonBlank(
                 System.getProperty("smartstock.db.user"),
                 System.getenv("SMARTSTOCK_DB_USER"),
-                SecureCredentialStore.read(PRIMARY_DB_USER_SECRET),
+                readProfileSecret(PRIMARY_DB_USER_SECRET),
                 props.getProperty("db.user")
         );
         String password = firstNonBlank(
                 System.getProperty("smartstock.db.password"),
                 System.getenv("SMARTSTOCK_DB_PASSWORD"),
-                SecureCredentialStore.read(PRIMARY_DB_PASSWORD_SECRET),
+                readProfileSecret(PRIMARY_DB_PASSWORD_SECRET),
                 props.getProperty("db.password")
         );
-        if (mode == DatabaseMode.CLIENT) {
+        if (mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN) {
             user = "";
             password = "";
         }
 
-        String cloudUrl = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_URL"), props.getProperty("cloud.jdbc.url"));
-        String cloudUser = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_USER"),
-                SecureCredentialStore.read(CLOUD_DB_USER_SECRET), props.getProperty("cloud.db.user"));
-        String cloudPassword = firstNonBlank(System.getenv("SMARTSTOCK_CLOUD_DB_PASSWORD"),
-                SecureCredentialStore.read(CLOUD_DB_PASSWORD_SECRET), props.getProperty("cloud.db.password"));
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
 
         return new DatabaseConfig(
@@ -96,15 +98,8 @@ public record DatabaseConfig(
                 host,
                 port,
                 parseNullableInt(props.getProperty("location.id")),
-                savedCredentials.resolve(cloudUrl),
-                firstNonBlank(savedCredentials.resolve(cloudUser), ""),
-                firstNonBlank(savedCredentials.resolve(cloudPassword), ""),
                 parseInt(firstNonBlank(props.getProperty("sync.interval.seconds"), "60"), 60)
         );
-    }
-
-    public boolean hasCloudConnection() {
-        return !isBlank(cloudJdbcUrl) && !isBlank(cloudDbUser) && !isBlank(cloudDbPassword);
     }
 
     public boolean hasPrimaryConnection() {
@@ -114,16 +109,14 @@ public record DatabaseConfig(
     public boolean hasUnresolvedCredentialPlaceholders() {
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
         return savedCredentials.isUnresolvedCredentialKey(dbUser)
-                || savedCredentials.isUnresolvedCredentialKey(dbPassword)
-                || savedCredentials.isUnresolvedCredentialKey(cloudDbUser)
-                || savedCredentials.isUnresolvedCredentialKey(cloudDbPassword);
+                || savedCredentials.isUnresolvedCredentialKey(dbPassword);
     }
 
     public String missingPrimaryConnectionMessage() {
         if (hasUnresolvedCredentialPlaceholders()) {
             return "Database setup still contains credential labels like SMARTSTOCK_DB_USER instead of real values. "
                     + "Click Load Saved Credentials in Database Setup, or run the SmartStock installer to create "
-                    + DatabaseCredentials.CREDENTIALS_PATH + ".";
+                    + DatabaseCredentials.activeCredentialsPath() + ".";
         }
         if (isBlank(jdbcUrl)) {
             return "Database JDBC URL is not configured. Open Database Setup and enter the local/server JDBC URL.";
@@ -135,17 +128,18 @@ public record DatabaseConfig(
     }
 
     public void save() throws IOException {
-        if (mode != DatabaseMode.CLIENT) {
+        if (mode == DatabaseMode.SERVER) {
             storeSecret(PRIMARY_DB_USER_SECRET, dbUser);
             storeSecret(PRIMARY_DB_PASSWORD_SECRET, dbPassword);
-            storeSecret(CLOUD_DB_USER_SECRET, cloudDbUser);
-            storeSecret(CLOUD_DB_PASSWORD_SECRET, cloudDbPassword);
+        } else if (mode == DatabaseMode.REMOTE_ADMIN) {
+            SecureCredentialStore.delete(profileSecret(PRIMARY_DB_USER_SECRET));
+            SecureCredentialStore.delete(profileSecret(PRIMARY_DB_PASSWORD_SECRET));
         }
         Properties props = new Properties();
         props.setProperty("mode", mode.name());
         props.setProperty("server.host", serverHost);
         props.setProperty("server.port", String.valueOf(serverPort));
-        if (mode != DatabaseMode.CLIENT) {
+        if (mode == DatabaseMode.SERVER) {
             props.setProperty("database.name", databaseNameFromUrl(jdbcUrl));
             props.setProperty("jdbc.url", jdbcUrl == null ? "" : jdbcUrl);
             props.setProperty("db.user", isBlank(dbUser) ? "" : "${SMARTSTOCK_SECURE_DB_USER}");
@@ -154,56 +148,57 @@ public record DatabaseConfig(
         if (locationId != null) {
             props.setProperty("location.id", String.valueOf(locationId));
         }
-        if (mode != DatabaseMode.CLIENT && !isBlank(cloudJdbcUrl)) {
-            props.setProperty("cloud.jdbc.url", cloudJdbcUrl);
-        }
-        if (mode != DatabaseMode.CLIENT && !isBlank(cloudDbUser)) {
-            props.setProperty("cloud.db.user", "${SMARTSTOCK_SECURE_CLOUD_DB_USER}");
-        }
-        if (mode != DatabaseMode.CLIENT && !isBlank(cloudDbPassword)) {
-            props.setProperty("cloud.db.password", "${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}");
-        }
         props.setProperty("sync.interval.seconds", String.valueOf(syncIntervalSeconds));
-        Files.createDirectories(CONFIG_PATH.getParent());
-        SecureFilePermissions.restrictDirectoryToOwner(CONFIG_PATH.getParent());
-        try (OutputStream output = Files.newOutputStream(CONFIG_PATH)) {
+        Path configPath = configPath();
+        Files.createDirectories(configPath.getParent());
+        SecureFilePermissions.restrictDirectoryToOwner(configPath.getParent());
+        try (OutputStream output = Files.newOutputStream(configPath)) {
             props.store(output, "SmartStock database mode and sync configuration");
         }
-        SecureFilePermissions.restrictFileToOwner(CONFIG_PATH);
+        SecureFilePermissions.restrictFileToOwner(configPath);
     }
 
     private static void storeSecret(String key, String value) throws IOException {
         if (!isBlank(value) && !value.trim().startsWith("${SMARTSTOCK_SECURE_")) {
-            SecureCredentialStore.write(key, value.trim());
+            SecureCredentialStore.write(profileSecret(key), value.trim());
         }
+    }
+
+    private static String profileSecret(String key) {
+        return EnvironmentProfile.active().secretKey(key);
+    }
+
+    private static String readProfileSecret(String key) {
+        String value = SecureCredentialStore.read(profileSecret(key));
+        if ((value == null || value.isBlank())
+                && EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT) {
+            value = SecureCredentialStore.read(key);
+        }
+        return value;
     }
 
     public DatabaseConfig withMode(DatabaseMode newMode) {
         return new DatabaseConfig(newMode, jdbcUrl, dbUser, dbPassword, serverHost, serverPort, locationId,
-                cloudJdbcUrl, cloudDbUser, cloudDbPassword, syncIntervalSeconds);
+                syncIntervalSeconds);
     }
 
     public static DatabaseConfig fromForm(DatabaseMode mode, String jdbcUrl, String dbUser, String dbPassword,
                                           String serverHost, int serverPort, Integer locationId,
-                                          String cloudJdbcUrl, String cloudDbUser, String cloudDbPassword,
                                           int syncIntervalSeconds) {
         DatabaseMode cleanMode = mode == null ? DatabaseMode.CLIENT : mode;
         String cleanHost = firstNonBlank(serverHost, "127.0.0.1");
         int cleanPort = serverPort <= 0 ? 5432 : serverPort;
-        String cleanCloudUrl = firstNonBlank(cloudJdbcUrl, "");
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
         String cleanJdbcUrl = firstNonBlank(jdbcUrl, "");
-        if (cleanMode == DatabaseMode.CLIENT) {
-            return new DatabaseConfig(DatabaseMode.CLIENT, "", "", "", cleanHost, cleanPort, locationId,
-                    "", "", "", syncIntervalSeconds <= 0 ? 60 : syncIntervalSeconds);
+        if (cleanMode == DatabaseMode.CLIENT || cleanMode == DatabaseMode.REMOTE_ADMIN) {
+            return new DatabaseConfig(cleanMode, "", "", "", cleanHost, cleanPort, locationId,
+                    syncIntervalSeconds <= 0 ? 60 : syncIntervalSeconds);
         }
         if (isBlank(cleanJdbcUrl)) {
             cleanJdbcUrl = "jdbc:postgresql://" + cleanHost + ":" + cleanPort + "/smartstock";
         }
         return new DatabaseConfig(cleanMode, firstNonBlank(cleanJdbcUrl, ""), firstNonBlank(savedCredentials.resolve(dbUser), ""),
                 firstNonBlank(savedCredentials.resolve(dbPassword), ""), cleanHost, cleanPort, locationId,
-                savedCredentials.resolve(cleanCloudUrl), firstNonBlank(savedCredentials.resolve(cloudDbUser), ""),
-                firstNonBlank(savedCredentials.resolve(cloudDbPassword), ""),
                 syncIntervalSeconds <= 0 ? 60 : syncIntervalSeconds);
     }
 

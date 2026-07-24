@@ -76,15 +76,32 @@ final class LanTransferService {
         return rows;
     }
 
+    static List<Map<String,Object>> outgoing(Connection c,int userId,int locationId)throws Exception{
+        requirePermission(c,userId); List<Map<String,Object>>rows=new ArrayList<>();
+        try(PreparedStatement ps=c.prepareStatement("""
+                SELECT st.transfer_id,COALESCE(l.name,'Unknown'),st.created_at,COALESCE(st.user_name,''),
+                  COALESCE(st.note,''),COUNT(i.transfer_item_id),COALESCE(SUM(i.quantity),0)
+                FROM store_transfers st LEFT JOIN store_transfer_items i ON i.transfer_id=st.transfer_id
+                LEFT JOIN locations l ON l.location_id=st.to_location_id
+                WHERE st.from_location_id=? AND UPPER(COALESCE(st.status,'PENDING'))='PENDING'
+                GROUP BY st.transfer_id,l.name,st.created_at,st.user_name,st.note
+                ORDER BY st.created_at,st.transfer_id LIMIT 1000
+                """)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
+                        "transferId",rs.getLong(1),"toStore",rs.getString(2),"createdAtEpochMillis",rs.getTimestamp(3).getTime(),
+                        "sentBy",rs.getString(4),"note",rs.getString(5),"itemCount",rs.getInt(6),"unitCount",rs.getInt(7)));}}
+        return rows;
+    }
+
     static List<Map<String,Object>> items(Connection c,long transferId,int userId,int locationId)throws Exception{
         requirePermission(c,userId); List<Map<String,Object>>rows=new ArrayList<>();
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT i.product_id,COALESCE(p.sku,''),COALESCE(p.name,'Unknown'),i.quantity
                 FROM store_transfer_items i JOIN store_transfers st ON st.transfer_id=i.transfer_id
                 LEFT JOIN products p ON p.product_id=i.product_id
-                WHERE i.transfer_id=? AND st.to_location_id=? AND UPPER(COALESCE(st.status,'PENDING'))='PENDING'
+                WHERE i.transfer_id=? AND (st.to_location_id=? OR st.from_location_id=?)
+                  AND UPPER(COALESCE(st.status,'PENDING'))='PENDING'
                 ORDER BY p.name,i.product_id
-                """)){ps.setLong(1,transferId);ps.setInt(2,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
+                """)){ps.setLong(1,transferId);ps.setInt(2,locationId);ps.setInt(3,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
                         "productId",rs.getInt(1),"sku",rs.getString(2),"name",rs.getString(3),"quantity",rs.getInt(4)));}}
         if(rows.isEmpty())throw rule(404,"TRANSFER_NOT_FOUND","Pending transfer was not found for this store.");
         return rows;

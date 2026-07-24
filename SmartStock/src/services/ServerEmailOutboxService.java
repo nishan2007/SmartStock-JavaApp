@@ -902,7 +902,7 @@ public final class ServerEmailOutboxService {
     }
 
     private static String emailAuthorizationToken() {
-        String serviceRole = getConfig("SUPABASE_SERVICE_ROLE_KEY", "");
+        String serviceRole = ServerSupabaseCredentials.get();
         if (!serviceRole.isBlank()) {
             return serviceRole;
         }

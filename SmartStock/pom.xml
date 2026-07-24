@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.0.13</version>
+    <version>1.0.27</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -58,6 +58,14 @@
           <include>Images/**</include>
         </includes>
       </resource>
+      <resource>
+        <directory>database</directory>
+        <targetPath>database</targetPath>
+        <includes>
+          <include>*.sql</include>
+          <include>migrations/*.sql</include>
+        </includes>
+      </resource>
     </resources>
     <plugins>
       <plugin>
@@ -69,6 +77,9 @@
           <excludes>
             <exclude>**/* 2.java</exclude>
           </excludes>
+          <testExcludes>
+            <testExclude>**/* 2.java</testExclude>
+          </testExcludes>
         </configuration>
       </plugin>
       <plugin>

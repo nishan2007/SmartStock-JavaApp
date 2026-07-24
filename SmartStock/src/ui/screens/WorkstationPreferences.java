@@ -1,7 +1,11 @@
 package ui.screens;
 
+import data.DatabaseConfig;
+import data.DatabaseMode;
 import managers.NavigationManager;
 import ui.components.AppMenuBar;
+import ui.components.PreferenceTreeCellRenderer;
+import ui.design.DeckersPalette;
 import ui.helpers.WindowHelper;
 import ui.screens.workstationprefs.HardwareSettingsPanel;
 import ui.screens.workstationprefs.WorkstationSettingsPanel;
@@ -9,7 +13,6 @@ import ui.screens.workstationprefs.WorkstationSettingsPanel;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.tree.DefaultMutableTreeNode;
-import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
@@ -18,8 +21,10 @@ public class WorkstationPreferences extends JFrame {
     public static final String NAV_GENERAL = "General";
     public static final String NAV_WORKSTATION_SETTINGS = "Workstation Settings";
     public static final String NAV_HARDWARE_SETTINGS = "Hardware Settings";
+    public static final String NAV_SERVER = "Server";
 
     private final JPanel rightContentPanel = new JPanel(new CardLayout());
+    private final boolean serverWorkstation = DatabaseConfig.load().mode() == DatabaseMode.SERVER;
     private JTree navigationTree;
 
     public WorkstationPreferences() {
@@ -73,6 +78,9 @@ public class WorkstationPreferences extends JFrame {
         root.add(new DefaultMutableTreeNode(NAV_GENERAL));
         root.add(new DefaultMutableTreeNode(NAV_WORKSTATION_SETTINGS));
         root.add(new DefaultMutableTreeNode(NAV_HARDWARE_SETTINGS));
+        if (serverWorkstation) {
+            root.add(new DefaultMutableTreeNode(NAV_SERVER));
+        }
 
         JTree tree = new JTree(new DefaultTreeModel(root));
         navigationTree = tree;
@@ -80,14 +88,12 @@ public class WorkstationPreferences extends JFrame {
         tree.setShowsRootHandles(true);
         tree.setRowHeight(24);
         tree.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        tree.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        tree.setBackground(DeckersPalette.surface());
+        tree.setForeground(DeckersPalette.text());
+        tree.setOpaque(true);
 
-        DefaultTreeCellRenderer renderer = new DefaultTreeCellRenderer();
-        renderer.setBorderSelectionColor(new Color(220, 224, 230));
-        renderer.setBackgroundSelectionColor(new Color(232, 240, 254));
-        renderer.setTextSelectionColor(new Color(32, 41, 57));
-        renderer.setTextNonSelectionColor(new Color(32, 41, 57));
-        renderer.setBackgroundNonSelectionColor(Color.WHITE);
-        tree.setCellRenderer(renderer);
+        tree.setCellRenderer(new PreferenceTreeCellRenderer());
 
         for (int row = 0; row < tree.getRowCount(); row++) {
             tree.expandRow(row);
@@ -111,7 +117,13 @@ public class WorkstationPreferences extends JFrame {
         label.setFont(new Font("SansSerif", Font.BOLD, 16));
         label.setBorder(new EmptyBorder(0, 0, 8, 0));
         container.add(label, BorderLayout.NORTH);
-        container.add(new JScrollPane(tree), BorderLayout.CENTER);
+        JScrollPane navigationScroll = new JScrollPane(tree);
+        navigationScroll.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        navigationScroll.setBackground(DeckersPalette.surface());
+        navigationScroll.setBorder(BorderFactory.createEmptyBorder());
+        navigationScroll.getViewport().putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        navigationScroll.getViewport().setBackground(DeckersPalette.surface());
+        container.add(navigationScroll, BorderLayout.CENTER);
 
         TreePath defaultPath = findTreePath(root, NAV_GENERAL);
         if (defaultPath != null) {
@@ -125,6 +137,7 @@ public class WorkstationPreferences extends JFrame {
         String resolvedKey = switch (key) {
             case NAV_WORKSTATION_SETTINGS -> NAV_WORKSTATION_SETTINGS;
             case NAV_HARDWARE_SETTINGS -> NAV_HARDWARE_SETTINGS;
+            case NAV_SERVER -> serverWorkstation ? NAV_SERVER : NAV_GENERAL;
             default -> NAV_GENERAL;
         };
         CardLayout cardLayout = (CardLayout) rightContentPanel.getLayout();
@@ -139,6 +152,67 @@ public class WorkstationPreferences extends JFrame {
         ), NAV_GENERAL);
         rightContentPanel.add(new WorkstationSettingsPanel(), NAV_WORKSTATION_SETTINGS);
         rightContentPanel.add(new HardwareSettingsPanel(), NAV_HARDWARE_SETTINGS);
+        if (serverWorkstation) {
+            rightContentPanel.add(buildServerPanel(), NAV_SERVER);
+        }
+    }
+
+    private JPanel buildServerPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                new EmptyBorder(18, 18, 18, 18)
+        ));
+
+        JLabel titleLabel = new JLabel("Server");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        titleLabel.setForeground(new Color(32, 41, 57));
+        titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JTextArea description = new JTextArea(
+                "Manage the database, LAN service, background synchronization, "
+                        + "Supabase server connection, initial setup, and recovery tools for this server."
+        );
+        description.setEditable(false);
+        description.setFocusable(false);
+        description.setLineWrap(true);
+        description.setWrapStyleWord(true);
+        description.setOpaque(false);
+        description.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        description.setForeground(new Color(71, 85, 105));
+        description.setAlignmentX(Component.LEFT_ALIGNMENT);
+        description.setMaximumSize(new Dimension(Integer.MAX_VALUE, 70));
+
+        JButton guidedSetupButton = new JButton("Open Guided Setup");
+        guidedSetupButton.setToolTipText(
+                "Choose Server, Register, or Remote Admin and follow the simplified setup."
+        );
+        guidedSetupButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        guidedSetupButton.addActionListener(e -> new InitialSetupWizard(this).setVisible(true));
+
+        JButton databaseSetupButton = new JButton("Advanced Server Settings");
+        databaseSetupButton.setToolTipText(
+                "Open technical database, service, Supabase credential, and recovery settings."
+        );
+        databaseSetupButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        databaseSetupButton.addActionListener(e -> {
+            if (WindowHelper.focusIfAlreadyOpen(DatabaseSetup.class)) {
+                return;
+            }
+            new DatabaseSetup(this).setVisible(true);
+        });
+
+        panel.add(titleLabel);
+        panel.add(Box.createVerticalStrut(10));
+        panel.add(description);
+        panel.add(Box.createVerticalStrut(12));
+        panel.add(guidedSetupButton);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(databaseSetupButton);
+        panel.add(Box.createVerticalGlue());
+        return panel;
     }
 
     private JPanel buildPlaceholderPanel(String title, String message) {

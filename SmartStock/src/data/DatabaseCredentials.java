@@ -12,11 +12,16 @@ public record DatabaseCredentials(Map<String, String> values) {
 
     public static DatabaseCredentials load() {
         Map<String, String> values = new HashMap<>();
-        if (!Files.exists(CREDENTIALS_PATH)) {
+        Path credentialsPath = EnvironmentProfile.active().file("database-credentials.txt");
+        if (!Files.isRegularFile(credentialsPath)
+                && EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT) {
+            credentialsPath = CREDENTIALS_PATH;
+        }
+        if (!Files.exists(credentialsPath)) {
             return new DatabaseCredentials(values);
         }
         try {
-            for (String line : Files.readAllLines(CREDENTIALS_PATH)) {
+            for (String line : Files.readAllLines(credentialsPath)) {
                 String trimmed = line.trim();
                 if (trimmed.isBlank() || trimmed.startsWith("#") || !trimmed.contains("=")) {
                     continue;
@@ -32,6 +37,10 @@ public record DatabaseCredentials(Map<String, String> values) {
             ex.printStackTrace();
         }
         return new DatabaseCredentials(values);
+    }
+
+    public static Path activeCredentialsPath() {
+        return EnvironmentProfile.active().file("database-credentials.txt");
     }
 
     public String get(String key) {

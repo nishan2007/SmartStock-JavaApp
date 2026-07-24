@@ -1,6 +1,7 @@
 package services;
 
 import data.DatabaseConfig;
+import data.EnvironmentProfile;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -17,6 +18,9 @@ public final class PostgresRuntimeService {
     }
 
     public static CommandResult installOrUpdateRuntime() throws Exception {
+        if (isWindows()) {
+            return installWindowsPostgres();
+        }
         String script = """
                 set -e
                 find_pg_formula() {
@@ -34,8 +38,6 @@ public final class PostgresRuntimeService {
                   if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"; fi
                   if [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
                 fi
-                if ! command -v java >/dev/null 2>&1; then brew install openjdk@17; fi
-                if ! command -v mvn >/dev/null 2>&1; then brew install maven; fi
                 if ! command -v psql >/dev/null 2>&1; then brew install postgresql; fi
                 start_pg
                 psql --version
@@ -44,7 +46,113 @@ public final class PostgresRuntimeService {
         return runShell(script, Duration.ofMinutes(20));
     }
 
+    public static ServerPrerequisites checkServerPrerequisites() {
+        int javaVersion = Runtime.version().feature();
+        String command = isWindows()
+                ? """
+                  $psql = Get-Command psql.exe -ErrorAction SilentlyContinue
+                  if (-not $psql) {
+                    $psql = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
+                      Sort-Object FullName -Descending | Select-Object -First 1
+                  }
+                  if (-not $psql) { exit 1 }
+                  & $psql.Source --version
+                  """
+                : "command -v psql >/dev/null 2>&1 && psql --version";
+        try {
+            CommandResult result = isWindows()
+                    ? runPowerShell(command, Duration.ofSeconds(20))
+                    : runShell(command, Duration.ofSeconds(20));
+            int postgresVersion = parsePostgresMajorVersion(result.output());
+            return new ServerPrerequisites(
+                    javaVersion >= 17,
+                    javaVersion,
+                    result.success() && postgresVersion >= 15,
+                    postgresVersion,
+                    result.output());
+        } catch (Exception ex) {
+            return new ServerPrerequisites(javaVersion >= 17, javaVersion,
+                    false, 0, ex.getMessage() == null ? "" : ex.getMessage());
+        }
+    }
+
+    static int parsePostgresMajorVersion(String output) {
+        if (output == null) return 0;
+        var matcher = java.util.regex.Pattern
+                .compile("(?i)(?:postgresql|psql)[^0-9]*([0-9]{1,2})(?:\\.[0-9]+)?")
+                .matcher(output);
+        if (!matcher.find()) return 0;
+        try {
+            return Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private static CommandResult installWindowsPostgres() throws Exception {
+        Path setupDir = Path.of(System.getProperty("user.home"), ".smartstock", "setup");
+        Files.createDirectories(setupDir);
+        utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
+        Path scriptPath = Files.createTempFile(setupDir, "install-postgresql-", ".ps1");
+        Path logPath = Files.createTempFile(setupDir, "install-postgresql-", ".log");
+        String script = """
+                $ErrorActionPreference = 'Stop'
+                $Log = %s
+                try {
+                  $Existing = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
+                    Sort-Object FullName -Descending | Select-Object -First 1
+                  if (-not $Existing) {
+                    $BundledInstaller = Join-Path (Split-Path -Parent $PSScriptRoot) 'postgresql-installer.exe'
+                    if (Test-Path $BundledInstaller) {
+                      $Install = Start-Process -FilePath $BundledInstaller -Wait -PassThru
+                      if ($Install.ExitCode -ne 0) { throw "PostgreSQL installer exited with code $($Install.ExitCode)." }
+                    } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+                      winget install --id PostgreSQL.PostgreSQL.17 --exact --silent `
+                        --accept-package-agreements --accept-source-agreements
+                      if ($LASTEXITCODE -ne 0) { throw "Windows Package Manager could not install PostgreSQL." }
+                    } else {
+                      throw "PostgreSQL is missing and Windows Package Manager is unavailable. Use a SmartStock installer bundle that includes postgresql-installer.exe."
+                    }
+                  }
+                  $Services = Get-Service 'postgresql*' -ErrorAction SilentlyContinue
+                  if (-not $Services) { throw 'PostgreSQL installed, but its Windows service was not found.' }
+                  $Services | Set-Service -StartupType Automatic
+                  $Services | Start-Service
+                  $Psql = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
+                    Sort-Object FullName -Descending | Select-Object -First 1
+                  if (-not $Psql) { throw 'PostgreSQL command-line tools were not found after installation.' }
+                  (& $Psql.FullName --version) | Set-Content -LiteralPath $Log
+                  Add-Content -LiteralPath $Log -Value 'PostgreSQL service is installed and set to start automatically.'
+                  exit 0
+                } catch {
+                  $_ | Out-String | Set-Content -LiteralPath $Log
+                  exit 1
+                }
+                """.formatted(powerShellSingleQuoted(logPath.toString()));
+        Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
+        utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
+        utils.SecureFilePermissions.restrictFileToOwner(logPath);
+        String elevate = "$ErrorActionPreference='Stop';"
+                + "$p=Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru "
+                + "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
+                + powerShellSingleQuoted(scriptPath.toString()) + ");"
+                + "exit $p.ExitCode";
+        try {
+            CommandResult elevated = runPowerShell(elevate, Duration.ofMinutes(20));
+            String log = Files.isRegularFile(logPath)
+                    ? Files.readString(logPath, StandardCharsets.UTF_8).trim() : "";
+            return new CommandResult(elevated.success(),
+                    log.isBlank() ? elevated.output() : log);
+        } finally {
+            Files.deleteIfExists(scriptPath);
+            Files.deleteIfExists(logPath);
+        }
+    }
+
     public static CommandResult startPostgres() throws Exception {
+        if (isWindows()) {
+            return runPowerShell("$ErrorActionPreference='Stop'; $services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; if(-not $services){throw 'PostgreSQL Windows service was not found.'}; $services | Start-Service; $services | Format-Table Name,Status -AutoSize", Duration.ofMinutes(2));
+        }
         return runShell("""
                 set -e
                 formula="$(brew services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1)"
@@ -55,8 +163,54 @@ public final class PostgresRuntimeService {
                 """, Duration.ofMinutes(2));
     }
 
+    public static CommandResult stopPostgres() throws Exception {
+        if (isWindows()) {
+            return runPowerShell("$ErrorActionPreference='Stop'; $services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; if(-not $services){throw 'PostgreSQL Windows service was not found.'}; $services | Stop-Service -Force; $services | Format-Table Name,Status -AutoSize", Duration.ofMinutes(2));
+        }
+        return runShell("""
+                set -e
+                formula="$(brew services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1)"
+                if [ -z "$formula" ]; then echo 'PostgreSQL Homebrew service was not found.' >&2; exit 1; fi
+                brew services stop "$formula"
+                brew services list | grep -E 'postgresql|Name' || true
+                """, Duration.ofMinutes(2));
+    }
+
     public static CommandResult postgresStatus() throws Exception {
+        if (isWindows()) {
+            return runPowerShell("$services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; if(-not $services){Write-Output 'PostgreSQL Windows service was not found.'; exit 1}; $services | Format-Table Name,Status -AutoSize", Duration.ofSeconds(30));
+        }
         return runShell("command -v psql && psql --version && brew services list | grep -E 'postgresql|Name' || true", Duration.ofSeconds(30));
+    }
+
+    public static CommandResult startLanService() throws Exception {
+        ensureSyncServiceInstalled();
+        if (isWindows()) {
+            return runPowerShell("schtasks /Run /TN SmartStockServerService; schtasks /Query /TN SmartStockServerService /FO LIST", Duration.ofSeconds(30));
+        }
+        return runShell("""
+                set -e
+                plist="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"
+                if [ ! -f "$plist" ]; then echo 'SmartStock LAN service is not installed.' >&2; exit 1; fi
+                launchctl bootstrap "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+                launchctl kickstart -k "gui/$(id -u)/com.smartstock.sync"
+                launchctl print "gui/$(id -u)/com.smartstock.sync" | grep -E 'state =|pid =|program ='
+                """, Duration.ofSeconds(30));
+    }
+
+    public static CommandResult stopLanService() throws Exception {
+        if (isWindows()) {
+            return runPowerShell("schtasks /End /TN SmartStockServerService; schtasks /Query /TN SmartStockServerService /FO LIST", Duration.ofSeconds(30));
+        }
+        return runShell("""
+                plist="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"
+                launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+                if launchctl print "gui/$(id -u)/com.smartstock.sync" >/dev/null 2>&1; then
+                  echo 'SmartStock LAN service is still running.' >&2
+                  exit 1
+                fi
+                echo 'SmartStock LAN service stopped.'
+                """, Duration.ofSeconds(30));
     }
 
     public static CommandResult ensureServiceOnlyDatabaseAccess(DatabaseConfig config) throws Exception {
@@ -174,6 +328,170 @@ public final class PostgresRuntimeService {
         return installSyncService();
     }
 
+    /**
+     * Performs the Windows-only production service/firewall setup behind a
+     * standard UAC prompt. No database password or service-role key is placed
+     * in the generated script or command line.
+     */
+    public static CommandResult installWindowsProductionServer(
+            SupabaseProjectConfig project, String lanSubnet) throws Exception {
+        return installWindowsServer(project, EnvironmentProfile.PRODUCTION, lanSubnet);
+    }
+
+    public static CommandResult installWindowsServer(
+            SupabaseProjectConfig project, EnvironmentProfile environment,
+            String lanSubnet) throws Exception {
+        if (!isWindows()) {
+            return new CommandResult(false,
+                    "Complete Windows Server Setup is available only on Windows.");
+        }
+        EnvironmentProfile selected = environment == null
+                ? EnvironmentProfile.active() : environment;
+        if (project == null || (selected == EnvironmentProfile.PRODUCTION
+                && !project.isProduction())) {
+            return new CommandResult(false,
+                    "Save this environment's Supabase project before installing the Windows service.");
+        }
+        String cleanSubnet = lanSubnet == null ? "" : lanSubnet.trim();
+        if (!validLanSubnet(cleanSubnet)) {
+            return new CommandResult(false,
+                    "LAN subnet must be LocalSubnet, an IP address, or CIDR such as 192.168.1.0/24.");
+        }
+
+        Path jar = currentPackagedJar();
+        if (jar == null) {
+            Path target = Path.of(System.getProperty("user.dir"))
+                    .toAbsolutePath().normalize().resolve("target");
+            try (var jars = Files.list(target)) {
+                jar = jars.filter(path -> path.getFileName().toString()
+                                .startsWith("inventory-management-"))
+                        .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                        .max(java.util.Comparator.comparingLong(path -> path.toFile().lastModified()))
+                        .orElse(null);
+            }
+        }
+        if (jar == null || !Files.isRegularFile(jar)) {
+            return new CommandResult(false,
+                    "The packaged SmartStock JAR was not found. Build or install SmartStock first.");
+        }
+        Path dependencies = jar.getParent().resolve("dependency");
+        if (!Files.isDirectory(dependencies)) {
+            return new CommandResult(false,
+                    "The packaged SmartStock dependency folder was not found beside the JAR.");
+        }
+
+        Path setupDir = Path.of(System.getProperty("user.home"), ".smartstock", "setup");
+        Files.createDirectories(setupDir);
+        utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
+        Path scriptPath = Files.createTempFile(setupDir, "install-production-server-", ".ps1");
+        Path logPath = Files.createTempFile(setupDir, "install-production-server-", ".log");
+        Path bundledJava = Path.of(System.getProperty("java.home"), "bin", "java.exe")
+                .toAbsolutePath().normalize();
+        if (!Files.isRegularFile(bundledJava)) {
+            return new CommandResult(false,
+                    "The Java runtime bundled with SmartStock was not found.");
+        }
+        String script = windowsProductionInstallScript(
+                jar, dependencies, bundledJava, project.url(), project.publishableKey(),
+                selected.id(), cleanSubnet, logPath);
+        Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
+        utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
+        utils.SecureFilePermissions.restrictFileToOwner(logPath);
+
+        String elevate = "$ErrorActionPreference='Stop';"
+                + "$p=Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru "
+                + "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
+                + powerShellSingleQuoted(scriptPath.toString()) + ");"
+                + "exit $p.ExitCode";
+        CommandResult elevated;
+        try {
+            elevated = runPowerShell(elevate, Duration.ofMinutes(5));
+            String log = Files.isRegularFile(logPath)
+                    ? Files.readString(logPath, StandardCharsets.UTF_8).trim() : "";
+            return new CommandResult(elevated.success(),
+                    log.isBlank() ? elevated.output() : log);
+        } finally {
+            Files.deleteIfExists(scriptPath);
+            Files.deleteIfExists(logPath);
+        }
+    }
+
+    static String windowsProductionInstallScript(
+            Path jar, Path dependencies, Path javaExecutable,
+            String supabaseUrl, String publishableKey,
+            String lanSubnet, Path logPath) {
+        return windowsProductionInstallScript(jar, dependencies, javaExecutable,
+                supabaseUrl, publishableKey, "production", lanSubnet, logPath);
+    }
+
+    static String windowsProductionInstallScript(
+            Path jar, Path dependencies, Path javaExecutable,
+            String supabaseUrl, String publishableKey, String environment,
+            String lanSubnet, Path logPath) {
+        return """
+                $ErrorActionPreference = 'Stop'
+                $Log = %s
+                try {
+                  $Jar = %s
+                  $Dependencies = %s
+                  $Java = %s
+                  $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
+                  $ServiceAppDir = Join-Path $ServiceDir 'app'
+                  New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
+                  Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
+                  Copy-Item -LiteralPath $Jar -Destination $ServiceAppDir -Force
+                  $TargetDependencies = Join-Path $ServiceAppDir 'dependency'
+                  Remove-Item -Recurse -Force $TargetDependencies -ErrorAction SilentlyContinue
+                  Copy-Item -LiteralPath $Dependencies -Destination $TargetDependencies -Recurse -Force
+                  $JarName = Split-Path -Leaf $Jar
+                  $Launcher = Join-Path $ServiceDir 'run-smartstock-sync-service.cmd'
+                  Set-Content -LiteralPath $Launcher -Encoding ASCII -Value @(
+                    '@echo off',
+                    'set "SMARTSTOCK_ENVIRONMENT=%s"',
+                    'set "SUPABASE_URL=%s"',
+                    'set "SUPABASE_PUBLISHABLE_KEY=%s"',
+                    'cd /d "' + $ServiceAppDir + '"',
+                    '"' + $Java + '" -jar "' + $JarName + '" --sync-service'
+                  )
+                  schtasks /Delete /TN SmartStockBackgroundSync /F 2>$null | Out-Null
+                  schtasks /Create /TN SmartStockServerService /TR "`"$Launcher`"" /SC ONSTART /RL HIGHEST /F | Out-Null
+                  $RuleName = 'SmartStock LAN API 8443'
+                  Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue |
+                    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+                  New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Action Allow `
+                    -Protocol TCP -LocalPort 8443 -RemoteAddress %s -Profile Private | Out-Null
+                  schtasks /Run /TN SmartStockServerService | Out-Null
+                  Start-Sleep -Seconds 3
+                  schtasks /Query /TN SmartStockServerService /FO LIST | Out-String | Set-Content -LiteralPath $Log
+                  Add-Content -LiteralPath $Log -Value 'Windows service and private-LAN firewall rule installed.'
+                  exit 0
+                } catch {
+                  $_ | Out-String | Set-Content -LiteralPath $Log
+                  exit 1
+                }
+                """.formatted(
+                powerShellSingleQuoted(logPath.toString()),
+                powerShellSingleQuoted(jar.toString()),
+                powerShellSingleQuoted(dependencies.toString()),
+                powerShellSingleQuoted(javaExecutable.toString()),
+                powerShellLiteralValue(environment),
+                powerShellLiteralValue(supabaseUrl),
+                powerShellLiteralValue(publishableKey),
+                powerShellSingleQuoted(lanSubnet)
+        );
+    }
+
+    static boolean validLanSubnet(String value) {
+        if (value == null || value.isBlank()) return false;
+        if ("LocalSubnet".equalsIgnoreCase(value.trim())) return true;
+        return value.trim().matches(
+                "(?i)(?:\\d{1,3}\\.){3}\\d{1,3}(?:/(?:[0-9]|[12][0-9]|3[0-2]))?");
+    }
+
+    public static boolean validLanSubnetForSetup(String value) {
+        return validLanSubnet(value);
+    }
+
     private static boolean repairInstalledSyncLauncherIfNeeded() throws Exception {
         Path currentJar = currentPackagedJar();
         if (currentJar == null) return false;
@@ -187,8 +505,16 @@ public final class PostgresRuntimeService {
         boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
         Path launcher = serviceDir.resolve(windows
                 ? "run-smartstock-sync-service.cmd" : "run-smartstock-sync-service.command");
-        String expected = installedSyncLauncherContent(windows, serviceAppDir, currentJar.getFileName().toString());
         String existing = Files.exists(launcher) ? Files.readString(launcher) : "";
+        if (windows && existing.contains("SMARTSTOCK_ENVIRONMENT=")) {
+            String updated = existing.replaceAll(
+                    "inventory-management-[^\"\\r\\n]+\\.jar",
+                    java.util.regex.Matcher.quoteReplacement(currentJar.getFileName().toString()));
+            if (!updated.equals(existing)) Files.writeString(launcher, updated);
+            return !updated.equals(existing);
+        }
+        String expected = installedSyncLauncherContent(windows, serviceAppDir,
+                currentJar.getFileName().toString());
         if (expected.equals(existing)) return false;
         Files.writeString(launcher, expected);
         if (!windows) {
@@ -407,6 +733,22 @@ public final class PostgresRuntimeService {
     public record CommandResult(boolean success, String output) {
     }
 
+    public record ServerPrerequisites(
+            boolean javaReady,
+            int javaVersion,
+            boolean postgresReady,
+            int postgresVersion,
+            String details) {
+    }
+
+    public static boolean isWindowsRuntime() {
+        return isWindows();
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
     private static String shellWord(String value) {
         if (value == null || value.isBlank()) {
             return "server";
@@ -420,5 +762,10 @@ public final class PostgresRuntimeService {
 
     private static String powerShellSingleQuoted(String value) {
         return "'" + value.replace("'", "''") + "'";
+    }
+
+    private static String powerShellLiteralValue(String value) {
+        return value == null ? "" : value.replace("`", "``")
+                .replace("\"", "`\"");
     }
 }

@@ -11,6 +11,7 @@ public class SaleReceiptPanel extends JPanel {
                             JTextField configPathField,
                             JTextField saleDiscountLimitPercentField,
                             JTextField saleReturnApprovalLimitField,
+                            JCheckBox alwaysPrintSaleReceiptBox,
                             JCheckBox showLogoBox,
                             JCheckBox showSaleIdBox,
                             JCheckBox showDeviceBox,
@@ -42,6 +43,7 @@ public class SaleReceiptPanel extends JPanel {
 
         JPanel optionsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
         optionsPanel.setOpaque(false);
+        optionsPanel.add(alwaysPrintSaleReceiptBox);
         optionsPanel.add(showLogoBox);
         optionsPanel.add(showSaleIdBox);
         optionsPanel.add(showDeviceBox);

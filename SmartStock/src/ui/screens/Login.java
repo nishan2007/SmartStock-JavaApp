@@ -5,9 +5,10 @@ import data.DatabaseMode;
 import managers.NavigationManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
-import services.AppUpdateService;
 import services.BadgeCredentialService;
 import services.LanApiClient;
+import services.PcscNfcService;
+import services.EmployeePinService;
 import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
@@ -16,6 +17,8 @@ import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.util.Arrays;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Register login. Authentication and authorization are owned by the LAN service. */
 public class Login extends JFrame {
@@ -23,11 +26,20 @@ public class Login extends JFrame {
     private JPasswordField passwordField;
     private JButton loginButton;
     private JButton clearButton;
+    private JButton backButton;
     private long badgeEntryStartedAtMillis;
     private long badgeEntryLastKeyAtMillis;
     private int badgeEntryKeyCount;
+    private volatile boolean nfcMonitorRunning;
+    private String lastNfcBadgeIdentifier;
+    private final AtomicBoolean authenticationInProgress = new AtomicBoolean(false);
+    private final AtomicBoolean mainMenuOpened = new AtomicBoolean(false);
 
     public Login() {
+        this(null);
+    }
+
+    public Login(PcscNfcService.ReadResult initialNfcCard) {
         setTitle("SmartStock Login");
         setSize(420, 260);
         setLocationRelativeTo(null);
@@ -46,11 +58,15 @@ public class Login extends JFrame {
         formPanel.add(new JLabel("Password or Employee PIN:"));
         formPanel.add(passwordField);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JPanel buttonPanel = new JPanel(new BorderLayout(8, 0));
+        JPanel loginActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        backButton = new JButton("Back");
         loginButton = new JButton("Login");
         clearButton = new JButton("Clear");
-        buttonPanel.add(clearButton);
-        buttonPanel.add(loginButton);
+        loginActions.add(clearButton);
+        loginActions.add(loginButton);
+        buttonPanel.add(backButton, BorderLayout.WEST);
+        buttonPanel.add(loginActions, BorderLayout.EAST);
         panel.add(titleLabel, BorderLayout.NORTH);
         panel.add(formPanel, BorderLayout.CENTER);
         panel.add(buttonPanel, BorderLayout.SOUTH);
@@ -69,25 +85,35 @@ public class Login extends JFrame {
                 badgeEntryKeyCount++;
             }
         });
+        backButton.addActionListener(event -> returnToWelcome());
         loginButton.addActionListener(event -> loginUser());
         clearButton.addActionListener(event -> clearFields());
         getRootPane().setDefaultButton(loginButton);
         ThemeManager.applyToWindow(this);
         setVisible(true);
+        startNfcMonitor();
+        if (initialNfcCard != null) {
+            SwingUtilities.invokeLater(() -> acceptNfcBadge(initialNfcCard));
+        }
         SwingUtilities.invokeLater(this::attemptStoredSignIn);
     }
 
     private void loginUser() {
-        String identifier = usernameField.getText().trim();
+        String identifier = lastNfcBadgeIdentifier != null
+                ? lastNfcBadgeIdentifier
+                : usernameField.getText().trim();
         char[] secret = passwordField.getPassword();
-        if (identifier.isBlank() || secret.length == 0) {
+        boolean badgeIdentifier = BadgeCredentialService.looksLikeGeneratedBadge(
+                BadgeCredentialService.normalizeBadge(identifier));
+        if (identifier.isBlank() || (secret.length == 0 && !badgeIdentifier)) {
             Arrays.fill(secret, '\0');
             JOptionPane.showMessageDialog(this,
                     "Enter username/email and password, or scan a badge and enter the employee PIN.");
             return;
         }
         if (BadgeCredentialService.looksLikeGeneratedBadge(BadgeCredentialService.normalizeBadge(identifier))
-                && !isLikelyScannerBadgeEntry(identifier)) {
+                && !isLikelyScannerBadgeEntry(identifier)
+                && !BadgeCredentialService.normalizeBadge(identifier).equals(lastNfcBadgeIdentifier)) {
             Arrays.fill(secret, '\0');
             JOptionPane.showMessageDialog(this, "Generated badge IDs must be scanned, swiped, or tapped.");
             return;
@@ -102,6 +128,10 @@ public class Login extends JFrame {
             JOptionPane.showMessageDialog(this,
                     "This register needs its one-time administrator setup before employees can log in.",
                     "Register Setup Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (!authenticationInProgress.compareAndSet(false, true)) {
+            Arrays.fill(secret, '\0');
             return;
         }
 
@@ -127,6 +157,7 @@ public class Login extends JFrame {
                                     + "\nStore: " + SessionManager.getCurrentLocationName());
                     openMainMenu();
                 } catch (Exception ex) {
+                    authenticationInProgress.set(false);
                     SessionManager.clearSessionState();
                     JOptionPane.showMessageDialog(Login.this,
                             "Login failed: " + rootCauseMessage(ex), "Login", JOptionPane.WARNING_MESSAGE);
@@ -139,6 +170,7 @@ public class Login extends JFrame {
 
     private void attemptStoredSignIn() {
         if (!LanApiClient.isPaired() || !LanApiClient.hasEmployeeSession()) return;
+        if (!authenticationInProgress.compareAndSet(false, true)) return;
         setLoginControlsEnabled(false);
         setTitle("SmartStock Login - restoring session...");
         SwingWorker<LanApiClient.LoginResult, Void> worker = new SwingWorker<>() {
@@ -156,14 +188,19 @@ public class Login extends JFrame {
                         LanApiClient.clearEmployeeSession();
                         SupabaseSessionManager.clearPersistedSession();
                         SessionManager.clearSessionState();
+                        authenticationInProgress.set(false);
                         setLoginControlsEnabled(true);
                         return;
                     }
                     applySession(restored);
                     openMainMenu();
                 } catch (Exception ex) {
-                    LanApiClient.clearEmployeeSession();
+                    authenticationInProgress.set(false);
                     SessionManager.clearSessionState();
+                    if (ex.getCause() instanceof LanApiClient.LanApiException apiFailure
+                            && !apiFailure.retryable()) {
+                        LanApiClient.clearEmployeeSession();
+                    }
                     setLoginControlsEnabled(true);
                 }
             }
@@ -209,9 +246,10 @@ public class Login extends JFrame {
 
     private Integer requiredRegisterLocation() {
         DatabaseConfig config = DatabaseConfig.load();
-        if (config.mode() != DatabaseMode.CLIENT && config.mode() != DatabaseMode.SERVER) {
+        if (config.mode() != DatabaseMode.CLIENT && config.mode() != DatabaseMode.SERVER
+                && config.mode() != DatabaseMode.REMOTE_ADMIN) {
             JOptionPane.showMessageDialog(this,
-                    "SmartStock must be configured as a server or paired register.",
+                    "SmartStock must be configured as a server, paired register, or Remote Admin device.",
                     "Setup Required", JOptionPane.WARNING_MESSAGE);
             return null;
         }
@@ -232,19 +270,183 @@ public class Login extends JFrame {
                 && elapsed >= 0 && elapsed <= 1_200;
     }
 
+    private void startNfcMonitor() {
+        if (nfcMonitorRunning) return;
+        nfcMonitorRunning = true;
+        Thread monitor = new Thread(() -> {
+            String lastUid = null;
+            while (nfcMonitorRunning && isDisplayable()) {
+                try {
+                    // A reader can be briefly unavailable while the previous screen's
+                    // monitor releases it during logout. Keep retrying instead of
+                    // permanently disabling badge login for this Login window.
+                    if (!PcscNfcService.hasReader()) {
+                        Thread.sleep(750);
+                        continue;
+                    }
+                    PcscNfcService.ReadResult card = PcscNfcService.read(Duration.ofSeconds(2));
+                    if (!card.cardUid().equals(lastUid)) {
+                        lastUid = card.cardUid();
+                        SwingUtilities.invokeLater(() -> acceptNfcBadge(card));
+                    }
+                    Thread.sleep(750);
+                } catch (PcscNfcService.NoCardPresentException ex) {
+                    lastUid = null;
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception ex) {
+                    try { Thread.sleep(1_500); } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }, "smartstock-nfc-login");
+        monitor.setDaemon(true);
+        monitor.start();
+    }
+
+    private void acceptNfcBadge(PcscNfcService.ReadResult card) {
+        if (!isDisplayable() || !usernameField.isEnabled()) return;
+        String normalized = BadgeCredentialService.normalizeBadge(card.payload());
+        if (!BadgeCredentialService.looksLikeGeneratedBadge(normalized)) {
+            JOptionPane.showMessageDialog(this, "The tapped card does not contain a valid SmartStock badge ID.",
+                    "NFC Badge", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        lastNfcBadgeIdentifier = normalized;
+        usernameField.setText("NFC badge detected");
+        usernameField.setEditable(false);
+        passwordField.setText("");
+        passwordField.requestFocusInWindow();
+        setTitle("SmartStock Login - NFC badge read; enter employee PIN");
+        Toolkit.getDefaultToolkit().beep();
+        checkFirstBadgePinSetup(normalized);
+    }
+
+    private void checkFirstBadgePinSetup(String badgeId) {
+        Integer locationId = requiredRegisterLocation();
+        if (locationId == null || !LanApiClient.isPaired()) return;
+        SwingWorker<LanApiClient.BadgeStatus, Void> worker = new SwingWorker<>() {
+            @Override protected LanApiClient.BadgeStatus doInBackground() throws Exception {
+                return LanApiClient.badgeStatus(badgeId, locationId);
+            }
+
+            @Override protected void done() {
+                if (!isDisplayable()) return;
+                try {
+                    LanApiClient.BadgeStatus status = get();
+                    if (!status.pinRequired()) {
+                        loginUser();
+                    } else if (!status.pinConfigured()) {
+                        showFirstBadgePinSetup(badgeId, locationId);
+                    } else {
+                        passwordField.requestFocusInWindow();
+                    }
+                } catch (Exception ex) {
+                    // Normal PIN login remains available if this optional preflight is temporarily unavailable.
+                    passwordField.requestFocusInWindow();
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void showFirstBadgePinSetup(String badgeId, int locationId) {
+        JPasswordField accountPasswordField = new JPasswordField();
+        JPasswordField pinField = new JPasswordField();
+        JPasswordField confirmPinField = new JPasswordField();
+        JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
+        panel.add(new JLabel("This is the first badge login for this employee."));
+        panel.add(new JLabel("Verify the normal account password, then create a 4–8 digit employee PIN."));
+        panel.add(new JLabel("Account Password:"));
+        panel.add(accountPasswordField);
+        panel.add(new JLabel("New Employee PIN:"));
+        panel.add(pinField);
+        panel.add(new JLabel("Confirm Employee PIN:"));
+        panel.add(confirmPinField);
+        int choice = JOptionPane.showConfirmDialog(this, panel, "Create Employee PIN",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            passwordField.requestFocusInWindow();
+            return;
+        }
+        char[] accountPassword = accountPasswordField.getPassword();
+        char[] pin = pinField.getPassword();
+        char[] confirm = confirmPinField.getPassword();
+        if (accountPassword.length == 0 || !EmployeePinService.validPin(pin) || !Arrays.equals(pin, confirm)) {
+            Arrays.fill(accountPassword, '\0');
+            Arrays.fill(pin, '\0');
+            Arrays.fill(confirm, '\0');
+            JOptionPane.showMessageDialog(this,
+                    "Enter the account password and use matching 4–8 digit PINs.",
+                    "Create Employee PIN", JOptionPane.WARNING_MESSAGE);
+            showFirstBadgePinSetup(badgeId, locationId);
+            return;
+        }
+        Arrays.fill(confirm, '\0');
+        if (!authenticationInProgress.compareAndSet(false, true)) {
+            Arrays.fill(accountPassword, '\0');
+            Arrays.fill(pin, '\0');
+            return;
+        }
+        setLoginControlsEnabled(false);
+        setTitle("SmartStock Login - creating employee PIN...");
+        SwingWorker<LanApiClient.LoginResult, Void> worker = new SwingWorker<>() {
+            @Override protected LanApiClient.LoginResult doInBackground() throws Exception {
+                return LanApiClient.setupBadgePin(badgeId, accountPassword, pin, locationId);
+            }
+
+            @Override protected void done() {
+                Arrays.fill(accountPassword, '\0');
+                Arrays.fill(pin, '\0');
+                try {
+                    LanApiClient.LoginResult result = get();
+                    applySession(result);
+                    JOptionPane.showMessageDialog(Login.this,
+                            "Employee PIN created. Future badge taps will use this PIN.",
+                            "Employee PIN", JOptionPane.INFORMATION_MESSAGE);
+                    openMainMenu();
+                } catch (Exception ex) {
+                    authenticationInProgress.set(false);
+                    setTitle("SmartStock Login - NFC badge read; enter employee PIN");
+                    setLoginControlsEnabled(true);
+                    usernameField.setEditable(false);
+                    JOptionPane.showMessageDialog(Login.this,
+                            "Employee PIN could not be created: " + rootCauseMessage(ex),
+                            "Create Employee PIN", JOptionPane.WARNING_MESSAGE);
+                    passwordField.requestFocusInWindow();
+                }
+            }
+        };
+        worker.execute();
+    }
+
     private void setLoginControlsEnabled(boolean enabled) {
         usernameField.setEnabled(enabled);
         passwordField.setEnabled(enabled);
         loginButton.setEnabled(enabled);
         clearButton.setEnabled(enabled);
+        backButton.setEnabled(enabled);
+    }
+
+    private void returnToWelcome() {
+        if (authenticationInProgress.get()) return;
+        nfcMonitorRunning = false;
+        passwordField.setText("");
+        lastNfcBadgeIdentifier = null;
+        NavigationManager.returnToWelcomeFromLogin(this);
     }
 
     private void clearFields() {
         usernameField.setText("");
+        usernameField.setEditable(true);
         passwordField.setText("");
         badgeEntryStartedAtMillis = 0;
         badgeEntryLastKeyAtMillis = 0;
         badgeEntryKeyCount = 0;
+        lastNfcBadgeIdentifier = null;
         LanApiClient.clearEmployeeSession();
         SessionManager.clearSessionState();
         SupabaseSessionManager.clearSession();
@@ -252,6 +454,10 @@ public class Login extends JFrame {
     }
 
     private void openMainMenu() {
+        if (!mainMenuOpened.compareAndSet(false, true)) {
+            return;
+        }
+        nfcMonitorRunning = false;
         NavigationManager.showMainMenuAfterLogin(this);
     }
 

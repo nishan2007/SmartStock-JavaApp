@@ -775,8 +775,8 @@ public class TimeClock extends JFrame {
             preserveForeground(dayLabel);
             dayLabel.setBorder(new EmptyBorder(4, 0, 4, 0));
 
-            // Highlight weekends
-            if (i == 0 || i == 6) {
+            // Sunday is the only recurring red day; Saturdays use the normal header color.
+            if (i == 0) {
                 dayLabel.setForeground(DeckersPalette.CORAL);
             }
 
@@ -843,22 +843,22 @@ public class TimeClock extends JFrame {
         boolean isToday = date.equals(LocalDate.now());
         boolean hasData = dayData != null && !dayData.rows.isEmpty();
         Holiday holiday = holidays.get(date);
-        boolean isWeekend = date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY;
+        boolean isSunday = date.getDayOfWeek() == DayOfWeek.SUNDAY;
 
-        Color accent = holiday != null ? DeckersPalette.MAGENTA
+        Color accent = holiday != null ? DeckersPalette.CORAL
                 : isToday ? EMPLOYEE_ACCENT : hasData ? DeckersPalette.LIME
-                : isWeekend ? DeckersPalette.CORAL : EMPLOYEE_ACCENT;
+                : isSunday ? DeckersPalette.CORAL : EMPLOYEE_ACCENT;
 
         // Background colors
         if (holiday != null) {
-            cell.setBackground(DeckersPalette.tileHover(DeckersPalette.MAGENTA));
+            cell.setBackground(DeckersPalette.tileFill(DeckersPalette.CORAL));
         } else if (isToday && hasData) {
             cell.setBackground(DeckersPalette.tilePressed(DeckersPalette.LIME));
         } else if (isToday) {
             cell.setBackground(DeckersPalette.tilePressed(EMPLOYEE_ACCENT));
         } else if (hasData) {
             cell.setBackground(DeckersPalette.tileHover(DeckersPalette.LIME));
-        } else if (isWeekend) {
+        } else if (isSunday) {
             cell.setBackground(DeckersPalette.tileFill(DeckersPalette.CORAL));
         } else {
             cell.setBackground(DeckersPalette.surface());
@@ -898,7 +898,7 @@ public class TimeClock extends JFrame {
             if (holiday != null) {
                 JLabel holidayLabel = new JLabel(holiday.name(), SwingConstants.CENTER);
                 holidayLabel.setFont(new Font("SansSerif", Font.BOLD, 9));
-                holidayLabel.setForeground(DeckersPalette.MAGENTA);
+                holidayLabel.setForeground(DeckersPalette.CORAL);
                 preserveForeground(holidayLabel);
                 infoPanel.add(holidayLabel);
             }
@@ -952,7 +952,7 @@ public class TimeClock extends JFrame {
             JLabel holidayLabel = new JLabel(holiday.name());
             holidayLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
             holidayLabel.setFont(new Font("SansSerif", Font.BOLD, 9));
-            holidayLabel.setForeground(DeckersPalette.MAGENTA);
+            holidayLabel.setForeground(DeckersPalette.CORAL);
             preserveForeground(holidayLabel);
             holidayPanel.add(dayNumber);
             holidayPanel.add(holidayLabel);

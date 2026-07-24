@@ -7,28 +7,19 @@ import utils.ImageCacheManager;
 import java.io.File;
 import java.net.URI;
 import java.net.URLDecoder;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Locale;
 
 public final class EmployeeDocumentService {
     private static final String EMPLOYEE_FILE_BUCKET = getConfig("EMPLOYEE_FILE_BUCKET", "employee files");
     private static final String ID_CARD_FOLDER = getConfig("EMPLOYEE_ID_CARD_FOLDER", "ID cards");
     private static final long MAX_ID_CARD_DOCUMENT_BYTES = 25L * 1024L * 1024L;
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
-
     private EmployeeDocumentService() {
     }
 
-    public static String uploadLocalIdCardDocumentIfNeeded(String documentPathOrUrl, String employeeLabel) throws Exception {
+    public static String uploadLocalIdCardDocumentIfNeeded(String documentPathOrUrl, String employeeName) throws Exception {
         String value = documentPathOrUrl == null ? "" : documentPathOrUrl.trim();
         if (value.isBlank() || ImageCacheManager.isRemoteImageUrl(value)) {
             return value;
@@ -47,50 +38,13 @@ public final class EmployeeDocumentService {
             contentType = "application/octet-stream";
         }
 
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
-        String objectPath = ID_CARD_FOLDER
-                + "/"
-                + sanitizePathPart(employeeLabel)
-                + "/"
-                + System.currentTimeMillis()
-                + "-"
-                + sanitizeFilename(documentFile.getName());
-        String encodedBucket = encodePathSegment(EMPLOYEE_FILE_BUCKET);
-        String encodedObjectPath = encodeObjectPath(objectPath);
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
-                        + "/storage/v1/object/"
-                        + encodedBucket
-                        + "/"
-                        + encodedObjectPath))
-                .timeout(Duration.ofSeconds(60))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Content-Type", contentType)
-                .header("x-upsert", "true")
-                .POST(HttpRequest.BodyPublishers.ofFile(documentFile.toPath()))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Supabase Storage returned HTTP "
-                    + response.statusCode()
-                    + " while uploading employee ID card document to bucket "
-                    + EMPLOYEE_FILE_BUCKET
-                    + ": "
-                    + response.body());
-        }
-
-        return SupabaseSessionManager.getSupabaseUrl()
-                + "/storage/v1/object/authenticated/"
-                + encodedBucket
-                + "/"
-                + encodedObjectPath;
+        String employeeSlug = sanitizePathPart(employeeName);
+        String filename = StorageObjectNameBuilder.filename(
+                documentFile.getName(), "bin", Long.toString(System.currentTimeMillis()),
+                employeeName, "id-card-document");
+        String objectPath = ID_CARD_FOLDER + "/" + employeeSlug + "/" + filename;
+        return LanApiClient.uploadCloudFile(EMPLOYEE_FILE_BUCKET, objectPath, contentType,
+                Files.readAllBytes(documentFile.toPath()));
     }
 
     public static File downloadAuthenticatedDocument(String documentUrl) throws Exception {
@@ -103,28 +57,13 @@ public final class EmployeeDocumentService {
             throw new IllegalArgumentException("The saved ID card document is not an authenticated Storage URL.");
         }
 
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(uri)
-                .timeout(Duration.ofSeconds(60))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .GET()
-                .build();
-
-        HttpResponse<byte[]> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Supabase Storage returned HTTP "
-                    + response.statusCode()
-                    + " while downloading employee ID card document: "
-                    + new String(response.body(), StandardCharsets.UTF_8));
-        }
+        byte[] downloaded = LanApiClient.downloadEmployeeCloudFile(value);
 
         Path targetDirectory = Path.of(System.getProperty("user.home"), ".smartstock", "employee-id-card-cache");
         Files.createDirectories(targetDirectory);
         SecureFilePermissions.restrictDirectoryToOwner(targetDirectory);
         Path target = targetDirectory.resolve(sanitizeFilename(extractFilename(uri)));
-        Files.write(target, response.body());
+        Files.write(target, downloaded);
         SecureFilePermissions.restrictFileToOwner(target);
         return target.toFile();
     }
@@ -158,22 +97,6 @@ public final class EmployeeDocumentService {
         String sanitized = value == null ? "employee" : value.trim().toLowerCase(Locale.ROOT);
         sanitized = sanitized.replaceAll("[^a-z0-9._-]", "-").replaceAll("-+", "-");
         return sanitized.isBlank() ? "employee" : sanitized;
-    }
-
-    private static String encodeObjectPath(String objectPath) {
-        String[] parts = objectPath.split("/");
-        StringBuilder encoded = new StringBuilder();
-        for (String part : parts) {
-            if (!encoded.isEmpty()) {
-                encoded.append("/");
-            }
-            encoded.append(encodePathSegment(part));
-        }
-        return encoded.toString();
-    }
-
-    private static String encodePathSegment(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String getConfig(String key, String fallback) {

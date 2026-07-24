@@ -31,6 +31,7 @@ import ui.screens.ViewInventory;
 import ui.screens.PriceTagPrinting;
 import ui.screens.ViewSales;
 import ui.screens.Login;
+import ui.screens.WelcomeFrame;
 import ui.screens.PayrollDashboard;
 import ui.screens.TimeClock;
 import ui.screens.WeeklySchedule;
@@ -465,6 +466,63 @@ public final class NavigationManager {
         transitionInProgress = false;
     }
 
+    /** Returns from the login prompt to the normal Welcome screen without clearing a saved session. */
+    public static void returnToWelcomeFromLogin(JFrame login) {
+        if (transitionInProgress) return;
+        transitionInProgress = true;
+        try {
+            if (login != null && login.getRootPane() != null) {
+                login.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
+            }
+
+            WelcomeFrame welcome = new WelcomeFrame();
+            welcome.setLocationRelativeTo(login);
+            welcome.setVisible(true);
+            welcome.toFront();
+            welcome.requestFocus();
+
+            if (login != null) {
+                UiTaskRunner.cancelAll(login);
+                login.dispose();
+            }
+        } finally {
+            transitionInProgress = false;
+        }
+    }
+
+    /** Locks a disconnected register at Welcome without deleting its saved employee session. */
+    public static void returnToWelcomeForConnectionLoss() {
+        Runnable transition = () -> {
+            for (Window window : Window.getWindows()) {
+                if (window instanceof WelcomeFrame && window.isVisible()) return;
+            }
+
+            transitionInProgress = true;
+            for (Window window : Window.getWindows()) {
+                if (window instanceof JFrame frame && frame.getRootPane() != null) {
+                    frame.getRootPane().putClientProperty("returnToMainMenu", Boolean.FALSE);
+                }
+                if (window.isDisplayable()) UiTaskRunner.cancelAll(window);
+            }
+
+            activeMainMenu = null;
+            SupabaseSessionManager.clearSession();
+            SessionManager.clearSessionState();
+
+            WelcomeFrame welcome = new WelcomeFrame(true);
+            welcome.setVisible(true);
+            welcome.toFront();
+            welcome.requestFocus();
+
+            for (Window window : Window.getWindows()) {
+                if (window != welcome && window.isDisplayable()) window.dispose();
+            }
+            transitionInProgress = false;
+        };
+        if (SwingUtilities.isEventDispatchThread()) transition.run();
+        else SwingUtilities.invokeLater(transition);
+    }
+
     public static void showMainMenu(JFrame currentScreen) {
         if (transitionInProgress) {
             return;
@@ -493,11 +551,18 @@ public final class NavigationManager {
     public static void showMainMenuAfterLogin(JFrame login) {
         if (transitionInProgress) return;
         transitionInProgress = true;
-        JFrame menu = createScreen(ScreenType.MAIN_MENU);
-        activeMainMenu = menu;
-        WindowHelper.showPosWindow(menu, login);
-        if (login != null) login.dispose();
-        transitionInProgress = false;
+        try {
+            if (activeMainMenu != null && activeMainMenu.isDisplayable()) {
+                showExistingMainMenu(login);
+            } else {
+                JFrame menu = createScreen(ScreenType.MAIN_MENU);
+                activeMainMenu = menu;
+                WindowHelper.showPosWindow(menu, login);
+            }
+            if (login != null) login.dispose();
+        } finally {
+            transitionInProgress = false;
+        }
     }
 
     public static void closeApplication(JFrame currentScreen) {

@@ -22,6 +22,8 @@ public final class ServerRequestIdentity {
     public static String supabaseAccessToken() {
         String token = SUPABASE_ACCESS_TOKEN.get();
         if (token != null && !token.isBlank()) return token;
+        token = ServerSupabaseCredentials.get();
+        if (token != null && !token.isBlank()) return token;
         try {
             return managers.SupabaseSessionManager.getValidAccessToken();
         } catch (InterruptedException interrupted) {

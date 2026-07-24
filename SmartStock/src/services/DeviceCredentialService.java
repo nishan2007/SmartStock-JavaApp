@@ -1,5 +1,6 @@
 package services;
 
+import data.EnvironmentProfile;
 import utils.SecureCredentialStore;
 
 import javax.crypto.Cipher;
@@ -21,11 +22,11 @@ import java.util.UUID;
 
 /** Handles one-time device key pairs and revocable HTTPS API credentials. */
 public final class DeviceCredentialService {
-    private static final String PRIVATE_KEY_SECRET = "device-pairing-private-key";
-    private static final String PUBLIC_KEY_SECRET = "device-pairing-public-key";
-    public static final String LAN_API_TOKEN_SECRET = "lan-api-device-token";
-    public static final String LAN_API_FINGERPRINT_SECRET = "lan-api-server-fingerprint";
-    public static final String LAN_API_PAIRING_CHALLENGE_SECRET = "lan-api-pairing-challenge";
+    private static final String PRIVATE_KEY_SECRET = EnvironmentProfile.active().secretKey("device-pairing-private-key");
+    private static final String PUBLIC_KEY_SECRET = EnvironmentProfile.active().secretKey("device-pairing-public-key");
+    public static final String LAN_API_TOKEN_SECRET = EnvironmentProfile.active().secretKey("lan-api-device-token");
+    public static final String LAN_API_FINGERPRINT_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-fingerprint");
+    public static final String LAN_API_PAIRING_CHALLENGE_SECRET = EnvironmentProfile.active().secretKey("lan-api-pairing-challenge");
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private DeviceCredentialService() {

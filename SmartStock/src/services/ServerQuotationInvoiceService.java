@@ -1184,7 +1184,7 @@ public final class ServerQuotationInvoiceService {
                                  BigDecimal unitPrice, BigDecimal originalUnitPrice,
                                  BigDecimal discountPercent, String deliveryMethod, String notes,
                                  String priceOverrideReason, Integer priceOverrideByUserId,
-                                 String priceOverrideByName) {
+                                 String priceOverrideByName, String priceOverrideApprovalToken) {
     }
 
     public record DeliveryLineInput(long salesInvoiceLineId, int quantityDelivered) {

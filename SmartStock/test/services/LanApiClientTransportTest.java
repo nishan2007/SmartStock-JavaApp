@@ -4,10 +4,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.http.HttpTimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LanApiClientTransportTest {
     @Test
@@ -42,5 +48,16 @@ class LanApiClientTransportTest {
 
         LanApiClient.resetTransportForTests();
         assertNotSame(first, LanApiClient.bootstrapClientForTests());
+    }
+
+    @Test
+    void recognizesLanTransportFailuresButNotServerBusinessErrors() {
+        assertTrue(LanApiClient.isConnectionFailure(new ConnectException("refused")));
+        assertTrue(LanApiClient.isConnectionFailure(new RuntimeException(new SocketTimeoutException("timed out"))));
+        assertTrue(LanApiClient.isConnectionFailure(new HttpTimeoutException("timed out")));
+        assertTrue(LanApiClient.isConnectionFailure(new IOException("connection closed")));
+        assertFalse(LanApiClient.isConnectionFailure(
+                new LanApiClient.LanApiException("PERMISSION_DENIED", "Not allowed", false)));
+        assertFalse(LanApiClient.isConnectionFailure(new IllegalArgumentException("bad input")));
     }
 }

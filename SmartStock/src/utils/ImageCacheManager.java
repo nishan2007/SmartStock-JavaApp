@@ -1,5 +1,6 @@
 package utils;
 
+import data.EnvironmentProfile;
 import managers.SupabaseSessionManager;
 
 import javax.imageio.ImageIO;
@@ -20,7 +21,10 @@ import java.util.HexFormat;
 import java.util.Locale;
 
 public final class ImageCacheManager {
-    private static final Path CACHE_DIRECTORY = Path.of(System.getProperty("user.home"), ".smartstock", "image-cache");
+    private static final Path LEGACY_CACHE_DIRECTORY =
+            Path.of(System.getProperty("user.home"), ".smartstock", "image-cache");
+    private static final Object CACHE_LOCK = new Object();
+    private static volatile Path preparedCacheDirectory;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -29,7 +33,8 @@ public final class ImageCacheManager {
     }
 
     public static boolean isRemoteImageUrl(String value) {
-        return value != null && (value.startsWith("http://") || value.startsWith("https://"));
+        return value != null && (value.startsWith("http://") || value.startsWith("https://")
+                || services.ImageAssetReference.isAssetReference(value));
     }
 
     public static BufferedImage loadImage(String pathOrUrl) {
@@ -40,6 +45,9 @@ public final class ImageCacheManager {
 
         try {
             if (isRemoteImageUrl(value)) {
+                if (services.ImageAssetReference.isAssetReference(value)) {
+                    return loadAssetImage(value);
+                }
                 return loadRemoteImage(value);
             }
 
@@ -59,8 +67,7 @@ public final class ImageCacheManager {
         }
 
         try {
-            Files.createDirectories(CACHE_DIRECTORY);
-            SecureFilePermissions.restrictDirectoryToOwner(CACHE_DIRECTORY);
+            Path cacheDirectory = cacheDirectory();
             Path target = cachePath(remoteUrl);
             Files.copy(sourcePath, target, StandardCopyOption.REPLACE_EXISTING);
             SecureFilePermissions.restrictFileToOwner(target);
@@ -76,8 +83,19 @@ public final class ImageCacheManager {
             return cached;
         }
 
-        Files.createDirectories(CACHE_DIRECTORY);
-        SecureFilePermissions.restrictDirectoryToOwner(CACHE_DIRECTORY);
+        cacheDirectory();
+        byte[] proxied = null;
+        if (isSupabaseStorageUrl(imageUrl) && imageUrl.contains("/storage/v1/object/authenticated/")) {
+            try {
+                String auth = authHeaderFor(imageUrl);
+                if (auth.isBlank()) proxied = services.LanApiClient.downloadEmployeeCloudFile(imageUrl);
+            } catch (Exception ignored) {
+                proxied = null;
+            }
+        }
+        if (proxied != null && proxied.length > 0) {
+            return cacheDownloadedImage(cachePath, proxied);
+        }
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(imageUrl))
                 .timeout(Duration.ofSeconds(20))
@@ -95,9 +113,30 @@ public final class ImageCacheManager {
             return null;
         }
 
-        Path tempPath = Files.createTempFile(CACHE_DIRECTORY, "image-", ".tmp");
+        return cacheDownloadedImage(cachePath, response.body());
+    }
+
+    private static BufferedImage loadAssetImage(String reference) throws IOException {
+        Path cachePath = cachePath(reference);
+        BufferedImage cached = readCachedImage(cachePath);
+        if (cached != null) return cached;
         try {
-            Files.write(tempPath, response.body());
+            byte[] bytes;
+            if (data.DatabaseConfig.load().mode() == data.DatabaseMode.SERVER) {
+                bytes = services.ServerImageAssetService.load(reference).bytes();
+            } else {
+                bytes = services.LanApiClient.downloadImageAsset(reference);
+            }
+            return cacheDownloadedImage(cachePath, bytes);
+        } catch (Exception ex) {
+            throw new IOException("SmartStock server image download failed.", ex);
+        }
+    }
+
+    private static BufferedImage cacheDownloadedImage(Path cachePath, byte[] bytes) throws IOException {
+        Path tempPath = Files.createTempFile(cacheDirectory(), "image-", ".tmp");
+        try {
+            Files.write(tempPath, bytes);
             BufferedImage downloaded = ImageIO.read(tempPath.toFile());
             if (downloaded == null) {
                 return null;
@@ -121,8 +160,36 @@ public final class ImageCacheManager {
         }
     }
 
-    private static Path cachePath(String imageUrl) {
-        return CACHE_DIRECTORY.resolve(sha256(imageUrl) + "." + extensionForUrl(imageUrl));
+    private static Path cachePath(String imageUrl) throws IOException {
+        return cacheDirectory().resolve(sha256(imageUrl) + "." + extensionForUrl(imageUrl));
+    }
+
+    static Path cacheDirectory() throws IOException {
+        String override = System.getProperty("smartstock.image.cache");
+        Path desired = override == null || override.isBlank()
+                ? EnvironmentProfile.active().directory().resolve("image-cache")
+                : Path.of(override.trim());
+        desired = desired.toAbsolutePath().normalize();
+        Path ready = preparedCacheDirectory;
+        if (desired.equals(ready)) return desired;
+        synchronized (CACHE_LOCK) {
+            if (desired.equals(preparedCacheDirectory)) return desired;
+            if ((override == null || override.isBlank())
+                    && EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT
+                    && Files.isDirectory(LEGACY_CACHE_DIRECTORY)
+                    && !Files.exists(desired)) {
+                Files.createDirectories(desired.getParent());
+                try {
+                    Files.move(LEGACY_CACHE_DIRECTORY, desired, StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+                    Files.move(LEGACY_CACHE_DIRECTORY, desired);
+                }
+            }
+            Files.createDirectories(desired);
+            SecureFilePermissions.restrictDirectoryToOwner(desired);
+            preparedCacheDirectory = desired;
+            return desired;
+        }
     }
 
     private static String extensionForUrl(String imageUrl) {

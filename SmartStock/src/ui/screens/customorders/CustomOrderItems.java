@@ -83,7 +83,9 @@ public final class CustomOrderItems extends JFrame {
             boolean isActive=active.isSelected();
             String itemType=classification.itemTypeName(),brand=classification.brandName();
             UiTaskRunner.submit(this,"custom-catalog.save-item",()->{
-                String imageUrl=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage);
+                String imageUrl=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,
+                        new ProductImageHelper.ProductImageNaming(
+                                itemName, brand, itemType, "", ""));
                 var request=new LanCustomOrderCatalogAdminService.ItemSave(targetId,itemName,primaryBarcode,itemDescription,imageUrl,selectedProductType,selectedPricingType,itemPrice,selectedAreaUnit,selectedDimensionUnit,width,length,hasVariants,itemQuantity,reorderLevel,isActive,categoryId,itemType,brand,codes);
                 return new ItemMutationResult(mutate("SAVE_ITEM","item",request),imageUrl);
             },result->{itemId=result.id();image.setImageUrl(result.imageUrl());refresh();info("Custom item saved.");},failure->error("Custom item was not saved",asException(failure)));
@@ -113,7 +115,12 @@ public final class CustomOrderItems extends JFrame {
                 Long variantId=vid[0];String variantName=n.getText(),variantBarcode=bc.getText(),sourceImage=img.getImageUrl();
                 BigDecimal variantPrice=decimal(pr,"price",false),variantQuantity=decimal(q,"quantity",true),variantReorder=decimal(re,"reorder level",true);boolean isActive=a.isSelected();
                 save.setEnabled(false);off.setEnabled(false);
-                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive);return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
+                var parentItem=state.items().stream().filter(x->x.itemId()==selectedItemId).findFirst().orElse(null);
+                ProductImageHelper.ProductImageNaming imageNaming=parentItem==null
+                        ? new ProductImageHelper.ProductImageNaming("", "", "", "", variantName)
+                        : new ProductImageHelper.ProductImageNaming(parentItem.name(),parentItem.brand(),
+                        parentItem.itemType(),"",variantName);
+                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,imageNaming);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive);return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
             }catch(Exception ex){error("Variant was not saved",ex);}
         });
         clear.addActionListener(e->reset.run());

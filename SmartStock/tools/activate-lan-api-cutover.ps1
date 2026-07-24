@@ -57,8 +57,7 @@ Get-ChildItem (Join-Path $env:USERPROFILE '.smartstock\database.properties.bak.*
         ForEach-Object {
             $_ -replace '^db\.user=.*$', 'db.user=${SMARTSTOCK_SECURE_DB_USER}' `
                -replace '^db\.password=.*$', 'db.password=${SMARTSTOCK_SECURE_DB_PASSWORD}' `
-               -replace '^cloud\.db\.user=.*$', 'cloud.db.user=${SMARTSTOCK_SECURE_CLOUD_DB_USER}' `
-               -replace '^cloud\.db\.password=.*$', 'cloud.db.password=${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}'
+               -replace '(?m)^cloud\.(?:jdbc\.url|db\.(?:user|password))=.*\r?\n?', ''
         } | Set-Content $_.FullName -Encoding UTF8
 }
 Write-Host 'SmartStock LAN API lockdown verified. Direct register database roles are disabled.'

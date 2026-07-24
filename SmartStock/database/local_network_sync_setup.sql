@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS local_auth_cache (
     user_id INTEGER PRIMARY KEY,
     username TEXT NOT NULL,
     full_name TEXT,
+    nickname TEXT,
     email TEXT,
     badge_id TEXT,
     role_name TEXT,

@@ -2,6 +2,7 @@ package managers;
 
 import data.DB;
 import services.ServerRequestIdentity;
+import services.StorageObjectNameBuilder;
 import utils.ImageCacheManager;
 import utils.ImageOptimizationHelper;
 
@@ -276,6 +277,48 @@ public class ServerCompanyCustomizationRepository {
         cachedBadgeTemplateSettings = settings;
     }
 
+    public static BadgeSecuritySettings loadBadgeSecuritySettings() {
+        Integer locationId = ServerRequestIdentity.locationId();
+        if (locationId == null) return new BadgeSecuritySettings(true);
+        try (Connection conn = DB.getConnection()) {
+            return new BadgeSecuritySettings(isBadgePinRequired(conn, locationId));
+        } catch (SQLException ex) {
+            throw new IllegalStateException("Badge login security settings could not be loaded.", ex);
+        }
+    }
+
+    public static void saveBadgeSecuritySettings(BadgeSecuritySettings settings) throws IOException, SQLException {
+        Integer locationId = ServerRequestIdentity.locationId();
+        if (locationId == null) throw new SQLException("A store must be selected before badge security can be saved.");
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     INSERT INTO company_customization (location_id, require_badge_pin_login, updated_at)
+                     VALUES (?, ?, NOW())
+                     ON CONFLICT (location_id) DO UPDATE SET
+                         require_badge_pin_login = EXCLUDED.require_badge_pin_login,
+                         updated_at = NOW()
+                     """)) {
+            ps.setInt(1, locationId);
+            ps.setBoolean(2, settings.requireBadgePinLogin());
+            ps.executeUpdate();
+        }
+    }
+
+    public static boolean isBadgePinRequired(Connection conn, int locationId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT COALESCE(require_badge_pin_login, TRUE)
+                FROM company_customization
+                WHERE location_id = ?
+                """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return !rs.next() || rs.getBoolean(1);
+            }
+        }
+    }
+
+    public record BadgeSecuritySettings(boolean requireBadgePinLogin) { }
+
     /** Five shared price-tag designs, each with its own physical label size. */
     public static List<PriceTagTemplateSettings> loadPriceTagTemplateSettings() {
         Integer locationId = ServerRequestIdentity.locationId();
@@ -374,6 +417,7 @@ public class ServerCompanyCustomizationRepository {
                        COALESCE(cc.vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
                        COALESCE(cc.next_receipt_counter, 1) AS next_receipt_counter,
                        COALESCE(cc.change_basket_target_amount, 60000) AS change_basket_target_amount,
+                       COALESCE(cc.always_print_sale_receipt, FALSE) AS always_print_sale_receipt,
                        COALESCE(cc.account_payment_receipt_title, 'CUSTOMER ACCOUNT PAYMENT') AS account_payment_receipt_title,
                        COALESCE(cc.account_payment_receipt_show_user, TRUE) AS account_payment_receipt_show_user,
                        COALESCE(cc.account_payment_receipt_show_customer, TRUE) AS account_payment_receipt_show_customer,
@@ -427,6 +471,7 @@ public class ServerCompanyCustomizationRepository {
                         rs.getBigDecimal("vat_fixed_rate_percent"),
                         rs.getInt("next_receipt_counter"),
                         rs.getBigDecimal("change_basket_target_amount"),
+                        rs.getBoolean("always_print_sale_receipt"),
                         new AccountPaymentReceiptSettings(
                                 rs.getString("account_payment_receipt_title"),
                                 rs.getBoolean("account_payment_receipt_show_user"),
@@ -481,6 +526,7 @@ public class ServerCompanyCustomizationRepository {
                     vat_fixed_rate_percent,
                     next_receipt_counter,
                     change_basket_target_amount,
+                    always_print_sale_receipt,
                     account_payment_receipt_title,
                     account_payment_receipt_show_user,
                     account_payment_receipt_show_customer,
@@ -494,7 +540,7 @@ public class ServerCompanyCustomizationRepository {
                     account_payment_receipt_show_barcode,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     receipt_header_line = EXCLUDED.receipt_header_line,
                     receipt_footer_line = EXCLUDED.receipt_footer_line,
@@ -510,6 +556,7 @@ public class ServerCompanyCustomizationRepository {
                     vat_fixed_rate_percent = EXCLUDED.vat_fixed_rate_percent,
                     next_receipt_counter = EXCLUDED.next_receipt_counter,
                     change_basket_target_amount = EXCLUDED.change_basket_target_amount,
+                    always_print_sale_receipt = EXCLUDED.always_print_sale_receipt,
                     account_payment_receipt_title = EXCLUDED.account_payment_receipt_title,
                     account_payment_receipt_show_user = EXCLUDED.account_payment_receipt_show_user,
                     account_payment_receipt_show_customer = EXCLUDED.account_payment_receipt_show_customer,
@@ -525,7 +572,6 @@ public class ServerCompanyCustomizationRepository {
                 """;
 
         try (Connection conn = DB.getConnection()) {
-            ensureReceiptSettingsSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement(companySql)) {
                 ps.setString(1, settings.companyName());
                 ps.setString(2, settings.mottoLine1());
@@ -549,18 +595,19 @@ public class ServerCompanyCustomizationRepository {
                 ps.setBigDecimal(13, settings.vatFixedRatePercent());
                 ps.setInt(14, settings.nextReceiptCounter());
                 ps.setBigDecimal(15, settings.changeBasketTargetAmount());
+                ps.setBoolean(16, settings.alwaysPrintSaleReceipt());
                 AccountPaymentReceiptSettings paymentReceiptSettings = settings.accountPaymentReceiptSettings();
-                ps.setString(16, paymentReceiptSettings.title());
-                ps.setBoolean(17, paymentReceiptSettings.showUser());
-                ps.setBoolean(18, paymentReceiptSettings.showCustomer());
-                ps.setBoolean(19, paymentReceiptSettings.showAccountNumber());
-                ps.setBoolean(20, paymentReceiptSettings.showMethod());
-                ps.setBoolean(21, paymentReceiptSettings.showReference());
-                ps.setBoolean(22, paymentReceiptSettings.showDevice());
-                ps.setBoolean(23, paymentReceiptSettings.showDrawer());
-                ps.setBoolean(24, paymentReceiptSettings.showAllocations());
-                ps.setBoolean(25, paymentReceiptSettings.showBalance());
-                ps.setBoolean(26, paymentReceiptSettings.showBarcode());
+                ps.setString(17, paymentReceiptSettings.title());
+                ps.setBoolean(18, paymentReceiptSettings.showUser());
+                ps.setBoolean(19, paymentReceiptSettings.showCustomer());
+                ps.setBoolean(20, paymentReceiptSettings.showAccountNumber());
+                ps.setBoolean(21, paymentReceiptSettings.showMethod());
+                ps.setBoolean(22, paymentReceiptSettings.showReference());
+                ps.setBoolean(23, paymentReceiptSettings.showDevice());
+                ps.setBoolean(24, paymentReceiptSettings.showDrawer());
+                ps.setBoolean(25, paymentReceiptSettings.showAllocations());
+                ps.setBoolean(26, paymentReceiptSettings.showBalance());
+                ps.setBoolean(27, paymentReceiptSettings.showBarcode());
                 ps.executeUpdate();
             }
         }
@@ -574,6 +621,7 @@ public class ServerCompanyCustomizationRepository {
             ensureCompanyInfoSchema(stmt);
             ensureLocationIdentitySchema(stmt);
             stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
+            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS always_print_sale_receipt BOOLEAN NOT NULL DEFAULT FALSE");
             ensureAccountPaymentReceiptSchema(stmt);
         }
     }
@@ -1229,6 +1277,7 @@ public class ServerCompanyCustomizationRepository {
                 parsePercent(properties.getProperty("receipt.vat_fixed_rate_percent", "0")),
                 parseIntInRange(properties.getProperty("receipt.next_receipt_counter", "1"), 1, 999999, 1),
                 parseMoney(properties.getProperty("receipt.change_basket_target_amount", "60000")),
+                Boolean.parseBoolean(properties.getProperty("receipt.always_print_sale_receipt", "false")),
                 new AccountPaymentReceiptSettings(
                         properties.getProperty("account_payment_receipt.title", "CUSTOMER ACCOUNT PAYMENT"),
                         Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_user", "true")),
@@ -1395,6 +1444,7 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("receipt.vat_fixed_rate_percent", settings.vatFixedRatePercent().toPlainString());
         properties.setProperty("receipt.next_receipt_counter", String.valueOf(settings.nextReceiptCounter()));
         properties.setProperty("receipt.change_basket_target_amount", settings.changeBasketTargetAmount().toPlainString());
+        properties.setProperty("receipt.always_print_sale_receipt", String.valueOf(settings.alwaysPrintSaleReceipt()));
         AccountPaymentReceiptSettings paymentReceiptSettings = settings.accountPaymentReceiptSettings();
         properties.setProperty("account_payment_receipt.title", paymentReceiptSettings.title());
         properties.setProperty("account_payment_receipt.show_user", String.valueOf(paymentReceiptSettings.showUser()));
@@ -1871,46 +1921,17 @@ public class ServerCompanyCustomizationRepository {
                 MAX_ORIGINAL_LOGO_BYTES,
                 MAX_LOGO_UPLOAD_BYTES
         )) {
-            String accessToken = ServerRequestIdentity.supabaseAccessToken();
-            String objectPath = "company/location-" + locationId + "/receipt-logo-" + System.currentTimeMillis() + "-" + sanitizeFilename(optimizedImage.filename());
-            String encodedBucket = encodePathSegment(COMPANY_LOGO_BUCKET);
-            String encodedObjectPath = encodeObjectPath(objectPath);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
-                            + "/storage/v1/object/"
-                            + encodedBucket
-                            + "/"
-                            + encodedObjectPath))
-                    .timeout(Duration.ofSeconds(45))
-                    .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("Content-Type", optimizedImage.contentType())
-                    .header("x-upsert", "true")
-                    .POST(HttpRequest.BodyPublishers.ofFile(optimizedImage.file().toPath()))
-                    .build();
-
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("Supabase Storage returned HTTP "
-                        + response.statusCode()
-                        + " while uploading company logo to bucket "
-                        + COMPANY_LOGO_BUCKET
-                        + ": "
-                        + response.body());
+            String filename = StorageObjectNameBuilder.filename(
+                    optimizedImage.filename(), "png", Long.toString(System.currentTimeMillis()),
+                    "location-" + locationId, "receipt-logo");
+            String objectPath = "company/location-" + locationId + "/" + filename;
+            try (java.sql.Connection conn = data.DB.getConnection()) {
+                String reference = services.ServerImageAssetService.storeUpload(conn, "COMPANY_LOGO",
+                        COMPANY_LOGO_BUCKET, objectPath, optimizedImage.contentType(), filename,
+                        "PUBLIC", Files.readAllBytes(optimizedImage.file().toPath()));
+                try { services.ServerImageAssetService.synchronize(conn); } catch (Exception ignored) { }
+                return reference;
             }
-
-            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
-                    + "/storage/v1/object/public/"
-                    + encodedBucket
-                    + "/"
-                    + encodedObjectPath;
-            ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());
-            return publicUrl;
         }
     }
 
@@ -1932,46 +1953,17 @@ public class ServerCompanyCustomizationRepository {
             };
         }
 
-        String accessToken = ServerRequestIdentity.supabaseAccessToken();
-        String objectPath = "company/location-" + locationId + "/badge-template-" + System.currentTimeMillis() + "-" + filename;
-        String encodedBucket = encodePathSegment(COMPANY_LOGO_BUCKET);
-        String encodedObjectPath = encodeObjectPath(objectPath);
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
-                        + "/storage/v1/object/"
-                        + encodedBucket
-                        + "/"
-                        + encodedObjectPath))
-                .timeout(Duration.ofSeconds(45))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Content-Type", contentType)
-                .header("x-upsert", "true")
-                .POST(HttpRequest.BodyPublishers.ofFile(imagePath))
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Supabase Storage returned HTTP "
-                    + response.statusCode()
-                    + " while uploading badge template image to bucket "
-                    + COMPANY_LOGO_BUCKET
-                    + ": "
-                    + response.body());
+        String descriptiveFilename = StorageObjectNameBuilder.filename(
+                filename, "png", Long.toString(System.currentTimeMillis()),
+                "location-" + locationId, "badge-logo");
+        String objectPath = "company/location-" + locationId + "/" + descriptiveFilename;
+        try (java.sql.Connection conn = data.DB.getConnection()) {
+            String reference = services.ServerImageAssetService.storeUpload(conn, "BADGE_LOGO",
+                    COMPANY_LOGO_BUCKET, objectPath, contentType, descriptiveFilename,
+                    "PUBLIC", Files.readAllBytes(imagePath));
+            try { services.ServerImageAssetService.synchronize(conn); } catch (Exception ignored) { }
+            return reference;
         }
-
-        String publicUrl = SupabaseSessionManager.getSupabaseUrl()
-                + "/storage/v1/object/public/"
-                + encodedBucket
-                + "/"
-                + encodedObjectPath;
-        ImageCacheManager.cacheUploadedImage(publicUrl, imagePath);
-        return publicUrl;
     }
 
     private static boolean isRemoteImageUrl(String imageUrl) {
@@ -2081,6 +2073,7 @@ public class ServerCompanyCustomizationRepository {
             java.math.BigDecimal vatFixedRatePercent,
             int nextReceiptCounter,
             java.math.BigDecimal changeBasketTargetAmount,
+            boolean alwaysPrintSaleReceipt,
             AccountPaymentReceiptSettings accountPaymentReceiptSettings
     ) {
         public ReceiptSettings {

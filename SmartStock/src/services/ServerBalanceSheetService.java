@@ -168,12 +168,28 @@ public final class ServerBalanceSheetService {
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_check_lines TEXT");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_location_period_idx ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx ON balance_sheet_submissions(submitted_by_user_id)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS balance_sheet_bf_overrides (
+                        balance_sheet_bf_override_id BIGSERIAL PRIMARY KEY,
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                        period_start DATE NOT NULL,
+                        amount NUMERIC(12, 2) NOT NULL,
+                        updated_by_user_id INTEGER REFERENCES users(user_id),
+                        updated_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT balance_sheet_bf_overrides_location_period_unique
+                            UNIQUE (location_id, period_start)
+                    )
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_bf_overrides_location_period_idx ON balance_sheet_bf_overrides(location_id, period_start DESC)");
             if (tableExists(conn, "customer_account_transactions")) {
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS device_id TEXT");
                 stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS device_name TEXT");
             }
         }
         SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_submissions");
+        SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_bf_overrides");
         SupabaseSecurityHardening.protectInternalTable(conn, "expenses");
         SupabaseSecurityHardening.protectInternalTable(conn, "cheque_bank_deposits");
         SupabaseSecurityHardening.protectInternalTable(conn, "bank_transactions");
@@ -671,7 +687,10 @@ public final class ServerBalanceSheetService {
             BigDecimal totalReceivables = total(receivables);
             BigDecimal totalExpenses = total(expenses);
             BigDecimal totalPayables = total(payables);
-            BigDecimal balanceBf = loadPreviousBalanceCf(conn, from, locationId);
+            BigDecimal balanceBf = loadBalanceBfOverride(conn, from, locationId);
+            if (balanceBf == null) {
+                balanceBf = loadPreviousBalanceCf(conn, from, locationId);
+            }
             if (balanceBf == null) {
                 balanceBf = BigDecimal.ZERO;
             }
@@ -747,6 +766,39 @@ public final class ServerBalanceSheetService {
             }
         }
         throw new SQLException("Balance sheet submission did not return an id.");
+    }
+
+    public static void setBalanceBf(Connection conn, LocalDate periodStart, BigDecimal amount) throws SQLException {
+        ensureSchema(conn);
+        Integer locationId = ServerRequestIdentity.locationId();
+        if (locationId == null) {
+            throw new SQLException("A store location is required to set Balance B/F.");
+        }
+        if (periodStart == null || amount == null) {
+            throw new SQLException("The period start and Balance B/F amount are required.");
+        }
+        if (amount.scale() > 2 || amount.precision() - amount.scale() > 10) {
+            throw new SQLException("Balance B/F must fit within 10 whole digits and 2 decimal places.");
+        }
+        String sql = """
+                INSERT INTO balance_sheet_bf_overrides (
+                    location_id, period_start, amount, updated_by_user_id, updated_by_name
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (location_id, period_start) DO UPDATE SET
+                    amount = EXCLUDED.amount,
+                    updated_by_user_id = EXCLUDED.updated_by_user_id,
+                    updated_by_name = EXCLUDED.updated_by_name,
+                    updated_at = CURRENT_TIMESTAMP
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setDate(2, Date.valueOf(periodStart));
+            ps.setBigDecimal(3, amount);
+            setNullableInteger(ps, 4, ServerRequestIdentity.userId());
+            ps.setString(5, ServerRequestIdentity.userName());
+            ps.executeUpdate();
+        }
     }
 
     /* Connection-bound mutations keep the accounting write, sync event and API
@@ -1744,6 +1796,25 @@ public final class ServerBalanceSheetService {
             }
         }
         return null;
+    }
+
+    private static BigDecimal loadBalanceBfOverride(Connection conn, LocalDate periodStart, Integer locationId) throws SQLException {
+        if (locationId == null) {
+            return null;
+        }
+        String sql = """
+                SELECT amount
+                FROM balance_sheet_bf_overrides
+                WHERE location_id = ?
+                  AND period_start = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, locationId);
+            ps.setDate(2, Date.valueOf(periodStart));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getBigDecimal("amount") : null;
+            }
+        }
     }
 
     private static BigDecimal total(List<SheetLine> lines) {

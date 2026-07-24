@@ -23,8 +23,12 @@ import services.TimeClockAutoCloseService;
 import services.TimeClockAutoCloseService.AutoCloseSettings;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
+import ui.components.PreferenceTreeCellRenderer;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.ThemeManager;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 import utils.ImageCacheManager;
@@ -34,6 +38,7 @@ import ui.screens.companyprefs.CustomOrderDepositPanel;
 import ui.screens.companyprefs.CustomOrderReceiptPanel;
 import ui.screens.companyprefs.SaleReceiptPanel;
 import ui.screens.companyprefs.QuotationInvoicePrintPanel;
+import ui.screens.companyprefs.ImageStoragePanel;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -42,7 +47,6 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.tree.DefaultMutableTreeNode;
-import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
@@ -84,6 +88,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_CUSTOM_ORDER_SLIP_FORMATTING = "Receipt/Slip Formatting";
     private static final String NAV_QUOTATION_ORDER_PRINTING = "Quotation/Invoice Printouts";
     private static final String NAV_PRICE_TAG_TEMPLATE = "Price Tag Template";
+    private static final String NAV_IMAGE_STORAGE = "Image Storage";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -126,6 +131,7 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
+    private final JCheckBox alwaysPrintSaleReceiptBox = new JCheckBox("Always print receipt");
     private final JTextField accountPaymentReceiptTitleField = new JTextField("CUSTOMER ACCOUNT PAYMENT");
     private final JCheckBox accountPaymentReceiptShowUserBox = new JCheckBox("User");
     private final JCheckBox accountPaymentReceiptShowCustomerBox = new JCheckBox("Customer");
@@ -145,7 +151,7 @@ public class CompanyCustomization extends JFrame {
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
-    private final JCheckBox slipAutoPrintBox = new JCheckBox("Print automatically after saving a custom order");
+    private final JCheckBox slipAutoPrintBox = new JCheckBox("Always print order slip");
     private final JTextField slipTitleField = new JTextField("CUSTOMER'S ORDER SLIP");
     private final JTextField slipContactLineField = new JTextField();
     private final JTextField slipEmailLineField = new JTextField();
@@ -188,6 +194,8 @@ public class CompanyCustomization extends JFrame {
     private final JTextField badgeMagStripeTrack3Field = new JTextField();
     private final JTextField badgeMagStripeCommandField = new JTextField();
     private final JCheckBox badgeNfcEnabledBox = new JCheckBox("Enable RFID/NFC writer");
+    private final JCheckBox requireBadgePinLoginBox = new JCheckBox(
+            "Require employee PIN after badge scan, swipe, or tap", true);
     private final JTextField badgeNfcPayloadField = new JTextField("{badge_id}");
     private final JTextField badgeNfcWriterCommandField = new JTextField();
     private final JTextField badgeNfcVerifyCommandField = new JTextField();
@@ -278,17 +286,20 @@ public class CompanyCustomization extends JFrame {
         initialPreferenceSection = firstPermittedSection(initialSection);
         setTitle("Company Preferences");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(900, 640);
+        setSize(1180, 760);
+        setMinimumSize(new Dimension(980, 680));
         setLocationRelativeTo(null);
         setJMenuBar(AppMenuBar.create(this, "CompanyCustomization"));
 
-        JPanel rootPanel = new JPanel(new BorderLayout(18, 18));
-        rootPanel.setBorder(new EmptyBorder(24, 24, 24, 24));
-        rootPanel.setBackground(new Color(245, 247, 250));
+        JPanel rootPanel = new JPanel(new BorderLayout(20, 18));
+        rootPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        rootPanel.setBorder(new EmptyBorder(22, 24, 20, 24));
+        rootPanel.setBackground(DeckersPalette.background());
 
         JLabel titleLabel = new JLabel("Company Preferences");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
-        titleLabel.setForeground(new Color(32, 41, 57));
+        titleLabel.setForeground(DeckersPalette.text());
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         rootPanel.add(titleLabel, BorderLayout.NORTH);
 
         addPermittedCardPlaceholders();
@@ -301,7 +312,8 @@ public class CompanyCustomization extends JFrame {
         mainSplitPane.setBorder(BorderFactory.createEmptyBorder());
         mainSplitPane.setContinuousLayout(true);
         mainSplitPane.setResizeWeight(0);
-        mainSplitPane.setDividerLocation(290);
+        mainSplitPane.setDividerLocation(270);
+        mainSplitPane.setDividerSize(8);
         rootPanel.add(mainSplitPane, BorderLayout.CENTER);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
@@ -311,6 +323,11 @@ public class CompanyCustomization extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JButton closeButton = new JButton("Close");
         saveButton = new JButton("Save");
+        DeckersSwing.styleUtilityButton(exportBackupButton, DeckersPalette.PURPLE);
+        DeckersSwing.styleUtilityButton(restoreBackupButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(refreshButton, DeckersPalette.PURPLE);
+        DeckersSwing.styleUtilityButton(closeButton, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
         if (isPhysicalServerMode()) {
             buttonPanel.add(exportBackupButton);
             buttonPanel.add(restoreBackupButton);
@@ -320,6 +337,7 @@ public class CompanyCustomization extends JFrame {
         buttonPanel.add(saveButton);
         JPanel footer = new JPanel(new BorderLayout());
         footer.setOpaque(false);
+        footer.setBorder(new EmptyBorder(4, 0, 0, 0));
         footer.add(loadingStatePanel, BorderLayout.CENTER);
         footer.add(buttonPanel, BorderLayout.SOUTH);
         rootPanel.add(footer, BorderLayout.SOUTH);
@@ -332,7 +350,6 @@ public class CompanyCustomization extends JFrame {
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveButton.addActionListener(e -> saveSettings());
         wireLivePreview();
-        configureActionButtons();
         saveButton.setEnabled(false);
 
         addWindowListener(new WindowAdapter() {
@@ -342,6 +359,7 @@ public class CompanyCustomization extends JFrame {
                 routeNavigationKey(initialPreferenceSection);
             }
         });
+        ThemeManager.applyToWindow(this);
         WindowHelper.configurePosWindow(this);
     }
 
@@ -353,6 +371,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_LOCATIONS);
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
         addNodeIfPermitted(root, NAV_BACKUPS);
+        addNodeIfPermitted(root, NAV_IMAGE_STORAGE);
         addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
 
         DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
@@ -374,16 +393,15 @@ public class CompanyCustomization extends JFrame {
         navigationTree = tree;
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
-        tree.setRowHeight(24);
+        tree.setRowHeight(30);
         tree.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        tree.setBorder(new EmptyBorder(4, 4, 4, 4));
+        tree.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        tree.setBackground(DeckersPalette.surface());
+        tree.setForeground(DeckersPalette.text());
+        tree.setOpaque(true);
 
-        DefaultTreeCellRenderer renderer = new DefaultTreeCellRenderer();
-        renderer.setBorderSelectionColor(new Color(220, 224, 230));
-        renderer.setBackgroundSelectionColor(new Color(232, 240, 254));
-        renderer.setTextSelectionColor(new Color(32, 41, 57));
-        renderer.setTextNonSelectionColor(new Color(32, 41, 57));
-        renderer.setBackgroundNonSelectionColor(Color.WHITE);
-        tree.setCellRenderer(renderer);
+        tree.setCellRenderer(new PreferenceTreeCellRenderer());
 
         for (int row = 0; row < tree.getRowCount(); row++) {
             tree.expandRow(row);
@@ -399,16 +417,25 @@ public class CompanyCustomization extends JFrame {
         });
 
         JPanel container = new JPanel(new BorderLayout());
-        container.setBackground(Color.WHITE);
+        container.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        container.setBackground(DeckersPalette.surface());
         container.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                new EmptyBorder(10, 10, 10, 10)
+                BorderFactory.createLineBorder(DeckersPalette.border()),
+                new EmptyBorder(12, 12, 12, 12)
         ));
         JLabel label = new JLabel("Preferences");
         label.setFont(new Font("SansSerif", Font.BOLD, 16));
-        label.setBorder(new EmptyBorder(0, 0, 8, 0));
+        label.setForeground(DeckersPalette.text());
+        label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        label.setBorder(new EmptyBorder(0, 2, 10, 0));
         container.add(label, BorderLayout.NORTH);
-        container.add(new JScrollPane(tree), BorderLayout.CENTER);
+        JScrollPane navigationScroll = new JScrollPane(tree);
+        navigationScroll.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        navigationScroll.setBackground(DeckersPalette.surface());
+        navigationScroll.setBorder(BorderFactory.createEmptyBorder());
+        navigationScroll.getViewport().putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        navigationScroll.getViewport().setBackground(DeckersPalette.surface());
+        container.add(navigationScroll, BorderLayout.CENTER);
 
         TreePath defaultPath = findTreePath(root, firstPermittedSection(NAV_COMPANY_IDENTITY));
         if (defaultPath != null) {
@@ -458,13 +485,14 @@ public class CompanyCustomization extends JFrame {
             return;
         }
         long started = System.nanoTime();
-        JComponent card = switch (cardKey) {
+        JComponent cardContent = switch (cardKey) {
             case NAV_COMPANY_IDENTITY -> buildCompanyIdentityScreen();
             case NAV_EMPLOYEE_BADGES -> buildEmployeeBadgesScreen();
             case NAV_PRICE_TAG_TEMPLATE -> buildPriceTagTemplateScreen();
             case NAV_LOCATIONS -> buildLocationsEmbeddedScreen();
             case NAV_CASH_DRAWER_MANAGER -> buildCashDrawerEmbeddedScreen();
             case NAV_BACKUPS -> buildBackupSchedulerScreen();
+            case NAV_IMAGE_STORAGE -> new ImageStoragePanel();
             case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
             case NAV_SALE_RECEIPT_FORMATTING -> buildSaleReceiptPreferencesScreen();
             case NAV_ACCOUNT_PAYMENT_RECEIPTS -> buildAccountPaymentReceiptPreferencesScreen();
@@ -473,6 +501,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_QUOTATION_ORDER_PRINTING -> buildQuotationInvoicePrintPreferencesScreen();
             default -> throw new IllegalArgumentException("Unknown preference section: " + cardKey);
         };
+        JComponent card = decoratePreferenceCard(cardKey, cardContent);
         JComponent placeholder = preferenceCardPlaceholders.get(cardKey);
         if (placeholder != null) rightContentPanel.remove(placeholder);
         rightContentPanel.add(card, cardKey);
@@ -483,8 +512,124 @@ public class CompanyCustomization extends JFrame {
         }
         rightContentPanel.revalidate();
         rightContentPanel.repaint();
+        // Cards are created after the window's initial theme pass. Theme the
+        // newly inserted controls immediately so Aqua cannot leave stale light
+        // fields or panels inside a dark SmartStock window.
+        ThemeManager.applyToWindow(this);
         ui.helpers.PerformanceDiagnostics.record("screen-card", cardKey, started, true, -1);
         if (NAV_EMPLOYEE_BADGES.equals(cardKey)) loadBadgeFontFamilies();
+    }
+
+    private JComponent decoratePreferenceCard(String cardKey, JComponent content) {
+        stylePreferenceControls(content);
+
+        JPanel page = new JPanel(new BorderLayout(0, 14));
+        page.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        page.setBackground(DeckersPalette.background());
+
+        JPanel heading = new JPanel();
+        heading.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        heading.setBackground(DeckersPalette.background());
+        heading.setLayout(new BoxLayout(heading, BoxLayout.Y_AXIS));
+
+        JLabel title = new JLabel(cardKey);
+        title.setFont(new Font("SansSerif", Font.BOLD, 22));
+        title.setForeground(DeckersPalette.text());
+        title.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        title.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel description = new JLabel("<html>" + preferenceSectionDescription(cardKey) + "</html>");
+        description.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        description.setForeground(DeckersPalette.muted());
+        description.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        description.setAlignmentX(Component.LEFT_ALIGNMENT);
+        description.setBorder(new EmptyBorder(4, 0, 0, 0));
+
+        heading.add(title);
+        heading.add(description);
+        page.add(heading, BorderLayout.NORTH);
+
+        JPanel surface = new JPanel(new BorderLayout());
+        surface.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        surface.setBackground(DeckersPalette.surface());
+        surface.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.ORANGE)),
+                new EmptyBorder(16, 16, 16, 16)
+        ));
+        surface.add(content, BorderLayout.CENTER);
+        page.add(surface, BorderLayout.CENTER);
+        return page;
+    }
+
+    private String preferenceSectionDescription(String cardKey) {
+        return switch (cardKey) {
+            case NAV_COMPANY_IDENTITY -> "Business identity and branding used throughout SmartStock.";
+            case NAV_EMPLOYEE_BADGES -> "Badge security, printing, encoding, and template controls.";
+            case NAV_PRICE_TAG_TEMPLATE -> "Reusable price-tag layouts, dimensions, and printed fields.";
+            case NAV_LOCATIONS -> "Stores and business locations available to this company.";
+            case NAV_CASH_DRAWER_MANAGER -> "Cash drawers, workstation assignments, and operating controls.";
+            case NAV_BACKUPS -> "Automatic encrypted company backups and retention settings.";
+            case NAV_IMAGE_STORAGE -> "Company image storage, upload status, and maintenance.";
+            case NAV_TIME_CLOCK_SAFETY -> "Automatic safeguards for stale and unusually long shifts.";
+            case NAV_SALE_RECEIPT_FORMATTING -> "Sales rules and the information printed on receipts.";
+            case NAV_ACCOUNT_PAYMENT_RECEIPTS -> "Fields and layout used for account-payment receipts.";
+            case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> "Deposit requirements and manager refund approval limits.";
+            case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> "Custom-order receipt behavior, fields, and appearance.";
+            case NAV_QUOTATION_ORDER_PRINTING -> "Titles, notes, signatures, and previews for sales documents.";
+            default -> "Company-level settings shared by authorized SmartStock workstations.";
+        };
+    }
+
+    private void stylePreferenceControls(Component component) {
+        if (component instanceof JTextField textField) {
+            DeckersSwing.styleField(textField);
+            Dimension preferred = textField.getPreferredSize();
+            textField.setPreferredSize(new Dimension(Math.max(160, preferred.width), Math.max(34, preferred.height)));
+        } else if (component instanceof JTable table) {
+            DeckersSwing.styleTable(table, DeckersPalette.ORANGE);
+        } else if (component instanceof JButton button
+                && !Boolean.TRUE.equals(button.getClientProperty("SmartStock.customPaintedButton"))) {
+            DeckersSwing.styleUtilityButton(button, preferenceButtonAccent(button.getText()));
+        } else if (component instanceof JComboBox<?> comboBox) {
+            Dimension preferred = comboBox.getPreferredSize();
+            comboBox.setPreferredSize(new Dimension(preferred.width, Math.max(34, preferred.height)));
+        } else if (component instanceof JSpinner spinner) {
+            Dimension preferred = spinner.getPreferredSize();
+            spinner.setPreferredSize(new Dimension(preferred.width, Math.max(34, preferred.height)));
+        } else if (component instanceof JScrollPane scrollPane) {
+            scrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+            scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        }
+
+        if (component instanceof JScrollPane scrollPane) {
+            Component view = scrollPane.getViewport().getView();
+            if (view != null) {
+                stylePreferenceControls(view);
+            }
+        } else if (component instanceof Container container
+                && !(component instanceof JComboBox<?>)
+                && !(component instanceof JSpinner)) {
+            for (Component child : container.getComponents()) {
+                stylePreferenceControls(child);
+            }
+        }
+    }
+
+    private Color preferenceButtonAccent(String text) {
+        String action = text == null ? "" : text.toLowerCase();
+        if (action.contains("save") || action.contains("apply") || action.contains("enable")
+                || action.contains("add") || action.contains("upload") || action.contains("create")) {
+            return DeckersPalette.LIME;
+        }
+        if (action.contains("delete") || action.contains("remove") || action.contains("clear")
+                || action.contains("stop") || action.contains("disable") || action.contains("cancel")) {
+            return DeckersPalette.CORAL;
+        }
+        if (action.contains("refresh") || action.contains("preview") || action.contains("view")
+                || action.contains("select") || action.contains("browse") || action.contains("test")) {
+            return DeckersPalette.PURPLE;
+        }
+        return DeckersPalette.ORANGE;
     }
 
     private void loadBadgeFontFamilies() {
@@ -510,6 +655,7 @@ public class CompanyCustomization extends JFrame {
         return new String[]{
                 NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE,
                 NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
+                NAV_IMAGE_STORAGE,
                 NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS,
                 NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
@@ -538,6 +684,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
+            case NAV_IMAGE_STORAGE -> canEditCompanyPreferences();
             case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
@@ -563,6 +710,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_LOCATIONS,
                 NAV_CASH_DRAWER_MANAGER,
                 NAV_BACKUPS,
+                NAV_IMAGE_STORAGE,
                 NAV_SALE,
                 NAV_SALE_RECEIPT_FORMATTING,
                 NAV_ACCOUNT_PAYMENT_RECEIPTS,
@@ -602,17 +750,27 @@ public class CompanyCustomization extends JFrame {
 
     private JPanel buildCompanyIdentityScreen() {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
-        contentPanel.setOpaque(false);
+        contentPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        contentPanel.setBackground(DeckersPalette.background());
         logoPathField.setEditable(false);
-        contentPanel.add(new CompanyIdentityPanel(
+        CompanyIdentityPanel identityPanel = new CompanyIdentityPanel(
                 companyNameField,
                 companyMottoLine1Field,
                 companyMottoLine2Field,
                 buildLogoFilePanel()
-        ), BorderLayout.NORTH);
-        JPanel filler = new JPanel();
-        filler.setOpaque(false);
-        contentPanel.add(filler, BorderLayout.CENTER);
+        );
+        JPanel cardColumn = new JPanel();
+        cardColumn.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        cardColumn.setBackground(DeckersPalette.background());
+        cardColumn.setLayout(new BoxLayout(cardColumn, BoxLayout.Y_AXIS));
+        identityPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        identityPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, identityPanel.getPreferredSize().height));
+        cardColumn.add(identityPanel);
+        cardColumn.add(Box.createVerticalGlue());
+        JScrollPane scrollPane = new JScrollPane(cardColumn);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        contentPanel.add(scrollPane, BorderLayout.CENTER);
         return contentPanel;
     }
 
@@ -636,9 +794,30 @@ public class CompanyCustomization extends JFrame {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
         badgeLogoPathField.setEditable(false);
-        contentPanel.add(buildBadgeEditorLaunchPanel(), BorderLayout.NORTH);
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+        top.add(buildBadgeSecurityPanel());
+        top.add(buildBadgeEditorLaunchPanel());
+        contentPanel.add(top, BorderLayout.NORTH);
         contentPanel.add(buildBadgeMagStripePanel(), BorderLayout.CENTER);
         return contentPanel;
+    }
+
+    private JPanel buildBadgeSecurityPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 6));
+        panel.setOpaque(false);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(229, 231, 235)),
+                new EmptyBorder(14, 14, 14, 14)));
+        JLabel title = new JLabel("Badge Login Security");
+        title.setFont(new Font("SansSerif", Font.BOLD, 16));
+        panel.add(title, BorderLayout.NORTH);
+        panel.add(requireBadgePinLoginBox, BorderLayout.CENTER);
+        JLabel warning = new JLabel("<html>When turned off, possession of an active badge is enough to log in and approve or override actions allowed by that employee's permissions.</html>");
+        warning.setForeground(new Color(153, 27, 27));
+        panel.add(warning, BorderLayout.SOUTH);
+        return panel;
     }
 
     private JPanel buildPriceTagTemplateScreen() {
@@ -2047,6 +2226,7 @@ public class CompanyCustomization extends JFrame {
                 configPathField,
                 saleDiscountLimitPercentField,
                 saleReturnApprovalLimitField,
+                alwaysPrintSaleReceiptBox,
                 showLogoBox,
                 showSaleIdBox,
                 showDeviceBox,
@@ -2170,30 +2350,36 @@ public class CompanyCustomization extends JFrame {
     }
 
     private JPanel buildLogoFilePanel() {
-        JPanel panel = new JPanel(new BorderLayout(10, 0));
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setOpaque(false);
 
-        logoPathField.setMinimumSize(new Dimension(260, 28));
-        panel.add(logoPathField, BorderLayout.CENTER);
+        DeckersSwing.styleField(logoPathField);
+        logoPathField.setPreferredSize(new Dimension(320, 36));
+        logoPathField.setToolTipText("The stored logo location. Use the buttons below to change it.");
+        panel.add(logoPathField, BorderLayout.NORTH);
 
-        JPanel logoToolsPanel = new JPanel(new BorderLayout(8, 0));
+        JPanel logoToolsPanel = new JPanel(new BorderLayout(12, 0));
         logoToolsPanel.setOpaque(false);
         logoPreviewLabel.setOpaque(true);
-        logoPreviewLabel.setBackground(new Color(248, 250, 252));
-        logoPreviewLabel.setBorder(BorderFactory.createLineBorder(new Color(220, 224, 230)));
-        logoPreviewLabel.setPreferredSize(new Dimension(150, 70));
-        logoToolsPanel.add(logoPreviewLabel, BorderLayout.CENTER);
+        logoPreviewLabel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        logoPreviewLabel.setBackground(DeckersPalette.fieldBackground());
+        logoPreviewLabel.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+        logoPreviewLabel.setPreferredSize(new Dimension(190, 92));
+        logoToolsPanel.add(logoPreviewLabel, BorderLayout.WEST);
 
-        JPanel buttonPanel = new JPanel(new GridLayout(0, 1, 0, 6));
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         buttonPanel.setOpaque(false);
         JButton uploadButton = new JButton("Upload Logo");
         JButton selectUploadedButton = new JButton("Select Uploaded");
         JButton clearButton = new JButton("Clear Logo");
+        DeckersSwing.styleUtilityButton(uploadButton, DeckersPalette.ORANGE);
+        DeckersSwing.styleUtilityButton(selectUploadedButton, DeckersPalette.PURPLE);
+        DeckersSwing.styleUtilityButton(clearButton, DeckersPalette.CORAL);
         buttonPanel.add(uploadButton);
         buttonPanel.add(selectUploadedButton);
         buttonPanel.add(clearButton);
-        logoToolsPanel.add(buttonPanel, BorderLayout.EAST);
-        panel.add(logoToolsPanel, BorderLayout.EAST);
+        logoToolsPanel.add(buttonPanel, BorderLayout.CENTER);
+        panel.add(logoToolsPanel, BorderLayout.CENTER);
 
         uploadButton.addActionListener(e -> uploadLogo());
         selectUploadedButton.addActionListener(e -> selectUploadedLogo());
@@ -2326,6 +2512,7 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.setSelected(settings.showSku());
         showItemDiscountBox.setSelected(settings.showItemDiscount());
         showPaymentStatusBox.setSelected(settings.showPaymentStatus());
+        alwaysPrintSaleReceiptBox.setSelected(settings.alwaysPrintSaleReceipt());
         vatEnabledBox.setSelected(settings.vatEnabled());
         vatUseDepartmentRatesBox.setSelected(settings.vatUseDepartmentRates());
         vatFixedRatePercentField.setText(settings.vatFixedRatePercent().stripTrailingZeros().toPlainString());
@@ -2345,6 +2532,8 @@ public class CompanyCustomization extends JFrame {
         loadQuotationInvoicePrintFields(salesPrintSettings);
         CompanyCustomizationManager.BadgeTemplateSettings badgeTemplateSettings = all.badgeTemplate();
         loadBadgeTemplateFields(badgeTemplateSettings);
+        requireBadgePinLoginBox.setSelected(all.badgeSecurity() == null
+                || all.badgeSecurity().requireBadgePinLogin());
         priceTagTemplates = new ArrayList<>(all.priceTags() == null ? List.of() : all.priceTags());
         loadPriceTagTemplateFields();
         AutoCloseSettings timeClockSettings = snapshot.timeClock();
@@ -2360,6 +2549,7 @@ public class CompanyCustomization extends JFrame {
         refreshSlipPreview();
         refreshQuotationInvoicePrintPreview();
         refreshBadgePreview();
+        configureActionButtons();
     }
 
     private record PreferencesSnapshot(CompanyCustomizationManager.AllSettings settings,
@@ -2373,6 +2563,7 @@ public class CompanyCustomization extends JFrame {
             var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
             var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
             var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
+            var badgeSecurity=new CompanyCustomizationManager.BadgeSecuritySettings(requireBadgePinLoginBox.isSelected());
             var clock=new AutoCloseSettings(
                     timeClockAutoCloseEnabledBox.isSelected(),
                     ((Number) scheduledDetectionDelaySpinner.getValue()).intValue(),
@@ -2381,7 +2572,7 @@ public class CompanyCustomization extends JFrame {
                     null,
                     null);
             loadingStatePanel.loading(true,Instant.now());
-            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
+            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);CompanyCustomizationManager.saveBadgeSecuritySettings(badgeSecurity);TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
         } catch (Exception ex) {
             loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings);
         }
@@ -2610,6 +2801,7 @@ public class CompanyCustomization extends JFrame {
                 parsePercentField(vatFixedRatePercentField.getText(), "Fixed VAT percent"),
                 parsePositiveCounter(receiptStartCounterField.getText()),
                 loadedChangeBasketTargetAmount,
+                alwaysPrintSaleReceiptBox.isSelected(),
                 getAccountPaymentReceiptSettingsFromFields()
         );
     }

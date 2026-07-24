@@ -1,6 +1,7 @@
 package app;
 
 import ui.screens.WelcomeFrame;
+import ui.screens.InitialSetupWizard;
 import ui.helpers.ThemeManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
@@ -8,6 +9,7 @@ import services.PostgresRuntimeService;
 import services.CompanyBackupScheduler;
 import services.SyncWorker;
 import services.LanApiClient;
+import managers.NavigationManager;
 
 import javax.swing.*;
 import java.io.IOException;
@@ -50,10 +52,17 @@ public class Main {
             }
             try {
                 ThemeManager.applyLookAndFeelDefaults();
+                LanApiClient.setConnectionLossHandler(NavigationManager::returnToWelcomeForConnectionLoss);
                 WelcomeFrame frame = new WelcomeFrame();
                 frame.setVisible(true);
                 frame.toFront();
                 frame.requestFocus();
+                if (hasArg(args, "--setup-wizard")) {
+                    InitialSetupWizard wizard = new InitialSetupWizard(frame);
+                    wizard.setVisible(true);
+                    wizard.toFront();
+                    wizard.requestFocus();
+                }
                 logStartup("WelcomeFrame visible=" + frame.isVisible()
                         + " bounds=" + frame.getBounds()
                         + " state=" + frame.getState());
@@ -73,7 +82,7 @@ public class Main {
 
     private static void startSilentLanCredentialMaintenance() {
         DatabaseMode mode = DatabaseConfig.load().mode();
-        if (mode != DatabaseMode.CLIENT && mode != DatabaseMode.SERVER) return;
+        if (mode != DatabaseMode.CLIENT && mode != DatabaseMode.SERVER && mode != DatabaseMode.REMOTE_ADMIN) return;
         Thread maintenance = new Thread(() -> {
             try {
                 if (mode == DatabaseMode.SERVER && !LanApiClient.isPaired()) {
@@ -160,6 +169,7 @@ public class Main {
             DatabaseMode mode = switch (arg) {
                 case "--server" -> DatabaseMode.SERVER;
                 case "--client" -> DatabaseMode.CLIENT;
+                case "--remote-admin" -> DatabaseMode.REMOTE_ADMIN;
                 default -> null;
             };
             if (mode == null) {

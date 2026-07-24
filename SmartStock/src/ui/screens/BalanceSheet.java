@@ -9,6 +9,8 @@ import services.BalanceSheetService.ExpenseEntry;
 import services.BalanceSheetService.ExpenseOption;
 import services.BalanceSheetService.SheetLine;
 import services.BalanceSheetService.SubmissionOption;
+import services.BalanceSheetExportService;
+import managers.PermissionManager;
 import ui.components.AppMenuBar;
 import ui.components.VendorSelector;
 import ui.helpers.StoreTimeZoneHelper;
@@ -19,9 +21,11 @@ import ui.helpers.WindowHelper;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.TableModelEvent;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.io.File;
 import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.time.LocalDate;
@@ -98,6 +102,8 @@ public class BalanceSheet extends JFrame {
         toField.setText(today.toString());
 
         JButton refreshButton = new JButton("Refresh");
+        JButton editBalanceBfButton = new JButton("Set Balance B/F");
+        JButton exportButton = new JButton("Print / Export");
         JButton addExpenseButton = new JButton("Log Expense");
         JButton submitButton = new JButton("Submit Balance Sheet");
         JButton matchDrawButton = new JButton("Match Draw Session");
@@ -114,9 +120,13 @@ public class BalanceSheet extends JFrame {
         filters.add(fromField);
         filters.add(label("To:"));
         filters.add(toField);
+        if ("ADMIN".equalsIgnoreCase(PermissionManager.getCurrentRole())) {
+            filters.add(editBalanceBfButton);
+        }
         filters.add(matchDrawButton);
         filters.add(submitButton);
         filters.add(addExpenseButton);
+        filters.add(exportButton);
         filters.add(refreshButton);
 
         savedSheetBox.setPreferredSize(new Dimension(310, 30));
@@ -178,6 +188,8 @@ public class BalanceSheet extends JFrame {
         add(mainPanel, BorderLayout.CENTER);
 
         refreshButton.addActionListener(e -> loadSheet());
+        editBalanceBfButton.addActionListener(e -> showBalanceBfDialog());
+        exportButton.addActionListener(e -> printOrExportSheet());
         submitButton.addActionListener(e -> submitSheet());
         matchDrawButton.addActionListener(e -> matchDrawSessionRange(true));
         openSavedButton.addActionListener(e -> loadSelectedSubmission());
@@ -202,6 +214,38 @@ public class BalanceSheet extends JFrame {
             loadSheet();
             loadSubmissionHistory();
         });
+    }
+
+    private void printOrExportSheet() {
+        if (currentSheet == null) {
+            JOptionPane.showMessageDialog(this, "Load a balance sheet before printing or exporting it.", "Balance Sheet", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Object[] formats = {"PDF", "PNG Image", "Print", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(this, "Print or export the complete balance sheet.", "Print / Export Balance Sheet",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, formats, formats[0]);
+        if (choice < 0 || choice == 3) return;
+        if (choice == 2) {
+            try { BalanceSheetExportService.print(this, currentSheet); }
+            catch (Exception ex) { JOptionPane.showMessageDialog(this, "Failed to print balance sheet: " + ex.getMessage(), "Print Error", JOptionPane.ERROR_MESSAGE); }
+            return;
+        }
+        boolean pdf = choice == 0; String extension = pdf ? "pdf" : "png";
+        LocalDate from = currentSheet.periodStart() == null ? parseDate(fromField.getText().trim(), "From") : currentSheet.periodStart();
+        LocalDate to = currentSheet.periodEnd() == null ? parseDate(toField.getText().trim(), "To") : currentSheet.periodEnd();
+        if (from == null || to == null) return;
+        JFileChooser chooser = new JFileChooser(); chooser.setDialogTitle("Save Balance Sheet " + (pdf ? "PDF" : "Image"));
+        chooser.setSelectedFile(new File("smartstock-balance-sheet-" + from + "-to-" + to + "." + extension));
+        chooser.setFileFilter(new FileNameExtensionFilter(pdf ? "PDF documents (*.pdf)" : "PNG images (*.png)", extension));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File output = chooser.getSelectedFile();
+        if (!output.getName().toLowerCase(Locale.ROOT).endsWith("." + extension)) output = new File(output.getParentFile(), output.getName() + "." + extension);
+        if (output.exists() && JOptionPane.showConfirmDialog(this, "Replace the existing file?\n" + output.getAbsolutePath(), "Replace Export", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+        File exportOutput = output; services.BalanceSheetService.BalanceSheet sheet = currentSheet;
+        try {
+            ResponsiveTask.await(this, "Exporting balance sheet...", () -> { if (pdf) BalanceSheetExportService.writePdf(exportOutput, sheet); else BalanceSheetExportService.writePng(exportOutput, sheet); return exportOutput; });
+            JOptionPane.showMessageDialog(this, "Balance sheet exported successfully.\n" + output.getAbsolutePath(), "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) { JOptionPane.showMessageDialog(this, "Failed to export balance sheet: " + ex.getMessage(), "Export Error", JOptionPane.ERROR_MESSAGE); }
     }
 
     private JPanel section(String title, JTable table, Color headerColor) {
@@ -405,6 +449,53 @@ public class BalanceSheet extends JFrame {
         netLabel.setText((net.compareTo(BigDecimal.ZERO) < 0 ? "Deficit: " : "Surplus: ") + money(net.abs()));
         cfExpectedTotal = defaultZero(sheet.balanceCf());
         recalculateCfChecker();
+    }
+
+    private void showBalanceBfDialog() {
+        if (!"ADMIN".equalsIgnoreCase(PermissionManager.getCurrentRole())) {
+            JOptionPane.showMessageDialog(this, "Only an administrator can set or edit Balance B/F.",
+                    "Access Denied", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (currentSheet != null && currentSheet.submissionId() != null) {
+            JOptionPane.showMessageDialog(this,
+                    "Saved balance sheets are read-only. Refresh the screen to edit the current period's Balance B/F.",
+                    "Balance B/F", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        LocalDate periodStart = parseDate(fromField.getText().trim(), "From");
+        if (periodStart == null) return;
+
+        JTextField amountField = new JTextField(
+                currentSheet == null ? "0.00" : defaultZero(currentSheet.balanceBf()).toPlainString(), 14);
+        JPanel panel = new JPanel(new GridLayout(0, 1, 0, 6));
+        panel.add(new JLabel("Balance B/F for the period starting " + periodStart + ":"));
+        panel.add(amountField);
+        panel.add(new JLabel("This overrides the automatically carried-forward balance for this start date."));
+        int result = JOptionPane.showConfirmDialog(this, panel, "Set Balance B/F",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) return;
+
+        BigDecimal amount;
+        try {
+            amount = new BigDecimal(amountField.getText().trim()).setScale(2);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Enter a valid amount with no more than 2 decimal places.",
+                    "Balance B/F", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try {
+            BigDecimal savedAmount = amount;
+            Boolean updated = ResponsiveTask.await(this, "Saving Balance B/F...", () -> {
+                BalanceSheetService.setBalanceBf(periodStart, savedAmount);
+                return Boolean.TRUE;
+            });
+            if (updated == null) return;
+            loadSheet();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save Balance B/F: " + ex.getMessage(),
+                    "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void submitSheet() {

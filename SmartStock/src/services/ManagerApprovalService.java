@@ -1,5 +1,7 @@
 package services;
 
+import ui.helpers.NfcBadgePromptController;
+
 import javax.swing.*;
 import java.awt.*;
 import java.util.Arrays;
@@ -19,6 +21,8 @@ public final class ManagerApprovalService {
                                                   String resourceLabel, String resourceIdentity) {
         JTextField loginField = new JTextField();
         JPasswordField passwordField = new JPasswordField();
+        JLabel passwordLabel = new JLabel("Manager Password:");
+        JLabel nfcStatusLabel = new JLabel("Checking for NFC reader...");
         JTextArea reasonArea = new JTextArea(3, 28);
         reasonArea.setLineWrap(true);
         reasonArea.setWrapStyleWord(true);
@@ -32,41 +36,60 @@ public final class ManagerApprovalService {
 
         gbc.gridx = 0;
         gbc.gridy = 0;
-        panel.add(new JLabel("Manager Username / Email / Badge ID:"), gbc);
+        panel.add(new JLabel("Manager Username / Email:"), gbc);
         gbc.gridy = 1;
         panel.add(loginField, gbc);
         gbc.gridy = 2;
-        panel.add(new JLabel("Manager Password:"), gbc);
+        panel.add(passwordLabel, gbc);
         gbc.gridy = 3;
         panel.add(passwordField, gbc);
         gbc.gridy = 4;
+        panel.add(nfcStatusLabel, gbc);
+        gbc.gridy = 5;
         if (resourceLabel != null && !resourceLabel.isBlank()) {
             panel.add(new JLabel(resourceLabel), gbc);
-            gbc.gridy = 5;
+            gbc.gridy = 6;
         }
         panel.add(new JLabel(reasonPrompt), gbc);
         gbc.gridy++;
         panel.add(new JScrollPane(reasonArea), gbc);
 
-        int result = JOptionPane.showConfirmDialog(
-                parent,
-                panel,
-                "Manager Approval Required - " + actionLabel,
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.WARNING_MESSAGE
-        );
+        NfcBadgePromptController nfc = new NfcBadgePromptController(
+                loginField, passwordField, passwordLabel, nfcStatusLabel);
+        int result;
+        try {
+            nfc.start();
+            result = JOptionPane.showConfirmDialog(
+                    parent,
+                    panel,
+                    "Manager Approval Required - " + actionLabel,
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+        } finally {
+            nfc.close();
+        }
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
 
-        String loginIdentifier = loginField.getText() == null ? "" : loginField.getText().trim();
+        String loginIdentifier = nfc.identifier();
         char[] password = passwordField.getPassword();
         String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
         if (loginIdentifier.isBlank()) {
             throw new IllegalStateException("Manager login is required.");
         }
+        boolean badgeIdentifier = BadgeCredentialService.looksLikeGeneratedBadge(
+                BadgeCredentialService.normalizeBadge(loginIdentifier));
         if (password.length == 0) {
-            throw new IllegalStateException("Manager password is required.");
+            if (!badgeIdentifier) {
+                throw new IllegalStateException("Manager password is required.");
+            }
+            if (!Boolean.FALSE.equals(nfc.badgePinRequired())) {
+                throw new IllegalStateException(nfc.badgePinRequired() == null
+                        ? "The badge PIN setting could not be confirmed. Enter the manager employee PIN."
+                        : "Manager employee PIN is required.");
+            }
         }
         if (reason.isBlank()) {
             throw new IllegalStateException("Override reason is required.");

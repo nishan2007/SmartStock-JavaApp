@@ -5,6 +5,8 @@ import managers.SessionManager;
 import services.LanApiClient;
 import services.ManagerApprovalService;
 import ui.components.AppMenuBar;
+import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
@@ -50,19 +52,39 @@ public class EnterInventory extends JFrame {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "EnterInventory"));
 
-        JPanel panel = new JPanel(new BorderLayout(10, 10));
-        panel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+        JPanel panel = new JPanel(new BorderLayout(16, 16));
+        panel.setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
+        panel.setBackground(DeckersPalette.background());
 
-        JPanel searchPanel = new JPanel(new BorderLayout(10, 10));
+        JPanel searchPanel = new JPanel(new BorderLayout(0, 14));
+        searchPanel.setOpaque(false);
 
         JLabel logoLabel = new JLabel();
         logoLabel.setHorizontalAlignment(SwingConstants.CENTER);
         logoLabel.setText("SmartStock");
+        logoLabel.setForeground(DeckersPalette.muted());
+        logoLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        logoLabel.setPreferredSize(new Dimension(210, 88));
 
-        selectedStoreLabel = new JLabel("Store: Not selected");
-        currentUserLabel = new JLabel("No User currently logged in");
-        currentDateLabel = new JLabel("No date yet");
-        currentTimeLabel = new JLabel("No time yet");
+        JLabel titleLabel = new JLabel("Receiving Inventory");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        titleLabel.setForeground(DeckersPalette.text());
+        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JLabel subtitleLabel = new JLabel("Count stock and receive new units");
+        subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        subtitleLabel.setForeground(DeckersPalette.muted());
+        subtitleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        JPanel titlePanel = new JPanel();
+        titlePanel.setOpaque(false);
+        titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
+        titlePanel.add(titleLabel);
+        titlePanel.add(Box.createVerticalStrut(4));
+        titlePanel.add(subtitleLabel);
+
+        selectedStoreLabel = DeckersSwing.metaLabel("Store: Not selected");
+        currentUserLabel = DeckersSwing.metaLabel("No User currently logged in");
+        currentDateLabel = DeckersSwing.metaLabel("No date yet");
+        currentTimeLabel = DeckersSwing.metaLabel("No time yet");
 
         JPanel rightSidePanel = new JPanel();
         rightSidePanel.setLayout(new BoxLayout(rightSidePanel, BoxLayout.Y_AXIS));
@@ -83,16 +105,24 @@ public class EnterInventory extends JFrame {
         rightSidePanel.add(Box.createVerticalStrut(10));
         rightSidePanel.add(currentUserLabel);
 
-        searchPanel.add(logoLabel, BorderLayout.CENTER);
-        searchPanel.add(rightSidePanel, BorderLayout.EAST);
+        JPanel headerBand = new JPanel(new BorderLayout(20, 0));
+        DeckersSwing.styleBand(headerBand, DeckersPalette.ORANGE, new Insets(16, 16, 16, 16));
+        headerBand.add(titlePanel, BorderLayout.WEST);
+        headerBand.add(logoLabel, BorderLayout.CENTER);
+        headerBand.add(rightSidePanel, BorderLayout.EAST);
 
         JPanel searchRow = new JPanel(new BorderLayout(10, 10));
-        JLabel searchLabel = new JLabel("Search Product or Custom Item");
+        DeckersSwing.styleBand(searchRow, DeckersPalette.MAGENTA, new Insets(7, 14, 7, 14));
+        JLabel searchLabel = DeckersSwing.metaLabel("Search Product or Custom Item");
         searchField = new JTextField();
         JButton searchBtn = new JButton("Search");
+        DeckersSwing.styleField(searchField);
+        DeckersSwing.styleUtilityButton(searchBtn, DeckersPalette.MAGENTA);
+        searchField.putClientProperty("JTextField.placeholderText", "Scan or enter a name, SKU, barcode, or item type");
         searchRow.add(searchLabel, BorderLayout.WEST);
         searchRow.add(searchField, BorderLayout.CENTER);
         searchRow.add(searchBtn, BorderLayout.EAST);
+        searchPanel.add(headerBand, BorderLayout.NORTH);
         searchPanel.add(searchRow, BorderLayout.SOUTH);
 
         inventoryModel = new DefaultTableModel(
@@ -106,24 +136,41 @@ public class EnterInventory extends JFrame {
         };
         inventoryTable = new JTable(inventoryModel);
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        inventoryTable.setFillsViewportHeight(true);
+        DeckersSwing.styleTable(inventoryTable, DeckersPalette.LIME);
         inventoryTable.getColumnModel().getColumn(6).setCellEditor(new DefaultCellEditor(new JTextField()));
         inventoryTable.getColumnModel().getColumn(7).setCellEditor(new DefaultCellEditor(new JTextField()));
         configureInventoryTableColumns();
 
         JScrollPane inventoryScrollPane = new JScrollPane(inventoryTable);
+        inventoryScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        inventoryScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
+        JPanel inventorySection = new JPanel(new BorderLayout());
+        DeckersSwing.styleBand(inventorySection, DeckersPalette.LIME, new Insets(6, 6, 6, 6));
+        inventorySection.add(inventoryScrollPane, BorderLayout.CENTER);
 
-        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
+        JPanel bottomPanel = new JPanel(new BorderLayout(14, 0));
+        DeckersSwing.styleBand(bottomPanel, DeckersPalette.CORAL, new Insets(14, 14, 14, 14));
         JButton removeSelectedBtn = new JButton("Remove Selected");
         JButton clearBtn = new JButton("Clear");
         JButton receiveBtn = new JButton("Add to Inventory");
-        totalUnitsLabel = new JLabel("Units to Add: 0");
-        bottomPanel.add(removeSelectedBtn);
-        bottomPanel.add(clearBtn);
-        bottomPanel.add(totalUnitsLabel);
-        bottomPanel.add(receiveBtn);
+        DeckersSwing.styleUtilityButton(removeSelectedBtn, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(clearBtn, DeckersPalette.PURPLE);
+        DeckersSwing.styleUtilityButton(receiveBtn, DeckersPalette.LIME);
+        totalUnitsLabel = DeckersSwing.totalLabel("Units to Add: 0", true);
+        JPanel utilityActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        utilityActions.setOpaque(false);
+        utilityActions.add(removeSelectedBtn);
+        utilityActions.add(clearBtn);
+        JPanel receiveActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        receiveActions.setOpaque(false);
+        receiveActions.add(totalUnitsLabel);
+        receiveActions.add(receiveBtn);
+        bottomPanel.add(utilityActions, BorderLayout.WEST);
+        bottomPanel.add(receiveActions, BorderLayout.EAST);
 
         panel.add(searchPanel, BorderLayout.NORTH);
-        panel.add(inventoryScrollPane, BorderLayout.CENTER);
+        panel.add(inventorySection, BorderLayout.CENTER);
         panel.add(bottomPanel, BorderLayout.SOUTH);
         add(panel);
 
@@ -367,7 +414,8 @@ public class EnterInventory extends JFrame {
     private void showSearchResultsPopup(java.util.List<Object[]> rows) {
         if (searchPopup == null) {
             searchPopup = new JPopupMenu();
-            searchPopup.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY));
+            searchPopup.setBorder(BorderFactory.createLineBorder(
+                    DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
             searchPopup.setFocusable(false);
 
             String[] columns = {"Type", "ID", "Name", "Description", "SKU / Code", "Stock"};
@@ -379,6 +427,7 @@ public class EnterInventory extends JFrame {
             };
 
             searchResultsTable = new JTable(resultsModel);
+            DeckersSwing.styleTable(searchResultsTable, DeckersPalette.MAGENTA);
             searchResultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             searchResultsTable.setAutoCreateRowSorter(true);
             searchResultsTable.setRowHeight(24);
@@ -399,6 +448,8 @@ public class EnterInventory extends JFrame {
 
             searchResultsScrollPane = new JScrollPane(searchResultsTable);
             searchResultsScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            searchResultsScrollPane.getViewport().setBackground(
+                    DeckersPalette.tableBody(DeckersPalette.MAGENTA));
             searchResultsScrollPane.setColumnHeaderView(null);
             searchResultsScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 

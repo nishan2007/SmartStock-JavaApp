@@ -70,9 +70,17 @@ final class LanHeldCartService {
         requirePermission(connection, userId, "MAKE_SALE");
         boolean canChangePrice = hasPermission(connection, userId, "CHANGE_SALE_ITEM_PRICE");
         boolean canDiscount = hasPermission(connection, userId, "APPLY_SALE_DISCOUNT");
+        boolean canOverrideSaleDiscount = hasPermission(connection, userId, "SALE_DISCOUNT_OVERRIDE");
         BigDecimal saleDiscount = percent(request.saleDiscountPercent());
-        if (saleDiscount.signum() > 0 && !canDiscount) {
-            throw rule(403, "PERMISSION_DENIED", "You do not have permission to hold a discounted cart.");
+        BigDecimal discountLimit = loadDiscountLimit(connection, locationId);
+        if (saleDiscount.compareTo(discountLimit) > 0) {
+            if (!canOverrideSaleDiscount) {
+                approvals.consume(request.saleDiscountApprovalToken(), "SALE_DISCOUNT_OVERRIDE",
+                        "Sale Discount Override", request.saleDiscountOverrideReason());
+            }
+        } else if (saleDiscount.signum() > 0 && !canDiscount) {
+            approvals.consume(request.saleDiscountApprovalToken(), "APPLY_SALE_DISCOUNT",
+                    "Sale Discount Approval", request.saleDiscountOverrideReason());
         }
         if (request.customerId() != null) requireActiveCustomer(connection, request.customerId());
 
@@ -81,7 +89,11 @@ final class LanHeldCartService {
         BigDecimal afterLineDiscounts = BigDecimal.ZERO;
         for (CreateLine line : request.lines()) {
             CatalogLine catalog = loadCatalog(connection, line.productId());
-            BigDecimal unitPrice = canChangePrice ? money(line.unitPrice()) : catalog.price();
+            BigDecimal unitPrice = money(line.unitPrice());
+            if (unitPrice.compareTo(catalog.price()) != 0 && !canChangePrice) {
+                approvals.consume(line.priceApprovalToken(), "CHANGE_SALE_ITEM_PRICE",
+                        "Price Override", line.priceOverrideReason());
+            }
             if (unitPrice.signum() < 0) throw rule(400, "VALIDATION_ERROR", "Item prices cannot be negative.");
             BigDecimal discount = percent(line.discountPercent());
             if (discount.signum() > 0 && !canDiscount) {
@@ -183,7 +195,8 @@ final class LanHeldCartService {
         BigDecimal total = BigDecimal.ZERO;
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT hci.product_id,hci.product_name,hci.description,hci.sku,hci.unit_price,hci.quantity,
-                       COALESCE(hci.discount_percent,0),COALESCE(hci.product_type,'INVENTORY'),p.category_id
+                       COALESCE(hci.discount_percent,0),COALESCE(hci.product_type,'INVENTORY'),p.category_id,
+                       COALESCE(p.price,0)
                 FROM held_cart_items hci JOIN products p ON p.product_id=hci.product_id
                 WHERE hci.held_cart_id=? ORDER BY hci.held_cart_item_id
                 """)) {
@@ -195,7 +208,8 @@ final class LanHeldCartService {
                     item.put("description", rs.getString(3)); item.put("sku", rs.getString(4));
                     item.put("unitPrice", rs.getBigDecimal(5)); item.put("quantity", rs.getInt(6));
                     item.put("discountPercent", rs.getBigDecimal(7)); item.put("productType", rs.getString(8));
-                    item.put("categoryId", rs.getObject(9)); items.add(item);
+                    item.put("categoryId", rs.getObject(9)); item.put("catalogPrice", rs.getBigDecimal(10));
+                    items.add(item);
                     BigDecimal line = money(rs.getBigDecimal(5).multiply(BigDecimal.valueOf(rs.getInt(6))));
                     total = total.add(line.subtract(line.multiply(rs.getBigDecimal(7))
                             .divide(HUNDRED, 2, RoundingMode.HALF_UP)));
@@ -229,6 +243,18 @@ final class LanHeldCartService {
                 if (!rs.next()) throw rule(400, "PRODUCT_NOT_FOUND", "A held-cart product no longer exists.");
                 return new CatalogLine(rs.getInt(1), rs.getString(2), rs.getString(3), rs.getString(4),
                         money(rs.getBigDecimal(5)), rs.getString(6));
+            }
+        }
+    }
+
+    private static BigDecimal loadDiscountLimit(Connection connection, int locationId) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT COALESCE(sale_discount_limit_percent,5)
+                FROM company_customization WHERE location_id=?
+                """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? percent(rs.getBigDecimal(1)) : BigDecimal.valueOf(5);
             }
         }
     }
@@ -314,8 +340,11 @@ final class LanHeldCartService {
         String safeMessage() { return safeMessage; }
     }
     record CreateRequest(String holdName, String paymentMethod, Integer customerId,
-                         BigDecimal saleDiscountPercent, List<CreateLine> lines) { }
+                         BigDecimal saleDiscountPercent,
+                         String saleDiscountApprovalToken, String saleDiscountOverrideReason,
+                         List<CreateLine> lines) { }
     record CreateLine(int productId, int quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+                      String priceApprovalToken, String priceOverrideReason,
                       String discountApprovalToken, String discountOverrideReason) { }
     private record CatalogLine(int productId, String name, String description, String sku,
                                BigDecimal price, String productType) { }

@@ -26,7 +26,7 @@ public final class QuotationInvoiceService {
     private static <T>T result(String action,JsonObject b,String field,Class<T>type)throws SQLException{T value=resultNullable(action,b,field,type);if(value==null)throw new SQLException("The server returned no "+field+" result.");return value;}
     private static <T>T resultNullable(String action,JsonObject b,String field,Class<T>type)throws SQLException{try{JsonObject r=LanApiClient.quotationMutation(action,b,UUID.randomUUID().toString());return !r.has(field)||r.get(field).isJsonNull()?null:GSON.fromJson(r.get(field),type);}catch(Exception e){throw sql(e);}}
     private static SQLException sql(Exception e){return e instanceof SQLException s?s:new SQLException(e.getMessage(),e);}
-    public record QuotationLineInput(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName){}
+    public record QuotationLineInput(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName,String priceOverrideApprovalToken){}
     public record DeliveryLineInput(long salesInvoiceLineId,int quantityDelivered){}
     public record QuotationResult(long quotationId,String quotationNumber){}
     public record InvoiceResult(long invoiceId,String invoiceNumber){}

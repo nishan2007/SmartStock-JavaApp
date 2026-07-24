@@ -55,7 +55,8 @@ public final class CustomerAccountLedgerService {
                         UPDATE customer_account_transactions
                         SET payment_id = NULL
                         WHERE COALESCE(transaction_type, '') <> 'PAYMENT'
-                          AND TRIM(COALESCE(payment_id, '')) = ''
+                          AND payment_id IS NOT NULL
+                          AND TRIM(payment_id) = ''
                         """);
                 stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_account_transactions_payment_id ON customer_account_transactions(payment_id) WHERE payment_id IS NOT NULL");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_customer_created_idx ON customer_account_transactions(customer_id, created_at DESC)");

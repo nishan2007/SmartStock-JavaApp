@@ -22,7 +22,8 @@ final class LanDiscoveryService implements AutoCloseable {
         this.thread = thread;
     }
 
-    static LanDiscoveryService start(int apiPort, LanTlsIdentity identity) throws Exception {
+    static LanDiscoveryService start(int apiPort, LanTlsIdentity identity,
+                                     DiscoveryIdentity advertisedIdentity) throws Exception {
         DatagramSocket socket = new DatagramSocket(DISCOVERY_PORT);
         socket.setBroadcast(true);
         final LanDiscoveryService[] holder = new LanDiscoveryService[1];
@@ -38,13 +39,18 @@ final class LanDiscoveryService implements AutoCloseable {
                     // address is rejected when it is not present in the certificate SAN.
                     String host = LanTlsIdentity.tlsHostName();
                     var proofs = identity.pairingProofs();
-                    byte[] response = GSON.toJson(Map.of(
-                            "service", "SmartStock LAN Service",
-                            "host", host,
-                            "port", apiPort,
-                            "certificateFingerprint", identity.fingerprint(),
-                            "pairingProof", proofs.get(0),
-                            "previousPairingProof", proofs.get(1)))
+                    byte[] response = GSON.toJson(Map.ofEntries(
+                            Map.entry("service", "SmartStock LAN Service"),
+                            Map.entry("host", host),
+                            Map.entry("port", apiPort),
+                            Map.entry("environment", advertisedIdentity.environment()),
+                            Map.entry("storeName", advertisedIdentity.storeName()),
+                            Map.entry("storeCode", advertisedIdentity.storeCode()),
+                            Map.entry("computerName", advertisedIdentity.computerName()),
+                            Map.entry("serverId", advertisedIdentity.serverId()),
+                            Map.entry("certificateFingerprint", identity.fingerprint()),
+                            Map.entry("pairingProof", proofs.get(0)),
+                            Map.entry("previousPairingProof", proofs.get(1))))
                             .getBytes(StandardCharsets.UTF_8);
                     socket.send(new DatagramPacket(response, response.length, packet.getAddress(), packet.getPort()));
                 } catch (Exception ex) {
@@ -65,5 +71,9 @@ final class LanDiscoveryService implements AutoCloseable {
         running = false;
         socket.close();
         thread.interrupt();
+    }
+
+    record DiscoveryIdentity(String environment, String storeName, String storeCode,
+                             String computerName, String serverId) {
     }
 }

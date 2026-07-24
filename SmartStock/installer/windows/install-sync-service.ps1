@@ -1,6 +1,10 @@
 param(
     [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [string]$TaskName = "SmartStockServerService"
+    [string]$TaskName = "SmartStockServerService",
+    [ValidateSet("development", "test", "production")]
+    [string]$Environment = "development",
+    [string]$SupabaseUrl = "",
+    [string]$SupabasePublishableKey = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,13 +29,23 @@ if (Test-Path $sourceDependency) {
 
 $runner = Join-Path $serviceDir "run-smartstock-sync-service.cmd"
 $jarName = Split-Path -Leaf $jar.FullName
-Set-Content -Path $runner -Encoding ASCII -Value @(
+$runnerLines = @(
     "@echo off",
+    "set `"SMARTSTOCK_ENVIRONMENT=$Environment`""
+)
+if (-not [string]::IsNullOrWhiteSpace($SupabaseUrl)) {
+    $runnerLines += "set `"SUPABASE_URL=$SupabaseUrl`""
+}
+if (-not [string]::IsNullOrWhiteSpace($SupabasePublishableKey)) {
+    $runnerLines += "set `"SUPABASE_PUBLISHABLE_KEY=$SupabasePublishableKey`""
+}
+$runnerLines += @(
     "cd /d `"$serviceAppDir`"",
     "java -jar $jarName --sync-service"
 )
+Set-Content -Path $runner -Encoding ASCII -Value $runnerLines
 
-schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /F | Out-Host
+schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /RL HIGHEST /F | Out-Host
 schtasks /Run /TN $TaskName | Out-Host
 schtasks /Query /TN $TaskName /FO LIST | Out-Host
 

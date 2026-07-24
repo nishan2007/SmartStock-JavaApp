@@ -53,13 +53,17 @@ final class LanSalesService {
         SaleConfig config = loadConfig(connection, locationId);
         boolean canDiscount = hasPermission(connection, userId, "APPLY_SALE_DISCOUNT");
         boolean canChangePrice = hasPermission(connection, userId, "CHANGE_SALE_ITEM_PRICE");
+        boolean canOverrideSaleDiscount = hasPermission(connection, userId, "SALE_DISCOUNT_OVERRIDE");
         BigDecimal saleDiscount = percent(request.saleDiscountPercent());
         Approval saleApproval = null;
         if (saleDiscount.compareTo(config.discountLimit()) > 0) {
-            saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
-                    "SALE_DISCOUNT_OVERRIDE", "Sale Discount Override", request.saleDiscountOverrideReason());
+            if (!canOverrideSaleDiscount) {
+                saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
+                        "SALE_DISCOUNT_OVERRIDE", "Sale Discount Override", request.saleDiscountOverrideReason());
+            }
         } else if (saleDiscount.signum() > 0 && !canDiscount) {
-            throw new SQLException("Manager approval is required to apply this sale discount.");
+            saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
+                    "APPLY_SALE_DISCOUNT", "Sale Discount Approval", request.saleDiscountOverrideReason());
         }
 
         // Lock all products in one deterministic order. Registers can submit
@@ -118,10 +122,6 @@ final class LanSalesService {
         if (cashPayment && cashCollected.compareTo(total) < 0) {
             throw new SQLException("Cash collected is less than the sale total.");
         }
-        if ("MMG".equals(request.paymentMethod()) && blank(request.paymentReference())) {
-            throw new SQLException("MMG transaction reference is required.");
-        }
-
         if (accountPayment) {
             if (request.customerId() == null) throw new SQLException("Select a customer account for account payment.");
             chargeCustomerAccount(connection, request.customerId(), total, userId, userName, deviceId, locationId);
@@ -174,6 +174,9 @@ final class LanSalesService {
         String payment = request.paymentMethod() == null ? "" : request.paymentMethod().trim().toUpperCase();
         if (!List.of("CASH", "CARD", "MMG", "ACCOUNT", "CHEQUE", "BANK_TRANSFER").contains(payment)) {
             throw new SQLException("Unsupported payment method.");
+        }
+        if (requiresPaymentReference(payment) && blank(request.paymentReference())) {
+            throw new SQLException("A card, cheque, or MMG reference is required.");
         }
         for (CheckoutLine line : request.lines()) {
             if (line.productId() <= 0 || line.quantity() <= 0 || line.quantity() > 100_000) {
@@ -364,6 +367,11 @@ final class LanSalesService {
     private static BigDecimal money(BigDecimal value) { return (value == null ? BigDecimal.ZERO : value).setScale(2,RoundingMode.HALF_UP); }
     private static BigDecimal percent(BigDecimal value) { return (value == null ? BigDecimal.ZERO : value).max(BigDecimal.ZERO).min(HUNDRED).setScale(2,RoundingMode.HALF_UP); }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
+    static boolean requiresPaymentReference(String paymentMethod) {
+        return "CARD".equals(paymentMethod)
+                || "CHEQUE".equals(paymentMethod)
+                || "MMG".equals(paymentMethod);
+    }
     private static String text(String value) { return blank(value) ? null : value.trim(); }
     private static void setInt(PreparedStatement ps,int i,Integer v)throws SQLException{if(v==null)ps.setNull(i,Types.INTEGER);else ps.setInt(i,v);}
     private static void setLong(PreparedStatement ps,int i,Long v)throws SQLException{if(v==null)ps.setNull(i,Types.BIGINT);else ps.setLong(i,v);}

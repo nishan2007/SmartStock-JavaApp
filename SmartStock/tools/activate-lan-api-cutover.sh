@@ -94,7 +94,7 @@ for credentials_file in "${HOME}/.smartstock"/database-credentials.txt*; do
 done
 for properties_file in "${HOME}/.smartstock"/database.properties.bak.*; do
   [[ -f "$properties_file" ]] || continue
-  perl -0pi -e 's/^db\.user=.*/db.user=\${SMARTSTOCK_SECURE_DB_USER}/mg; s/^db\.password=.*/db.password=\${SMARTSTOCK_SECURE_DB_PASSWORD}/mg; s/^cloud\.db\.user=.*/cloud.db.user=\${SMARTSTOCK_SECURE_CLOUD_DB_USER}/mg; s/^cloud\.db\.password=.*/cloud.db.password=\${SMARTSTOCK_SECURE_CLOUD_DB_PASSWORD}/mg' "$properties_file"
+  perl -0pi -e 's/^db\.user=.*/db.user=\${SMARTSTOCK_SECURE_DB_USER}/mg; s/^db\.password=.*/db.password=\${SMARTSTOCK_SECURE_DB_PASSWORD}/mg; s/^cloud\.(?:jdbc\.url|db\.(?:user|password))=.*\n?//mg' "$properties_file"
   chmod 600 "$properties_file"
 done
 formula="$(brew services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1)"

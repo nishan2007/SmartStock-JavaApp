@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import data.DB;
 import data.DatabaseConfig;
+import data.EnvironmentProfile;
 import data.DatabaseMode;
 import managers.ServerTimeClockManager;
 import managers.ServerCompanyCustomizationRepository;
@@ -19,6 +20,7 @@ import javax.crypto.Cipher;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -56,6 +58,7 @@ public final class LanApiServer implements AutoCloseable {
     public static final int DEFAULT_PORT = 8443;
     private static final int MAX_BODY_BYTES = 2 * 1024 * 1024;
     private static final int MAX_IMAGE_BODY_BYTES = 16 * 1024 * 1024;
+    private static final int MAX_CLOUD_FILE_BODY_BYTES = 36 * 1024 * 1024;
     private static final Set<String> DEVICE_HEADER_EXEMPT_ROUTES = Set.of(
             "/v1/devices/enroll", "/v1/devices/claim", "/v1/devices/local-claim");
     private static final Duration SESSION_LIFETIME = Duration.ofMinutes(15);
@@ -90,17 +93,51 @@ public final class LanApiServer implements AutoCloseable {
                     return thread;
                 });
         https.setExecutor(executor);
-        LanDiscoveryService discovery = LanDiscoveryService.start(port, identity);
-        LanApiServer api = new LanApiServer(https, executor, identity, discovery);
-        api.installRoutes();
         try (Connection connection = DB.getConnection()) {
             DeviceCredentialSchemaInstaller.ensureSchema(connection);
             LanApiSchemaInstaller.ensureSchema(connection);
         }
+        LanDiscoveryService discovery = Boolean.getBoolean("smartstock.remote.gateway")
+                ? null : LanDiscoveryService.start(port, identity, discoveryIdentity(identity));
+        LanApiServer api = new LanApiServer(https, executor, identity, discovery);
+        api.installRoutes();
         https.start();
         System.out.println("SmartStock LAN service listening on HTTPS port " + port
                 + "; certificate " + identity.fingerprint());
         return api;
+    }
+
+    private static LanDiscoveryService.DiscoveryIdentity discoveryIdentity(
+            LanTlsIdentity identity) throws Exception {
+        DatabaseConfig config = DatabaseConfig.load();
+        String storeName = "Unassigned Store";
+        String storeCode = "";
+        if (config.locationId() != null) {
+            try (Connection connection = DB.getConnection();
+                 PreparedStatement statement = connection.prepareStatement("""
+                         SELECT name, COALESCE(receipt_store_code, '')
+                         FROM locations WHERE location_id = ?
+                         """)) {
+                statement.setInt(1, config.locationId());
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (rows.next()) {
+                        storeName = rows.getString(1);
+                        storeCode = rows.getString(2);
+                    }
+                }
+            }
+        }
+        String computerName;
+        try {
+            computerName = java.net.InetAddress.getLocalHost().getHostName();
+        } catch (Exception ex) {
+            computerName = LanTlsIdentity.tlsHostName();
+        }
+        String fingerprint = identity.fingerprint();
+        String serverId = fingerprint == null ? "UNKNOWN"
+                : fingerprint.substring(0, Math.min(8, fingerprint.length())).toUpperCase();
+        return new LanDiscoveryService.DiscoveryIdentity(
+                EnvironmentProfile.active().id(), storeName, storeCode, computerName, serverId);
     }
 
     public String pairingPhrase() {
@@ -118,8 +155,13 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/devices/local-claim", exchange -> handle(exchange, this::localServerClaim));
         server.createContext("/v1/devices/rotate", exchange -> handle(exchange, this::rotate));
         server.createContext("/v1/sessions/login", exchange -> handle(exchange, this::login));
+        server.createContext("/v1/sessions/badge-status", exchange -> handle(exchange, this::badgeStatus));
+        server.createContext("/v1/sessions/badge-pin-setup", exchange -> handle(exchange, this::badgePinSetup));
         server.createContext("/v1/sessions/refresh", exchange -> handle(exchange, this::refresh));
         server.createContext("/v1/sessions/logout", exchange -> handle(exchange, this::logout));
+        server.createContext("/v1/sessions/stores", exchange -> handle(exchange, this::sessionStores));
+        server.createContext("/v1/sessions/switch-store", exchange -> handle(exchange, this::switchSessionStore));
+        server.createContext("/v1/remote/commands", exchange -> handle(exchange, this::remoteCommands));
         server.createContext("/v1/session/permissions", exchange -> handle(exchange, this::permissions));
         server.createContext("/v1/approvals", exchange -> handle(exchange, this::approve));
         server.createContext("/v1/catalog/search", exchange -> handle(exchange, this::searchCatalog));
@@ -145,6 +187,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/transfers/destinations", exchange -> handle(exchange, this::transferDestinations));
         server.createContext("/v1/transfers/products", exchange -> handle(exchange, this::transferProducts));
         server.createContext("/v1/transfers/incoming", exchange -> handle(exchange, this::incomingTransfers));
+        server.createContext("/v1/transfers/outgoing", exchange -> handle(exchange, this::outgoingTransfers));
         server.createContext("/v1/transfers/items", exchange -> handle(exchange, this::transferItems));
         server.createContext("/v1/transfers/create", exchange -> handle(exchange, this::createTransfer));
         server.createContext("/v1/transfers/receive", exchange -> handle(exchange, this::receiveTransfer));
@@ -216,6 +259,15 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/custom-orders/workflow/update", exchange -> handle(exchange, this::customOrderWorkflowMutation));
         server.createContext("/v1/configuration/read", exchange -> handle(exchange, this::companyCustomizationRead));
         server.createContext("/v1/configuration/update", exchange -> handle(exchange, this::companyCustomizationMutation));
+        server.createContext("/v1/cloud/update/latest", exchange -> handle(exchange, this::latestAppRelease));
+        server.createContext("/v1/cloud/update/sign", exchange -> handle(exchange, this::signAppRelease));
+        server.createContext("/v1/cloud/storage/upload", exchange -> handle(exchange, this::uploadCloudFile));
+        server.createContext("/v1/cloud/storage/download", exchange -> handle(exchange, this::downloadCloudFile));
+        server.createContext("/v1/images/fetch", exchange -> handle(exchange, this::fetchImageAsset));
+        server.createContext("/v1/images/list", exchange -> handle(exchange, this::listImageAssets));
+        server.createContext("/v1/images/reconcile", exchange -> handle(exchange, this::reconcileImageAssets));
+        server.createContext("/v1/images/retain", exchange -> handle(exchange, this::retainImageAsset));
+        server.createContext("/v1/images/purge", exchange -> handle(exchange, this::purgeImageAsset));
         server.createContext("/v1/accounting/balance-sheet/read", exchange -> handle(exchange, this::balanceSheetRead));
         server.createContext("/v1/accounting/balance-sheet/update", exchange -> handle(exchange, this::balanceSheetMutation));
         server.createContext("/v1/email/queue", exchange -> handle(exchange, this::queueEmail));
@@ -256,6 +308,230 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/security/roles/add", exchange -> handle(exchange, this::roleAdminAdd));
     }
 
+    private ApiResult latestAppRelease(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        authenticateSession(context.exchange(), device, true);
+        String platform = required(context.body(), "platform", 40).toLowerCase(java.util.Locale.ROOT);
+        if (!platform.matches("[a-z0-9._-]+")) throw new ApiException(400, "VALIDATION_ERROR", "The update platform is invalid.", false);
+        String query = "select=release_id,version,build_number,platform,artifact_bucket,artifact_path,sha256,file_size_bytes,release_notes,required,minimum_supported_version"
+                + "&published=eq.true&platform=in.(" + cloudEncode(platform) + ",all)&order=build_number.desc&limit=1";
+        HttpResponse<String> response = cloudRequest(HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/rest/v1/app_releases?" + query))
+                .timeout(Duration.ofSeconds(20)).header("Accept", "application/json").GET());
+        com.google.gson.JsonArray rows = JsonParser.parseString(response.body()).getAsJsonArray();
+        if (rows.isEmpty()) { Map<String,Object> empty=new LinkedHashMap<>();empty.put("release",null);return ApiResult.ok(empty); }
+        JsonObject row = rows.get(0).getAsJsonObject();
+        AppUpdateService.AppRelease release = new AppUpdateService.AppRelease(
+                row.get("release_id").getAsLong(), row.get("version").getAsString(), row.get("build_number").getAsInt(),
+                row.get("platform").getAsString(), row.get("artifact_bucket").getAsString(), row.get("artifact_path").getAsString(),
+                row.get("sha256").getAsString(), row.get("file_size_bytes").getAsLong(),
+                row.has("release_notes") && !row.get("release_notes").isJsonNull() ? row.get("release_notes").getAsString() : "",
+                row.has("required") && row.get("required").getAsBoolean(),
+                row.has("minimum_supported_version") && !row.get("minimum_supported_version").isJsonNull()
+                        ? row.get("minimum_supported_version").getAsString() : "");
+        return ApiResult.ok(Map.of("release", release));
+    }
+
+    private ApiResult signAppRelease(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        authenticateSession(context.exchange(), device, true);
+        String bucket = required(context.body(), "bucket", 100);
+        String path = required(context.body(), "path", 1000);
+        if (R2UpdateUrlSigner.handles(bucket)) {
+            if (!R2UpdateUrlSigner.R2_BUCKET_REFERENCE.equals(bucket)
+                    || path.startsWith("/") || path.contains("..") || path.contains("\\")) {
+                throw new ApiException(403, "UPDATE_ARTIFACT_DENIED",
+                        "The requested update artifact is not allowed.", false);
+            }
+            requirePublishedUpdateArtifact(bucket, path);
+            return ApiResult.ok(Map.of("url", R2UpdateUrlSigner.createDownloadUrl(bucket, path)));
+        }
+        if (!"smartstock-releases".equals(bucket) || path.startsWith("/")
+                || path.contains("..") || path.contains("\\")) {
+            throw new ApiException(403, "UPDATE_ARTIFACT_DENIED", "The requested update artifact is not allowed.", false);
+        }
+        requirePublishedUpdateArtifact(bucket, path);
+        String encodedPath = java.util.Arrays.stream(path.split("/"))
+                .filter(part -> !part.isBlank()).map(LanApiServer::cloudEncode)
+                .collect(java.util.stream.Collectors.joining("/"));
+        HttpResponse<String> response = cloudRequest(HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/storage/v1/object/sign/"
+                        + cloudEncode(bucket) + "/" + encodedPath))
+                .timeout(Duration.ofSeconds(20)).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"expiresIn\":600}", StandardCharsets.UTF_8)));
+        JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+        String signed = body.has("signedURL") ? body.get("signedURL").getAsString() : body.get("signedUrl").getAsString();
+        return ApiResult.ok(Map.of("url", AppUpdateService.resolveSignedDownloadUrl(SupabaseSessionManager.getSupabaseUrl(), signed)));
+    }
+
+    private static void requirePublishedUpdateArtifact(String bucket, String path) throws Exception {
+        String query = "select=release_id"
+                + "&published=eq.true"
+                + "&artifact_bucket=eq." + cloudEncode(bucket)
+                + "&artifact_path=eq." + cloudEncode(path)
+                + "&limit=1";
+        HttpResponse<String> response = cloudRequest(HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/rest/v1/app_releases?" + query))
+                .timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json")
+                .GET());
+        com.google.gson.JsonArray rows = JsonParser.parseString(response.body()).getAsJsonArray();
+        if (rows.isEmpty()) {
+            throw new ApiException(403, "UPDATE_ARTIFACT_DENIED",
+                    "The requested update artifact is not published.", false);
+        }
+    }
+
+    private ApiResult uploadCloudFile(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        String bucket = required(context.body(), "bucket", 100);
+        String path = required(context.body(), "path", 1000);
+        String contentType = required(context.body(), "contentType", 200);
+        boolean employeeFile = "employee files".equals(bucket)
+                && (path.startsWith("employee photos/") || path.startsWith("ID cards/"));
+        boolean productImage = "Product Images".equals(bucket) && path.startsWith("products/");
+        if ((!employeeFile && !productImage) || path.startsWith("/") || path.contains("..")) {
+            throw new ApiException(403, "CLOUD_FILE_DENIED", "The requested employee file location is not allowed.", false);
+        }
+        if (employeeFile) try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "EMPLOYEE_MANAGEMENT");
+        }
+        byte[] bytes;
+        try { bytes = Base64.getDecoder().decode(required(context.body(), "bytesBase64", MAX_CLOUD_FILE_BODY_BYTES)); }
+        catch (IllegalArgumentException ex) { throw new ApiException(400, "INVALID_FILE", "The uploaded employee file is invalid.", false); }
+        String category = employeeFile ? "EMPLOYEE_PHOTO" : "PRODUCT";
+        if (path.startsWith("ID cards/")) {
+            String encodedPath = java.util.Arrays.stream(path.split("/"))
+                    .filter(part -> !part.isBlank()).map(LanApiServer::cloudEncode)
+                    .collect(java.util.stream.Collectors.joining("/"));
+            cloudRequest(HttpRequest.newBuilder().uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
+                            + "/storage/v1/object/" + cloudEncode(bucket) + "/" + encodedPath))
+                    .timeout(Duration.ofSeconds(60)).header("Content-Type", contentType).header("x-upsert", "true")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(bytes)));
+            String url = SupabaseSessionManager.getSupabaseUrl() + "/storage/v1/object/authenticated/"
+                    + cloudEncode(bucket) + "/" + encodedPath;
+            return ApiResult.ok(Map.of("url", url));
+        }
+        String reference;
+        try (Connection connection = DB.getConnection()) {
+            reference = ServerImageAssetService.storeUpload(connection, category, bucket, path, contentType,
+                    path.substring(path.lastIndexOf('/') + 1),
+                    productImage ? "PUBLIC" : "AUTHENTICATED", bytes);
+            try {
+                ServerImageAssetService.synchronize(connection);
+            } catch (Exception ignored) {
+                // Offline-first: the sync worker will retry without blocking the save.
+            }
+        }
+        return ApiResult.ok(Map.of("url", reference, "reference", reference));
+    }
+
+    private ApiResult fetchImageAsset(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        String reference = required(context.body(), "reference", 100);
+        try (Connection connection = DB.getConnection()) {
+            if (ServerImageAssetService.isEmployeePhoto(connection, reference)) {
+                requireAnyPermission(connection, session.userId(), "EMPLOYEE_MANAGEMENT");
+            }
+        }
+        ServerImageAssetService.AssetBytes asset = ServerImageAssetService.load(reference);
+        return ApiResult.ok(Map.of(
+                "bytesBase64", Base64.getEncoder().encodeToString(asset.bytes()),
+                "contentType", asset.contentType(),
+                "sha256", asset.sha256()));
+    }
+
+    private ApiResult listImageAssets(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "COMPANY_PREFERENCES", "COMPANY_CUSTOMIZATION");
+            return ApiResult.ok(Map.of("assets", ServerImageAssetService.list(connection),
+                    "counts", ServerImageAssetService.counts(connection)));
+        }
+    }
+
+    private ApiResult reconcileImageAssets(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "COMPANY_PREFERENCES", "COMPANY_CUSTOMIZATION");
+            ServerImageAssetService.SyncResult result = ServerImageAssetService.synchronize(connection);
+            return ApiResult.ok(Map.of("result", result));
+        }
+    }
+
+    private ApiResult retainImageAsset(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        UUID assetId = UUID.fromString(required(context.body(), "assetId", 80));
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "COMPANY_PREFERENCES", "COMPANY_CUSTOMIZATION");
+            ServerImageAssetService.retain(connection, assetId);
+            return ApiResult.ok(Map.of("updated", true));
+        }
+    }
+
+    private ApiResult purgeImageAsset(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        UUID assetId = UUID.fromString(required(context.body(), "assetId", 80));
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "COMPANY_PREFERENCES", "COMPANY_CUSTOMIZATION");
+            AuthenticatedUser actor = loadUser(connection, session.userId(), session.locationId());
+            ServerImageAssetService.purge(connection, assetId, session.userId(), displayName(actor));
+            return ApiResult.ok(Map.of("deleted", true));
+        }
+    }
+
+    private ApiResult downloadCloudFile(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "EMPLOYEE_MANAGEMENT");
+        }
+        String url = required(context.body(), "url", 4000);
+        String prefix = SupabaseSessionManager.getSupabaseUrl() + "/storage/v1/object/authenticated/" + cloudEncode("employee files") + "/";
+        if (!url.startsWith(prefix) || url.contains("..")) {
+            throw new ApiException(403, "CLOUD_FILE_DENIED", "The requested employee file is not allowed.", false);
+        }
+        HttpRequest.Builder request = HttpRequest.newBuilder().uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(60)).GET();
+        HttpResponse<byte[]> response = CLOUD_HTTP.send(
+                ServerSupabaseCredentials.applyTo(request).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new ApiException(502, "CLOUD_REQUEST_FAILED", "The SmartStock Server could not download the employee file.", response.statusCode() >= 500);
+        }
+        if (response.body().length > 25L * 1024L * 1024L) throw new ApiException(413, "FILE_TOO_LARGE", "The employee file is too large.", false);
+        return ApiResult.ok(Map.of("bytesBase64", Base64.getEncoder().encodeToString(response.body())));
+    }
+
+    private static HttpResponse<String> cloudRequest(HttpRequest.Builder builder) throws Exception {
+        HttpResponse<String> response = CLOUD_HTTP.send(
+                ServerSupabaseCredentials.applyTo(builder).build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new ApiException(502, "CLOUD_REQUEST_FAILED", "The SmartStock Server cloud request failed with HTTP " + response.statusCode() + ".", response.statusCode() >= 500);
+        }
+        return response;
+    }
+
+    private static String cloudEncode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
     private void health(HttpExchange exchange) throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) {
             send(exchange, 405, failure("METHOD_NOT_ALLOWED", "Use GET for this endpoint.", false));
@@ -282,6 +558,8 @@ public final class LanApiServer implements AutoCloseable {
         String deviceName = optional(body, "deviceName", 200);
         String hostname = optional(body, "hostname", 255);
         String appVersion = optional(body, "appVersion", 100);
+        String accessMode = "REMOTE_ADMIN".equals(optional(body, "accessMode", 30))
+                ? "REMOTE_ADMIN" : "CLIENT";
         String pairingChallenge = LanSecurity.randomToken();
         String pairingChallengeEnvelope = encryptForDevice(publicKey, pairingChallenge);
 
@@ -294,14 +572,15 @@ public final class LanApiServer implements AutoCloseable {
                         installation_id, device_fingerprint, device_name, hostname,
                         app_version, pairing_public_key, api_pairing_challenge_hash,
                         api_pairing_challenge_expires_at, first_seen, last_seen,
-                        is_approved, is_blocked, credential_status
+                        is_approved, is_blocked, credential_status, access_mode
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '24 hours',
-                              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE, FALSE, 'PENDING')
+                              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE, FALSE, 'PENDING', ?)
                     ON CONFLICT (installation_id) DO UPDATE SET
                         device_fingerprint = EXCLUDED.device_fingerprint,
                         device_name = COALESCE(NULLIF(devices.device_name, ''), EXCLUDED.device_name),
                         hostname = EXCLUDED.hostname,
                         app_version = EXCLUDED.app_version,
+                        access_mode = CASE WHEN devices.is_approved THEN devices.access_mode ELSE EXCLUDED.access_mode END,
                         last_seen = CURRENT_TIMESTAMP,
                         api_pairing_challenge_hash = EXCLUDED.api_pairing_challenge_hash,
                         api_pairing_challenge_expires_at = EXCLUDED.api_pairing_challenge_expires_at,
@@ -319,6 +598,7 @@ public final class LanApiServer implements AutoCloseable {
                 statement.setString(5, appVersion);
                 statement.setString(6, publicKey);
                 statement.setString(7, LanSecurity.sha256(pairingChallenge));
+                statement.setString(8, accessMode);
                 try (ResultSet rs = statement.executeQuery()) {
                     rs.next();
                     deviceId = (UUID) rs.getObject("device_id");
@@ -425,19 +705,20 @@ public final class LanApiServer implements AutoCloseable {
         String accessToken = optional(body, "supabaseAccessToken", 16384);
         String identifier = optional(body, "identifier", 512);
         String secret = optional(body, "secret", 2048);
+        if (secret == null) secret = "";
 
         AuthenticatedUser user;
         String source;
         SupabasePasswordResult supabaseTokens = null;
         try (Connection connection = DB.getConnection()) {
-            if (device.locationId() != null && device.locationId() != locationId) {
+            if (!device.remoteAdmin() && device.locationId() != null && device.locationId() != locationId) {
                 throw new ApiException(403, "DEVICE_STORE_MISMATCH", "This register is assigned to a different store.", false);
             }
             if (accessToken != null) {
                 user = authenticateSupabase(connection, accessToken, locationId);
                 source = "SUPABASE";
             } else {
-                if (identifier == null || secret == null) {
+                if (identifier == null) {
                     throw new ApiException(400, "LOGIN_REQUIRED", "Login credentials are required.", false);
                 }
                 LoginSecurityService.requireAllowed(connection, identifier);
@@ -451,11 +732,16 @@ public final class LanApiServer implements AutoCloseable {
                 char[] enteredSecret = secret.toCharArray();
                 try {
                     if (badgeLogin) {
-                        if (!LocalAuthCacheService.verifyEmployeePin(connection, resolved.userId(), enteredSecret)) {
+                        boolean pinRequired = ServerCompanyCustomizationRepository.isBadgePinRequired(connection, locationId);
+                        if (pinRequired && !LocalAuthCacheService.verifyEmployeePin(connection, resolved.userId(), enteredSecret)) {
                             LoginSecurityService.recordFailure(connection, device.deviceId(), identifier, "Badge PIN failed");
                             throw new ApiException(401, "LOGIN_FAILED", "The login was not accepted.", false);
                         }
-                        source = "BADGE_PIN";
+                        source = pinRequired ? "BADGE_PIN" : "BADGE_ONLY";
+                        if (!pinRequired) {
+                            auditSecurity(connection, "BADGE_ONLY_LOGIN", device.deviceId(), resolved.userId(),
+                                    "Badge-only login accepted by company preference");
+                        }
                     } else {
                         supabaseTokens = signInSupabasePassword(resolved.email(), secret);
                         if (supabaseTokens.status() == SupabasePasswordStatus.SUCCESS) {
@@ -489,6 +775,151 @@ public final class LanApiServer implements AutoCloseable {
             List<String> permissions = loadPermissions(connection, user.userId());
             return ApiResult.ok(sessionResponse(sessionToken, user, permissions, device.deviceId(), supabaseTokens,
                     persistentLoginAllowed(connection, device.deviceId())));
+        }
+    }
+
+    private ApiResult badgeStatus(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        int locationId = requiredInt(context.body(), "locationId");
+        String badgeId = required(context.body(), "badgeId", 512);
+        if (device.locationId() != null && device.locationId() != locationId) {
+            throw new ApiException(403, "DEVICE_STORE_MISMATCH", "This register is assigned to a different store.", false);
+        }
+        try (Connection connection = DB.getConnection()) {
+            ResolvedLoginUser user = resolveLoginUser(connection, badgeId, locationId);
+            if (user == null || !BadgeCredentialService.normalizeBadge(badgeId)
+                    .equals(BadgeCredentialService.normalizeBadge(user.badgeId()))) {
+                throw new ApiException(404, "BADGE_NOT_FOUND", "This employee badge is not active at this store.", false);
+            }
+            return ApiResult.ok(Map.of(
+                    "pinConfigured", LocalAuthCacheService.hasEmployeePin(connection, user.userId()),
+                    "pinRequired", ServerCompanyCustomizationRepository.isBadgePinRequired(connection, locationId)));
+        }
+    }
+
+    private ApiResult sessionStores(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        if (!device.remoteAdmin()) {
+            throw new ApiException(403, "REMOTE_ADMIN_REQUIRED", "Store switching is available only on an enrolled Remote Admin device.", false);
+        }
+        List<Map<String,Object>> stores = new ArrayList<>();
+        try (Connection connection = DB.getConnection(); PreparedStatement ps = connection.prepareStatement("""
+                SELECT l.location_id, l.name, COALESCE(l.timezone, ''),
+                       CASE WHEN ss.last_seen_at >= CURRENT_TIMESTAMP - INTERVAL '3 minutes' THEN 'Online'
+                            WHEN ss.last_seen_at IS NULL THEN 'Never synchronized' ELSE 'Offline' END,
+                       ss.last_success_at
+                FROM user_locations ul
+                JOIN locations l ON l.location_id = ul.location_id
+                LEFT JOIN store_sync_status ss ON ss.location_id = l.location_id
+                WHERE ul.user_id = ? ORDER BY l.name
+                """)) {
+            ps.setInt(1, session.userId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String,Object> row = new LinkedHashMap<>();
+                    row.put("locationId", rs.getInt(1)); row.put("name", rs.getString(2));
+                    row.put("timezone", rs.getString(3)); row.put("status", rs.getString(4));
+                    Timestamp seen = rs.getTimestamp(5); row.put("lastSyncEpochMillis", seen == null ? 0L : seen.getTime());
+                    stores.add(row);
+                }
+            }
+        }
+        return ApiResult.ok(Map.of("stores", stores, "currentLocationId", session.locationId()));
+    }
+
+    private ApiResult switchSessionStore(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, false);
+        if (!device.remoteAdmin()) {
+            throw new ApiException(403, "REMOTE_ADMIN_REQUIRED", "Store switching is available only on an enrolled Remote Admin device.", false);
+        }
+        int locationId = requiredInt(context.body(), "locationId");
+        try (Connection connection = DB.getConnection()) {
+            AuthenticatedUser user = loadUser(connection, session.userId(), locationId);
+            String token = issueSession(connection, device, user, "REMOTE_STORE_SWITCH");
+            List<String> permissions = loadPermissions(connection, user.userId());
+            auditSecurity(connection, "REMOTE_ADMIN_STORE_SWITCHED", device.deviceId(), user.userId(),
+                    "Remote Admin session switched to location " + locationId);
+            return ApiResult.ok(sessionResponse(token, user, permissions, device.deviceId(), null,
+                    persistentLoginAllowed(connection, device.deviceId())));
+        }
+    }
+
+    private ApiResult remoteCommands(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        if (!device.remoteAdmin()) throw new ApiException(403, "REMOTE_ADMIN_REQUIRED", "Remote command status requires Remote Admin.", false);
+        List<Map<String,Object>> commands = new ArrayList<>();
+        try (Connection c = DB.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                SELECT command_id,operation,status,details,created_at,applied_at
+                FROM remote_admin_commands WHERE location_id=? ORDER BY created_at DESC LIMIT 100
+                """)) {
+            ps.setInt(1, session.locationId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String,Object> row = new LinkedHashMap<>();
+                    row.put("commandId", rs.getObject(1).toString()); row.put("operation", rs.getString(2));
+                    row.put("status", rs.getString(3)); row.put("details", rs.getString(4));
+                    row.put("createdAtEpochMillis", rs.getTimestamp(5).getTime());
+                    Timestamp applied = rs.getTimestamp(6); row.put("appliedAtEpochMillis", applied == null ? 0L : applied.getTime());
+                    commands.add(row);
+                }
+            }
+        }
+        return ApiResult.ok(Map.of("commands", commands));
+    }
+
+    private ApiResult badgePinSetup(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        JsonObject body = context.body();
+        int locationId = requiredInt(body, "locationId");
+        String badgeId = required(body, "badgeId", 512);
+        String accountPassword = required(body, "accountPassword", 2048);
+        String pinText = required(body, "pin", 16);
+        char[] pin = pinText.toCharArray();
+        if (device.locationId() != null && device.locationId() != locationId) {
+            java.util.Arrays.fill(pin, '\0');
+            throw new ApiException(403, "DEVICE_STORE_MISMATCH", "This register is assigned to a different store.", false);
+        }
+        if (!EmployeePinService.validPin(pin)) {
+            java.util.Arrays.fill(pin, '\0');
+            throw new ApiException(400, "PIN_INVALID", "Use exactly 4–8 digits for the employee PIN.", false);
+        }
+        try (Connection connection = DB.getConnection()) {
+            LoginSecurityService.requireAllowed(connection, badgeId);
+            ResolvedLoginUser user = resolveLoginUser(connection, badgeId, locationId);
+            if (user == null || !BadgeCredentialService.normalizeBadge(badgeId)
+                    .equals(BadgeCredentialService.normalizeBadge(user.badgeId()))) {
+                LoginSecurityService.recordFailure(connection, device.deviceId(), badgeId, "Unknown badge PIN setup identifier");
+                throw new ApiException(401, "BADGE_SETUP_FAILED", "Badge PIN setup was not accepted.", false);
+            }
+            if (LocalAuthCacheService.hasEmployeePin(connection, user.userId())) {
+                throw new ApiException(409, "PIN_ALREADY_CONFIGURED", "This employee already has a badge PIN.", false);
+            }
+            SupabasePasswordResult passwordResult = signInSupabasePassword(user.email(), accountPassword);
+            if (passwordResult.status() != SupabasePasswordStatus.SUCCESS) {
+                LoginSecurityService.recordFailure(connection, device.deviceId(), badgeId, "Badge PIN setup password failed");
+                throw new ApiException(401, "BADGE_SETUP_FAILED",
+                        passwordResult.status() == SupabasePasswordStatus.UNAVAILABLE
+                                ? "Internet access is required for first-time badge PIN setup."
+                                : "Badge PIN setup was not accepted.", false);
+            }
+            LocalAuthCacheService.saveEmployeePin(connection, user.cachedUser(), pin);
+            LoginSecurityService.recordSuccess(connection, badgeId);
+            String sessionToken = issueSession(connection, device, user.authenticatedUser(), "BADGE_PIN_SETUP");
+            List<String> permissions = loadPermissions(connection, user.userId());
+            auditSecurity(connection, "EMPLOYEE_BADGE_PIN_CREATED", device.deviceId(), user.userId(),
+                    "Employee created a PIN after first badge tap");
+            return ApiResult.ok(sessionResponse(sessionToken, user.authenticatedUser(), permissions,
+                    device.deviceId(), passwordResult, persistentLoginAllowed(connection, device.deviceId())));
+        } finally {
+            java.util.Arrays.fill(pin, '\0');
         }
     }
 
@@ -642,7 +1073,8 @@ public final class LanApiServer implements AutoCloseable {
         SessionPrincipal requester = authenticateSession(context.exchange(), device, true);
         JsonObject body = context.body();
         String managerIdentifier = required(body, "managerIdentifier", 512);
-        String password = required(body, "password", 2048);
+        String password = optional(body, "password", 2048);
+        if (password == null) password = "";
         String permissionKey = required(body, "permissionKey", 160).toUpperCase();
         String actionKey = required(body, "actionKey", 200);
         String resourceHash = required(body, "resourceHash", 128);
@@ -651,8 +1083,10 @@ public final class LanApiServer implements AutoCloseable {
             int managerUserId;
             String managerEmail;
             String managerName;
+            String managerBadgeId;
             try (PreparedStatement ps = connection.prepareStatement("""
-                    SELECT u.user_id, u.email, COALESCE(NULLIF(TRIM(u.full_name), ''), u.username, 'Manager')
+                    SELECT u.user_id, u.email, COALESCE(NULLIF(TRIM(u.full_name), ''), u.username, 'Manager'),
+                           COALESCE(u.badge_id, '')
                 FROM users u
                 JOIN user_locations ul ON ul.user_id = u.user_id AND ul.location_id = ?
                 WHERE u.is_active = TRUE
@@ -669,21 +1103,44 @@ public final class LanApiServer implements AutoCloseable {
                     managerUserId = rs.getInt(1);
                     managerEmail = rs.getString(2);
                     managerName = rs.getString(3);
+                    managerBadgeId = rs.getString(4);
                 }
             }
             LoginSecurityService.requireAllowed(connection, managerIdentifier);
-            SupabasePasswordResult managerAuth = signInSupabasePassword(managerEmail, password);
-            boolean managerAccepted = managerAuth.status() == SupabasePasswordStatus.SUCCESS;
-            if (!managerAccepted && managerAuth.status() == SupabasePasswordStatus.UNAVAILABLE) {
-                LocalAuthCacheService.CachedUser cachedManager = LocalAuthCacheService.verify(
-                        connection, managerIdentifier, password.toCharArray(), requester.locationId());
-                managerAccepted = cachedManager != null && cachedManager.userId() == managerUserId;
+            boolean badgeLogin = BadgeCredentialService.normalizeBadge(managerIdentifier)
+                    .equals(BadgeCredentialService.normalizeBadge(managerBadgeId))
+                    && BadgeCredentialService.looksLikeGeneratedBadge(
+                            BadgeCredentialService.normalizeBadge(managerIdentifier));
+            char[] managerSecret = password.toCharArray();
+            boolean managerAccepted;
+            boolean managerBadgePinRequired = !badgeLogin
+                    || ServerCompanyCustomizationRepository.isBadgePinRequired(
+                            connection, requester.locationId());
+            try {
+                if (badgeLogin) {
+                    managerAccepted = !managerBadgePinRequired
+                            || LocalAuthCacheService.verifyEmployeePin(connection, managerUserId, managerSecret);
+                } else {
+                    SupabasePasswordResult managerAuth = signInSupabasePassword(managerEmail, password);
+                    managerAccepted = managerAuth.status() == SupabasePasswordStatus.SUCCESS;
+                    if (!managerAccepted && managerAuth.status() == SupabasePasswordStatus.UNAVAILABLE) {
+                        LocalAuthCacheService.CachedUser cachedManager = LocalAuthCacheService.verify(
+                                connection, managerIdentifier, managerSecret, requester.locationId());
+                        managerAccepted = cachedManager != null && cachedManager.userId() == managerUserId;
+                    }
+                }
+            } finally {
+                java.util.Arrays.fill(managerSecret, '\0');
             }
             if (!managerAccepted) {
                 LoginSecurityService.recordFailure(connection, device.deviceId(), managerIdentifier, "LAN API manager confirmation failed");
                 throw new ApiException(401, "MANAGER_LOGIN_FAILED", "Manager confirmation was not accepted.", false);
             }
             LoginSecurityService.recordSuccess(connection, managerIdentifier);
+            if (badgeLogin && !managerBadgePinRequired) {
+                auditSecurity(connection, "BADGE_ONLY_MANAGER_APPROVAL", device.deviceId(), managerUserId,
+                        "Badge-only manager approval accepted by company preference");
+            }
             if (!hasPermission(connection, managerUserId, permissionKey)) {
                 throw new ApiException(403, "MANAGER_PERMISSION_DENIED", "That manager does not have permission for this action.", false);
             }
@@ -1022,6 +1479,15 @@ public final class LanApiServer implements AutoCloseable {
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);
         try(Connection connection=DB.getConnection()){
             try{return ApiResult.ok(Map.of("transfers",LanTransferService.incoming(connection,session.userId(),session.locationId())));}
+            catch(LanTransferService.RuleViolation ex){throw apiException(ex);}
+        }
+    }
+
+    private ApiResult outgoingTransfers(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection connection=DB.getConnection()){
+            try{return ApiResult.ok(Map.of("transfers",LanTransferService.outgoing(connection,session.userId(),session.locationId())));}
             catch(LanTransferService.RuleViolation ex){throw apiException(ex);}
         }
     }
@@ -1441,7 +1907,20 @@ public final class LanApiServer implements AutoCloseable {
     private String employeeAuthCreate(LanEmployeeAdminService.SaveRequest r)throws Exception{if(r==null)throw new ApiException(400,"VALIDATION_ERROR","Employee details are required.",false);JsonObject b=new JsonObject();b.addProperty("email",r.email());b.addProperty("password",r.password());b.addProperty("full_name",r.fullName());b.addProperty("is_active",r.active());JsonObject result=employeeAuthCall("create-employee-auth-user",b,r.supabaseAccessToken());for(String k:List.of("auth_user_id","user_id","id"))if(result.has(k)&&!result.get(k).isJsonNull())return result.get(k).getAsString();throw new ApiException(502,"AUTH_SYNC_FAILED","Supabase created the employee but returned no Auth user ID.",true);}
     private void employeeAuthUpdate(String id,LanEmployeeAdminService.SaveRequest r)throws Exception{JsonObject b=new JsonObject();b.addProperty("auth_user_id",id);b.addProperty("email",r.email());b.addProperty("full_name",r.fullName());b.addProperty("is_active",r.active());if(r.password()!=null&&!r.password().isBlank())b.addProperty("password",r.password());employeeAuthCall("update-employee-auth-user",b,r.supabaseAccessToken());}
     private void employeeAuthDelete(String id,String token)throws Exception{JsonObject b=new JsonObject();b.addProperty("auth_user_id",id);employeeAuthCall("delete-employee-auth-user",b,token);}
-    private JsonObject employeeAuthCall(String function,JsonObject body,String token)throws Exception{if(token==null||token.isBlank())throw new ApiException(401,"CLOUD_SESSION_REQUIRED","A current Supabase login is required for employee Auth administration.",false);HttpRequest request=HttpRequest.newBuilder().uri(URI.create(SupabaseSessionManager.getSupabaseUrl()+"/functions/v1/"+function)).timeout(Duration.ofSeconds(20)).header("Content-Type","application/json").header("apikey",SupabaseSessionManager.getSupabasePublishableKey()).header("Authorization","Bearer "+token).POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body),StandardCharsets.UTF_8)).build();HttpResponse<String>response=CLOUD_HTTP.send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));if(response.statusCode()<200||response.statusCode()>=300){String message="Employee Auth synchronization failed.";try{JsonObject e=JsonParser.parseString(response.body()).getAsJsonObject();for(String k:List.of("error","message","msg"))if(e.has(k)){message=e.get(k).getAsString();break;}}catch(Exception ignored){}throw new ApiException(502,"AUTH_SYNC_FAILED",message,response.statusCode()>=500);}if(response.body()==null||response.body().isBlank())return new JsonObject();try{return JsonParser.parseString(response.body()).getAsJsonObject();}catch(Exception e){return new JsonObject();}}
+    private JsonObject employeeAuthCall(String function,JsonObject body,String token)throws Exception{
+        boolean serverCredential=token==null||token.isBlank()||"SERVER_CREDENTIAL".equals(token);
+        HttpRequest.Builder request=HttpRequest.newBuilder()
+                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()+"/functions/v1/"+function))
+                .timeout(Duration.ofSeconds(20)).header("Content-Type","application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body),StandardCharsets.UTF_8));
+        if(serverCredential)ServerSupabaseCredentials.applyTo(request);
+        else request.header("apikey",SupabaseSessionManager.getSupabasePublishableKey())
+                .header("Authorization","Bearer "+token);
+        HttpResponse<String>response=CLOUD_HTTP.send(request.build(),HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if(response.statusCode()<200||response.statusCode()>=300){String message="Employee Auth synchronization failed.";try{JsonObject e=JsonParser.parseString(response.body()).getAsJsonObject();for(String k:List.of("error","message","msg"))if(e.has(k)){message=e.get(k).getAsString();break;}}catch(Exception ignored){}throw new ApiException(502,"AUTH_SYNC_FAILED",message,response.statusCode()>=500);}
+        if(response.body()==null||response.body().isBlank())return new JsonObject();
+        try{return JsonParser.parseString(response.body()).getAsJsonObject();}catch(Exception e){return new JsonObject();}
+    }
     private ApiResult quotationRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);try{String a=required(x.body(),"action",40);Map<String,Object>r=new LinkedHashMap<>();switch(a){case"LIST_QUOTES"->r.put("rows",ServerQuotationInvoiceViewService.listQuotations());case"LIST_INVOICES"->r.put("rows",ServerQuotationInvoiceViewService.listInvoices());case"LIST_DELIVERIES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliveries());case"LIST_AUDIT"->r.put("rows",ServerQuotationInvoiceViewService.listAudit());case"SEARCH_CUSTOMERS"->r.put("rows",ServerQuotationInvoiceViewService.searchCustomers(optional(x.body(),"search",500)));case"QUOTE_EDIT"->r.put("quotation",ServerQuotationInvoiceViewService.loadQuotationForEdit(requiredLong(x.body(),"quotationId")));case"SEARCH_PRODUCTS"->r.put("rows",ServerQuotationInvoiceViewService.searchProducts(optional(x.body(),"search",500)));case"DELIVERABLE_LINES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliverableLines(requiredLong(x.body(),"invoiceId")));case"INVOICE_FINANCIALS"->r.put("financials",ServerQuotationInvoiceViewService.loadInvoiceFinancials(requiredLong(x.body(),"invoiceId")));default->throw new ApiException(400,"VALIDATION_ERROR","The quotation query is invalid.",false);}return ApiResult.ok(r);}finally{ServerRequestIdentity.clear();}}}
     private ApiResult quotationMutation(RequestContext x)throws Exception{
         requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
@@ -1450,8 +1929,8 @@ public final class LanApiServer implements AutoCloseable {
             requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
             AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);Map<String,Object>r=new LinkedHashMap<>();
             try{switch(a){
-                case"CREATE"->{ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.createQuotation(c,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),lines==null?List.of():List.of(lines)));}
-                case"UPDATE"->{ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.updateDraftQuotation(c,requiredLong(x.body(),"quotationId"),requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),lines==null?List.of():List.of(lines)));}
+                case"CREATE"->{ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.createQuotation(c,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,null,lines)));}
+                case"UPDATE"->{long quotationId=requiredLong(x.body(),"quotationId");ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.updateDraftQuotation(c,quotationId,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,quotationId,lines)));}
                 case"ISSUE"->{ServerQuotationInvoiceService.issueQuotation(c,requiredLong(x.body(),"quotationId"));r.put("updated",true);}
                 case"CANCEL"->{ServerQuotationInvoiceService.cancelQuotation(c,requiredLong(x.body(),"quotationId"),optional(x.body(),"reason",2000));r.put("updated",true);}
                 case"ACCEPT"->r.put("invoice",ServerQuotationInvoiceService.acceptQuotation(c,requiredLong(x.body(),"quotationId")));
@@ -1462,6 +1941,65 @@ public final class LanApiServer implements AutoCloseable {
             }}finally{ServerRequestIdentity.clear();}
             completeIdempotency(c,d.deviceId(),key,r);c.commit();return ApiResult.ok(r);
         }catch(Exception e){c.rollback();throw e;}finally{ServerRequestIdentity.clear();c.setAutoCommit(true);}}}
+    private List<ServerQuotationInvoiceService.QuotationLineInput> trustedQuotationLines(
+            Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u,Long quotationId,
+            ServerQuotationInvoiceService.QuotationLineInput[] supplied)throws Exception{
+        if(supplied==null)return List.of();
+        List<ServerQuotationInvoiceService.QuotationLineInput> trusted=new ArrayList<>();
+        boolean canChangePrice=hasPermission(c,s.userId(),"CHANGE_SALE_ITEM_PRICE");
+        for(ServerQuotationInvoiceService.QuotationLineInput line:supplied){
+            if(line==null)continue;
+            BigDecimal original=line.unitPrice();
+            String reason=null;
+            Integer approvedBy=null;
+            String approvedName=null;
+            if(line.productId()!=null){
+                try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(price,0) FROM products WHERE product_id=?")){
+                    ps.setInt(1,line.productId());
+                    try(ResultSet rs=ps.executeQuery()){
+                        if(!rs.next())throw new ApiException(400,"PRODUCT_NOT_FOUND","A quotation product no longer exists.",false);
+                        original=utils.CurrencyFormatter.normalize(rs.getBigDecimal(1));
+                    }
+                }
+                BigDecimal entered=utils.CurrencyFormatter.normalize(line.unitPrice());
+                if(entered.compareTo(original)!=0&&!canChangePrice){
+                    reason=line.priceOverrideReason()==null?"":line.priceOverrideReason().trim();
+                    if(reason.isBlank())throw new ApiException(400,"VALIDATION_ERROR","A quotation price override reason is required.",false);
+                    LanSalesService.Approval approval=existingQuotationPriceApproval(
+                            c,quotationId,line.productId(),entered,original,reason);
+                    if(approval==null){
+                        approval=consumeApproval(c,d,s,line.priceOverrideApprovalToken(),
+                                "CHANGE_SALE_ITEM_PRICE","Quotation Price Override",reason);
+                    }
+                    approvedBy=approval.approverUserId();
+                    approvedName=approval.approverName();
+                }
+            }
+            trusted.add(new ServerQuotationInvoiceService.QuotationLineInput(
+                    line.productId(),line.itemName(),line.sku(),line.quantity(),line.unitPrice(),original,
+                    line.discountPercent(),line.deliveryMethod(),line.notes(),reason,approvedBy,approvedName,null));
+        }
+        return trusted;
+    }
+    private LanSalesService.Approval existingQuotationPriceApproval(
+            Connection c,Long quotationId,Integer productId,BigDecimal entered,BigDecimal original,
+            String reason)throws SQLException{
+        if(quotationId==null)return null;
+        try(PreparedStatement ps=c.prepareStatement("""
+                SELECT price_override_by_user_id,price_override_by_name
+                FROM quotation_lines
+                WHERE quotation_id=? AND product_id=? AND unit_price=? AND original_unit_price=?
+                  AND COALESCE(price_override_reason,'')=?
+                  AND price_override_by_user_id IS NOT NULL
+                LIMIT 1
+                """)){
+            ps.setLong(1,quotationId);ps.setInt(2,productId);ps.setBigDecimal(3,entered);
+            ps.setBigDecimal(4,original);ps.setString(5,reason);
+            try(ResultSet rs=ps.executeQuery()){
+                return rs.next()?new LanSalesService.Approval(rs.getInt(1),rs.getString(2),reason):null;
+            }
+        }
+    }
     private void bindServerIdentity(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u)throws SQLException{ServerRequestIdentity.bind(s.userId(),s.locationId(),u.locationName(),displayName(u),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()));}
     private static LocalDate optionalDate(JsonObject b,String key)throws ApiException{String v=optional(b,key,40);if(v==null||v.isBlank())return null;try{return LocalDate.parse(v);}catch(Exception e){throw new ApiException(400,"VALIDATION_ERROR",key+" is invalid.",false);}}
     private ApiResult quotationDocument(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");String type=required(x.body(),"type",30);long id=requiredLong(x.body(),"documentId");String value=switch(type){case"QUOTATION"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildQuotation(id);case"INVOICE"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildInvoice(id);case"DELIVERY"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildDelivery(id);default->throw new ApiException(400,"VALIDATION_ERROR","The document type is invalid.",false);};return ApiResult.ok(Map.of("text",value));}}
@@ -1537,6 +2075,7 @@ public final class LanApiServer implements AutoCloseable {
                         all.put("customOrderSlip", ServerCompanyCustomizationRepository.loadCustomOrderSlipSettings());
                         all.put("quotationInvoice", ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings());
                         all.put("badgeTemplate", ServerCompanyCustomizationRepository.loadBadgeTemplateSettings());
+                        all.put("badgeSecurity", ServerCompanyCustomizationRepository.loadBadgeSecuritySettings());
                         all.put("priceTags", ServerCompanyCustomizationRepository.loadPriceTagTemplateSettings());
                         yield all;
                     }
@@ -1546,6 +2085,7 @@ public final class LanApiServer implements AutoCloseable {
                     case "CUSTOM_ORDER_SLIP" -> ServerCompanyCustomizationRepository.loadCustomOrderSlipSettings();
                     case "QUOTATION_INVOICE" -> ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings();
                     case "BADGE_TEMPLATE" -> ServerCompanyCustomizationRepository.loadBadgeTemplateSettings();
+                    case "BADGE_SECURITY" -> ServerCompanyCustomizationRepository.loadBadgeSecuritySettings();
                     case "PRICE_TAGS" -> ServerCompanyCustomizationRepository.loadPriceTagTemplateSettings();
                     case "CHANGE_BASKET_TARGET" -> ServerCompanyCustomizationRepository.loadChangeBasketTargetAmount(locationId);
                     case "UPLOADED_IMAGES" -> ServerCompanyCustomizationRepository.listUploadedCompanyLogos();
@@ -1600,6 +2140,8 @@ public final class LanApiServer implements AutoCloseable {
                                 GSON.fromJson(x.body().get("settings"), ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings.class));
                         case "BADGE_TEMPLATE" -> ServerCompanyCustomizationRepository.saveBadgeTemplateSettings(
                                 GSON.fromJson(x.body().get("settings"), ServerCompanyCustomizationRepository.BadgeTemplateSettings.class));
+                        case "BADGE_SECURITY" -> ServerCompanyCustomizationRepository.saveBadgeSecuritySettings(
+                                GSON.fromJson(x.body().get("settings"), ServerCompanyCustomizationRepository.BadgeSecuritySettings.class));
                         case "PRICE_TAGS" -> {
                             ServerCompanyCustomizationRepository.PriceTagTemplateSettings[] values = GSON.fromJson(
                                     x.body().get("settings"), ServerCompanyCustomizationRepository.PriceTagTemplateSettings[].class);
@@ -1707,6 +2249,18 @@ public final class LanApiServer implements AutoCloseable {
                                 x.body().get("paymentAmount").getAsBigDecimal(),required(x.body(),"paymentMethod",40),optional(x.body(),"paymentReference",500));
                         case "SUBMIT" -> result.put("submissionId",ServerBalanceSheetService.submitBalanceSheet(connection,date(x.body(),"from"),date(x.body(),"to"),
                                 required(x.body(),"storeZoneId",100),optional(x.body(),"notes",5000),longList(x.body(),"cashDrawerSessionIds")));
+                        case "SET_BALANCE_BF" -> {
+                            if (!"ADMIN".equalsIgnoreCase(user.role())) {
+                                throw new ApiException(403,"ADMIN_REQUIRED","Only an administrator can set or edit Balance B/F.",false);
+                            }
+                            BigDecimal amount;
+                            try {
+                                amount=x.body().get("amount").getAsBigDecimal();
+                            } catch(Exception ex) {
+                                throw new ApiException(400,"VALIDATION_ERROR","A valid Balance B/F amount is required.",false);
+                            }
+                            ServerBalanceSheetService.setBalanceBf(connection,date(x.body(),"periodStart"),amount);
+                        }
                         default -> throw new ApiException(400,"VALIDATION_ERROR","The balance-sheet change is invalid.",false);
                     }
                     result.putIfAbsent("updated",true);
@@ -2336,7 +2890,7 @@ public final class LanApiServer implements AutoCloseable {
         String hash = LanSecurity.sha256(token);
         try (Connection connection = DB.getConnection();
              PreparedStatement ps = connection.prepareStatement("""
-                     SELECT device_id, installation_id, last_store_id,
+                     SELECT device_id, installation_id, last_store_id, COALESCE(access_mode, 'CLIENT') access_mode,
                             api_credential_hash, api_previous_credential_hash,
                             api_credential_expires_at, api_previous_expires_at
                      FROM devices
@@ -2354,6 +2908,11 @@ public final class LanApiServer implements AutoCloseable {
                     throw new ApiException(401, "DEVICE_CREDENTIAL_EXPIRED", "This register credential needs administrator recovery.", false);
                 }
                 UUID deviceId = (UUID) rs.getObject("device_id");
+                boolean remoteAdmin = "REMOTE_ADMIN".equals(rs.getString("access_mode"));
+                if (remoteAdmin && RemoteAdminPolicy.isPhysicalOperation(exchange.getRequestURI().getPath())) {
+                    throw new ApiException(403, "PHYSICAL_STORE_ACCESS_REQUIRED",
+                            "This action requires physical access to the selected store and is unavailable through Remote Admin.", false);
+                }
                 try (PreparedStatement touch = connection.prepareStatement("""
                         UPDATE devices SET last_seen = CURRENT_TIMESTAMP,
                             api_credential_last_used_at = CURRENT_TIMESTAMP WHERE device_id = ?
@@ -2362,8 +2921,9 @@ public final class LanApiServer implements AutoCloseable {
                     touch.executeUpdate();
                 }
                 exchange.setAttribute("smartstock.deviceId", deviceId);
+                exchange.setAttribute("smartstock.remoteAdmin", remoteAdmin);
                 return new DevicePrincipal(deviceId, rs.getString("installation_id"),
-                        (Integer) rs.getObject("last_store_id"));
+                        (Integer) rs.getObject("last_store_id"), remoteAdmin);
             }
         }
     }
@@ -2408,14 +2968,33 @@ public final class LanApiServer implements AutoCloseable {
                             update.executeUpdate();
                         }
                     }
-                    connection.commit();
                     exchange.setAttribute("smartstock.userId", rs.getInt("user_id"));
                     exchange.setAttribute("smartstock.locationId", rs.getInt("location_id"));
+                    enforceRemoteStoreAvailability(connection, exchange, rs.getInt("location_id"));
+                    connection.commit();
                     return new SessionPrincipal(sessionId, rs.getInt("user_id"), rs.getInt("location_id"), token);
                 }
             } catch (Exception ex) {
                 connection.rollback();
                 throw ex;
+            }
+        }
+    }
+
+    private void enforceRemoteStoreAvailability(Connection connection, HttpExchange exchange, int locationId) throws SQLException, ApiException {
+        if (!Boolean.TRUE.equals(exchange.getAttribute("smartstock.remoteAdmin"))) return;
+        String path = exchange.getRequestURI().getPath();
+        if (!RemoteAdminPolicy.isMutation(path) || RemoteAdminPolicy.isOfflineSafeMutation(path)) return;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT last_seen_at >= CURRENT_TIMESTAMP - INTERVAL '3 minutes'
+                FROM store_sync_status WHERE location_id=?
+                """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next() || !rs.getBoolean(1)) {
+                    throw new ApiException(409, "STORE_OFFLINE_CURRENT_STATE_REQUIRED",
+                            "The selected store is offline. This change requires current store state and has not been applied.", true);
+                }
             }
         }
     }
@@ -2637,6 +3216,7 @@ public final class LanApiServer implements AutoCloseable {
             resultCount = PerformanceDiagnostics.resultCount(result.data());
             outcome = status < 400 ? "SUCCESS" : "DENIED";
             envelope = success(result.data());
+            recordRemoteCommand(requestId, exchange);
         } catch (ApiException ex) {
             status = ex.status;
             outcome = status == 401 || status == 403 ? "DENIED" : "ERROR";
@@ -2649,6 +3229,33 @@ public final class LanApiServer implements AutoCloseable {
                 status < 400, resultCount);
         bestEffortRequestAudit(requestId, exchange, status, outcome);
         send(exchange, status, envelope);
+    }
+
+    private void recordRemoteCommand(UUID requestId, HttpExchange exchange) {
+        if (!Boolean.TRUE.equals(exchange.getAttribute("smartstock.remoteAdmin"))) return;
+        String path = exchange.getRequestURI().getPath();
+        if (!RemoteAdminPolicy.isMutation(path)) return;
+        Object location = exchange.getAttribute("smartstock.locationId");
+        if (!(location instanceof Integer locationId)) return;
+        try (Connection connection = DB.getConnection(); PreparedStatement ps = connection.prepareStatement("""
+                INSERT INTO remote_admin_commands(command_id,location_id,device_id,user_id,operation,status,details)
+                VALUES (?,?,?,?,?,CASE WHEN EXISTS (
+                    SELECT 1 FROM store_sync_status WHERE location_id=?
+                      AND last_seen_at >= CURRENT_TIMESTAMP - INTERVAL '3 minutes'
+                ) THEN 'APPLIED_CLOUD' ELSE 'PENDING_STORE' END,?)
+                ON CONFLICT(command_id) DO NOTHING
+                """)) {
+            ps.setObject(1, requestId); ps.setInt(2, locationId);
+            ps.setObject(3, exchange.getAttribute("smartstock.deviceId"));
+            Object user = exchange.getAttribute("smartstock.userId");
+            if (user instanceof Integer userId) ps.setInt(4, userId); else ps.setNull(4, java.sql.Types.INTEGER);
+            ps.setString(5, path); ps.setInt(6, locationId);
+            ps.setString(7, RemoteAdminPolicy.isOfflineSafeMutation(path)
+                    ? "Conflict-safe cloud change" : "Applied while store was online");
+            ps.executeUpdate();
+        } catch (Exception ex) {
+            System.err.println("Remote Admin command audit could not be recorded: " + ex.getMessage());
+        }
     }
 
     private void bestEffortRequestAudit(UUID requestId, HttpExchange exchange, int status, String outcome) {
@@ -2707,8 +3314,9 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private static JsonObject readJson(HttpExchange exchange) throws Exception {
-        int limit = "/v1/configuration/update".equals(exchange.getRequestURI().getPath())
-                ? MAX_IMAGE_BODY_BYTES : MAX_BODY_BYTES;
+        String path = exchange.getRequestURI().getPath();
+        int limit = "/v1/cloud/storage/upload".equals(path) ? MAX_CLOUD_FILE_BODY_BYTES
+                : "/v1/configuration/update".equals(path) ? MAX_IMAGE_BODY_BYTES : MAX_BODY_BYTES;
         int declared = parseContentLength(exchange.getRequestHeaders().getFirst("Content-Length"));
         if (declared > limit) throw new ApiException(413, "BODY_TOO_LARGE", "The request is too large.", false);
         byte[] bytes = exchange.getRequestBody().readNBytes(limit + 1);
@@ -2811,7 +3419,7 @@ public final class LanApiServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(2);
-        discoveryService.close();
+        if (discoveryService != null) discoveryService.close();
         executor.shutdownNow();
     }
 
@@ -2826,7 +3434,7 @@ public final class LanApiServer implements AutoCloseable {
     private record ApiResult(int status, Object data) { static ApiResult ok(Object data) { return new ApiResult(200, data); } }
     private record ApiEnvelope(boolean success, Object data, ApiError error) { }
     private record ApiError(String code, String message, boolean retryable, Map<String, String> fields) { }
-    private record DevicePrincipal(UUID deviceId, String installationId, Integer locationId) { }
+    private record DevicePrincipal(UUID deviceId, String installationId, Integer locationId, boolean remoteAdmin) { }
     private record SessionPrincipal(UUID sessionId, int userId, int locationId, String plainToken) { }
     private record AuthenticatedUser(int userId, String username, String fullName, String email, String role,
                                      int locationId, String locationName, String locationTimezone) { }

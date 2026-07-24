@@ -4,10 +4,20 @@
 target/
 out/
 *.class
+node_modules/
+.wrangler/
 
-# IDE-generated build metadata
+# IDE-generated metadata
+.idea/
+*.iml
 *.log
 
 # Local scratch/tooling folders that should not ship with SmartStock
 Project 1/
 SmartStock/.ai/
+SmartStock/tmp/
+**/* 2.java
+
+# Production rollout inputs/evidence contain environment-specific identity metadata.
+SmartStock/tools/production-identity-manifest.json
+SmartStock/tools/production-recovery-evidence.json

@@ -1,7 +1,5 @@
 package services;
 
-import data.DB;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -90,12 +88,6 @@ public final class WorkflowSyncIdentityCollisionVerifier {
         } finally {
             cleanup(local, marker);
             cleanup(cloud, marker);
-        }
-    }
-
-    public static VerificationResult runWithConfiguredDatabases() throws SQLException {
-        try (Connection local = DB.getConnection(); Connection cloud = DB.getCloudConnection()) {
-            return run(local, cloud);
         }
     }
 

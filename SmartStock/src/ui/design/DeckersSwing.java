@@ -9,6 +9,7 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.JTableHeader;
+import ui.helpers.ThemeManager;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Font;
@@ -100,5 +101,6 @@ public final class DeckersSwing {
                 )
         ));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        ThemeManager.ensureReadableButtonColors(button);
     }
 }

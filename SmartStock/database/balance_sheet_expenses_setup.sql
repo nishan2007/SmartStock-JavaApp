@@ -166,6 +166,22 @@ ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC);
 CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx
 ON balance_sheet_submissions(submitted_by_user_id);
 
+CREATE TABLE IF NOT EXISTS balance_sheet_bf_overrides (
+    balance_sheet_bf_override_id BIGSERIAL PRIMARY KEY,
+    location_id INTEGER NOT NULL REFERENCES locations(location_id),
+    period_start DATE NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    updated_by_user_id INTEGER REFERENCES users(user_id),
+    updated_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT balance_sheet_bf_overrides_location_period_unique
+        UNIQUE (location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS balance_sheet_bf_overrides_location_period_idx
+ON balance_sheet_bf_overrides(location_id, period_start DESC);
+
 DO $$
 DECLARE
     target_table TEXT;
@@ -174,7 +190,7 @@ DECLARE
     has_authenticated BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
     has_service_role BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role');
 BEGIN
-    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'expenses', 'cheque_bank_deposits', 'bank_transactions']
+    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'balance_sheet_bf_overrides', 'expenses', 'cheque_bank_deposits', 'bank_transactions']
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
         EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC', target_table);

@@ -21,6 +21,7 @@ import java.security.CodeSource;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -31,7 +32,10 @@ import java.util.regex.Pattern;
 
 public final class AppUpdateService {
     private static final String RELEASE_BUCKET = "smartstock-releases";
-    private static final Path UPDATE_ROOT = Path.of(System.getProperty("user.home"), ".smartstock", "updates");
+    private static final Path SMARTSTOCK_ROOT =
+            Path.of(System.getProperty("user.home"), ".smartstock");
+    private static final Path UPDATE_ROOT = SMARTSTOCK_ROOT.resolve("updates");
+    private static final Path ROLLBACK_DIR = SMARTSTOCK_ROOT.resolve("rollback");
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -79,6 +83,21 @@ public final class AppUpdateService {
             }
         };
         worker.execute();
+    }
+
+    static boolean hasSupabaseUpdateSession() {
+        String accessToken = managers.SessionManager.getCurrentAccessToken();
+        SupabaseSessionManager.PersistedSession persisted = SupabaseSessionManager.loadPersistedSession();
+        return hasMatchingSupabaseUpdateSession(accessToken, persisted,
+                managers.SessionManager.getCurrentUserId(), managers.SessionManager.getCurrentLocationId());
+    }
+
+    static boolean hasMatchingSupabaseUpdateSession(String accessToken,
+                                                     SupabaseSessionManager.PersistedSession persisted,
+                                                     Integer userId, Integer locationId) {
+        if (accessToken != null && !accessToken.isBlank()) return true;
+        return persisted != null && persisted.userId().equals(userId)
+                && persisted.locationId().equals(locationId);
     }
 
     public static UpdateCheckResult checkForUpdate() throws IOException, InterruptedException {
@@ -147,48 +166,14 @@ public final class AppUpdateService {
     }
 
     private static AppRelease fetchLatestRelease() throws IOException, InterruptedException {
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
         String platform = detectPlatform();
-        String query = "select=release_id,version,build_number,platform,artifact_bucket,artifact_path,sha256,file_size_bytes,release_notes,required,minimum_supported_version"
-                + "&published=eq.true"
-                + "&platform=in.(" + urlEncode(platform) + ",all)"
-                + "&order=build_number.desc"
-                + "&limit=1";
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/rest/v1/app_releases?" + query))
-                .timeout(Duration.ofSeconds(20))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Release lookup failed with HTTP " + response.statusCode() + ": " + response.body());
+        try {
+            return LanApiClient.loadLatestAppRelease(platform);
+        } catch (InterruptedException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IOException("The SmartStock server could not check for updates.", ex);
         }
-        String object = firstJsonObject(response.body());
-        if (object == null) {
-            return null;
-        }
-        String version = extractJsonString(object, "version");
-        String artifactPath = extractJsonString(object, "artifact_path");
-        String sha256 = extractJsonString(object, "sha256");
-        if (isBlank(version) || isBlank(artifactPath) || isBlank(sha256)) {
-            throw new IOException("Latest release metadata is missing version, artifact path, or checksum.");
-        }
-        return new AppRelease(
-                parseLong(extractJsonNumber(object, "release_id"), 0),
-                version,
-                parseInt(extractJsonNumber(object, "build_number"), 0),
-                valueOrDefault(extractJsonString(object, "platform"), platform),
-                valueOrDefault(extractJsonString(object, "artifact_bucket"), RELEASE_BUCKET),
-                artifactPath,
-                sha256.toLowerCase(Locale.ROOT),
-                parseLong(extractJsonNumber(object, "file_size_bytes"), 0),
-                valueOrDefault(extractJsonString(object, "release_notes"), ""),
-                extractJsonBoolean(object, "required"),
-                valueOrDefault(extractJsonString(object, "minimum_supported_version"), "")
-        );
     }
 
     private static Path downloadAndStage(AppRelease release) throws IOException, InterruptedException {
@@ -198,6 +183,7 @@ public final class AppUpdateService {
         if (appBundle != null) {
             validateMacUpdateLocation(appBundle);
         }
+        cleanupStaleStagingDirectories(UPDATE_ROOT);
         Path stagingDir = UPDATE_ROOT.resolve("staged-" + release.version() + "-" + UUID.randomUUID());
         Files.createDirectories(stagingDir);
 
@@ -222,7 +208,7 @@ public final class AppUpdateService {
         }
         manifest.setProperty("current.jar", appJar.getFileName().toString());
         manifest.setProperty("release.zip", zipPath.toString());
-        manifest.setProperty("backup.dir", UPDATE_ROOT.resolve("backup-" + System.currentTimeMillis()).toString());
+        manifest.setProperty("backup.dir", rollbackDirectory().toString());
         manifest.setProperty("java.bin", javaBinary().toString());
         manifest.setProperty("sync.service.app.dir", Path.of(System.getProperty("user.home"), ".smartstock", "sync-service", "app").toString());
         manifest.setProperty("sync.service.task.name", "SmartStockBackgroundSync");
@@ -235,30 +221,39 @@ public final class AppUpdateService {
         return manifestPath;
     }
 
+    static Path rollbackDirectory() {
+        return ROLLBACK_DIR;
+    }
+
+    static void cleanupStaleStagingDirectories(Path updateRoot) throws IOException {
+        if (updateRoot == null || !Files.isDirectory(updateRoot)) return;
+        try (var entries = Files.list(updateRoot)) {
+            for (Path entry : entries.toList()) {
+                String name = entry.getFileName().toString();
+                if (Files.isDirectory(entry) && name.startsWith("staged-")) {
+                    deleteRecursively(entry);
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path path) throws IOException {
+        if (path == null || !Files.exists(path)) return;
+        try (var entries = Files.walk(path)) {
+            for (Path entry : entries.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(entry);
+            }
+        }
+    }
+
     private static String createSignedDownloadUrl(String bucket, String artifactPath) throws IOException, InterruptedException {
-        String accessToken = SupabaseSessionManager.getValidAccessToken();
-        String path = encodePath(artifactPath);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/storage/v1/object/sign/" + urlEncode(bucket) + "/" + path))
-                .timeout(Duration.ofSeconds(20))
-                .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString("{\"expiresIn\":600}", StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Signed download URL failed with HTTP " + response.statusCode() + ": " + response.body());
+        try {
+            return LanApiClient.createUpdateDownloadUrl(bucket, artifactPath);
+        } catch (InterruptedException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IOException("The SmartStock server could not prepare the update download.", ex);
         }
-        String signedUrl = extractJsonString(response.body(), "signedURL");
-        if (isBlank(signedUrl)) {
-            signedUrl = extractJsonString(response.body(), "signedUrl");
-        }
-        if (isBlank(signedUrl)) {
-            throw new IOException("Supabase did not return a signed download URL.");
-        }
-        return resolveSignedDownloadUrl(SupabaseSessionManager.getSupabaseUrl(), signedUrl);
     }
 
     static String resolveSignedDownloadUrl(String supabaseUrl, String signedUrl) {

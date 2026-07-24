@@ -15,13 +15,16 @@ import java.util.Base64;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import services.SupabaseProjectConfig;
+import data.EnvironmentProfile;
 import utils.SecureFilePermissions;
 
 public final class SupabaseSessionManager {
 
-    private static final String SUPABASE_URL = getConfig("SUPABASE_URL", "https://wbffhygkttoaaodjcvuh.supabase.co");
-    private static final String SUPABASE_PUBLISHABLE_KEY = getConfig("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja");
-    private static final Path SESSION_PATH = Path.of(System.getProperty("user.home"), ".smartstock", "session.properties");
+    private static final SupabaseProjectConfig SUPABASE_CONFIG = SupabaseProjectConfig.load();
+    private static final String SUPABASE_URL = SUPABASE_CONFIG.url();
+    private static final String SUPABASE_PUBLISHABLE_KEY = SUPABASE_CONFIG.publishableKey();
+    private static final Path SESSION_PATH = EnvironmentProfile.active().file("session.properties");
     // Refresh shortly before expiry so callers never send a known-expired JWT to /auth/v1/user.
     private static final long ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -346,17 +349,6 @@ public final class SupabaseSessionManager {
         } catch (NumberFormatException ex) {
             return null;
         }
-    }
-
-    private static String getConfig(String key, String fallback) {
-        String value = System.getenv(key);
-        if (value == null || value.isBlank()) {
-            value = System.getProperty(key);
-        }
-        if (value == null || value.isBlank()) {
-            value = fallback;
-        }
-        return value;
     }
 
     public record PersistedSession(String accessToken, String refreshToken, Integer userId, Integer locationId) {

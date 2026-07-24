@@ -77,6 +77,14 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
         save("BADGE_TEMPLATE", settings);
     }
 
+    public static BadgeSecuritySettings loadBadgeSecuritySettings() {
+        return read("BADGE_SECURITY", BadgeSecuritySettings.class);
+    }
+
+    public static void saveBadgeSecuritySettings(BadgeSecuritySettings settings) throws IOException, SQLException {
+        save("BADGE_SECURITY", settings);
+    }
+
     public static List<PriceTagTemplateSettings> loadPriceTagTemplateSettings() {
         try {
             JsonObject response = LanApiClient.companyCustomizationRead("PRICE_TAGS", null);
@@ -99,6 +107,7 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
                     GSON.fromJson(settings.get("customOrderSlip"), CustomOrderSlipSettings.class),
                     GSON.fromJson(settings.get("quotationInvoice"), QuotationInvoicePrintSettings.class),
                     GSON.fromJson(settings.get("badgeTemplate"), BadgeTemplateSettings.class),
+                    GSON.fromJson(settings.get("badgeSecurity"), BadgeSecuritySettings.class),
                     GSON.fromJson(settings.get("priceTags"), new TypeToken<List<PriceTagTemplateSettings>>() { }.getType())
             );
         } catch (Exception ex) {
@@ -110,6 +119,7 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
                               CustomOrderSettings customOrder, CustomOrderSlipSettings customOrderSlip,
                               QuotationInvoicePrintSettings quotationInvoice,
                               BadgeTemplateSettings badgeTemplate,
+                              BadgeSecuritySettings badgeSecurity,
                               List<PriceTagTemplateSettings> priceTags) { }
 
     public static PriceTagTemplateSettings loadPriceTagTemplateSettings(int slot) {

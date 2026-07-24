@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS users (
     middle_name TEXT,
     last_name TEXT,
     full_name TEXT NOT NULL,
+    nickname TEXT,
     email TEXT,
     phone TEXT,
     employee_photo_url TEXT,
@@ -477,7 +478,10 @@ ALTER TABLE users ALTER COLUMN hire_date SET DEFAULT CURRENT_DATE;
 ALTER TABLE users ALTER COLUMN hire_date SET NOT NULL;
 
 ALTER TABLE users
-ADD COLUMN IF NOT EXISTS employee_photo_url TEXT;
+    ADD COLUMN IF NOT EXISTS employee_photo_url TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS nickname TEXT;
 
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS employee_id_card_document_url TEXT;

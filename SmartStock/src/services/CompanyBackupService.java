@@ -21,6 +21,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -91,6 +92,7 @@ public final class CompanyBackupService {
                     sql.append('\n');
                 }
             }
+            collectRegisteredImageAssets(conn, assets);
 
             for (TableInfo table : tables) {
                 appendSequenceResets(table, sql);
@@ -285,6 +287,33 @@ public final class CompanyBackupService {
         StorageAsset asset = StorageAsset.fromUrl(stringValue.trim(), table.name(), column.name());
         if (asset != null) {
             assets.putIfAbsent(asset.url(), asset);
+        }
+    }
+
+    private static void collectRegisteredImageAssets(Connection conn, Map<String, StorageAsset> assets) throws SQLException {
+        if (!tableExists(conn, "image_assets")) return;
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT asset_id::text,bucket_name,object_path,access_level
+                FROM image_assets WHERE lifecycle_status <> 'DELETED'
+                """);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String reference = ImageAssetReference.PREFIX + rs.getString(1);
+                assets.putIfAbsent(reference, new StorageAsset(reference, rs.getString(2), rs.getString(3),
+                        "AUTHENTICATED".equals(rs.getString(4)), "image_assets", "asset_id"));
+            }
+        }
+    }
+
+    private static boolean tableExists(Connection conn, String table) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema=current_schema() AND table_name=?
+                """)) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -536,13 +565,21 @@ public final class CompanyBackupService {
     }
 
     private static DownloadedAsset downloadAsset(StorageAsset asset) throws IOException, InterruptedException {
+        if (ImageAssetReference.isAssetReference(asset.url())) {
+            try {
+                ServerImageAssetService.AssetBytes bytes = ServerImageAssetService.load(asset.url());
+                return new DownloadedAsset(bytes.bytes(), bytes.contentType());
+            } catch (Exception ex) {
+                throw new IOException("Registered image backup failed.", ex);
+            }
+        }
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(asset.url()))
                 .timeout(java.time.Duration.ofSeconds(60))
                 .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
                 .GET();
         if (asset.authenticated()) {
-            builder.header("Authorization", "Bearer " + SupabaseSessionManager.getValidAccessToken());
+            builder.header("Authorization", "Bearer " + ServerSupabaseCredentials.require());
         }
         HttpResponse<byte[]> response = HTTP_CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
         if (response.statusCode() < 200 || response.statusCode() >= 300 || response.body() == null || response.body().length == 0) {
@@ -561,7 +598,7 @@ public final class CompanyBackupService {
                         + encodeObjectPath(asset.objectPath())))
                 .timeout(java.time.Duration.ofSeconds(60))
                 .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                .header("Authorization", "Bearer " + SupabaseSessionManager.getValidAccessToken())
+                .header("Authorization", "Bearer " + ServerSupabaseCredentials.require())
                 .header("Content-Type", asset.contentType().isBlank() ? "application/octet-stream" : asset.contentType())
                 .header("x-upsert", "true")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(asset.bytes()))

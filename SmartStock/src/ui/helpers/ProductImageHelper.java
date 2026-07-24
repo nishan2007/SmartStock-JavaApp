@@ -1,6 +1,6 @@
 package ui.helpers;
 
-import managers.SupabaseSessionManager;
+import services.StorageObjectNameBuilder;
 import utils.ImageCacheManager;
 import utils.ImageOptimizationHelper;
 
@@ -9,22 +9,11 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.io.File;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 
 public final class ProductImageHelper {
     private static final String PRODUCT_IMAGE_BUCKET = getConfig("PRODUCT_IMAGE_BUCKET", "Product Images");
     private static final long MAX_ORIGINAL_IMAGE_BYTES = 15L * 1024L * 1024L;
     private static final long MAX_PRODUCT_UPLOAD_BYTES = 200L * 1024L;
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
-
     private ProductImageHelper() {
     }
 
@@ -53,7 +42,7 @@ public final class ProductImageHelper {
         return ImageCacheManager.isRemoteImageUrl(imageUrl);
     }
 
-    public static String uploadLocalImageIfNeeded(String imageUrl) throws Exception {
+    public static String uploadLocalImageIfNeeded(String imageUrl, ProductImageNaming naming) throws Exception {
         if (imageUrl == null || imageUrl.isBlank() || isRemoteImageUrl(imageUrl)) {
             return imageUrl == null ? "" : imageUrl.trim();
         }
@@ -63,7 +52,7 @@ public final class ProductImageHelper {
             throw new IllegalArgumentException("The selected image file was not found.");
         }
 
-        return uploadProductImage(imageFile);
+        return uploadProductImage(imageFile, naming);
     }
 
     public static void setPreviewImage(JLabel label, String imageUrl, int width, int height) {
@@ -130,7 +119,6 @@ public final class ProductImageHelper {
 
             JButton browseButton = new JButton("Browse");
             JButton previewButton = new JButton("Preview");
-            JButton uploadButton = new JButton("Upload");
             JButton clearButton = new JButton("Clear");
 
             JPanel fieldPanel = new JPanel(new BorderLayout(6, 6));
@@ -141,7 +129,6 @@ public final class ProductImageHelper {
             buttonPanel.setOpaque(false);
             buttonPanel.add(browseButton);
             buttonPanel.add(previewButton);
-            buttonPanel.add(uploadButton);
             buttonPanel.add(clearButton);
             fieldPanel.add(buttonPanel, BorderLayout.SOUTH);
 
@@ -155,7 +142,6 @@ public final class ProductImageHelper {
 
             browseButton.addActionListener(e -> chooseLocalImage());
             previewButton.addActionListener(e -> refreshPreview());
-            uploadButton.addActionListener(e -> uploadCurrentImage());
             clearButton.addActionListener(e -> setImageUrl(""));
             imageUrlField.addActionListener(e -> refreshPreview());
         }
@@ -226,37 +212,6 @@ public final class ProductImageHelper {
             }
         }
 
-        private void uploadCurrentImage() {
-            String imagePath = getImageUrl();
-            if (imagePath.isBlank()) {
-                JOptionPane.showMessageDialog(parent, "Choose an image file first.");
-                return;
-            }
-
-            if (isRemoteImageUrl(imagePath)) {
-                JOptionPane.showMessageDialog(parent, "This image is already a URL.");
-                return;
-            }
-
-            File imageFile = new File(imagePath);
-            if (!imageFile.isFile()) {
-                JOptionPane.showMessageDialog(parent, "The selected image file was not found.");
-                return;
-            }
-
-            try {
-                setImageUrl(uploadProductImage(imageFile));
-                JOptionPane.showMessageDialog(parent, "Image uploaded successfully.");
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(
-                        parent,
-                        "Image upload failed.\n\n" + ex.getMessage(),
-                        "Upload Error",
-                        JOptionPane.ERROR_MESSAGE
-                );
-            }
-        }
-
         private java.util.List<Component> getAllChildren(Container container) {
             java.util.List<Component> children = new java.util.ArrayList<>();
             for (Component child : container.getComponents()) {
@@ -269,7 +224,7 @@ public final class ProductImageHelper {
         }
     }
 
-    private static String uploadProductImage(File imageFile) throws Exception {
+    private static String uploadProductImage(File imageFile, ProductImageNaming naming) throws Exception {
         try (ImageOptimizationHelper.OptimizedImage optimizedImage = ImageOptimizationHelper.optimizeForUpload(
                 imageFile,
                 "product-image",
@@ -280,73 +235,25 @@ public final class ProductImageHelper {
                 MAX_PRODUCT_UPLOAD_BYTES,
                 false
         )) {
-            String accessToken = SupabaseSessionManager.getValidAccessToken();
-            String objectPath = "products/" + System.currentTimeMillis() + "-" + sanitizeFilename(optimizedImage.filename());
-            String encodedBucket = encodePathSegment(PRODUCT_IMAGE_BUCKET);
-            String encodedObjectPath = encodeObjectPath(objectPath);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(SupabaseSessionManager.getSupabaseUrl()
-                            + "/storage/v1/object/"
-                            + encodedBucket
-                            + "/"
-                            + encodedObjectPath))
-                    .timeout(Duration.ofSeconds(45))
-                    .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("Content-Type", optimizedImage.contentType())
-                    .header("x-upsert", "true")
-                    .POST(HttpRequest.BodyPublishers.ofFile(optimizedImage.file().toPath()))
-                    .build();
-
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("Supabase Storage returned HTTP "
-                        + response.statusCode()
-                        + " while uploading to bucket "
-                        + PRODUCT_IMAGE_BUCKET
-                        + ": "
-                        + response.body());
-            }
-
-            String publicUrl = SupabaseSessionManager.getSupabaseUrl()
-                    + "/storage/v1/object/public/"
-                    + encodedBucket
-                    + "/"
-                    + encodedObjectPath;
+            ProductImageNaming safeNaming = naming == null ? ProductImageNaming.empty() : naming;
+            String filename = StorageObjectNameBuilder.filename(
+                    optimizedImage.filename(), "jpg", Long.toString(System.currentTimeMillis()),
+                    safeNaming.productName(), safeNaming.brand(), safeNaming.type(), safeNaming.size(),
+                    safeNaming.variantName(), "product-image");
+            String objectPath = "products/" + filename;
+            String publicUrl = services.LanApiClient.uploadCloudFile(
+                    PRODUCT_IMAGE_BUCKET, objectPath, optimizedImage.contentType(),
+                    java.nio.file.Files.readAllBytes(optimizedImage.file().toPath()));
             ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());
             return publicUrl;
         }
     }
 
-    private static String sanitizeFilename(String filename) {
-        String sanitized = filename == null ? "product-image" : filename.trim();
-        sanitized = sanitized.replaceAll("[^A-Za-z0-9._-]", "-");
-        sanitized = sanitized.replaceAll("-+", "-");
-        if (sanitized.isBlank() || ".".equals(sanitized) || "..".equals(sanitized)) {
-            return "product-image";
+    public record ProductImageNaming(String productName, String brand, String type,
+                                     String size, String variantName) {
+        public static ProductImageNaming empty() {
+            return new ProductImageNaming("", "", "", "", "");
         }
-        return sanitized;
-    }
-
-    private static String encodeObjectPath(String objectPath) {
-        String[] parts = objectPath.split("/");
-        StringBuilder encoded = new StringBuilder();
-        for (String part : parts) {
-            if (!encoded.isEmpty()) {
-                encoded.append("/");
-            }
-            encoded.append(encodePathSegment(part));
-        }
-        return encoded.toString();
-    }
-
-    private static String encodePathSegment(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String getConfig(String key, String fallback) {

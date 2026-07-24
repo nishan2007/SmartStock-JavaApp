@@ -2,6 +2,9 @@ package ui.screens;
 
 import Receipt.ReceiptBuilder;
 import Receipt.ReceiptData;
+import Receipt.ReceiptPrinter;
+import managers.CompanyCustomizationManager;
+import managers.HardwareSettingsManager;
 import managers.PermissionManager;
 import managers.SessionManager;
 import services.ManagerApprovalService;
@@ -35,6 +38,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.EventObject;
 import java.util.Map;
 import java.util.UUID;
 
@@ -107,6 +111,8 @@ public class MakeASale extends JFrame {
     private boolean suppressDiscountFieldEvents = false;
     private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
     private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
+    private record PendingSaleDiscountApproval(String permission,
+                                               ManagerApprovalService.ApprovalResult approval) {}
     private record VatCalculation(BigDecimal amount, BigDecimal ratePercent, String mode) {
         private VatCalculation {
             amount = utils.CurrencyFormatter.normalize(amount);
@@ -116,11 +122,14 @@ public class MakeASale extends JFrame {
     }
     private final java.util.Map<Integer, PendingPriceApproval> pendingPriceOverrideApprovals = new java.util.HashMap<>();
     private final java.util.Map<Integer, PendingDiscountApproval> pendingItemDiscountApprovals = new java.util.HashMap<>();
+    private PendingSaleDiscountApproval pendingSaleDiscountApproval;
+    private String lastAcceptedSaleDiscountText = "0";
     private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
     private boolean updatingCustomerAccountFilter = false;
     private LanApiClient.SalesSettings salesSettings = new LanApiClient.SalesSettings(
             false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), java.util.List.of());
     private boolean salesSettingsLoaded;
+    private boolean alwaysPrintSaleReceipt;
     private String pendingCheckoutKey;
     private String pendingCheckoutFingerprint;
     private String pendingHoldKey;
@@ -139,7 +148,7 @@ public class MakeASale extends JFrame {
        setSize(1000, 600);
        setLocationRelativeTo(null);
        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
-       setJMenuBar(AppMenuBar.create(this, "MakeASale"));
+       setJMenuBar(AppMenuBar.create(this, "MakeASale", loadingState));
 
        JPanel initialShell = new JPanel(new BorderLayout());
        JLabel initialStatus = new JLabel("Preparing point of sale...", SwingConstants.CENTER);
@@ -290,9 +299,12 @@ public class MakeASale extends JFrame {
        cartScrollPane.setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
        cartScrollPane.getViewport().putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
        cartScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.LIME));
-	       cartTable.getColumnModel().getColumn(CART_COL_PRICE).setCellEditor(new DefaultCellEditor(new JTextField()));
+	       cartTable.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
+	       cartTable.getColumnModel().getColumn(CART_COL_PRICE).setCellEditor(
+                   createApprovalAwareCartEditor(CART_COL_PRICE));
 	       cartTable.getColumnModel().getColumn(CART_COL_QTY).setCellEditor(new DefaultCellEditor(new JTextField()));
-	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(new DefaultCellEditor(new JTextField()));
+	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(
+                   createApprovalAwareCartEditor(CART_COL_ITEM_DISCOUNT));
        configureCartTableColumns();
 
        JPanel cartSection = new JPanel(new BorderLayout());
@@ -320,15 +332,14 @@ public class MakeASale extends JFrame {
        mmgPaymentButton = createPaymentMethodButton("MMG", "MMG");
        accountPaymentButton = createPaymentMethodButton("Account", "ACCOUNT");
        paymentReferenceField = new JTextField(14);
-       paymentReferenceField.setToolTipText("Required for MMG transaction reference.");
+       paymentReferenceField.setToolTipText("Required for card, cheque, and MMG payments.");
        paymentReferenceField.setEnabled(false);
        DeckersSwing.styleField(paymentReferenceField);
        setFixedControlHeight(paymentReferenceField, 170);
 	       discountPercentField = new JTextField("0", 5);
        DeckersSwing.styleField(discountPercentField);
-	       discountPercentField.setEnabled(canApplySaleDiscount());
 	       if (!canApplySaleDiscount()) {
-	           discountPercentField.setToolTipText("Requires Apply Sale Discount permission.");
+	           discountPercentField.setToolTipText("A manager approval is required to apply a sale discount.");
 	       }
        setFixedControlHeight(discountPercentField, 70);
 
@@ -385,7 +396,6 @@ public class MakeASale extends JFrame {
        footerPanel.setOpaque(false);
        footerPanel.add(overrideStatusLabel, BorderLayout.WEST);
        footerPanel.add(actionPanel, BorderLayout.EAST);
-       footerPanel.add(loadingState, BorderLayout.SOUTH);
        bottomPanel.add(bottomTopPanel, BorderLayout.CENTER);
        bottomPanel.add(footerPanel, BorderLayout.SOUTH);
 
@@ -537,12 +547,7 @@ public class MakeASale extends JFrame {
                        if (suppressDiscountFieldEvents) {
                            return;
                        }
-	                   if (!canApplySaleDiscount()) {
-                           String current = discountPercentField.getText() == null ? "" : discountPercentField.getText().trim();
-                           if (!"0".equals(current)) {
-                               setDiscountFieldValue("0");
-                           }
-	                   }
+                       handleSaleDiscountEditOverride();
 	                   updateOverallTotal();
 	               });
 	           }
@@ -589,7 +594,13 @@ public class MakeASale extends JFrame {
 
     private void loadStartupData() {
         CachedUiLoader.load(this,"make-sale:startup",SalesStartupSnapshot.class,SessionDataCache.SCREEN_TTL,
-                loadingState,()->{var settings=UiTaskRunner.supplyAsync(LanApiClient::loadSalesSettings);var customers=UiTaskRunner.supplyAsync(LanApiClient::loadCustomerAccounts);return new SalesStartupSnapshot(settings.join(),customers.join());},snapshot->{salesSettings=snapshot.settings();salesSettingsLoaded=true;applyCustomerAccounts(snapshot.customers());updateOverallTotal();updateCustomerAccountEnabled();});
+                loadingState,()->{var settings=UiTaskRunner.supplyAsync(LanApiClient::loadSalesSettings);var customers=UiTaskRunner.supplyAsync(LanApiClient::loadCustomerAccounts);var receipt=UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadReceiptSettings);return new SalesStartupSnapshot(settings.join(),customers.join(),receipt.join().alwaysPrintSaleReceipt());},snapshot->{salesSettings=snapshot.settings();salesSettingsLoaded=true;alwaysPrintSaleReceipt=snapshot.alwaysPrintSaleReceipt();applyRequiredPrintPreference();applyCustomerAccounts(snapshot.customers());updateOverallTotal();updateCustomerAccountEnabled();});
+    }
+
+    private void applyRequiredPrintPreference() {
+        if (checkoutBtn != null) {
+            checkoutBtn.setVisible(!alwaysPrintSaleReceipt);
+        }
     }
 
     private void applyCustomerAccounts(java.util.List<LanApiClient.CustomerAccount> accounts) {
@@ -602,9 +613,10 @@ public class MakeASale extends JFrame {
     }
 
     private record SalesStartupSnapshot(LanApiClient.SalesSettings settings,
-                                        java.util.List<LanApiClient.CustomerAccount> customers) { }
+                                        java.util.List<LanApiClient.CustomerAccount> customers,
+                                        boolean alwaysPrintSaleReceipt) { }
     private record CheckoutSnapshot(LanApiClient.CheckoutResult result, ReceiptData receipt,
-                                    String receiptError) { }
+                                    String receiptError, String printError) { }
 
     private JButton createPrimaryButton(String text) {
         // Standard blue command button: text color, fill color, border color, and internal padding live here.
@@ -693,7 +705,7 @@ public class MakeASale extends JFrame {
         if (paymentReferenceField == null) {
             return;
         }
-        boolean enabled = "MMG".equals(selectedPaymentMethod);
+        boolean enabled = requiresPaymentReference(selectedPaymentMethod);
         paymentReferenceField.setEnabled(enabled);
         if (!enabled) {
             paymentReferenceField.setText("");
@@ -723,6 +735,12 @@ public class MakeASale extends JFrame {
         if (checkoutPrintBtn != null) {
             checkoutPrintBtn.setToolTipText(hasPaymentMethod ? null : "Select a payment method before checkout.");
         }
+    }
+
+    static boolean requiresPaymentReference(String paymentMethod) {
+        return "CARD".equals(paymentMethod)
+                || "CHEQUE".equals(paymentMethod)
+                || "MMG".equals(paymentMethod);
     }
 
     private Color paymentAccent(String method) {
@@ -1057,10 +1075,10 @@ public class MakeASale extends JFrame {
             editItemBtn.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
         }
 	        if (discountPercentField != null) {
-	            discountPercentField.setEnabled(canApplySaleDiscount());
-	            if (!canApplySaleDiscount()) {
-                    setDiscountFieldValue("0");
-	            }
+                discountPercentField.setEnabled(true);
+                discountPercentField.setToolTipText(canApplySaleDiscount()
+                        ? null
+                        : "A manager approval is required to apply a sale discount.");
 	        }
 	    }
 
@@ -1070,6 +1088,84 @@ public class MakeASale extends JFrame {
 
     private boolean canChangeSaleItemPrice() {
         return PermissionManager.hasPermission(CHANGE_SALE_ITEM_PRICE_PERMISSION);
+    }
+
+    private boolean canOverrideSaleDiscount() {
+        return PermissionManager.hasPermission(SALE_DISCOUNT_OVERRIDE_PERMISSION);
+    }
+
+    private DefaultCellEditor createApprovalAwareCartEditor(int column) {
+        return new DefaultCellEditor(new JTextField()) {
+            @Override
+            public boolean isCellEditable(EventObject event) {
+                if (!super.isCellEditable(event)) {
+                    return false;
+                }
+                int row = cartTable == null ? -1 : cartTable.getSelectedRow();
+                if (event instanceof java.awt.event.MouseEvent mouseEvent
+                        && mouseEvent.getSource() == cartTable) {
+                    row = cartTable.rowAtPoint(mouseEvent.getPoint());
+                }
+                if (row >= 0 && cartTable != null) {
+                    row = cartTable.convertRowIndexToModel(row);
+                }
+                return authorizeCartValueEdit(row, column);
+            }
+        };
+    }
+
+    private boolean authorizeCartValueEdit(int row, int column) {
+        if (row < 0 || row >= cartModel.getRowCount()) {
+            return false;
+        }
+        if (column == CART_COL_PRICE && canChangeSaleItemPrice()) {
+            return true;
+        }
+        if (column == CART_COL_ITEM_DISCOUNT && canApplySaleDiscount()) {
+            return true;
+        }
+
+        int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+        if (productId <= 0) {
+            return false;
+        }
+        String productName = String.valueOf(cartModel.getValueAt(row, CART_COL_NAME));
+        String permission = column == CART_COL_PRICE
+                ? CHANGE_SALE_ITEM_PRICE_PERMISSION : APPLY_SALE_DISCOUNT_PERMISSION;
+        String action = column == CART_COL_PRICE ? "Price Override" : "Item Discount Override";
+        String prompt = column == CART_COL_PRICE
+                ? "Reason for price override on " + productName + ":"
+                : "Reason for item discount on " + productName + ":";
+        ManagerApprovalService.ApprovalResult approval = requestManagerApproval(
+                permission, action, prompt);
+        if (approval == null) {
+            return false;
+        }
+        if (column == CART_COL_PRICE) {
+            pendingPriceOverrideApprovals.put(productId, new PendingPriceApproval(null, approval));
+            showOverrideStatus("Price override approved by: " + approval.approvedByName());
+        } else {
+            pendingItemDiscountApprovals.put(productId, new PendingDiscountApproval(null, approval));
+            showOverrideStatus("Item discount approved by: " + approval.approvedByName());
+        }
+        return true;
+    }
+
+    private ManagerApprovalService.ApprovalResult requestManagerApproval(
+            String permission, String action, String prompt) {
+        try {
+            return ManagerApprovalService.requestApproval(this, permission, action, prompt);
+        } catch (RuntimeException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(),
+                    "Manager Approval", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+    }
+
+    private void showOverrideStatus(String message) {
+        if (overrideStatusLabel != null) {
+            overrideStatusLabel.setText(message);
+        }
     }
 
     private void configureCartTableColumns() {
@@ -1515,13 +1611,17 @@ public class MakeASale extends JFrame {
             return;
         }
         PendingPriceApproval existingApproval = pendingPriceOverrideApprovals.get(productId);
-        if (existingApproval != null && existingApproval.approvedPrice().compareTo(enteredPrice) == 0) {
+        if (existingApproval != null && (existingApproval.approvedPrice() == null
+                || existingApproval.approvedPrice().compareTo(enteredPrice) == 0)) {
+            if (existingApproval.approvedPrice() == null) {
+                pendingPriceOverrideApprovals.put(productId,
+                        new PendingPriceApproval(enteredPrice, existingApproval.approval()));
+            }
             return;
         }
 
         String productName = String.valueOf(cartModel.getValueAt(row, CART_COL_NAME));
-        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
-                this,
+        ManagerApprovalService.ApprovalResult approval = requestManagerApproval(
                 CHANGE_SALE_ITEM_PRICE_PERMISSION,
                 "Price Override",
                 "Reason for price override on " + productName + ":"
@@ -1562,13 +1662,17 @@ public class MakeASale extends JFrame {
             return;
         }
         PendingDiscountApproval existingApproval = pendingItemDiscountApprovals.get(productId);
-        if (existingApproval != null && existingApproval.approvedDiscountPercent().compareTo(discountPercent) == 0) {
+        if (existingApproval != null && (existingApproval.approvedDiscountPercent() == null
+                || existingApproval.approvedDiscountPercent().compareTo(discountPercent) == 0)) {
+            if (existingApproval.approvedDiscountPercent() == null) {
+                pendingItemDiscountApprovals.put(productId,
+                        new PendingDiscountApproval(discountPercent, existingApproval.approval()));
+            }
             return;
         }
 
         String productName = String.valueOf(cartModel.getValueAt(row, CART_COL_NAME));
-        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
-                this,
+        ManagerApprovalService.ApprovalResult approval = requestManagerApproval(
                 APPLY_SALE_DISCOUNT_PERMISSION,
                 "Item Discount Override",
                 "Reason for item discount on " + productName + ":"
@@ -1589,6 +1693,101 @@ public class MakeASale extends JFrame {
         if (overrideStatusLabel != null) {
             overrideStatusLabel.setText("Item discount approved by: " + approval.approvedByName());
         }
+    }
+
+    private void handleSaleDiscountEditOverride() {
+        if (discountPercentField == null || suppressDiscountFieldEvents) {
+            return;
+        }
+        String currentText = discountPercentField.getText() == null
+                ? "" : discountPercentField.getText().trim();
+        if (currentText.isBlank()) {
+            return;
+        }
+
+        BigDecimal discountPercent;
+        try {
+            discountPercent = new BigDecimal(currentText);
+        } catch (NumberFormatException ignored) {
+            return;
+        }
+        if (discountPercent.signum() <= 0) {
+            pendingSaleDiscountApproval = null;
+            lastAcceptedSaleDiscountText = currentText;
+            return;
+        }
+
+        BigDecimal discountLimit = salesSettings == null || salesSettings.discountLimit() == null
+                ? BigDecimal.valueOf(5) : salesSettings.discountLimit();
+        String requiredPermission = null;
+        String action = null;
+        String prompt = null;
+        if (discountPercent.compareTo(discountLimit) > 0) {
+            if (!canOverrideSaleDiscount()) {
+                requiredPermission = SALE_DISCOUNT_OVERRIDE_PERMISSION;
+                action = "Sale Discount Override";
+                prompt = "Reason for discount override:";
+            }
+        } else if (!canApplySaleDiscount()) {
+            requiredPermission = APPLY_SALE_DISCOUNT_PERMISSION;
+            action = "Sale Discount Approval";
+            prompt = "Reason for applying this sale discount:";
+        }
+
+        if (requiredPermission == null) {
+            pendingSaleDiscountApproval = null;
+            lastAcceptedSaleDiscountText = currentText;
+            return;
+        }
+        if (pendingSaleDiscountApproval != null
+                && requiredPermission.equals(pendingSaleDiscountApproval.permission())) {
+            lastAcceptedSaleDiscountText = currentText;
+            return;
+        }
+
+        ManagerApprovalService.ApprovalResult approval = requestManagerApproval(
+                requiredPermission, action, prompt);
+        if (approval == null) {
+            setDiscountFieldValue(lastAcceptedSaleDiscountText);
+            return;
+        }
+        pendingSaleDiscountApproval = new PendingSaleDiscountApproval(requiredPermission, approval);
+        lastAcceptedSaleDiscountText = currentText;
+        showOverrideStatus("Sale discount approved by: " + approval.approvedByName());
+    }
+
+    private String requiredSaleDiscountApprovalPermission(BigDecimal discountPercent,
+                                                           BigDecimal discountLimit) {
+        if (discountPercent == null || discountPercent.signum() <= 0) {
+            return null;
+        }
+        BigDecimal limit = discountLimit == null ? BigDecimal.valueOf(5) : discountLimit;
+        if (discountPercent.compareTo(limit) > 0) {
+            return canOverrideSaleDiscount() ? null : SALE_DISCOUNT_OVERRIDE_PERMISSION;
+        }
+        if (!canApplySaleDiscount()) {
+            return APPLY_SALE_DISCOUNT_PERMISSION;
+        }
+        return null;
+    }
+
+    private boolean commitCurrentCartEdit() {
+        if (cartTable == null || !cartTable.isEditing()) {
+            return true;
+        }
+        if (cartTable.getCellEditor() != null && cartTable.getCellEditor().stopCellEditing()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(this,
+                "Finish or cancel the current cart edit before continuing.");
+        return false;
+    }
+
+    private void clearPendingManagerApprovals() {
+        pendingPriceOverrideApprovals.clear();
+        pendingItemDiscountApprovals.clear();
+        pendingSaleDiscountApproval = null;
+        lastAcceptedSaleDiscountText = "0";
     }
 
     private String getCartProductType(int row) {
@@ -1744,7 +1943,7 @@ public class MakeASale extends JFrame {
     }
 
     private BigDecimal getDiscountPercent() {
-        if (!canApplySaleDiscount() || discountPercentField == null) {
+        if (discountPercentField == null) {
             return BigDecimal.ZERO;
         }
 
@@ -1785,10 +1984,6 @@ public class MakeASale extends JFrame {
     }
 
     private BigDecimal parseDiscountPercentOrShowError() {
-        if (!canApplySaleDiscount()) {
-            return BigDecimal.ZERO;
-        }
-
         String text = discountPercentField.getText().trim();
         if (text.isEmpty()) {
             return BigDecimal.ZERO;
@@ -2016,6 +2211,9 @@ public class MakeASale extends JFrame {
     }
 
     private void checkout(boolean showReceiptPreview) {
+        if (!commitCurrentCartEdit()) {
+            return;
+        }
         if (!PermissionManager.requirePermission(MAKE_SALE_PERMISSION, this, "Checkout")) {
             refreshPermissionButtons();
             return;
@@ -2036,14 +2234,9 @@ public class MakeASale extends JFrame {
             return;
         }
 
+        handleSaleDiscountEditOverride();
         BigDecimal discountPercent = parseDiscountPercentOrShowError();
         if (discountPercent == null) {
-            return;
-        }
-        if (discountPercent.compareTo(BigDecimal.ZERO) > 0 && !canApplySaleDiscount()) {
-            JOptionPane.showMessageDialog(this, "You do not have permission to apply sale discounts.");
-            discountPercentField.setText("0");
-            updateOverallTotal();
             return;
         }
         BigDecimal discountLimit = salesSettings == null || salesSettings.discountLimit() == null
@@ -2051,23 +2244,18 @@ public class MakeASale extends JFrame {
                 : salesSettings.discountLimit();
         String saleDiscountOverrideReason = null;
         String saleDiscountApprovalToken = null;
-        String saleDiscountOverrideByName = null;
-        if (discountPercent.compareTo(discountLimit) > 0) {
-            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
-                    this,
-                    SALE_DISCOUNT_OVERRIDE_PERMISSION,
-                    "Sale Discount Override",
-                    "Reason for discount override:"
-            );
-            if (approval == null) {
+        String requiredSaleApproval = requiredSaleDiscountApprovalPermission(
+                discountPercent, discountLimit);
+        if (requiredSaleApproval != null) {
+            if (pendingSaleDiscountApproval == null
+                    || !requiredSaleApproval.equals(pendingSaleDiscountApproval.permission())) {
+                JOptionPane.showMessageDialog(this,
+                        "Manager approval is required before this discount can be checked out.",
+                        "Manager Approval", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            saleDiscountOverrideReason = approval.reason();
-            saleDiscountApprovalToken = approval.lanApprovalToken();
-            saleDiscountOverrideByName = approval.approvedByName();
-            if (overrideStatusLabel != null) {
-                overrideStatusLabel.setText("Discount override approved by: " + saleDiscountOverrideByName);
-            }
+            saleDiscountOverrideReason = pendingSaleDiscountApproval.approval().reason();
+            saleDiscountApprovalToken = pendingSaleDiscountApproval.approval().lanApprovalToken();
         }
 
         String paymentMethod = selectedPaymentMethod;
@@ -2086,8 +2274,9 @@ public class MakeASale extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a customer account for account payment.");
             return;
         }
-        if ("MMG".equals(paymentMethod) && paymentReference.isBlank()) {
-            JOptionPane.showMessageDialog(this, "Enter the MMG transaction reference number.");
+        if (requiresPaymentReference(paymentMethod) && paymentReference.isBlank()) {
+            JOptionPane.showMessageDialog(this,
+                    "Enter the card, cheque, or MMG reference number.");
             return;
         }
 
@@ -2139,16 +2328,23 @@ public class MakeASale extends JFrame {
             LanApiClient.CheckoutResult result = LanApiClient.checkout(request, checkoutKey);
             ReceiptData receipt = null;
             String receiptError = null;
+            String printError = null;
             if (showReceiptPreview) {
                 try {
                     receipt = ReceiptBuilder.loadSaleReceipt(result.saleId(),
                             "CASH".equals(paymentMethod) ? result.cashCollected() : null,
                             "CASH".equals(paymentMethod) ? result.changeDue() : null);
+                    HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+                    ReceiptPrinter.printToPosPrinter(receipt, printer);
                 } catch (Exception ex) {
-                    receiptError = ex.getMessage();
+                    if (receipt == null) {
+                        receiptError = ex.getMessage();
+                    } else {
+                        printError = ex.getMessage();
+                    }
                 }
             }
-            return new CheckoutSnapshot(result, receipt, receiptError);
+            return new CheckoutSnapshot(result, receipt, receiptError, printError);
         }, snapshot -> {
             LanApiClient.CheckoutResult result = snapshot.result();
             pendingCheckoutKey = null;
@@ -2167,11 +2363,15 @@ public class MakeASale extends JFrame {
             } else if (snapshot.receiptError() != null) {
                 message += "\n\nReceipt preview failed: " + snapshot.receiptError();
             }
+            if (snapshot.printError() != null) {
+                message += "\n\nReceipt printing failed: " + snapshot.printError();
+            } else if (showReceiptPreview) {
+                message += "\n\nReceipt sent to the printer.";
+            }
             JOptionPane.showMessageDialog(this, message);
             cartModel.setRowCount(0);
-            pendingPriceOverrideApprovals.clear();
-            pendingItemDiscountApprovals.clear();
-            discountPercentField.setText("0");
+            clearPendingManagerApprovals();
+            setDiscountFieldValue("0");
             clearHeldCartSelection();
             if (paymentReferenceField != null) paymentReferenceField.setText("");
             configureCartTableColumns();
@@ -2191,6 +2391,9 @@ public class MakeASale extends JFrame {
     }
 
     private void holdCurrentCart() {
+        if (!commitCurrentCartEdit()) {
+            return;
+        }
         if (!PermissionManager.requirePermission(HOLD_CART_PERMISSION, this, "Hold Cart")) {
             refreshPermissionButtons();
             return;
@@ -2203,24 +2406,46 @@ public class MakeASale extends JFrame {
                 JOptionPane.PLAIN_MESSAGE);
         if (holdName == null) return;
         CustomerAccountOption customer = getSelectedCustomerAccount();
+        handleSaleDiscountEditOverride();
         BigDecimal saleDiscount = parseDiscountPercentOrShowError();
         if (saleDiscount == null) return;
+        BigDecimal discountLimit = salesSettings == null || salesSettings.discountLimit() == null
+                ? BigDecimal.valueOf(5) : salesSettings.discountLimit();
+        String requiredSaleApproval = requiredSaleDiscountApprovalPermission(
+                saleDiscount, discountLimit);
+        ManagerApprovalService.ApprovalResult saleApproval = null;
+        if (requiredSaleApproval != null) {
+            if (pendingSaleDiscountApproval == null
+                    || !requiredSaleApproval.equals(pendingSaleDiscountApproval.permission())) {
+                JOptionPane.showMessageDialog(this,
+                        "Manager approval is required before this discounted cart can be held.",
+                        "Manager Approval", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            saleApproval = pendingSaleDiscountApproval.approval();
+        }
 
         java.util.List<LanApiClient.HeldCartCreateLine> lines = new java.util.ArrayList<>();
         for (int row = 0; row < cartModel.getRowCount(); row++) {
             int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
-            PendingDiscountApproval approval = pendingItemDiscountApprovals.get(productId);
+            PendingPriceApproval priceApproval = pendingPriceOverrideApprovals.get(productId);
+            PendingDiscountApproval discountApproval = pendingItemDiscountApprovals.get(productId);
             lines.add(new LanApiClient.HeldCartCreateLine(
                     productId,
                     parseIntOrDefault(cartModel.getValueAt(row, CART_COL_QTY), 0),
                     parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_PRICE)),
                     parsePercentOrZero(cartModel.getValueAt(row, CART_COL_ITEM_DISCOUNT)),
-                    approval == null ? null : approval.approval().lanApprovalToken(),
-                    approval == null ? null : approval.approval().reason()));
+                    priceApproval == null ? null : priceApproval.approval().lanApprovalToken(),
+                    priceApproval == null ? null : priceApproval.approval().reason(),
+                    discountApproval == null ? null : discountApproval.approval().lanApprovalToken(),
+                    discountApproval == null ? null : discountApproval.approval().reason()));
         }
         LanApiClient.HeldCartCreateRequest request = new LanApiClient.HeldCartCreateRequest(
                 holdName.trim(), selectedPaymentMethod, customer == null ? null : customer.customerId,
-                saleDiscount, lines);
+                saleDiscount,
+                saleApproval == null ? null : saleApproval.lanApprovalToken(),
+                saleApproval == null ? null : saleApproval.reason(),
+                lines);
         String fingerprint = request.toString();
         if (pendingHoldKey == null || !fingerprint.equals(pendingHoldFingerprint)) {
             pendingHoldKey = UUID.randomUUID().toString();
@@ -2233,8 +2458,7 @@ public class MakeASale extends JFrame {
             JOptionPane.showMessageDialog(this,
                     "Cart held successfully. Hold ID: " + result.heldCartId());
             cartModel.setRowCount(0);
-            pendingPriceOverrideApprovals.clear();
-            pendingItemDiscountApprovals.clear();
+            clearPendingManagerApprovals();
             clearHeldCartSelection();
             configureCartTableColumns();
             updateOverallTotal();
@@ -2310,20 +2534,21 @@ public class MakeASale extends JFrame {
     }
 
     private void loadHeldCartIntoCurrentCart(LanApiClient.HeldCartPayload held) {
-        pendingPriceOverrideApprovals.clear();
-        pendingItemDiscountApprovals.clear();
+        clearPendingManagerApprovals();
         updatingCart = true;
         try {
             cartModel.setRowCount(0);
             for (LanApiClient.HeldCartItem item : held.items()) {
                 BigDecimal price = utils.CurrencyFormatter.normalize(item.unitPrice());
-                BigDecimal discount = canApplySaleDiscount() && item.discountPercent() != null
-                        ? item.discountPercent() : BigDecimal.ZERO;
+                BigDecimal catalogPrice = utils.CurrencyFormatter.normalize(
+                        item.catalogPrice() == null ? item.unitPrice() : item.catalogPrice());
+                BigDecimal discount = item.discountPercent() == null
+                        ? BigDecimal.ZERO : item.discountPercent();
                 BigDecimal gross = price.multiply(BigDecimal.valueOf(item.quantity()));
                 BigDecimal lineTotal = gross.subtract(gross.multiply(discount)
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)).max(BigDecimal.ZERO);
                 cartModel.addRow(new Object[]{item.productId(), item.productName(), item.description(), item.sku(),
-                        price, item.quantity(), discount, lineTotal, price,
+                        price, item.quantity(), discount, lineTotal, catalogPrice,
                         normalizeProductType(item.productType()), item.categoryId()});
             }
         } finally {
@@ -2332,11 +2557,17 @@ public class MakeASale extends JFrame {
         if (held.paymentMethod() != null && !held.paymentMethod().isBlank()) {
             selectPaymentMethod(held.paymentMethod());
         }
-        setDiscountFieldValue(canApplySaleDiscount() && held.saleDiscountPercent() != null
+        setDiscountFieldValue(held.saleDiscountPercent() != null
                 ? held.saleDiscountPercent().stripTrailingZeros().toPlainString() : "0");
+        lastAcceptedSaleDiscountText = "0";
+        for (int row = 0; row < cartModel.getRowCount(); row++) {
+            handlePriceEditOverrideAtCart(row);
+            handleItemDiscountEditOverrideAtCart(row);
+        }
+        handleSaleDiscountEditOverride();
         selectCustomerById(held.customerId());
         configureCartTableColumns();
-        updateOverallTotal();
+        updateLineTotals();
     }
 
     private void selectCustomerById(Integer customerId) {
@@ -2358,8 +2589,7 @@ public class MakeASale extends JFrame {
     }
 
     private void clearHeldCartSelection() {
-        pendingPriceOverrideApprovals.clear();
-        pendingItemDiscountApprovals.clear();
+        clearPendingManagerApprovals();
         applyCustomerAccountFilter("", false);
         customerAccountBox.setSelectedItem("");
         if (customerAccountBox.getEditor() != null) {
@@ -2373,7 +2603,7 @@ public class MakeASale extends JFrame {
         updatePaymentButtonStyles();
         updateCheckoutAvailability();
         if (discountPercentField != null) {
-            discountPercentField.setText("0");
+            setDiscountFieldValue("0");
         }
     }
 

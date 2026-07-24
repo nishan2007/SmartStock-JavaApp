@@ -14,31 +14,23 @@ import services.LanApiSchemaInstaller;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 import ui.helpers.BlockingCallGuard;
 import ui.helpers.PerformanceDiagnostics;
 
 public class DB {
     private static final Object SCHEMA_LOCK = new Object();
     private static final Set<String> ENSURED_SCHEMA_KEYS = ConcurrentHashMap.newKeySet();
-    private static final Executor CLOUD_NETWORK_TIMEOUT_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "smartstock-cloud-db-timeout");
-        thread.setDaemon(true);
-        return thread;
-    });
-
     public static Connection getConnection() throws SQLException {
         BlockingCallGuard.check("primary database connection");
         long started = System.nanoTime();
         DatabaseConfig config = DatabaseConfig.load();
-        if (config.mode() == DatabaseMode.CLIENT) {
-            throw new SQLException("Direct database access is disabled on this register. SmartStock must use the authenticated LAN service.", "28000");
+        if (config.mode() == DatabaseMode.CLIENT || config.mode() == DatabaseMode.REMOTE_ADMIN) {
+            throw new SQLException("Direct database access is disabled on this device. SmartStock must use its authenticated API service.", "28000");
         }
-        if (config.mode() == DatabaseMode.SERVER && !isLoopbackJdbcUrl(config.jdbcUrl())) {
+        if (config.mode() == DatabaseMode.SERVER && !isLoopbackJdbcUrl(config.jdbcUrl())
+                && !Boolean.getBoolean("smartstock.remote.gateway")) {
             throw new SQLException("The SmartStock Server Service database URL must use localhost. Registers connect through HTTPS port 8443.", "28000");
         }
         if (!config.hasPrimaryConnection()) {
@@ -70,39 +62,6 @@ public class DB {
         PerformanceDiagnostics.record("database", "primary-connect", started, false, -1);
         if (last != null) last.printStackTrace();
         throw last == null ? new SQLException("Database connection failed.") : last;
-    }
-
-    public static Connection getCloudConnection() throws SQLException {
-        BlockingCallGuard.check("cloud database connection");
-        long started = System.nanoTime();
-        DatabaseConfig config = DatabaseConfig.load();
-        if (!config.hasCloudConnection()) {
-            throw new SQLException("Cloud database connection is not configured on this machine.");
-        }
-        Connection conn = DriverManager.getConnection(withCloudTimeouts(config.cloudJdbcUrl()), config.cloudDbUser(), config.cloudDbPassword());
-        configureCloudSession(conn);
-        PerformanceDiagnostics.record("database", "cloud-connect", started, true, -1);
-        return conn;
-    }
-
-    private static void configureCloudSession(Connection conn) throws SQLException {
-        conn.setNetworkTimeout(CLOUD_NETWORK_TIMEOUT_EXECUTOR, 30_000);
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute("SET statement_timeout = '30s'");
-            stmt.execute("SET lock_timeout = '10s'");
-            stmt.execute("SET idle_in_transaction_session_timeout = '60s'");
-        }
-    }
-
-    private static String withCloudTimeouts(String jdbcUrl) {
-        String url = jdbcUrl == null ? "" : jdbcUrl;
-        url = withJdbcParam(url, "connectTimeout", "10");
-        url = withJdbcParam(url, "socketTimeout", "30");
-        url = withJdbcParam(url, "tcpKeepAlive", "true");
-        if (!isLoopbackJdbcUrl(url)) {
-            url = withJdbcParam(url, "sslmode", "require");
-        }
-        return url;
     }
 
     private static String withPrimarySecurity(DatabaseConfig config) {

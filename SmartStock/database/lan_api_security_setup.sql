@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS public.lan_api_sessions (
     revoked_at TIMESTAMPTZ,
     auth_source TEXT NOT NULL,
     CHECK (auth_source IN ('SUPABASE', 'SUPABASE_PASSWORD', 'LOCAL_CACHE',
-                           'LOCAL_PASSWORD_CACHE', 'BADGE_PIN', 'EMPLOYEE_PIN'))
+                           'LOCAL_PASSWORD_CACHE', 'BADGE_PIN', 'EMPLOYEE_PIN',
+                           'BADGE_ONLY', 'BADGE_PIN_SETUP'))
 );
 
 ALTER TABLE public.lan_api_sessions
@@ -39,7 +40,8 @@ ALTER TABLE public.lan_api_sessions
 ALTER TABLE public.lan_api_sessions
     ADD CONSTRAINT lan_api_sessions_auth_source_check
     CHECK (auth_source IN ('SUPABASE', 'SUPABASE_PASSWORD', 'LOCAL_CACHE',
-                           'LOCAL_PASSWORD_CACHE', 'BADGE_PIN', 'EMPLOYEE_PIN'));
+                           'LOCAL_PASSWORD_CACHE', 'BADGE_PIN', 'EMPLOYEE_PIN',
+                           'BADGE_ONLY', 'BADGE_PIN_SETUP'));
 
 CREATE INDEX IF NOT EXISTS lan_api_sessions_device_active_idx
 ON public.lan_api_sessions(device_id, expires_at)

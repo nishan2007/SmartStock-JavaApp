@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS devices (
     receipt_device_code TEXT NOT NULL DEFAULT '0001',
     allow_sales BOOLEAN NOT NULL DEFAULT TRUE,
     allow_orders BOOLEAN NOT NULL DEFAULT TRUE,
+    access_mode TEXT NOT NULL DEFAULT 'CLIENT',
     session_count BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -57,6 +58,17 @@ ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS allow_sales BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS allow_orders BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'CLIENT';
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'devices_access_mode_check'
+          AND conrelid = 'public.devices'::regclass
+    ) THEN
+        ALTER TABLE public.devices ADD CONSTRAINT devices_access_mode_check
+            CHECK (access_mode IN ('CLIENT', 'SERVER', 'REMOTE_ADMIN'));
+    END IF;
+END $$;
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS session_count BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE devices
@@ -225,7 +237,8 @@ FROM (
     LEFT JOIN device_sessions ds ON ds.device_id = d2.device_id
     GROUP BY d2.device_id
 ) session_totals
-WHERE session_totals.device_id = d.device_id;
+WHERE session_totals.device_id = d.device_id
+  AND d.session_count IS DISTINCT FROM COALESCE(session_totals.session_count, 0);
 
 DO $outer$
 BEGIN

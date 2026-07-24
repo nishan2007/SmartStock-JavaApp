@@ -27,17 +27,20 @@ public final class StoreHydrationService {
 
     private static HydrationResult hydrate(Connection local, Integer locationId, boolean includeHistory) throws SQLException {
         DatabaseConfig config = DatabaseConfig.load();
-        if (!config.hasCloudConnection()) {
-            return HydrationResult.skipped("Cloud database connection is not configured.");
+        if (!ServerSupabaseCredentials.isConfigured()) {
+            return HydrationResult.skipped("Supabase server API is not configured.");
         }
-
-        try (Connection cloud = DB.getCloudConnection()) {
-            int rows = ReferenceDataSyncService.pullReferenceData(local, cloud);
-            if (includeHistory) {
-                rows += ReferenceDataSyncService.pullExistingLocationHistory(local, cloud, locationId);
-            }
+        Integer storeId = locationId == null ? config.locationId() : locationId;
+        if (storeId == null) {
+            return HydrationResult.skipped("No store is selected for cloud hydration.");
+        }
+        try {
+            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(storeId);
+            int rows = CloudRecoveryService.restoreStoreMirror(local, storeId, mirror);
             ImageCacheWarmupService.warmLocalCache(local);
             return HydrationResult.synced(rows);
+        } catch (java.io.IOException ex) {
+            throw new SQLException("The Supabase store mirror is unavailable.", ex);
         }
     }
 

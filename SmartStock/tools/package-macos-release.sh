@@ -59,12 +59,7 @@ import sys
 source_dir = pathlib.Path(sys.argv[1])
 output_path = pathlib.Path(sys.argv[2])
 chunks = [
-    ("ic04", "icon_16.png"),
-    ("ic05", "icon_32.png"),
-    ("ic07", "icon_128.png"),
     ("ic08", "icon_256.png"),
-    ("ic09", "icon_512.png"),
-    ("ic10", "icon_1024.png"),
 ]
 body = bytearray()
 for chunk_type, filename in chunks:
@@ -112,6 +107,10 @@ mkdir -p "$JPACKAGE_INPUT_DIR/dependency"
 
 cp "$JAR_PATH" "$JPACKAGE_INPUT_DIR/"
 cp -R "$TARGET_DIR/dependency/." "$JPACKAGE_INPUT_DIR/dependency/"
+# These artifacts contain compile-time annotations only. They are not referenced
+# by SmartStock's runtime dependency graph and needlessly inflate updater bundles.
+rm -f "$JPACKAGE_INPUT_DIR/dependency/checker-qual-"*.jar
+rm -f "$JPACKAGE_INPUT_DIR/dependency/error_prone_annotations-"*.jar
 build_macos_icons
 cat > "$UPDATER_LAUNCHER_PROPERTIES" <<EOF
 main-jar=$JAR_NAME
@@ -140,7 +139,7 @@ JPACKAGE_OUTPUT="$(jpackage \
   --icon "$MAC_ICON_PATH" \
   --mac-package-identifier "com.smartstock.desktop" \
   --add-launcher "SmartStockUpdater=$UPDATER_LAUNCHER_PROPERTIES" \
-  --add-modules "java.base,java.desktop,java.management,java.net.http,java.prefs,java.sql,jdk.httpserver,jdk.unsupported" \
+  --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.httpserver,jdk.unsupported" \
   --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
 JPACKAGE_STATUS=$?
 set -e

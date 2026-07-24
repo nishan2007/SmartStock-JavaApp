@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JProgressBar;
+import javax.swing.JRootPane;
 import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.awt.Container;
@@ -38,6 +39,26 @@ class LoadingStatePanelTest {
             assertFalse(progress(panel).isVisible());
             assertFalse(retry.isVisible());
             assertTrue(label(panel).getText().startsWith("Updated"));
+        });
+    }
+
+    @Test
+    void redirectsScreenStatusAndRetryActionToSharedMenuStrip() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JRootPane rootPane = new JRootPane();
+            LoadingStatePanel menuStatus = LoadingStatePanel.forMenuBar();
+            rootPane.putClientProperty("SmartStock.menuBarStatusComponent", menuStatus);
+
+            LoadingStatePanel screenStatus = new LoadingStatePanel();
+            rootPane.setContentPane(screenStatus);
+            AtomicBoolean retried = new AtomicBoolean();
+            screenStatus.failed("offline", false, () -> retried.set(true));
+
+            assertFalse(screenStatus.isVisible());
+            assertTrue(label(menuStatus).getText().contains("offline"));
+            assertTrue(button(menuStatus).isVisible());
+            button(menuStatus).doClick();
+            assertTrue(retried.get());
         });
     }
 

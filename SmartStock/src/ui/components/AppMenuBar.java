@@ -9,12 +9,12 @@ import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
+import data.EnvironmentProfile;
 import ui.screens.CompanyCustomization;
 import ui.screens.customorders.CustomOrderItems;
 import ui.screens.BalanceDraw;
 import ui.screens.BalanceSheet;
 import ui.screens.CustomerAccounts;
-import ui.screens.DatabaseSetup;
 import ui.screens.DeviceManagement;
 import ui.screens.DepartmentList;
 import ui.screens.EditItem;
@@ -61,12 +61,22 @@ import java.util.List;
 
 public class AppMenuBar {
     private static final String NOTIFICATIONS_MENU_PROPERTY = "SmartStock.notificationsMenuItem";
+    private static final String STATUS_COMPONENT_PROPERTY = "SmartStock.menuBarStatusComponent";
     private static final Color NOTIFICATION_URGENT_COLOR = new Color(185, 28, 28);
     private static final DateTimeFormatter SESSION_CLOCK_FORMATTER =
             DateTimeFormatter.ofPattern("h:mm EEE, MMM d", Locale.US);
 
     public static JMenuBar create(JFrame parent, String currentScreen) {
         JMenuBar menuBar = new JMenuBar();
+
+        Object savedStatus = parent.getRootPane().getClientProperty(STATUS_COMPONENT_PROPERTY);
+        LoadingStatePanel menuStatus;
+        if (savedStatus instanceof LoadingStatePanel existingStatus) {
+            menuStatus = existingStatus;
+        } else {
+            menuStatus = LoadingStatePanel.forMenuBar();
+            parent.getRootPane().putClientProperty(STATUS_COMPONENT_PROPERTY, menuStatus);
+        }
 
         JMenu pointOfSaleMenu = new JMenu("Point of Sale");
         JMenu operationsMenu = new JMenu("Operations");
@@ -152,7 +162,8 @@ public class AppMenuBar {
         boolean canPartsManagement = PermissionManager.hasPermission("PARTS_MANAGEMENT");
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
-        boolean canChangeStore = PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation();
+        boolean canChangeStore = DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN
+                || (PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation());
         boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canViewEmployeeSchedule || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
@@ -692,8 +703,8 @@ public class AppMenuBar {
         JMenuItem changeEmployeePinItem = new JMenuItem("Change Employee PIN");
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
+        JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
-        JMenuItem databaseSetupItem = new JMenuItem("Database Setup");
         JMenuItem closeItem = new JMenuItem("Close");
         JMenuItem logoutItem = new JMenuItem("Logout");
 
@@ -731,14 +742,21 @@ public class AppMenuBar {
                 new SyncStatus().setVisible(true);
             }
         });
+        remoteQueueItem.setVisible(DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN);
+        remoteQueueItem.addActionListener(e -> ui.helpers.UiTaskRunner.submit(parent, "remote-admin.commands",
+                LanApiClient::loadRemoteCommands, commands -> {
+                    StringBuilder message = new StringBuilder("Recent changes for ")
+                            .append(SessionManager.getCurrentLocationName()).append(":\n\n");
+                    if (commands.isEmpty()) message.append("No remote changes recorded.");
+                    for (LanApiClient.RemoteCommand command : commands) {
+                        message.append(command.status()).append("  ").append(command.operation()).append('\n');
+                    }
+                    showWrappedMessageDialog(parent, message.toString(), "Remote Change Status", JOptionPane.INFORMATION_MESSAGE);
+                }, failure -> JOptionPane.showMessageDialog(parent, failure.getMessage(),
+                        "Remote Change Status", JOptionPane.ERROR_MESSAGE)));
         checkUpdatesItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 AppUpdateService.checkForUpdatesAsync(parent, true);
-            }
-        });
-        databaseSetupItem.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                new DatabaseSetup(parent).setVisible(true);
             }
         });
         closeItem.addActionListener(new ActionListener() {
@@ -762,8 +780,8 @@ public class AppMenuBar {
 
         statusMenu.add(syncNowItem);
         statusMenu.add(syncStatusItem);
+        statusMenu.add(remoteQueueItem);
         statusMenu.add(checkUpdatesItem);
-        statusMenu.add(databaseSetupItem);
 
         sessionMenu.add(changeStoreItem);
         sessionMenu.add(changeEmployeePinItem);
@@ -782,11 +800,42 @@ public class AppMenuBar {
         menuBar.add(statusMenu);
         menuBar.add(notificationsItem);
         menuBar.add(Box.createHorizontalGlue());
+        if (EnvironmentProfile.active() == EnvironmentProfile.DEVELOPMENT) {
+            JLabel developmentLabel = new JLabel("DEVELOPER / TEST");
+            developmentLabel.setForeground(Color.WHITE);
+            developmentLabel.setFont(developmentLabel.getFont().deriveFont(java.awt.Font.BOLD));
+            developmentLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+            menuBar.add(developmentLabel);
+            menuBar.add(Box.createHorizontalStrut(12));
+        }
+        menuBar.add(menuStatus);
+        menuBar.add(Box.createHorizontalStrut(8));
         menuBar.add(sessionDateLabel);
         menuBar.add(sessionMenu);
         menuBar.add(Box.createHorizontalStrut(14));
 
         return menuBar;
+    }
+
+    /**
+     * Creates the standard application menu bar with a screen-specific status
+     * component. The component is retained if permissions later rebuild the menu.
+     */
+    public static JMenuBar create(JFrame parent, String currentScreen, JComponent statusComponent) {
+        JMenuBar menuBar = create(parent, currentScreen);
+        if (statusComponent instanceof LoadingStatePanel loadingStatePanel) {
+            loadingStatePanel.attachToMenu(parent.getRootPane());
+        }
+        return menuBar;
+    }
+
+    static LoadingStatePanel loadingStatusFor(Component component) {
+        JRootPane rootPane = SwingUtilities.getRootPane(component);
+        if (rootPane == null) {
+            return null;
+        }
+        Object status = rootPane.getClientProperty(STATUS_COMPONENT_PROPERTY);
+        return status instanceof LoadingStatePanel loadingStatePanel ? loadingStatePanel : null;
     }
 
     public static void updateNotificationMenuLabel(JMenuBar menuBar, int unreadCount, int urgentCount) {
@@ -814,7 +863,12 @@ public class AppMenuBar {
 
     private static String currentSessionMenuTitle() {
         String username = SessionManager.getCurrentUsername();
-        return username == null || username.isBlank() ? "Session" : username.trim();
+        String base = username == null || username.isBlank() ? "Session" : username.trim();
+        if (DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN
+                && SessionManager.getCurrentLocationName() != null) {
+            return base + " · " + SessionManager.getCurrentLocationName();
+        }
+        return base;
     }
 
     private static JLabel createSessionDateLabel() {
@@ -970,6 +1024,28 @@ public class AppMenuBar {
 
 
     private static void showChangeLocationDialog(JFrame parent, String currentScreen) {
+        if (DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN) {
+            ui.helpers.UiTaskRunner.submit(parent, "remote-admin.stores", LanApiClient::loadRemoteStores, stores -> {
+                LanApiClient.RemoteStore selected = (LanApiClient.RemoteStore) JOptionPane.showInputDialog(parent,
+                        "Select the store to manage. The current screen will reload in that store's scope.",
+                        "Remote Admin Store", JOptionPane.PLAIN_MESSAGE, null, stores.toArray(),
+                        stores.stream().filter(s -> s.locationId() == SessionManager.getCurrentLocationId()).findFirst().orElse(null));
+                if (selected == null || selected.locationId() == SessionManager.getCurrentLocationId()) return;
+                ui.helpers.UiTaskRunner.submit(parent, "remote-admin.switch-store",
+                        () -> LanApiClient.switchRemoteStore(selected.locationId()), result -> {
+                            LanApiClient.User user = result.user();
+                            SessionManager.setCurrentLocationId(user.locationId());
+                            SessionManager.setCurrentLocationName(user.locationName());
+                            SessionManager.setCurrentLocationTimezone(user.locationTimezone());
+                            SessionManager.setCurrentPermissions(result.permissions());
+                            ui.helpers.SessionDataCache.clear();
+                            refreshCurrentScreen(parent, currentScreen);
+                        }, failure -> JOptionPane.showMessageDialog(parent,
+                                "Store switch failed: " + failure.getMessage(), "Remote Admin", JOptionPane.ERROR_MESSAGE));
+            }, failure -> JOptionPane.showMessageDialog(parent,
+                    "Stores could not be loaded: " + failure.getMessage(), "Remote Admin", JOptionPane.ERROR_MESSAGE));
+            return;
+        }
         JOptionPane.showMessageDialog(parent,
                 "This installation is assigned to " + SessionManager.getCurrentLocationName()
                         + ". An administrator can change the assignment from Device Management.",

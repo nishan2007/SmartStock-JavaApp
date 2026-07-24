@@ -24,8 +24,10 @@ fi
 
 rg -Fq 'config.mode() == DatabaseMode.SERVER && !isLoopbackJdbcUrl(config.jdbcUrl())' src/data/DB.java \
   || fail "the server database URL is not restricted to loopback"
-rg -q 'withJdbcParam\(url, "sslmode", "require"\)' src/data/DB.java \
-  || fail "remote cloud JDBC does not require TLS"
+if rg -n 'getCloudConnection|SMARTSTOCK_CLOUD_DB_|cloud\.jdbc\.url|cloud\.db\.(user|password)' \
+  src installer tools -g '!security-check.sh'; then
+  fail "obsolete direct cloud PostgreSQL access is present"
+fi
 rg -q 'SecureCredentialStore' src/data/DatabaseConfig.java || fail "database config is not using secure credential storage"
 rg -q 'REVOKE ALL ON public\.devices, public\.device_sessions FROM anon, authenticated' \
   database/supabase_rls_hardening_setup.sql || fail "device tables are not closed to direct Data API access"
