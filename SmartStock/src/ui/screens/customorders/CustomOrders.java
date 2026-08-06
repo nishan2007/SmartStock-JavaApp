@@ -1,5 +1,8 @@
 package ui.screens.customorders;
 
+import Receipt.CustomOrderLabelPrinter;
+import Receipt.CustomOrderSlipBuilder;
+import Receipt.CustomOrderSlipData;
 import Receipt.CustomOrderSlipPrinter;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -119,7 +122,7 @@ public class CustomOrders extends JFrame {
         return guidedOrder;
     }
     private JPanel lookupTab(){lookup=new CustomOrdersLookupTabPanel(handler());return lookup;}
-    private JPanel ordersTab(boolean all){DefaultTableModel m=all?allModel:myModel;JTable t=all?allTable:myTable;JTextArea d=all?allDetails:myDetails;JTextField s=all?allSearch:mySearch;JComboBox<String>status=all?allStatus:myStatus;TableRowSorter<DefaultTableModel>sorter=all?allSorter:mySorter;t.setRowSorter(sorter);t.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);t.setRowHeight(26);t.getSelectionModel().addListSelectionListener(e->{if(!e.getValueIsAdjusting()){Long id=selected(t,m);if(id!=null)loadDetails(id,d);}});Runnable filter=()->filter(sorter,s,status);s.getDocument().addDocumentListener(listener(filter));status.addActionListener(e->filter.run());JButton refresh=new JButton("Refresh"),preview=new JButton("Preview Slip"),print=new JButton("Print Slip");refresh.addActionListener(e->loadOrders());preview.addActionListener(e->{Long id=selected(t,m);String number=selectedNumber(t,m);if(id!=null&&number!=null)try{WindowHelper.showPosWindow(new CustomOrderSlipPreview(number),this);}catch(Exception ex){error(ex);}});print.addActionListener(e->{String number=selectedNumber(t,m);if(number!=null)printSlipAsync(number);});JPanel top=new JPanel(new BorderLayout(8,0));top.add(s);JPanel controls=new JPanel();controls.add(status);controls.add(refresh);controls.add(preview);controls.add(print);top.add(controls,BorderLayout.EAST);JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(d));split.setResizeWeight(.7);JPanel p=new JPanel(new BorderLayout(8,8));p.setBorder(new EmptyBorder(12,12,12,12));p.add(top,BorderLayout.NORTH);p.add(split);return p;}
+    private JPanel ordersTab(boolean all){DefaultTableModel m=all?allModel:myModel;JTable t=all?allTable:myTable;JTextArea d=all?allDetails:myDetails;JTextField s=all?allSearch:mySearch;JComboBox<String>status=all?allStatus:myStatus;TableRowSorter<DefaultTableModel>sorter=all?allSorter:mySorter;t.setRowSorter(sorter);t.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);t.setRowHeight(26);t.getSelectionModel().addListSelectionListener(e->{if(!e.getValueIsAdjusting()){Long id=selected(t,m);if(id!=null)loadDetails(id,d);}});Runnable filter=()->filter(sorter,s,status);s.getDocument().addDocumentListener(listener(filter));status.addActionListener(e->filter.run());JButton refresh=new JButton("Refresh"),preview=new JButton("Preview Slip"),print=new JButton("Print Slip");refresh.addActionListener(e->loadOrders());preview.addActionListener(e->{Long id=selected(t,m);String number=selectedNumber(t,m);if(id!=null&&number!=null)try{WindowHelper.showPosWindow(new CustomOrderSlipPreview(number),this);}catch(Exception ex){error(ex);}});print.addActionListener(e->{String number=selectedNumber(t,m);if(number!=null)promptAndPrintSlip(number);});JPanel top=new JPanel(new BorderLayout(8,0));top.add(s);JPanel controls=new JPanel();controls.add(status);controls.add(refresh);controls.add(preview);controls.add(print);top.add(controls,BorderLayout.EAST);JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(d));split.setResizeWeight(.7);JPanel p=new JPanel(new BorderLayout(8,8));p.setBorder(new EmptyBorder(12,12,12,12));p.add(top,BorderLayout.NORTH);p.add(split);return p;}
 
     private void loadCatalog(){
         if(guidedOrder==null)return;
@@ -178,7 +181,7 @@ public class CustomOrders extends JFrame {
             },number->{
                 loadingState.ready(java.time.Instant.now());
                 JOptionPane.showMessageDialog(this,"Custom order "+number+" saved.");
-                if(printOrderSlip || alwaysPrintOrderSlip)printSlipAsync(number);
+                if(printOrderSlip || alwaysPrintOrderSlip)promptAndPrintSlip(number);
                 clearOrder();loadOrders();
             },failure->loadingState.failed(failure.getMessage(),false,()->saveOrder(printOrderSlip)));
         }catch(Exception e){error(e);}
@@ -215,14 +218,57 @@ public class CustomOrders extends JFrame {
                     area.setCaretPosition(0);
                 }, failure -> area.setText("Unable to load order details. Select the order to retry."));
     }
-    private void printSlipAsync(String orderNumber) {
+    private void promptAndPrintSlip(String orderNumber) {
+        Integer count = CustomOrderLabelPrinter.promptLabelCount(this);
+        if (count != null) printSlipAndLabelsAsync(orderNumber, count);
+    }
+
+    private void printSlipAndLabelsAsync(String orderNumber, int count) {
         loadingState.loading(false, java.time.Instant.now());
         UiTaskRunner.submit(this, "custom-orders.print-slip", () -> {
-            CustomOrderSlipPrinter.print(orderNumber);
-            return null;
-        }, ignored -> loadingState.ready(java.time.Instant.now()),
-                failure -> loadingState.failed(failure.getMessage(), false,
-                        () -> printSlipAsync(orderNumber)));
+            CustomOrderSlipData data = CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber);
+            try {
+                CustomOrderSlipPrinter.print(data);
+            } catch (Exception ex) {
+                return new OrderPrintResult(data, ex, null);
+            }
+            try {
+                CustomOrderLabelPrinter.print(data, count);
+                return new OrderPrintResult(data, null, null);
+            } catch (Exception ex) {
+                return new OrderPrintResult(data, null, ex);
+            }
+        }, result -> {
+            if (result.slipFailure() != null) {
+                loadingState.failed("Order " + orderNumber + " was saved, but its slip did not print: " + message(result.slipFailure()), false,
+                        () -> printSlipAndLabelsAsync(orderNumber, count));
+            } else if (result.labelFailure() != null) {
+                loadingState.failed("The order slip printed, but the order label did not: " + message(result.labelFailure()), false,
+                        () -> printLabelsAsync(orderNumber, count));
+            } else {
+                loadingState.ready(java.time.Instant.now());
+                JOptionPane.showMessageDialog(this, "Order slip and " + count + " label" + (count == 1 ? "" : "s") + " sent to the printers.");
+            }
+        }, failure -> loadingState.failed("Unable to load order " + orderNumber + " for printing: " + message(failure), false,
+                () -> printSlipAndLabelsAsync(orderNumber, count)));
+    }
+
+    private void promptAndPrintLabels(String orderNumber) {
+        Integer count = CustomOrderLabelPrinter.promptLabelCount(this);
+        if (count != null) printLabelsAsync(orderNumber, count);
+    }
+
+    private void printLabelsAsync(String orderNumber, int count) {
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "custom-orders.print-labels", () -> {
+            CustomOrderSlipData data = CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber);
+            CustomOrderLabelPrinter.print(data, count);
+            return data;
+        }, ignored -> {
+            loadingState.ready(java.time.Instant.now());
+            JOptionPane.showMessageDialog(this, count + " order label" + (count == 1 ? "" : "s") + " sent to the label printer.");
+        }, failure -> loadingState.failed("Order labels did not print: " + message(failure), false,
+                () -> printLabelsAsync(orderNumber, count)));
     }
     private CustomOrdersLookupTabPanel.Handler handler() {
         return new CustomOrdersLookupTabPanel.Handler() {
@@ -269,6 +315,7 @@ public class CustomOrders extends JFrame {
             public boolean canRefundPayments() { return can("CUSTOM_ORDER_LINE_RETURNS") || can("CUSTOM_ORDER_REFUNDS") || can("CUSTOM_ORDER_OVERRIDES"); }
             public boolean canDeliverOrderLines() { return can("CUSTOM_ORDER_LINE_DELIVERY") || can("CUSTOM_ORDER_OVERRIDES"); }
             public boolean canUpdateProduction() { return can("CUSTOM_ORDER_PRODUCTION_STEPS") || can("CUSTOM_ORDER_OVERRIDES"); }
+            public void reprintOrderLabels(String orderNumber) { promptAndPrintLabels(orderNumber); }
             public void refreshRelatedOrders() { loadOrders(); }
         };
     }
@@ -359,10 +406,11 @@ public class CustomOrders extends JFrame {
         BigDecimal squareUnit=switch(a){case"SQ_IN","SQUARE_INCH","SQUARE_INCHES"->new BigDecimal("0.00064516");case"SQ_FT","SQUARE_FOOT","SQUARE_FEET"->new BigDecimal("0.09290304");case"SQ_CM","SQUARE_CENTIMETRE","SQUARE_CENTIMETERS"->new BigDecimal("0.0001");case"SQ_MM"->new BigDecimal("0.000001");default->BigDecimal.ONE;};
         return squareMetres.divide(squareUnit,6,RoundingMode.HALF_UP);
     }
-    private static boolean can(String permission){return PermissionManager.hasPermission(permission);}private static DefaultTableModel model(String...c){return new DefaultTableModel(c,0){public boolean isCellEditable(int r,int c){return false;}};}private static JTextArea details(){JTextArea a=new JTextArea();a.setEditable(false);a.setLineWrap(true);a.setWrapStyleWord(true);return a;}private static JPanel form(){JPanel p=new JPanel(new GridBagLayout());p.setBorder(new EmptyBorder(8,8,8,8));return p;}private static void row(JPanel p,int y,String label,Component c){GridBagConstraints g=new GridBagConstraints();g.insets=new Insets(4,4,4,4);g.gridy=y;g.gridx=0;g.anchor=GridBagConstraints.WEST;p.add(new JLabel(label),g);g.gridx=1;g.weightx=1;g.fill=GridBagConstraints.HORIZONTAL;p.add(c,g);}static String money(BigDecimal v){return CurrencyFormatter.normalize(v).toPlainString();}private static String decimalText(BigDecimal v){return v==null?"":v.stripTrailingZeros().toPlainString();}private static BigDecimal decimal(JTextField f,String label,boolean required){String v=f.getText().trim();if(v.isBlank()){if(required)throw new IllegalArgumentException("Enter "+label+".");return null;}try{return new BigDecimal(v);}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}static BigDecimal wholeDollar(JTextField f,String label,boolean required){BigDecimal v=decimal(f,label,required);if(v==null)return null;BigDecimal whole=CurrencyFormatter.normalize(v);if(v.compareTo(whole)!=0)throw new IllegalArgumentException("Enter "+label+" in whole dollars; cents are not used.");return whole;}private static BigDecimal nullable(JTextField f){return decimal(f,"value",false);}private static int integer(JTextField f,String label,int min){try{int v=Integer.parseInt(f.getText().trim());if(v<min)throw new Exception();return v;}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+" of at least "+min+".");}}private static Long selected(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:Long.valueOf(m.getValueAt(t.convertRowIndexToModel(r),0).toString());}private static String selectedNumber(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:String.valueOf(m.getValueAt(t.convertRowIndexToModel(r),1));}private static String payment(LanCustomOrderWorkflowService.OrderRow x){return x.paymentMethod()+(x.paymentStatus().isBlank()?"":" / "+x.paymentStatus());}private static String productionLabel(String v){return switch(v){case"DESIGN_APPROVED"->"Design Approved";case"PRINTED"->"Printed";case"FINISHED"->"Finished";case"QUALITY_CHECKED"->"Quality Checked";case"READY"->"Ready";default->"Not Started";};}private static void filter(TableRowSorter<DefaultTableModel>s,JTextField q,JComboBox<String>status){List<RowFilter<Object,Object>>filters=new ArrayList<>();if(!q.getText().isBlank())filters.add(RowFilter.regexFilter("(?i)"+Pattern.quote(q.getText().trim())));if(!"All".equals(status.getSelectedItem()))filters.add(RowFilter.regexFilter("^"+Pattern.quote(String.valueOf(status.getSelectedItem()))+"$",2));s.setRowFilter(filters.isEmpty()?null:RowFilter.andFilter(filters));}private static javax.swing.event.DocumentListener listener(Runnable r){return new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){r.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){r.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){r.run();}};}private void error(Exception e){JOptionPane.showMessageDialog(this,e.getMessage()==null?e.getClass().getSimpleName():e.getMessage(),getTitle(),JOptionPane.ERROR_MESSAGE);}
+    private static boolean can(String permission){return PermissionManager.hasPermission(permission);}private static DefaultTableModel model(String...c){return new DefaultTableModel(c,0){public boolean isCellEditable(int r,int c){return false;}};}private static JTextArea details(){JTextArea a=new JTextArea();a.setEditable(false);a.setLineWrap(true);a.setWrapStyleWord(true);return a;}private static JPanel form(){JPanel p=new JPanel(new GridBagLayout());p.setBorder(new EmptyBorder(8,8,8,8));return p;}private static void row(JPanel p,int y,String label,Component c){GridBagConstraints g=new GridBagConstraints();g.insets=new Insets(4,4,4,4);g.gridy=y;g.gridx=0;g.anchor=GridBagConstraints.WEST;p.add(new JLabel(label),g);g.gridx=1;g.weightx=1;g.fill=GridBagConstraints.HORIZONTAL;p.add(c,g);}static String money(BigDecimal v){return CurrencyFormatter.normalize(v).toPlainString();}private static String decimalText(BigDecimal v){return v==null?"":v.stripTrailingZeros().toPlainString();}private static BigDecimal decimal(JTextField f,String label,boolean required){String v=f.getText().trim();if(v.isBlank()){if(required)throw new IllegalArgumentException("Enter "+label+".");return null;}try{return new BigDecimal(v);}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}static BigDecimal wholeDollar(JTextField f,String label,boolean required){BigDecimal v=decimal(f,label,required);if(v==null)return null;BigDecimal whole=CurrencyFormatter.normalize(v);if(v.compareTo(whole)!=0)throw new IllegalArgumentException("Enter "+label+" in whole dollars; cents are not used.");return whole;}private static BigDecimal nullable(JTextField f){return decimal(f,"value",false);}private static int integer(JTextField f,String label,int min){try{int v=Integer.parseInt(f.getText().trim());if(v<min)throw new Exception();return v;}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+" of at least "+min+".");}}private static Long selected(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:Long.valueOf(m.getValueAt(t.convertRowIndexToModel(r),0).toString());}private static String selectedNumber(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:String.valueOf(m.getValueAt(t.convertRowIndexToModel(r),1));}private static String payment(LanCustomOrderWorkflowService.OrderRow x){return x.paymentMethod()+(x.paymentStatus().isBlank()?"":" / "+x.paymentStatus());}private static String productionLabel(String v){return switch(v){case"DESIGN_APPROVED"->"Design Approved";case"PRINTED"->"Printed";case"FINISHED"->"Finished";case"QUALITY_CHECKED"->"Quality Checked";case"READY"->"Ready";default->"Not Started";};}private static void filter(TableRowSorter<DefaultTableModel>s,JTextField q,JComboBox<String>status){List<RowFilter<Object,Object>>filters=new ArrayList<>();if(!q.getText().isBlank())filters.add(RowFilter.regexFilter("(?i)"+Pattern.quote(q.getText().trim())));if(!"All".equals(status.getSelectedItem()))filters.add(RowFilter.regexFilter("^"+Pattern.quote(String.valueOf(status.getSelectedItem()))+"$",2));s.setRowFilter(filters.isEmpty()?null:RowFilter.andFilter(filters));}private static javax.swing.event.DocumentListener listener(Runnable r){return new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){r.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){r.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){r.run();}};}private static String message(Throwable e){return e==null?"Unknown error":e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}private void error(Exception e){JOptionPane.showMessageDialog(this,e.getMessage()==null?e.getClass().getSimpleName():e.getMessage(),getTitle(),JOptionPane.ERROR_MESSAGE);}
     private record CartLine(OrderLineRequest request){}
     private record Catalog(List<CustomItemOption>items,List<PrintMaterialOption>materials,List<String>placements,BigDecimal minimumDepositPercent,boolean alwaysPrintOrderSlip){}
     private record OrderSnapshot(List<LanCustomOrderWorkflowService.OrderRow>all,List<LanCustomOrderWorkflowService.OrderRow>mine){}
+    private record OrderPrintResult(CustomOrderSlipData data,Exception slipFailure,Exception labelFailure){}
     private record LookupSnapshot(List<LanCustomOrderWorkflowService.OrderRow>rows){}
     private record VariantSnapshot(long itemId,List<VariantOption>variants){}
     private record PresetSnapshot(long materialId,List<PrintSizePresetOption>presets){}

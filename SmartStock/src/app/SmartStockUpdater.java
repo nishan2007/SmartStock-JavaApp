@@ -369,7 +369,8 @@ public final class SmartStockUpdater {
         return "#!/usr/bin/env bash\n"
                 + "set -euo pipefail\n"
                 + "cd " + shellQuote(appDir.toString()) + "\n"
-                + "exec java -jar " + shellQuote(jarName) + " --sync-service\n";
+                + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
+                + shellQuote(jarName) + " --sync-service\n";
     }
 
     private static String shellQuote(String value) {

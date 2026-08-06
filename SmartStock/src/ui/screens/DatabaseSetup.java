@@ -1012,6 +1012,14 @@ public class DatabaseSetup extends JFrame {
             if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
                 throw new IllegalStateException("Switch Mode to SERVER before starting server mode.");
             }
+            services.ServerSetupGuardService.Activation activation =
+                    services.ServerSetupGuardService.prepareToStart();
+            if (!activation.startServices()) {
+                statusLabel.setText("Status: " + activation.message());
+                JOptionPane.showMessageDialog(this, activation.message(), "Server Role",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
             PostgresRuntimeService.CommandResult syncServiceResult = ResponsiveTask.await(this,
                     "Starting SmartStock server services...",
                     PostgresRuntimeService::ensureSyncServiceInstalled);

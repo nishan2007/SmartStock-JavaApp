@@ -158,6 +158,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/sessions/badge-status", exchange -> handle(exchange, this::badgeStatus));
         server.createContext("/v1/sessions/badge-pin-setup", exchange -> handle(exchange, this::badgePinSetup));
         server.createContext("/v1/sessions/refresh", exchange -> handle(exchange, this::refresh));
+        server.createContext("/v1/sessions/policy", exchange -> handle(exchange, this::sessionPolicy));
         server.createContext("/v1/sessions/logout", exchange -> handle(exchange, this::logout));
         server.createContext("/v1/sessions/stores", exchange -> handle(exchange, this::sessionStores));
         server.createContext("/v1/sessions/switch-store", exchange -> handle(exchange, this::switchSessionStore));
@@ -232,6 +233,13 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/security/devices/list", exchange -> handle(exchange, this::deviceAdminList));
         server.createContext("/v1/security/devices/sessions", exchange -> handle(exchange, this::deviceAdminSessions));
         server.createContext("/v1/security/devices/update", exchange -> handle(exchange, this::deviceAdminUpdate));
+        server.createContext("/v1/security/servers/list", exchange -> handle(exchange, this::serverAdminList));
+        server.createContext("/v1/security/servers/update", exchange -> handle(exchange, this::serverAdminUpdate));
+        server.createContext("/v1/security/servers/prepare-standby", exchange -> handle(exchange, x->serverAdminAction(x,"PREPARE_STANDBY")));
+        server.createContext("/v1/security/servers/begin-handoff", exchange -> handle(exchange, x->serverAdminAction(x,"BEGIN_HANDOFF")));
+        server.createContext("/v1/security/servers/handoff-status", exchange -> handle(exchange, this::serverAdminHandoffStatus));
+        server.createContext("/v1/security/servers/emergency-takeover", exchange -> handle(exchange, x->serverAdminAction(x,"EMERGENCY_TAKEOVER")));
+        server.createContext("/v1/security/servers/retire", exchange -> handle(exchange, x->serverAdminAction(x,"RETIRE")));
         server.createContext("/v1/security/status", exchange -> handle(exchange, this::deviceSecurityStatus));
         server.createContext("/v1/locations/list", exchange -> handle(exchange, this::locationList));
         server.createContext("/v1/locations/save", exchange -> handle(exchange, this::saveLocation));
@@ -774,7 +782,7 @@ public final class LanApiServer implements AutoCloseable {
             String sessionToken = issueSession(connection, device, user, source);
             List<String> permissions = loadPermissions(connection, user.userId());
             return ApiResult.ok(sessionResponse(sessionToken, user, permissions, device.deviceId(), supabaseTokens,
-                    persistentLoginAllowed(connection, device.deviceId())));
+                    deviceSessionPolicy(connection, device.deviceId())));
         }
     }
 
@@ -845,7 +853,7 @@ public final class LanApiServer implements AutoCloseable {
             auditSecurity(connection, "REMOTE_ADMIN_STORE_SWITCHED", device.deviceId(), user.userId(),
                     "Remote Admin session switched to location " + locationId);
             return ApiResult.ok(sessionResponse(token, user, permissions, device.deviceId(), null,
-                    persistentLoginAllowed(connection, device.deviceId())));
+                    deviceSessionPolicy(connection, device.deviceId())));
         }
     }
 
@@ -917,7 +925,7 @@ public final class LanApiServer implements AutoCloseable {
             auditSecurity(connection, "EMPLOYEE_BADGE_PIN_CREATED", device.deviceId(), user.userId(),
                     "Employee created a PIN after first badge tap");
             return ApiResult.ok(sessionResponse(sessionToken, user.authenticatedUser(), permissions,
-                    device.deviceId(), passwordResult, persistentLoginAllowed(connection, device.deviceId())));
+                    device.deviceId(), passwordResult, deviceSessionPolicy(connection, device.deviceId())));
         } finally {
             java.util.Arrays.fill(pin, '\0');
         }
@@ -939,15 +947,16 @@ public final class LanApiServer implements AutoCloseable {
         try(Connection connection=DB.getConnection()) {
             UUID deviceId;
             try(PreparedStatement ps=connection.prepareStatement("""
-                    INSERT INTO devices (installation_id,device_fingerprint,device_name,hostname,app_version,
+                    INSERT INTO devices (installation_id,device_fingerprint,device_name,hostname,app_version,access_mode,
                       pairing_public_key,first_seen,last_seen,last_store_id,is_approved,is_blocked,approved_at,
                       credential_status,api_credential_hash,api_credential_issued_at,api_credential_expires_at,
                       api_server_fingerprint)
-                    VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?,TRUE,FALSE,CURRENT_TIMESTAMP,
+                    VALUES (?,?,?,?,?,'SERVER',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?,TRUE,FALSE,CURRENT_TIMESTAMP,
                       'CLAIMED',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '90 days',?)
                     ON CONFLICT (installation_id) DO UPDATE SET
                       device_fingerprint=EXCLUDED.device_fingerprint,device_name=EXCLUDED.device_name,
                       hostname=EXCLUDED.hostname,app_version=EXCLUDED.app_version,pairing_public_key=EXCLUDED.pairing_public_key,
+                      access_mode='SERVER',
                       last_seen=CURRENT_TIMESTAMP,last_store_id=EXCLUDED.last_store_id,is_approved=TRUE,is_blocked=FALSE,
                       approved_at=COALESCE(devices.approved_at,CURRENT_TIMESTAMP),credential_status='CLAIMED',
                       api_credential_hash=EXCLUDED.api_credential_hash,api_credential_issued_at=CURRENT_TIMESTAMP,
@@ -1030,7 +1039,7 @@ public final class LanApiServer implements AutoCloseable {
             List<String> permissions = loadPermissions(connection, session.userId());
             AuthenticatedUser user = loadUser(connection, session.userId(), session.locationId());
             return ApiResult.ok(sessionResponse(session.plainToken(), user, permissions, device.deviceId(), null,
-                    persistentLoginAllowed(connection, device.deviceId())));
+                    deviceSessionPolicy(connection, device.deviceId())));
         }
     }
 
@@ -1056,6 +1065,20 @@ public final class LanApiServer implements AutoCloseable {
             }
         }
         return ApiResult.ok(Map.of("loggedOut", true));
+    }
+
+    private ApiResult sessionPolicy(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        authenticateSession(context.exchange(), device, true);
+        try (Connection connection = DB.getConnection()) {
+            DeviceSessionPolicy policy = deviceSessionPolicy(connection, device.deviceId());
+            return ApiResult.ok(Map.of(
+                    "persistentLoginAllowed", policy.persistentLoginAllowed(),
+                    "autoLogoutEnabled", policy.autoLogoutEnabled(),
+                    "autoLogoutMinutes", policy.autoLogoutMinutes()
+            ));
+        }
     }
 
     private ApiResult permissions(RequestContext context) throws Exception {
@@ -1733,6 +1756,41 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult deviceAdminRead(RequestContext x,DeviceAdminOperation operation)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
         try(Connection c=DB.getConnection()){try{return ApiResult.ok(operation.run(c,s));}catch(LanDeviceAdminService.RuleViolation e){throw apiException(e);}}}
 
+    private ApiResult serverAdminList(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanServerAdminService.list(c,s.userId(),s.locationId()));}
+        catch(LanServerAdminService.RuleViolation e){throw apiException(e);}
+        catch(CloudServerRegistryService.RegistryException e){throw apiException(e);}
+        catch(java.io.IOException e){throw new ApiException(503,"SERVER_REGISTRY_UNAVAILABLE","Server inventory is temporarily unavailable.",true);}}
+    }
+    private ApiResult serverAdminUpdate(RequestContext x)throws Exception{
+        return serverAdminMutation(x,null);
+    }
+    private ApiResult serverAdminAction(RequestContext x,String action)throws Exception{
+        return serverAdminMutation(x,action);
+    }
+    private ApiResult serverAdminMutation(RequestContext x,String forcedAction)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        if(forcedAction!=null)x.body().addProperty("action",forcedAction);
+        String key=requireIdempotencyKey(x,"A valid idempotency key is required for a server operation."),operation="security.servers.update.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
+        try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{
+            Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
+            AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());
+            Map<String,Object>result=LanServerAdminService.mutate(c,x.body(),s.userId(),displayName(u),s.locationId());
+            completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
+        }catch(LanServerAdminService.RuleViolation e){c.rollback();throw apiException(e);}
+        catch(CloudServerRegistryService.RegistryException e){c.rollback();throw apiException(e);}
+        catch(java.io.IOException e){c.rollback();throw new ApiException(503,"SERVER_REGISTRY_UNAVAILABLE","Server coordination is temporarily unavailable.",true);}
+        catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
+    }
+    private ApiResult serverAdminHandoffStatus(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanServerAdminService.handoffStatus(c,x.body(),s.userId(),s.locationId()));}
+        catch(LanServerAdminService.RuleViolation e){throw apiException(e);}
+        catch(CloudServerRegistryService.RegistryException e){throw apiException(e);}
+        catch(java.io.IOException e){throw new ApiException(503,"SERVER_REGISTRY_UNAVAILABLE","Handoff status is temporarily unavailable.",true);}}
+    }
+
     private ApiResult locationList(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanLocationService.list(c,x.body(),s.userId()));}catch(LanLocationService.RuleViolation e){throw apiException(e);}}}
     private ApiResult processLocationEmail(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);ServerRequestIdentity.bindSupabaseAccessToken(optional(x.body(),"supabaseAccessToken",16384));try{return ApiResult.ok(LanLocationService.processEmail(c,s.userId()));}catch(LanLocationService.RuleViolation e){throw apiException(e);}finally{ServerRequestIdentity.clear();}}}
     private ApiResult saveLocation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required to save a location."),operation="locations.save.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
@@ -2213,9 +2271,15 @@ public final class LanApiServer implements AutoCloseable {
                             required(x.body(),"storeZoneId",100),longList(x.body(),"cashDrawerSessionIds")));
                     case "SUBMISSIONS" -> result.put("rows",ServerBalanceSheetService.listSubmissions());
                     case "SUBMISSION" -> result.put("sheet",ServerBalanceSheetService.loadSubmission(requiredLong(x.body(),"submissionId")));
+                    case "EDIT_CONTEXT" -> {
+                        requireAnyPermission(connection,session.userId(),"EDIT_BALANCE_SHEET");
+                        result.put("editContext",ServerBalanceSheetService.loadEditContext(connection,requiredLong(x.body(),"submissionId")));
+                    }
+                    case "REVISION_HISTORY" -> result.put("rows",ServerBalanceSheetService.loadRevisionHistory(connection,requiredLong(x.body(),"submissionId")));
                     case "DRAW_RANGES" -> result.put("rows",ServerBalanceSheetService.findDrawSessionRanges(
                             required(x.body(),"storeZoneId",100),from,to));
                     case "DELETABLE_EXPENSES" -> result.put("rows",ServerBalanceSheetService.listDeletableExpenses(from,to,optional(x.body(),"status",40)));
+                    case "DELETABLE_OTHER_INCOME" -> result.put("rows",ServerBalanceSheetService.listDeletableOtherIncome(from,to));
                     case "PENDING_CHEQUES" -> result.put("rows",ServerBalanceSheetService.listPendingChequeDeposits());
                     case "UNPAID_PAYABLES" -> result.put("rows",ServerBalanceSheetService.listUnpaidPayables(from,to));
                     default -> throw new ApiException(400,"VALIDATION_ERROR","The balance-sheet query is invalid.",false);
@@ -2243,12 +2307,21 @@ public final class LanApiServer implements AutoCloseable {
                 try {
                     switch(action) {
                         case "ADD_EXPENSE" -> ServerBalanceSheetService.addManualExpense(connection,GSON.fromJson(x.body().get("expense"),ServerBalanceSheetService.ExpenseEntry.class));
+                        case "ADD_OTHER_INCOME" -> ServerBalanceSheetService.addOtherIncome(connection,GSON.fromJson(x.body().get("income"),ServerBalanceSheetService.OtherIncomeEntry.class));
+                        case "DELETE_OTHER_INCOME" -> ServerBalanceSheetService.deleteOtherIncome(connection,requiredLong(x.body(),"otherIncomeId"),date(x.body(),"from"),date(x.body(),"to"));
                         case "DELETE_EXPENSE" -> ServerBalanceSheetService.deleteManualExpense(connection,requiredLong(x.body(),"expenseId"),date(x.body(),"from"),date(x.body(),"to"),optional(x.body(),"status",40));
                         case "DEPOSIT_CHEQUE" -> ServerBalanceSheetService.markChequeDeposited(connection,GSON.fromJson(x.body().get("cheque"),ServerBalanceSheetService.ChequeDepositOption.class),optional(x.body(),"notes",3000));
                         case "PAY_PAYABLE" -> ServerBalanceSheetService.recordPayablePayment(connection,requiredLong(x.body(),"expenseId"),date(x.body(),"paymentDate"),
                                 x.body().get("paymentAmount").getAsBigDecimal(),required(x.body(),"paymentMethod",40),optional(x.body(),"paymentReference",500));
                         case "SUBMIT" -> result.put("submissionId",ServerBalanceSheetService.submitBalanceSheet(connection,date(x.body(),"from"),date(x.body(),"to"),
                                 required(x.body(),"storeZoneId",100),optional(x.body(),"notes",5000),longList(x.body(),"cashDrawerSessionIds")));
+                        case "REVISE" -> {
+                            requireAnyPermission(connection,session.userId(),"EDIT_BALANCE_SHEET");
+                            ServerBalanceSheetService.EditResult revised=ServerBalanceSheetService.reviseSubmission(connection,
+                                    GSON.fromJson(x.body().get("edit"),ServerBalanceSheetService.EditRequest.class));
+                            result.put("revisionNo",revised.revisionNo());
+                            result.put("sheet",revised.sheet());
+                        }
                         case "SET_BALANCE_BF" -> {
                             if (!"ADMIN".equalsIgnoreCase(user.role())) {
                                 throw new ApiException(403,"ADMIN_REQUIRED","Only an administrator can set or edit Balance B/F.",false);
@@ -2302,7 +2375,8 @@ public final class LanApiServer implements AutoCloseable {
                         case "QUOTATION" -> ServerEmailOutboxService.queueQuotation(requiredLong(x.body(),"documentId"),recipient,requireEnabled);
                         case "INVOICE" -> ServerEmailOutboxService.queueInvoice(requiredLong(x.body(),"documentId"),recipient,requireEnabled);
                         case "DELIVERY_BILL" -> ServerEmailOutboxService.queueDeliveryBill(requiredLong(x.body(),"documentId"),recipient,requireEnabled);
-                        case "BALANCE_SHEET" -> ServerEmailOutboxService.queueBalanceSheetSubmission(requiredLong(x.body(),"submissionId"));
+                        case "BALANCE_SHEET" -> ServerEmailOutboxService.queueBalanceSheetSubmission(requiredLong(x.body(),"submissionId"),
+                                x.body().has("revisionNo")?x.body().get("revisionNo").getAsInt():0);
                         default -> throw new ApiException(400,"VALIDATION_ERROR","The email document type is invalid.",false);
                     };
                 } finally { ServerEmailOutboxService.clearRequestConnection(); ServerRequestIdentity.clear(); }
@@ -2824,6 +2898,11 @@ public final class LanApiServer implements AutoCloseable {
     private static ApiException apiException(LanCashOperationsService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanCashDrawerService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanDeviceAdminService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
+    private static ApiException apiException(LanServerAdminService.RuleViolation ex){return new ApiException(ex.status,ex.code,ex.getMessage(),false);}
+    private static ApiException apiException(CloudServerRegistryService.RegistryException ex){
+        String code=switch(ex.code()){case "23505"->"PRIMARY_SERVER_EXISTS";case "40001"->"GENERATION_CONFLICT";case "55000"->"SERVER_READINESS_FAILED";case "P0002"->"SERVER_NOT_FOUND";default->"SERVER_REGISTRY_REJECTED";};
+        return new ApiException(409,code,ex.getMessage(),false);
+    }
     private static ApiException apiException(LanLocationService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanMaintenancePartsService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanDocumentDataService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
@@ -3171,14 +3250,16 @@ public final class LanApiServer implements AutoCloseable {
 
     private Map<String, Object> sessionResponse(String token, AuthenticatedUser user, List<String> permissions,
                                                 UUID deviceId, SupabasePasswordResult supabaseTokens,
-                                                boolean persistentLoginAllowed) {
+                                                DeviceSessionPolicy policy) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("sessionToken", token);
         result.put("expiresAt", Instant.now().plus(SESSION_LIFETIME).toString());
         result.put("user", user);
         result.put("permissions", permissions);
         result.put("deviceId", deviceId.toString());
-        result.put("persistentLoginAllowed", persistentLoginAllowed);
+        result.put("persistentLoginAllowed", policy.persistentLoginAllowed());
+        result.put("autoLogoutEnabled", policy.autoLogoutEnabled());
+        result.put("autoLogoutMinutes", policy.autoLogoutMinutes());
         if (supabaseTokens != null && supabaseTokens.status() == SupabasePasswordStatus.SUCCESS) {
             result.put("supabaseAccessToken", supabaseTokens.accessToken());
             result.put("supabaseRefreshToken", supabaseTokens.refreshToken());
@@ -3186,15 +3267,26 @@ public final class LanApiServer implements AutoCloseable {
         return result;
     }
 
-    private boolean persistentLoginAllowed(Connection connection, UUID deviceId) throws SQLException {
+    private DeviceSessionPolicy deviceSessionPolicy(Connection connection, UUID deviceId) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT COALESCE(allow_persistent_login, FALSE) FROM devices WHERE device_id = ?")) {
+                """
+                SELECT COALESCE(allow_persistent_login, FALSE),
+                       COALESCE(auto_logout_enabled, FALSE),
+                       COALESCE(auto_logout_minutes, 15)
+                FROM devices WHERE device_id = ?
+                """)) {
             ps.setObject(1, deviceId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
+                if (!rs.next()) return new DeviceSessionPolicy(false, false, 15);
+                int minutes = Math.max(1, Math.min(480, rs.getInt(3)));
+                return new DeviceSessionPolicy(rs.getBoolean(1), rs.getBoolean(2), minutes);
             }
         }
     }
+
+    private record DeviceSessionPolicy(boolean persistentLoginAllowed,
+                                       boolean autoLogoutEnabled,
+                                       int autoLogoutMinutes) { }
 
     private static String optionalJsonString(JsonObject json, String key) {
         return json.has(key) && !json.get(key).isJsonNull() ? json.get(key).getAsString() : null;
@@ -3209,6 +3301,9 @@ public final class LanApiServer implements AutoCloseable {
         String outcome = "ERROR";
         ApiEnvelope envelope;
         try {
+            if (ServerRoleGuard.blocks(exchange.getRequestURI().getPath())) {
+                throw new ApiException(503, "SERVER_NOT_PRIMARY", ServerRoleGuard.safeMessage(), true);
+            }
             requireDeviceHeaderBeforeBody(exchange);
             JsonObject body = readsBody(exchange.getRequestMethod()) ? readJson(exchange) : new JsonObject();
             ApiResult result = operation.run(new RequestContext(exchange, body, requestId));

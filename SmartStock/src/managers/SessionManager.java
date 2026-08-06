@@ -132,6 +132,7 @@ public final class SessionManager {
     }
 
     public static void clearSessionState() {
+        AutoLogoutManager.stop();
         currentUserId = null;
         currentUsername = null;
         currentUserDisplayName = null;

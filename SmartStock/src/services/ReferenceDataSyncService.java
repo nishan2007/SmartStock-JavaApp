@@ -133,9 +133,11 @@ public final class ReferenceDataSyncService {
             "customer_account_payment_allocations",
             "balance_sheet_bf_overrides",
             "balance_sheet_submissions",
+            "balance_sheet_submission_revisions",
             "cheque_bank_deposits",
             "expense_categories",
             "expenses",
+            "other_income_entries",
             "employee_time_clock",
             "employee_time_clock_adjustments",
             "employee_payroll_bonuses",
@@ -225,9 +227,11 @@ public final class ReferenceDataSyncService {
             "customer_account_payment_allocations",
             "balance_sheet_bf_overrides",
             "balance_sheet_submissions",
+            "balance_sheet_submission_revisions",
             "cheque_bank_deposits",
             "expense_categories",
             "expenses",
+            "other_income_entries",
             "employee_time_clock",
             "employee_time_clock_adjustments",
             "employee_payroll_bonuses",
@@ -2926,6 +2930,13 @@ public final class ReferenceDataSyncService {
                     WHERE r.barcode = tombstone.key_data->>'barcode'
                       AND r.updated_at <= tombstone.deleted_at
                     """;
+            case "other_income_entries" -> """
+                    WITH tombstone AS (SELECT ?::jsonb AS key_data, ?::timestamptz AS deleted_at)
+                    DELETE FROM other_income_entries r
+                    USING tombstone
+                    WHERE r.other_income_id = (tombstone.key_data->>'other_income_id')::bigint
+                      AND r.updated_at <= tombstone.deleted_at
+                    """;
             default -> null;
         };
     }
@@ -2944,6 +2955,9 @@ public final class ReferenceDataSyncService {
         }
         if ("employee_time_clock_adjustments".equals(table)) {
             return "ON CONFLICT (adjustment_id) DO NOTHING";
+        }
+        if ("balance_sheet_submission_revisions".equals(table)) {
+            return "ON CONFLICT (balance_sheet_revision_id) DO NOTHING";
         }
         List<String> updateColumns = new ArrayList<>();
         for (String column : columns) {
@@ -3760,6 +3774,8 @@ public final class ReferenceDataSyncService {
                 "is_approved",
                 "is_blocked",
                 "allow_persistent_login",
+                "auto_logout_enabled",
+                "auto_logout_minutes",
                 "allow_sales",
                 "allow_orders",
                 "approved_at",

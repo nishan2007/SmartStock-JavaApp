@@ -4,6 +4,7 @@ import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SupabaseSessionManager;
 import managers.SessionManager;
+import managers.SessionLogoutManager;
 import models.AppNotification;
 import services.LanApiClient;
 import services.NotificationService;
@@ -1474,11 +1475,7 @@ public class MainMenu extends JFrame {
         });
 
         logoutButton.addActionListener(e -> {
-            endSessionSafely();
-            SessionManager.clearSessionState();
-            SupabaseSessionManager.clearSession();
-            SupabaseSessionManager.clearPersistedSession();
-            NavigationManager.logoutToLogin(this);
+            SessionLogoutManager.logout(this);
         });
     }
 

@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS devices (
     last_store_id INTEGER REFERENCES locations(location_id),
     is_approved BOOLEAN NOT NULL DEFAULT FALSE,
     allow_persistent_login BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_logout_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_logout_minutes INTEGER NOT NULL DEFAULT 15,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     approved_at TIMESTAMPTZ,
     approved_by_user_id INTEGER REFERENCES users(user_id),
@@ -40,6 +42,22 @@ ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS allow_persistent_login BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE devices
+ADD COLUMN IF NOT EXISTS auto_logout_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE devices
+ADD COLUMN IF NOT EXISTS auto_logout_minutes INTEGER NOT NULL DEFAULT 15;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'devices_auto_logout_minutes_check'
+          AND conrelid = 'public.devices'::regclass
+    ) THEN
+        ALTER TABLE public.devices ADD CONSTRAINT devices_auto_logout_minutes_check
+            CHECK (auto_logout_minutes BETWEEN 1 AND 480);
+    END IF;
+END $$;
 
 ALTER TABLE devices
 ADD COLUMN IF NOT EXISTS approved_by_user_id INTEGER REFERENCES users(user_id);
@@ -307,4 +325,21 @@ WHERE UPPER(r.role_name) = 'ADMIN'
       FROM role_permissions rp
       WHERE rp.role_id = r.role_id
         AND rp.permission_id = p.permission_id
+  );
+
+INSERT INTO permissions (permission_key, permission_name, permission_group, permission_subgroup)
+VALUES ('SERVER_RECOVERY', 'Server Recovery', 'Administration', 'Devices')
+ON CONFLICT (permission_key) DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.role_id, p.permission_id
+FROM roles r
+JOIN permissions p ON UPPER(p.permission_key) = 'SERVER_RECOVERY'
+WHERE UPPER(r.role_name) = 'ADMIN'
+  AND NOT EXISTS (
+      SELECT 1 FROM role_permissions rp
+      WHERE rp.role_id = r.role_id AND rp.permission_id = p.permission_id
   );

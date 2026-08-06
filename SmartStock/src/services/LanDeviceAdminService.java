@@ -16,7 +16,10 @@ final class LanDeviceAdminService{
     static Map<String,Object>sessions(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);return map("sessions",DeviceManagementService.getDeviceSessionHistory(c,required(b,"deviceId"),25));}
     static Map<String,Object>update(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);String action=required(b,"action"),id=required(b,"deviceId");
         switch(action){
-            case "ACCESS"->DeviceManagementService.updateDeviceApproval(c,id,userId,bool(b,"approved"),bool(b,"persistentLoginAllowed"),bool(b,"allowSales"),bool(b,"allowOrders"),text(b,"notes"));
+            case "ACCESS"->DeviceManagementService.updateDeviceApproval(c,id,userId,
+                    bool(b,"approved"),bool(b,"persistentLoginAllowed"),
+                    bool(b,"autoLogoutEnabled"),autoLogoutMinutes(b),
+                    bool(b,"allowSales"),bool(b,"allowOrders"),text(b,"notes"));
             case "BLOCK"->{DeviceManagementService.blockDevice(c,id,userId,text(b,"notes"));DeviceCredentialService.revokeCredential(c,id,userId);}
             case "NAME"->DeviceManagementService.updateDeviceFriendlyName(c,id,required(b,"deviceName"));
             case "RECEIPT_CODE"->DeviceManagementService.updateDeviceReceiptCode(c,id,required(b,"receiptCode"));
@@ -35,6 +38,14 @@ final class LanDeviceAdminService{
     private static String required(JsonObject b,String k)throws RuleViolation{String v=text(b,k);if(v.isBlank())throw rule(400,"VALIDATION_ERROR",k+" is required.");return v;}
     private static String text(JsonObject b,String k){return b.has(k)&&!b.get(k).isJsonNull()?b.get(k).getAsString().trim():"";}
     private static boolean bool(JsonObject b,String k){return b.has(k)&&b.get(k).getAsBoolean();}
+    private static int autoLogoutMinutes(JsonObject b)throws RuleViolation{
+        String value=text(b,"autoLogoutMinutes");
+        if(!value.matches("\\d+"))throw rule(400,"VALIDATION_ERROR","autoLogoutMinutes must be a whole number.");
+        try{
+            int minutes=Integer.parseInt(value);
+            if(minutes<1||minutes>480)throw rule(400,"VALIDATION_ERROR","Automatic logout must be between 1 and 480 minutes.");
+            return minutes;
+        }catch(NumberFormatException ex){throw rule(400,"VALIDATION_ERROR","Automatic logout must be between 1 and 480 minutes.");}}
     private static Map<String,Object>map(Object...v){Map<String,Object>m=new LinkedHashMap<>();for(int i=0;i<v.length;i+=2)m.put((String)v[i],v[i+1]);return m;}
     private static RuleViolation rule(int s,String c,String m){return new RuleViolation(s,c,m);}
     static final class RuleViolation extends Exception{private final int status;private final String code;private final String safeMessage;RuleViolation(int s,String c,String m){super(m);status=s;code=c;safeMessage=m;}int status(){return status;}String code(){return code;}String safeMessage(){return safeMessage;}}

@@ -40,21 +40,21 @@ public class HardwareSettingsPanel extends JPanel {
         installedPrinterList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         contentPanel.add(wrapPanel("Installed Printers", new JScrollPane(installedPrinterList)));
 
-        configuredPrinterModel = new DefaultTableModel(new Object[]{"POS Name", "System Printer", "Receipt Default", "Format"}, 0) {
+        configuredPrinterModel = new DefaultTableModel(new Object[]{"POS Name", "System Printer", "Receipt Default", "Order Label Default", "Format"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 0 || column == 3;
+                return column == 0 || column == 4;
             }
 
             @Override
             public Class<?> getColumnClass(int columnIndex) {
-                return columnIndex == 2 ? Boolean.class : String.class;
+                return columnIndex == 2 || columnIndex == 3 ? Boolean.class : String.class;
             }
         };
         configuredPrinterTable = new JTable(configuredPrinterModel);
         configuredPrinterTable.setRowHeight(28);
         configuredPrinterTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        configuredPrinterTable.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(new JComboBox<>(HardwareSettingsManager.PrintFormat.values())));
+        configuredPrinterTable.getColumnModel().getColumn(4).setCellEditor(new DefaultCellEditor(new JComboBox<>(HardwareSettingsManager.PrintFormat.values())));
         contentPanel.add(wrapPanel("POS Printers", new JScrollPane(configuredPrinterTable)));
 
         JPanel bottomPanel = new JPanel(new BorderLayout(12, 12));
@@ -71,11 +71,13 @@ public class HardwareSettingsPanel extends JPanel {
         JButton addButton = new JButton("Add Selected");
         JButton removeButton = new JButton("Remove");
         JButton defaultButton = new JButton("Set Receipt Default");
+        JButton labelDefaultButton = new JButton("Set Order Label Default");
         JButton saveButton = new JButton("Save");
         buttonPanel.add(refreshButton);
         buttonPanel.add(addButton);
         buttonPanel.add(removeButton);
         buttonPanel.add(defaultButton);
+        buttonPanel.add(labelDefaultButton);
         buttonPanel.add(saveButton);
         bottomPanel.add(loadingState,BorderLayout.CENTER);bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
 
@@ -87,6 +89,7 @@ public class HardwareSettingsPanel extends JPanel {
         addButton.addActionListener(e -> addSelectedPrinter());
         removeButton.addActionListener(e -> removeSelectedPrinter());
         defaultButton.addActionListener(e -> setSelectedDefault());
+        labelDefaultButton.addActionListener(e -> setSelectedLabelDefault());
         saveButton.addActionListener(e -> saveConfiguredPrinters());
 
         loadHardware();
@@ -139,6 +142,7 @@ public class HardwareSettingsPanel extends JPanel {
                         printer.displayName(),
                         printer.systemName(),
                         printer.defaultReceiptPrinter(),
+                        printer.defaultOrderLabelPrinter(),
                         printer.printFormat()
                 });
             }
@@ -157,7 +161,7 @@ public class HardwareSettingsPanel extends JPanel {
         }
 
         boolean defaultPrinter = configuredPrinterModel.getRowCount() == 0;
-        configuredPrinterModel.addRow(new Object[]{posName.trim(), systemPrinter, defaultPrinter, HardwareSettingsManager.PrintFormat.RECEIPT_40});
+        configuredPrinterModel.addRow(new Object[]{posName.trim(), systemPrinter, defaultPrinter, false, HardwareSettingsManager.PrintFormat.RECEIPT_40});
     }
 
     private void removeSelectedPrinter() {
@@ -183,6 +187,18 @@ public class HardwareSettingsPanel extends JPanel {
         }
     }
 
+    private void setSelectedLabelDefault() {
+        int selectedRow = configuredPrinterTable.getSelectedRow();
+        if (selectedRow < 0) {
+            JOptionPane.showMessageDialog(this, "Select a POS printer first.", "Hardware Settings", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int modelRow = configuredPrinterTable.convertRowIndexToModel(selectedRow);
+        for (int i = 0; i < configuredPrinterModel.getRowCount(); i++) {
+            configuredPrinterModel.setValueAt(i == modelRow, i, 3);
+        }
+    }
+
     private void saveConfiguredPrinters() {
         ensureOneDefaultSelected();
         List<HardwareSettingsManager.PosPrinter> printers = new ArrayList<>();
@@ -191,7 +207,8 @@ public class HardwareSettingsPanel extends JPanel {
                     String.valueOf(configuredPrinterModel.getValueAt(i, 0)).trim(),
                     String.valueOf(configuredPrinterModel.getValueAt(i, 1)).trim(),
                     Boolean.TRUE.equals(configuredPrinterModel.getValueAt(i, 2)),
-                    getPrintFormat(configuredPrinterModel.getValueAt(i, 3))
+                    Boolean.TRUE.equals(configuredPrinterModel.getValueAt(i, 3)),
+                    getPrintFormat(configuredPrinterModel.getValueAt(i, 4))
             ));
         }
 

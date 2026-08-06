@@ -587,7 +587,8 @@ public final class BaseSchemaInstaller {
                     ) VALUES
                         ('VIEW_EMPLOYEE_SCHEDULE', 'View Employee Schedule', 'Allows viewing who is scheduled to work each day.', 'People', 'Scheduling'),
                         ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling'),
-                        ('SCHEDULE_OTHER_STORES', 'Schedule Other Stores', 'Allows viewing and scheduling employees at stores other than the selected login store.', 'People', 'Scheduling')
+                        ('SCHEDULE_OTHER_STORES', 'Schedule Other Stores', 'Allows viewing and scheduling employees at stores other than the selected login store.', 'People', 'Scheduling'),
+                        ('EDIT_BALANCE_SHEET', 'Edit Submitted Balance Sheet', 'Allows revising the latest submitted Balance Sheet during its 48-hour edit window.', 'Operations', 'Cash Drawer')
                     ON CONFLICT (permission_key) DO UPDATE SET
                         permission_name = EXCLUDED.permission_name,
                         description = EXCLUDED.description,
@@ -605,6 +606,19 @@ public final class BaseSchemaInstaller {
                           FROM role_permissions existing
                           JOIN permissions existing_permission ON existing_permission.permission_id = existing.permission_id
                           WHERE UPPER(existing_permission.permission_key) = 'VIEW_EMPLOYEE_SCHEDULE'
+                      )
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.role_id, p.permission_id
+                    FROM roles r
+                    JOIN permissions p ON UPPER(p.permission_key) = 'EDIT_BALANCE_SHEET'
+                    WHERE (UPPER(r.role_name) IN ('ADMIN', 'OWNER', 'CEO') OR UPPER(r.role_name) LIKE '%MANAGER%')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM role_permissions existing
+                          JOIN permissions existing_permission ON existing_permission.permission_id=existing.permission_id
+                          WHERE existing_permission.permission_key='EDIT_BALANCE_SHEET'
                       )
                     ON CONFLICT (role_id, permission_id) DO NOTHING
                     """);

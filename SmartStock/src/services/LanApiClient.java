@@ -179,6 +179,13 @@ public final class LanApiClient {
         return new ServiceHealth(true, probe.certificateFingerprint());
     }
 
+    public static boolean isServerReachable(String host,int port,String expectedFingerprint){
+        try{
+            Probe probe=probeUntrusted(URI.create("https://"+host+":"+port));
+            return expectedFingerprint!=null&&LanSecurity.constantTimeEquals(expectedFingerprint,probe.certificateFingerprint());
+        }catch(Exception ex){return false;}
+    }
+
     /**
      * Administrator-only, one-time setup. The phrase must match the server
      * screen before the server certificate is pinned or any secret is sent.
@@ -376,6 +383,11 @@ public final class LanApiClient {
                     data.has("persistentLoginAllowed") && data.get("persistentLoginAllowed").getAsBoolean());
         }
         return GSON.fromJson(data, LoginResult.class);
+    }
+
+    public static SessionPolicy loadSessionPolicy() throws Exception {
+        return GSON.fromJson(post("/v1/sessions/policy", new JsonObject(), true, true),
+                SessionPolicy.class);
     }
 
     public static boolean hasEmployeeSession() {
@@ -693,6 +705,21 @@ public final class LanApiClient {
     public static List<ManagedDevice> loadManagedDevices()throws Exception{JsonObject d=post("/v1/security/devices/list",new JsonObject(),true,true);ManagedDevice[]a=GSON.fromJson(d.getAsJsonArray("devices"),ManagedDevice[].class);return a==null?List.of():List.of(a);}
     public static List<DeviceSessionRecord> loadDeviceSessions(String deviceId)throws Exception{JsonObject r=new JsonObject();r.addProperty("deviceId",deviceId);JsonObject d=post("/v1/security/devices/sessions",r,true,true);DeviceSessionRecord[]a=GSON.fromJson(d.getAsJsonArray("sessions"),DeviceSessionRecord[].class);return a==null?List.of():List.of(a);}
     public static void updateManagedDevice(DeviceAdminUpdate request,String key)throws Exception{post("/v1/security/devices/update",GSON.toJsonTree(request).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key));}
+    public static ServerAdminState loadServerAdminState()throws Exception{
+        JsonObject d=post("/v1/security/servers/list",new JsonObject(),true,true);
+        ServerRecord[]a=GSON.fromJson(d.getAsJsonArray("servers"),ServerRecord[].class);
+        ServerEvent[]events=GSON.fromJson(d.getAsJsonArray("events"),ServerEvent[].class);
+        return new ServerAdminState(a==null?List.of():List.of(a),events==null?List.of():List.of(events),optionalString(d,"currentServerInstanceId"),optionalString(d,"localRole"));
+    }
+    public static JsonObject updateManagedServer(ServerAdminUpdate request,String key)throws Exception{
+        return post("/v1/security/servers/update",GSON.toJsonTree(request).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key));
+    }
+    public static JsonObject prepareStandby(String serverInstanceId,String key)throws Exception{return serverLifecycle("/v1/security/servers/prepare-standby",serverInstanceId,null,false,key);}
+    public static JsonObject beginServerHandoff(String sourceId,String targetId,String key)throws Exception{return serverLifecycle("/v1/security/servers/begin-handoff",sourceId,targetId,false,key);}
+    public static JsonObject loadServerHandoffStatus(String serverInstanceId,String handoffId)throws Exception{JsonObject r=new JsonObject();if(serverInstanceId!=null)r.addProperty("serverInstanceId",serverInstanceId);if(handoffId!=null)r.addProperty("handoffId",handoffId);return post("/v1/security/servers/handoff-status",r,true,true);}
+    public static JsonObject emergencyServerTakeover(String standbyId,String key)throws Exception{return serverLifecycle("/v1/security/servers/emergency-takeover",standbyId,null,true,key);}
+    public static JsonObject retireServer(String serverInstanceId,String key)throws Exception{return serverLifecycle("/v1/security/servers/retire",serverInstanceId,null,false,key);}
+    private static JsonObject serverLifecycle(String path,String serverId,String targetId,boolean warning,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("serverInstanceId",serverId);if(targetId!=null)r.addProperty("targetServerInstanceId",targetId);r.addProperty("idempotencyKey",key);r.addProperty("warningAcknowledged",warning);return post(path,r,true,true,Map.of("Idempotency-Key",key));}
     public static DeviceSecurityStatus loadDeviceSecurityStatus()throws Exception{return GSON.fromJson(post("/v1/security/status",new JsonObject(),true,true),DeviceSecurityStatus.class);}
     public static List<LocationRecord> loadLocationRecords(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search);JsonObject d=post("/v1/locations/list",r,true,true);LocationRecord[]a=GSON.fromJson(d.getAsJsonArray("locations"),LocationRecord[].class);return a==null?List.of():List.of(a);}
     public static int saveLocationRecord(LocationRecord r,String key)throws Exception{return post("/v1/locations/save",GSON.toJsonTree(r).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key)).get("locationId").getAsInt();}
@@ -1286,7 +1313,10 @@ public final class LanApiClient {
     public record ServiceHealth(boolean online, String certificateFingerprint) { }
     public record LoginResult(String sessionToken, String expiresAt, User user, String[] permissions,
                               String deviceId, String supabaseAccessToken, String supabaseRefreshToken,
-                              boolean persistentLoginAllowed) { }
+                              boolean persistentLoginAllowed, boolean autoLogoutEnabled,
+                              int autoLogoutMinutes) { }
+    public record SessionPolicy(boolean persistentLoginAllowed, boolean autoLogoutEnabled,
+                                int autoLogoutMinutes) { }
     public record User(int userId, String username, String fullName, String email, String role,
                        int locationId, String locationName, String locationTimezone) { }
     public record ApprovalResult(String approvalToken, String expiresAt, int approverUserId, String approverName) { }
@@ -1453,7 +1483,22 @@ public final class LanApiClient {
                                        List<CashDrawer>drawers,List<CashDrawerAssignment>assignments,BigDecimal changeBasketTarget) { }
     public record CashDrawerSaveRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,
                                         Map<Integer,Integer>floatMix,boolean active) { }
-    public record DeviceAdminUpdate(String action,String deviceId,boolean approved,boolean persistentLoginAllowed,boolean allowSales,boolean allowOrders,String notes,String deviceName,String receiptCode) { }
+    public record DeviceAdminUpdate(String action,String deviceId,boolean approved,
+                                    boolean persistentLoginAllowed,boolean autoLogoutEnabled,
+                                    int autoLogoutMinutes,boolean allowSales,boolean allowOrders,
+                                    String notes,String deviceName,String receiptCode) { }
+    public record ServerAdminState(List<ServerRecord> servers,List<ServerEvent> events,String currentServerInstanceId,String localRole) { }
+    public record ServerRecord(String serverInstanceId,int locationId,String installationId,String displayName,
+                               String hostname,String appVersion,String certificateFingerprint,String endpointHost,
+                               int endpointPort,String role,long generation,String health,String lastHeartbeatAt,
+                               String lastSyncAt,String lastMaterializationAt,Long materializedRowCount,
+                               String recoveryValidatedAt,String recoveryMaterializationAt,
+                               String recoveryNetworkCheckedAt,
+                               String statusMessage,String replacedByServerInstanceId,String createdAt,String retiredAt) { }
+    public record ServerAdminUpdate(String action,String serverInstanceId,String targetServerInstanceId,
+                                    String displayName,String idempotencyKey,boolean warningAcknowledged) { }
+    public record ServerEvent(String eventType,String serverInstanceId,String handoffId,
+                              String actorName,String details,String createdAt) { }
     public record DeviceSecurityStatus(boolean healthy,boolean tls,String credentialStore,int pendingCredentials,int issuedCredentials,
                                        int claimedCredentials,int blockedDevices,int broadAuthenticatedPolicies,int exposedTablesWithoutRls,
                                        int publicSecurityDefiners,long latestAuditEpochMillis,long latestBackupEpochMillis,String pairingPhrase,

@@ -454,7 +454,7 @@ EOF
 cat > "${service_dir}/run-smartstock-sync-service.command" <<EOF
 #!/usr/bin/env bash
 cd "${service_app_dir}"
-exec java -jar ${jar_name} --sync-service
+exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar ${jar_name} --sync-service
 EOF
   chmod +x "${service_dir}/run-smartstock-sync-service.command"
 }

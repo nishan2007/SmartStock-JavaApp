@@ -36,6 +36,8 @@ public final class DeviceManagementService {
                        COALESCE(last_store.name, '') AS last_store_name,
                        COALESCE(d.is_approved, false) AS is_approved,
                        COALESCE(d.allow_persistent_login, false) AS allow_persistent_login,
+                       COALESCE(d.auto_logout_enabled, false) AS auto_logout_enabled,
+                       COALESCE(d.auto_logout_minutes, 15) AS auto_logout_minutes,
                        COALESCE(d.is_blocked, false) AS is_blocked,
                        COALESCE(d.allow_sales, true) AS allow_sales,
                        COALESCE(d.allow_orders, true) AS allow_orders,
@@ -98,6 +100,8 @@ public final class DeviceManagementService {
                         rs.getString("last_store_name"),
                         rs.getBoolean("is_approved"),
                         rs.getBoolean("allow_persistent_login"),
+                        rs.getBoolean("auto_logout_enabled"),
+                        rs.getInt("auto_logout_minutes"),
                         rs.getBoolean("is_blocked"),
                         rs.getBoolean("allow_sales"),
                         rs.getBoolean("allow_orders"),
@@ -165,6 +169,8 @@ public final class DeviceManagementService {
             Integer actingUserId,
             boolean approved,
             boolean allowPersistentLogin,
+            boolean autoLogoutEnabled,
+            int autoLogoutMinutes,
             boolean allowSales,
             boolean allowOrders,
             String notes
@@ -173,6 +179,8 @@ public final class DeviceManagementService {
                 UPDATE devices
                 SET is_approved = ?,
                     allow_persistent_login = ?,
+                    auto_logout_enabled = ?,
+                    auto_logout_minutes = ?,
                     is_blocked = FALSE,
                     allow_sales = ?,
                     allow_orders = ?,
@@ -185,23 +193,26 @@ public final class DeviceManagementService {
                 """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            validateAutoLogoutMinutes(autoLogoutMinutes);
             ps.setBoolean(1, approved);
             ps.setBoolean(2, approved && allowPersistentLogin);
-            ps.setBoolean(3, allowSales);
-            ps.setBoolean(4, allowOrders);
+            ps.setBoolean(3, autoLogoutEnabled);
+            ps.setInt(4, autoLogoutMinutes);
+            ps.setBoolean(5, allowSales);
+            ps.setBoolean(6, allowOrders);
             if (approved) {
-                ps.setTimestamp(5, new java.sql.Timestamp(System.currentTimeMillis()));
+                ps.setTimestamp(7, new java.sql.Timestamp(System.currentTimeMillis()));
             } else {
-                ps.setNull(5, Types.TIMESTAMP);
+                ps.setNull(7, Types.TIMESTAMP);
             }
 
             if (actingUserId == null) {
-                ps.setNull(6, Types.INTEGER);
+                ps.setNull(8, Types.INTEGER);
             } else {
-                ps.setInt(6, actingUserId);
+                ps.setInt(8, actingUserId);
             }
-            ps.setString(7, normalizeNotes(notes));
-            ps.setObject(8, UUID.fromString(deviceId));
+            ps.setString(9, normalizeNotes(notes));
+            ps.setObject(10, UUID.fromString(deviceId));
             ps.executeUpdate();
         }
 
@@ -209,6 +220,8 @@ public final class DeviceManagementService {
                 "device_id", deviceId,
                 "is_approved", approved,
                 "allow_persistent_login", approved && allowPersistentLogin,
+                "auto_logout_enabled", autoLogoutEnabled,
+                "auto_logout_minutes", autoLogoutMinutes,
                 "is_blocked", false,
                 "allow_sales", allowSales,
                 "allow_orders", allowOrders
@@ -221,6 +234,7 @@ public final class DeviceManagementService {
                 SET is_blocked = TRUE,
                     is_approved = FALSE,
                     allow_persistent_login = FALSE,
+                    auto_logout_enabled = FALSE,
                     allow_sales = FALSE,
                     allow_orders = FALSE,
                     blocked_at = CURRENT_TIMESTAMP,
@@ -257,6 +271,7 @@ public final class DeviceManagementService {
                 "device_id", deviceId,
                 "is_approved", false,
                 "allow_persistent_login", false,
+                "auto_logout_enabled", false,
                 "is_blocked", true,
                 "allow_sales", false,
                 "allow_orders", false
@@ -296,6 +311,12 @@ public final class DeviceManagementService {
         }
         String trimmed = notes.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static void validateAutoLogoutMinutes(int minutes) {
+        if (minutes < 1 || minutes > 480) {
+            throw new IllegalArgumentException("Automatic logout must be between 1 and 480 minutes.");
+        }
     }
 
     private static String sanitizeCode(String value) {

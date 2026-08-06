@@ -6,6 +6,7 @@ import data.EnvironmentProfile;
 import services.LanApiClient;
 import services.LanApiServer;
 import services.PcscNfcService;
+import services.PostgresRuntimeService;
 import services.ServerStoreSetupService;
 import services.ServerSupabaseCredentials;
 import services.ServerFirstAdministratorService;
@@ -67,6 +68,7 @@ public class WelcomeFrame extends JFrame {
     private Timer displayRefreshTimer;
     private Timer systemStatusRefreshTimer;
     private boolean systemStatusRefreshInProgress;
+    private boolean startupDatabaseRecoveryPending = true;
     private boolean initialSetupWindowOpened;
     private volatile boolean nfcMonitorRunning;
     private volatile boolean loginAvailable;
@@ -591,6 +593,9 @@ public class WelcomeFrame extends JFrame {
         DatabaseConfig config = DatabaseConfig.load();
         String connectionLabel = config.mode() == DatabaseMode.REMOTE_ADMIN ? "Cloud Gateway: "
                 : config.mode() == DatabaseMode.CLIENT ? "SmartStock Server: " : "Local DB: ";
+        boolean startingServerDatabase = startupDatabaseRecoveryPending
+                && config.mode() == DatabaseMode.SERVER;
+        startupDatabaseRecoveryPending = false;
         setupBtn.setVisible(isInitialSetupRequired(config));
         if (!DatabaseConfig.hasConfigFile()) {
             systemStatusRefreshInProgress = false;
@@ -605,11 +610,14 @@ public class WelcomeFrame extends JFrame {
             return;
         }
         if (showCheckingState) {
-            localDbLabel.setText(connectionLabel + "Checking...");
+            localDbLabel.setText(connectionLabel
+                    + (startingServerDatabase ? "Starting database..." : "Checking..."));
             onlineDbLabel.setText("Online DB: Checking...");
             localDbLabel.setForeground(DeckersPalette.muted());
             onlineDbLabel.setForeground(DeckersPalette.muted());
-            statusLabel.setText("Status: Refreshing system status...");
+            statusLabel.setText(startingServerDatabase
+                    ? "Status: Starting database..."
+                    : "Status: Refreshing system status...");
             continueBtn.setEnabled(false);
             loginAvailable = false;
         }
@@ -618,7 +626,9 @@ public class WelcomeFrame extends JFrame {
         SwingWorker<SystemStatus, Void> worker = new SwingWorker<>() {
             @Override
             protected SystemStatus doInBackground() {
-                String localStatus = checkLocalDb(config);
+                String localStatus = startingServerDatabase
+                        ? startServerDatabaseAndCheck(config)
+                        : checkLocalDb(config);
                 String onlineStatus = checkOnlineDb(config);
                 boolean setupRequired = isInitialSetupRequired(config);
                 if (!setupRequired && config.mode() == DatabaseMode.SERVER) {
@@ -709,6 +719,35 @@ public class WelcomeFrame extends JFrame {
         try {
             LanApiClient.checkHealth();
             return "Online";
+        } catch (Exception ex) {
+            return "Offline - " + getRootCauseMessage(ex);
+        }
+    }
+
+    private String startServerDatabaseAndCheck(DatabaseConfig config) {
+        String status = checkLocalDb(config);
+        if (status.startsWith("Online")) {
+            return status;
+        }
+        try {
+            PostgresRuntimeService.CommandResult database = PostgresRuntimeService.startPostgres();
+            if (!database.success()) {
+                return "Offline - " + database.output();
+            }
+            PostgresRuntimeService.startLanService();
+            for (int attempt = 0; attempt < 10; attempt++) {
+                try {
+                    Thread.sleep(1_000L);
+                    LanApiClient.checkHealth();
+                    return "Online";
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return "Offline - Database startup was interrupted";
+                } catch (Exception ignored) {
+                    // PostgreSQL and the LAN service can take a few seconds to accept requests.
+                }
+            }
+            return checkLocalDb(config);
         } catch (Exception ex) {
             return "Offline - " + getRootCauseMessage(ex);
         }

@@ -86,6 +86,7 @@ public class MakeASale extends JFrame {
     private JButton checkoutPrintBtn;
     private JButton holdCartBtn;
     private JButton resumeHeldCartBtn;
+    private JButton removeCartItemBtn;
     private JLabel overrideStatusLabel;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
@@ -305,6 +306,16 @@ public class MakeASale extends JFrame {
 	       cartTable.getColumnModel().getColumn(CART_COL_QTY).setCellEditor(new DefaultCellEditor(new JTextField()));
 	       cartTable.getColumnModel().getColumn(CART_COL_ITEM_DISCOUNT).setCellEditor(
                    createApprovalAwareCartEditor(CART_COL_ITEM_DISCOUNT));
+       cartTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+               .put(KeyStroke.getKeyStroke("DELETE"), "remove-selected-cart-items");
+       cartTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+               .put(KeyStroke.getKeyStroke("BACK_SPACE"), "remove-selected-cart-items");
+       cartTable.getActionMap().put("remove-selected-cart-items", new AbstractAction() {
+           @Override
+           public void actionPerformed(ActionEvent event) {
+               removeSelectedCartItems();
+           }
+       });
        configureCartTableColumns();
 
        JPanel cartSection = new JPanel(new BorderLayout());
@@ -379,6 +390,10 @@ public class MakeASale extends JFrame {
        checkoutPrintBtn = createCheckoutButton("Checkout & Print");
        holdCartBtn = createActionUtilityButton("Hold Cart");
        resumeHeldCartBtn = createActionUtilityButton("Resume Hold");
+       removeCartItemBtn = createActionUtilityButton("Remove Item");
+       removeCartItemBtn.setToolTipText("Remove the selected cart item. You can also press Delete.");
+       removeCartItemBtn.setEnabled(false);
+       actionPanel.add(removeCartItemBtn);
        actionPanel.add(holdCartBtn);
        actionPanel.add(resumeHeldCartBtn);
        actionPanel.add(checkoutBtn);
@@ -537,6 +552,12 @@ public class MakeASale extends JFrame {
        checkoutPrintBtn.addActionListener(e -> checkout(true));
        holdCartBtn.addActionListener(e -> holdCurrentCart());
        resumeHeldCartBtn.addActionListener(e -> resumeHeldCart());
+       removeCartItemBtn.addActionListener(e -> removeSelectedCartItems());
+       cartTable.getSelectionModel().addListSelectionListener(e -> {
+           if (!e.getValueIsAdjusting()) {
+               removeCartItemBtn.setEnabled(cartTable.getSelectedRowCount() > 0);
+           }
+       });
 	       addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
 	       discountPercentField.getDocument().addDocumentListener(new DocumentListener() {
 	           private void refreshTotals() {
@@ -1783,6 +1804,47 @@ public class MakeASale extends JFrame {
         return false;
     }
 
+    private void removeSelectedCartItems() {
+        if (cartTable == null || cartModel == null) return;
+        if (!commitCurrentCartEdit()) return;
+
+        int[] selectedViewRows = cartTable.getSelectedRows();
+        if (selectedViewRows.length == 0) {
+            JOptionPane.showMessageDialog(this, "Select an item in the cart to remove.");
+            return;
+        }
+
+        int[] selectedModelRows = new int[selectedViewRows.length];
+        for (int i = 0; i < selectedViewRows.length; i++) {
+            selectedModelRows[i] = cartTable.convertRowIndexToModel(selectedViewRows[i]);
+        }
+        java.util.Arrays.sort(selectedModelRows);
+
+        updatingCart = true;
+        try {
+            for (int i = selectedModelRows.length - 1; i >= 0; i--) {
+                int row = selectedModelRows[i];
+                int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
+                pendingPriceOverrideApprovals.remove(productId);
+                pendingItemDiscountApprovals.remove(productId);
+                cartModel.removeRow(row);
+            }
+        } finally {
+            updatingCart = false;
+        }
+
+        updateLineTotals();
+        if (cartModel.getRowCount() > 0) {
+            int nextModelRow = Math.min(selectedModelRows[0], cartModel.getRowCount() - 1);
+            int nextViewRow = cartTable.convertRowIndexToView(nextModelRow);
+            if (nextViewRow >= 0) {
+                cartTable.setRowSelectionInterval(nextViewRow, nextViewRow);
+            }
+        } else {
+            removeCartItemBtn.setEnabled(false);
+        }
+    }
+
     private void clearPendingManagerApprovals() {
         pendingPriceOverrideApprovals.clear();
         pendingItemDiscountApprovals.clear();
@@ -2161,6 +2223,62 @@ public class MakeASale extends JFrame {
                 filter();
             }
         });
+        editorField.addKeyListener(new java.awt.event.KeyAdapter() {
+            @Override
+            public void keyPressed(java.awt.event.KeyEvent event) {
+                if (event.getKeyCode() == java.awt.event.KeyEvent.VK_DOWN) {
+                    navigateCustomerAccountResults(editorField, 1);
+                    event.consume();
+                } else if (event.getKeyCode() == java.awt.event.KeyEvent.VK_UP) {
+                    navigateCustomerAccountResults(editorField, -1);
+                    event.consume();
+                } else if (event.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
+                    if (customerAccountBox.getSelectedItem() instanceof CustomerAccountOption option) {
+                        updatingCustomerAccountFilter = true;
+                        try {
+                            customerAccountBox.setSelectedItem(option);
+                            customerAccountBox.getEditor().setItem(option);
+                            customerAccountBox.setPopupVisible(false);
+                        } finally {
+                            updatingCustomerAccountFilter = false;
+                        }
+                        event.consume();
+                    }
+                } else if (event.getKeyCode() == java.awt.event.KeyEvent.VK_ESCAPE
+                        && customerAccountBox.isPopupVisible()) {
+                    customerAccountBox.setPopupVisible(false);
+                    event.consume();
+                }
+            }
+        });
+    }
+
+    private void navigateCustomerAccountResults(JTextField editorField, int direction) {
+        if (customerAccountBox == null) return;
+        String filterText = editorField.getText();
+        if (!customerAccountBox.isPopupVisible()) {
+            applyCustomerAccountFilter(filterText, true);
+        }
+        if (customerAccountBox.getItemCount() <= 1) return;
+
+        int currentIndex = customerAccountBox.getSelectedIndex();
+        int nextIndex;
+        if (direction > 0) {
+            nextIndex = currentIndex < 1 ? 1
+                    : Math.min(currentIndex + 1, customerAccountBox.getItemCount() - 1);
+        } else {
+            nextIndex = currentIndex <= 1 ? 1 : currentIndex - 1;
+        }
+
+        updatingCustomerAccountFilter = true;
+        try {
+            customerAccountBox.setSelectedIndex(nextIndex);
+            editorField.setText(filterText);
+            editorField.setCaretPosition(editorField.getText().length());
+            customerAccountBox.setPopupVisible(true);
+        } finally {
+            updatingCustomerAccountFilter = false;
+        }
     }
 
     private void applyCustomerAccountFilter(String text, boolean showPopup) {

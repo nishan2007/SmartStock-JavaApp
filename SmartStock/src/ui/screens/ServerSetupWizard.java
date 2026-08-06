@@ -589,7 +589,35 @@ public final class ServerSetupWizard extends JFrame {
             new DatabaseConfig(DatabaseMode.SERVER, current.jdbcUrl(), current.dbUser(),
                     current.dbPassword(), current.serverHost(), current.serverPort(),
                     selected.locationId(), current.syncIntervalSeconds()).save();
-            statusLabel.setText("Store " + selected.name() + " is assigned to this server.");
+            services.ServerSetupGuardService.Assessment assessment =
+                    services.ServerSetupGuardService.assess(selected.locationId());
+            java.util.List<services.LanApiClient.DiscoveredServer> lanServers =
+                    services.ServerSetupGuardService.discoverStoreServers(selected.storeCode());
+            if (assessment.primary()==null&&!lanServers.isEmpty()) {
+                throw new IllegalStateException("LAN discovery found an existing SmartStock server for this store, but it is not in the secured server registry. Open Server Setup on the existing server so it can register before adding this machine.");
+            }
+            boolean anotherPrimary = assessment.primary() != null
+                    && (assessment.current() == null || !assessment.primary().serverInstanceId()
+                    .equals(assessment.current().serverInstanceId()));
+            if (anotherPrimary) {
+                Object[] options = {"Configure as Standby", "Prepare Replacement", "Cancel"};
+                int choice = JOptionPane.showOptionDialog(this,
+                        "This store already has an " + assessment.primary().health().toLowerCase()
+                                + " primary server:\n\n" + assessment.primary().displayName()
+                                + " (" + assessment.primary().endpointHost() + ")\n\n"
+                                + "LAN discovery: " + (lanServers.isEmpty()?"not currently detected":"server detected") + "\n\n"
+                                + "SmartStock will not start a second writable server.",
+                        "Existing Store Server", JOptionPane.DEFAULT_OPTION,
+                        JOptionPane.WARNING_MESSAGE, null, options, options[0]);
+                if (choice < 0 || choice == 2) return;
+                services.ServerSetupGuardService.registerForStore(selected.locationId(), true);
+                statusLabel.setText(choice == 1
+                        ? "Replacement standby prepared. Start the verified handoff from the current primary server."
+                        : "Recovery-ready standby registered for " + selected.name() + ".");
+            } else {
+                services.ServerSetupGuardService.registerForStore(selected.locationId(), false);
+                statusLabel.setText("Store " + selected.name() + " is assigned to this primary server.");
+            }
             showStep(5);
         } catch (Exception ex) {
             showError("Store Setup", ex);
@@ -630,6 +658,9 @@ public final class ServerSetupWizard extends JFrame {
             @Override
             protected String doInBackground() throws Exception {
                 StringBuilder result = new StringBuilder();
+                services.ServerSetupGuardService.Activation activation =
+                        services.ServerSetupGuardService.prepareToStart();
+                result.append("✓ ").append(activation.message()).append("\n");
                 ServerProvisioningService.testLocalConnection();
                 result.append("✓ Local database connection\n");
                 ServerProvisioningService.testCloudConnection();
@@ -646,22 +677,33 @@ public final class ServerSetupWizard extends JFrame {
                 result.append("✓ Automatic background service installed\n");
                 var started = PostgresRuntimeService.startLanService();
                 if (!started.success()) throw new IllegalStateException(started.output());
+                if (!activation.startServices()) {
+                    return result.append("✓ Standby coordination heartbeat started; PostgreSQL data is preserved and LAN/sync traffic remains disabled.\n").toString();
+                }
                 result.append("✓ LAN and synchronization service started\n");
                 result.append("✓ Store assignment and first administrator verified\n");
+                result.append("✓ Register reconnection: an administrator must point each register to ")
+                        .append(services.LanTlsIdentity.tlsHostName()).append(":")
+                        .append(services.LanApiServer.DEFAULT_PORT)
+                        .append(", verify the TLS identity, and complete the one-time pairing.\n");
                 return result.toString();
             }
 
             @Override
             protected void done() {
                 try {
-                    finalChecks.setText(get()
-                            + "\nSetup is ready. Continue to the first online administrator login.");
-                    nextButton.setText("Continue to Login");
+                    String result = get();
+                    boolean standby = result.contains("Standby coordination heartbeat started");
+                    finalChecks.setText(result + (standby
+                            ? "\nStandby preparation is complete. Return here after the primary marks the handoff ready."
+                            : "\nSetup is ready. Continue to the first online administrator login."));
+                    nextButton.setText(standby ? "Close" : "Continue to Login");
                     for (var listener : nextButton.getActionListeners()) {
                         nextButton.removeActionListener(listener);
                     }
-                    nextButton.addActionListener(event -> completeWizard());
-                    statusLabel.setText("Server setup is ready for the first online login.");
+                    nextButton.addActionListener(event -> { if (standby) dispose(); else completeWizard(); });
+                    statusLabel.setText(standby ? "Standby server is safely prepared."
+                            : "Server setup is ready for the first online login.");
                 } catch (Exception ex) {
                     finalChecks.append("\n! " + rootCauseMessage(ex));
                     showError("Start Server", ex);

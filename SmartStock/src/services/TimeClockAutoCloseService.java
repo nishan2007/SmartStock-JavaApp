@@ -53,8 +53,10 @@ public final class TimeClockAutoCloseService {
                              String reason) {
     }
 
-    public record EmployeeAutoCloseNotice(long clockId, LocalDateTime clockOut,
-                                          String rule, String reviewStatus) {
+    public record EmployeeAutoCloseNotice(long clockId, LocalDate workDate,
+                                          LocalDateTime clockIn, LocalDateTime lunchStart,
+                                          LocalDateTime lunchEnd, LocalDateTime clockOut,
+                                          int maxWorkHours, String rule, String reviewStatus) {
     }
 
     private record OpenPunch(long clockId, int userId, String employeeName,
@@ -475,8 +477,9 @@ public final class TimeClockAutoCloseService {
     public static EmployeeAutoCloseNotice latestPendingNotice(Connection conn, int userId) throws SQLException {
         ensureSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
-                    SELECT tc.clock_id, tc.clock_out, tc.auto_close_rule_snapshot,
-                           tc.auto_clock_out_review_status,
+                    SELECT tc.clock_id, tc.work_date, tc.clock_in, tc.lunch_start,
+                           tc.lunch_end, tc.clock_out, tc.auto_close_rule_snapshot,
+                           tc.auto_close_max_work_hours, tc.auto_clock_out_review_status,
                            COALESCE(NULLIF(l.timezone, ''), 'America/New_York') AS timezone
                     FROM employee_time_clock tc
                     LEFT JOIN locations l ON l.location_id = tc.location_id
@@ -488,8 +491,16 @@ public final class TimeClockAutoCloseService {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         ZoneId zone = safeZone(rs.getString("timezone"));
-                        return new EmployeeAutoCloseNotice(rs.getLong(1), local(rs, "clock_out", zone),
-                                rs.getString(3), rs.getString(4));
+                        return new EmployeeAutoCloseNotice(
+                                rs.getLong("clock_id"),
+                                rs.getDate("work_date").toLocalDate(),
+                                local(rs, "clock_in", zone),
+                                local(rs, "lunch_start", zone),
+                                local(rs, "lunch_end", zone),
+                                local(rs, "clock_out", zone),
+                                rs.getInt("auto_close_max_work_hours"),
+                                rs.getString("auto_close_rule_snapshot"),
+                                rs.getString("auto_clock_out_review_status"));
                     }
                 }
             }

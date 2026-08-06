@@ -90,10 +90,30 @@ public final class SyncWorker {
             latestStatus = latestStatus.withFailure(config.missingPrimaryConnectionMessage());
             return;
         }
+        ServerRoleGuard.State role = ServerRoleGuard.state();
+        if (role != ServerRoleGuard.State.PRIMARY && role != ServerRoleGuard.State.DRAINING) {
+            latestStatus = latestStatus.withMessage(ServerRoleGuard.safeMessage());
+            return;
+        }
+        if (CloudServerRegistryService.currentInstanceId() == null) {
+            latestStatus = latestStatus.withFailure("The store server registry identity must be verified before synchronization.");
+            return;
+        }
         try (Connection local = DB.getConnection()) {
             SyncSchemaInstaller.ensureSchema(local);
             EmailSchemaInstaller.ensureSchema(local);
             ServerImageAssetService.ensureSchema(local);
+            try {
+                CloudServerRegistryService.heartbeatCurrent(local,null);
+            } catch (Exception registryFailure) {
+                // A verified current primary remains local-first when coordination is unavailable.
+                System.err.println("Store server registry preflight failed: " + registryFailure.getMessage());
+            }
+            role=ServerRoleGuard.state();
+            if(role!=ServerRoleGuard.State.PRIMARY&&role!=ServerRoleGuard.State.DRAINING){
+                latestStatus=latestStatus.withMessage(ServerRoleGuard.safeMessage());
+                return;
+            }
             Optional<SyncLockService.SyncLease> lease = SyncLockService.tryAcquire(local, ownerLabel);
             if (lease.isEmpty()) {
                 SyncLockService.LockInfo lock = SyncLockService.currentLock(local);
@@ -138,6 +158,12 @@ public final class SyncWorker {
                 latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
                         countPending(local), countFailed(local), countConflicts(local), null,
                         SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));
+                try {
+                    CloudServerRegistryService.heartbeatCurrent(local, null);
+                } catch (Exception registryFailure) {
+                    // Registry availability must never stop the current primary's POS or cloud backup work.
+                    System.err.println("Store server registry heartbeat failed: " + registryFailure.getMessage());
+                }
             }
         }
     }

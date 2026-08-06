@@ -50,10 +50,6 @@ class CustomOrdersLookupTabPanel extends JPanel {
         detailsArea.setLineWrap(true);
         detailsArea.setWrapStyleWord(true);
 
-        JPanel center = new JPanel(new GridLayout(1, 2, 10, 0));
-        center.add(new JScrollPane(table));
-        center.add(new JScrollPane(detailsArea));
-
         methodBox = new JComboBox<>(new String[]{"Cash", "Card", "Cheque", "MMG", "Account"});
         amountField = new JTextField(8);
         referenceField = new JTextField(14);
@@ -61,16 +57,29 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
         JButton deliveredButton = new JButton("Deliver Lines");
+        JButton reprintLabelButton = new JButton("Reprint Order Label(s)");
         JButton closeButton = new JButton("Close");
         styleDialogButton(searchButton);
         styleDialogButton(payButton);
         styleDialogButton(refundButton);
         styleDialogButton(productionButton);
         styleDialogButton(deliveredButton);
+        styleDialogButton(reprintLabelButton);
         styleDialogButton(closeButton);
         refundButton.setEnabled(handler.canRefundPayments());
         productionButton.setEnabled(handler.canUpdateProduction());
         deliveredButton.setEnabled(handler.canDeliverOrderLines());
+        reprintLabelButton.setEnabled(false);
+
+        JPanel detailsHeader = new JPanel(new BorderLayout(8, 0));
+        detailsHeader.add(new JLabel("Order Details"), BorderLayout.WEST);
+        detailsHeader.add(reprintLabelButton, BorderLayout.EAST);
+        JPanel detailsPanel = new JPanel(new BorderLayout(0, 8));
+        detailsPanel.add(detailsHeader, BorderLayout.NORTH);
+        detailsPanel.add(new JScrollPane(detailsArea), BorderLayout.CENTER);
+        JPanel center = new JPanel(new GridLayout(1, 2, 10, 0));
+        center.add(new JScrollPane(table));
+        center.add(detailsPanel);
 
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actionPanel.add(new JLabel("Amount:"));
@@ -93,9 +102,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
             if (!e.getValueIsAdjusting()) {
                 Long orderId = handler.selectedLookupOrderId(table, model);
                 if (orderId != null) {
+                    reprintLabelButton.setEnabled(true);
                     handler.loadOrderDetails(orderId, detailsArea);
                     BigDecimal balance = handler.parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), 7));
                     amountField.setText(balance == null ? "" : balance.toPlainString());
+                } else {
+                    reprintLabelButton.setEnabled(false);
                 }
             }
         });
@@ -207,6 +219,13 @@ class CustomOrdersLookupTabPanel extends JPanel {
                             if (success) refreshAfterMutation(handler, orderId);
                         });
             });
+        });
+        reprintLabelButton.addActionListener(e -> {
+            int selectedRow = table.getSelectedRow();
+            if (selectedRow < 0) return;
+            int modelRow = table.convertRowIndexToModel(selectedRow);
+            String orderNumber = String.valueOf(model.getValueAt(modelRow, 1));
+            handler.reprintOrderLabels(orderNumber);
         });
         closeButton.addActionListener(e -> {
             Window window = SwingUtilities.getWindowAncestor(this);
@@ -557,6 +576,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         boolean canRefundPayments();
         boolean canDeliverOrderLines();
         boolean canUpdateProduction();
+        void reprintOrderLabels(String orderNumber);
         void refreshRelatedOrders();
     }
 

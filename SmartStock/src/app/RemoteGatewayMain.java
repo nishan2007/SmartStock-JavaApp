@@ -21,8 +21,11 @@ public final class RemoteGatewayMain {
         if (config.mode() != DatabaseMode.SERVER || !config.hasPrimaryConnection()) {
             throw new IllegalStateException("The gateway host requires SERVER mode with a server-side cloud PostgreSQL connection.");
         }
-        try (Connection ignored = DB.getConnection()) {
+        try (Connection connection = DB.getConnection()) {
             // Fail closed before opening the listener if credentials or schema are invalid.
+            if (!services.ServerSetupGuardService.authorizeBackgroundService(connection)) {
+                throw new IllegalStateException("This machine is not the active store primary.");
+            }
         }
         LanApiServer api = LanApiServer.start();
         Runtime.getRuntime().addShutdownHook(new Thread(api::close, "smartstock-remote-gateway-shutdown"));

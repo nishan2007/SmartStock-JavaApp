@@ -6,6 +6,7 @@ import data.DatabaseMode;
 import services.SyncServiceStatusService;
 import services.SyncWorker;
 import services.LanApiServer;
+import services.ServerRoleGuard;
 
 import java.sql.Connection;
 
@@ -36,15 +37,32 @@ public final class SyncServiceMain {
                 continue;
             }
 
-            ensureLanApiStarted();
-
-            try (Connection ignored = DB.getConnection()) {
+            try (Connection connection = DB.getConnection()) {
+                if (!services.ServerSetupGuardService.authorizeBackgroundService(connection)) {
+                    stopLanApiForInactiveRole();
+                    SyncServiceStatusService.mark("Waiting", ServerRoleGuard.safeMessage());
+                    sleepSeconds(intervalSeconds);
+                    continue;
+                }
                 SyncServiceStatusService.mark("Running", "Local database is online. Running cloud sync every " + intervalSeconds + " seconds.");
             } catch (Exception ex) {
-                System.err.println("Local database unavailable; waiting: " + ex.getMessage());
+                stopLanApiForInactiveRole();
+                System.err.println("Server role or local database unavailable; waiting: " + ex.getMessage());
+                SyncServiceStatusService.mark("Waiting", "Server role could not be verified: " + ex.getMessage());
                 sleepSeconds(Math.min(intervalSeconds, 15));
                 continue;
             }
+
+            if (ServerRoleGuard.state() == ServerRoleGuard.State.RETIRED
+                    || ServerRoleGuard.state() == ServerRoleGuard.State.FENCED
+                    || ServerRoleGuard.state() == ServerRoleGuard.State.STANDBY) {
+                stopLanApiForInactiveRole();
+                SyncServiceStatusService.mark("Waiting", ServerRoleGuard.safeMessage());
+                sleepSeconds(intervalSeconds);
+                continue;
+            }
+
+            ensureLanApiStarted();
 
             SyncWorker.runOnceSafely(SyncServiceStatusService.processLabel("Background Sync"));
             SyncWorker.SyncStatus status = SyncWorker.latestStatus();
@@ -68,6 +86,15 @@ public final class SyncServiceMain {
             } catch (Exception ex) {
                 System.err.println("SmartStock LAN service could not start: " + ex.getMessage());
                 SyncServiceStatusService.mark("Failed", "LAN service could not start: " + ex.getMessage());
+            }
+        }
+    }
+
+    private static void stopLanApiForInactiveRole() {
+        synchronized (SyncServiceMain.class) {
+            if (lanApiServer != null) {
+                lanApiServer.close();
+                lanApiServer = null;
             }
         }
     }

@@ -86,7 +86,7 @@ SET permission_group = CASE
         'CUSTOMER_ACCOUNTS','SET_CREDIT_LIMIT','EDIT_ACCOUNT_NUMBER'
     ) THEN 'Customers'
     WHEN UPPER(permission_key) IN (
-        'END_OF_DAY','BALANCE_DRAWER','BALANCE_SHEET','CASH_DRAWER_MANAGEMENT','CHANGE_STORE',
+        'END_OF_DAY','BALANCE_DRAWER','BALANCE_SHEET','EDIT_BALANCE_SHEET','CASH_DRAWER_MANAGEMENT','CHANGE_STORE',
         'VIEW_REPORTS','SYNC_NOTIFICATIONS','LOCAL_DEVICE_SETTINGS','HARDWARE_SETUP','APP_UPDATES'
     ) THEN 'Operations'
     WHEN UPPER(permission_key) IN (
@@ -102,6 +102,7 @@ SET permission_group = v.permission_group
 FROM (VALUES
     ('BALANCE_DRAWER', 'Operations'),
     ('BALANCE_SHEET', 'Operations'),
+    ('EDIT_BALANCE_SHEET', 'Operations'),
     ('DEVICE_MANAGEMENT', 'Administration'),
     ('CUSTOM_ORDER_OVERRIDES', 'Custom Orders'),
     ('CUSTOM_ORDER_ITEMS', 'Custom Orders'),
@@ -186,6 +187,7 @@ FROM (VALUES
     ('END_OF_DAY', 'Closeout'),
     ('BALANCE_DRAWER', 'Cash Drawer'),
     ('BALANCE_SHEET', 'Cash Drawer'),
+    ('EDIT_BALANCE_SHEET', 'Cash Drawer'),
     ('CASH_DRAWER_MANAGEMENT', 'Cash Drawer'),
     ('CHANGE_STORE', 'Store Context'),
     ('VIEW_REPORTS', 'Reports'),

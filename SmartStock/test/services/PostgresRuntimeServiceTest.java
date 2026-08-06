@@ -14,7 +14,8 @@ class PostgresRuntimeServiceTest {
         Path macAppDir = Path.of("/Users/test/.smartstock/sync-service/app");
         assertEquals("#!/usr/bin/env bash\nset -euo pipefail\n"
                         + "cd '/Users/test/.smartstock/sync-service/app'\n"
-                        + "exec java -jar 'inventory-management-1.0.11.jar' --sync-service\n",
+                        + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
+                        + "'inventory-management-1.0.11.jar' --sync-service\n",
                 PostgresRuntimeService.installedSyncLauncherContent(
                         false, macAppDir, "inventory-management-1.0.11.jar"));
 

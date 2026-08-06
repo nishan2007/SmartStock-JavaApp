@@ -4,6 +4,7 @@ import Receipt.CustomOrderSlipBuilder;
 import Receipt.CustomOrderSlipData;
 import Receipt.CustomOrderSlipFormatter;
 import Receipt.CustomOrderSlipPrinter;
+import Receipt.CustomOrderLabelPrinter;
 import Receipt.CustomOrderSlipRenderer;
 import managers.CompanyCustomizationManager;
 import managers.HardwareSettingsManager;
@@ -178,12 +179,31 @@ public class CustomOrderSlipPreview extends JFrame {
     }
 
     private void printSlip() {
+        Integer labelCount = CustomOrderLabelPrinter.promptLabelCount(this);
+        if (labelCount == null) return;
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
             CustomOrderSlipPrinter.printToPosPrinter(slipData, selected == null ? null : selected.printer, getSelectedPrintFormat());
-            JOptionPane.showMessageDialog(this, "Custom order slip sent to " + (selected == null ? "the printer" : selected) + ".");
+            try {
+                CustomOrderLabelPrinter.print(slipData, labelCount);
+                JOptionPane.showMessageDialog(this, "Custom order slip and " + labelCount + " label" + (labelCount == 1 ? "" : "s") + " sent to the printers.");
+            } catch (PrintException labelFailure) {
+                int retry = JOptionPane.showConfirmDialog(this,
+                        "The custom order slip printed, but the order label did not.\n\n" + labelFailure.getMessage() + "\n\nRetry the label now?",
+                        "Order Label Print Error", JOptionPane.YES_NO_OPTION, JOptionPane.ERROR_MESSAGE);
+                if (retry == JOptionPane.YES_OPTION) retryLabels(labelCount);
+            }
         } catch (PrintException ex) {
             JOptionPane.showMessageDialog(this, "Failed to print custom order slip.\n\n" + ex.getMessage(), "Print Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void retryLabels(int labelCount) {
+        try {
+            CustomOrderLabelPrinter.print(slipData, labelCount);
+            JOptionPane.showMessageDialog(this, labelCount + " order label" + (labelCount == 1 ? "" : "s") + " sent to the label printer.");
+        } catch (PrintException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to print order labels.\n\n" + ex.getMessage(), "Print Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

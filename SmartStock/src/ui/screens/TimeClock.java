@@ -468,6 +468,8 @@ public class TimeClock extends JFrame {
     }
 
     private void clockInWithRequiredOverride() throws SQLException, TimeClockException {
+        showPendingAutoClockOutWarning();
+
         if (!TimeClockManager.requiresMultipleSessionOverride()) {
             TimeClockManager.clockIn();
             return;
@@ -488,6 +490,33 @@ public class TimeClock extends JFrame {
             throw new TimeClockException("Clock in canceled. Manager approval is required after a completed session today.");
         }
         TimeClockManager.clockIn(approval);
+    }
+
+    private void showPendingAutoClockOutWarning() throws SQLException {
+        Integer userId = SessionManager.getCurrentUserId();
+        if (userId == null) return;
+
+        EmployeeAutoCloseNotice notice = TimeClockAutoCloseService.latestPendingNotice(userId);
+        if (notice == null) return;
+
+        String lunchStart = notice.lunchStart() == null ? "Not recorded" : formatTime(notice.lunchStart());
+        String lunchEnd = notice.lunchEnd() == null ? "Not recorded" : formatTime(notice.lunchEnd());
+        String workDate = notice.workDate() == null ? "Previous session" : notice.workDate().format(DATE_FORMAT);
+        String message = """
+                You forgot to clock out of your previous session.
+
+                Date: %s
+                Clock in: %s
+                Lunch start: %s
+                Lunch end: %s
+                %d-hour automatic clock-out: %s
+
+                Please inform management so an employee with Time Clock Management
+                permission can review and correct the session if necessary.
+                """.formatted(workDate, formatTime(notice.clockIn()), lunchStart, lunchEnd,
+                notice.maxWorkHours(), formatTime(notice.clockOut()));
+        JOptionPane.showMessageDialog(this, message, "Previous Clock-Out Needs Review",
+                JOptionPane.WARNING_MESSAGE);
     }
 
     private void runPunch(PunchAction action, String databaseErrorMessage) {
@@ -553,7 +582,7 @@ public class TimeClock extends JFrame {
                     ? "the scheduled-shift safety rule" : "the unscheduled 12-hour safety rule";
             autoClockOutNoticeLabel.setText("SmartStock automatically closed your session at "
                     + formatTime(notice.clockOut()) + " using " + rule
-                    + ". It is included in payroll and awaiting manager review.");
+                    + ". Please inform management; it is included in payroll and awaiting manager review.");
             autoClockOutNoticeLabel.setVisible(true);
         }
         if (autoClockOutReviewsButton != null) {

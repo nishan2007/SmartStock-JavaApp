@@ -4,6 +4,7 @@ import data.DatabaseConfig;
 import data.DatabaseMode;
 import managers.NavigationManager;
 import managers.SessionManager;
+import managers.AutoLogoutManager;
 import managers.SupabaseSessionManager;
 import services.BadgeCredentialService;
 import services.LanApiClient;
@@ -220,6 +221,7 @@ public class Login extends JFrame {
         SessionManager.setCurrentLocationTimezone(user.locationTimezone());
         SessionManager.setCurrentDeviceId(result.deviceId());
         SessionManager.setCurrentPermissions(result.permissions());
+        AutoLogoutManager.start(result);
         if (result.supabaseAccessToken() != null && !result.supabaseAccessToken().isBlank()) {
             SessionManager.setCurrentAccessToken(result.supabaseAccessToken());
             SessionManager.setCurrentRefreshToken(result.supabaseRefreshToken());

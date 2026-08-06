@@ -6,6 +6,7 @@ import services.LanApiClient;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
+import managers.SessionLogoutManager;
 import managers.SupabaseSessionManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
@@ -767,11 +768,7 @@ public class AppMenuBar {
 
         logoutItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                services.LanApiClient.logoutWithoutWaiting();
-                SessionManager.clearSessionState();
-                SupabaseSessionManager.clearSession();
-                SupabaseSessionManager.clearPersistedSession();
-                NavigationManager.logoutToLogin(parent);
+                SessionLogoutManager.logout(parent);
             }
         });
 

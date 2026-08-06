@@ -20,6 +20,7 @@ FROM (VALUES
     ('END_OF_DAY', 'Allows access to sales reporting totals.'),
     ('BALANCE_DRAWER', 'Allows balancing drawer sessions, submitting counted cash totals, and receiving drawer-start notifications.'),
     ('BALANCE_SHEET', 'Allows viewing balance sheet totals and logging business expenses.'),
+    ('EDIT_BALANCE_SHEET', 'Allows revising the latest submitted Balance Sheet during its 48-hour edit window.'),
     ('VIEW_SALES', 'Allows viewing past sales and related transaction history.'),
     ('NEW_ITEM', 'Allows creating new inventory items.'),
     ('EDIT_ITEM', 'Allows editing existing inventory item details.'),

@@ -1,6 +1,8 @@
 package ui.screens;
 
+import Receipt.CashDrawerCloseReceiptPrinter;
 import utils.CurrencyFormatter;
+import managers.HardwareSettingsManager;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -26,6 +28,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,6 +41,9 @@ public class BalanceDraw extends JFrame {
     private static final int[] FLOAT_FILL_DENOMINATIONS = {1000, 500, 100, 20};
     private static final NumberFormat CURRENCY = CurrencyFormatter.create(Locale.US);
     private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
+    private static final Color MATCH_COLOR = new Color(34, 139, 34);
+    private static final Color VARIANCE_COLOR = new Color(190, 38, 20);
+    private static final Color METRIC_TEXT_COLOR = new Color(31, 41, 55);
 
     private final JLabel statusLabel = new JLabel("Loading draw status...");
     private final JLabel drawerLabel = new JLabel();
@@ -66,6 +72,7 @@ public class BalanceDraw extends JFrame {
     private BigDecimal expectedCash = BigDecimal.ZERO;
     private BigDecimal expectedFloatCash = BigDecimal.ZERO;
     private BigDecimal currentFloatTotal = BigDecimal.ZERO;
+    private BigDecimal currentCihTotal = BigDecimal.ZERO;
     private Map<Integer, Integer> currentFloatCounts = new HashMap<>();
     private Map<Integer, Integer> configuredFloatMix = CashDrawerService.DEFAULT_FLOAT_MIX;
     private boolean floatCalculated;
@@ -92,6 +99,7 @@ public class BalanceDraw extends JFrame {
         };
         denominationTable = new JTable(denominationModel);
         denominationTable.setRowHeight(30);
+        denominationTable.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
         denominationTable.getTableHeader().setReorderingAllowed(false);
         denominationTable.setDefaultRenderer(Object.class, new CashCountRenderer());
         denominationTable.setDefaultRenderer(Integer.class, new CashCountRenderer());
@@ -105,6 +113,7 @@ public class BalanceDraw extends JFrame {
                     floatCalculated = false;
                 }
                 recalculateDenominations();
+                saveQuantityDraft();
             }
         });
 
@@ -196,7 +205,7 @@ public class BalanceDraw extends JFrame {
         JLabel titleLabel = new JLabel(title);
         titleLabel.setForeground(new Color(75, 85, 99));
         valueLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        valueLabel.setForeground(new Color(31, 41, 55));
+        valueLabel.setForeground(METRIC_TEXT_COLOR);
         panel.add(titleLabel, BorderLayout.NORTH);
         panel.add(valueLabel, BorderLayout.CENTER);
         return panel;
@@ -279,6 +288,7 @@ public class BalanceDraw extends JFrame {
             closeButton.setEnabled(true);
             editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
+            restoreQuantityDraft(activeSession.sessionId());
     }
 
     private void startDraw() {
@@ -326,6 +336,7 @@ public class BalanceDraw extends JFrame {
         }
         long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+countedCash);
         UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,key),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+            clearQuantityDraft(sessionId);
             JOptionPane.showMessageDialog(
                     this,
                     "Handover confirmed.\nFrom: " + displayName(handover.fromUserName())
@@ -381,7 +392,22 @@ public class BalanceDraw extends JFrame {
             return;
         }
         long sessionId=activeSession.sessionId();String key=mutationKey("close|"+sessionId+"|"+countedCash);
-        UiTaskRunner.submit(this,"cash-drawer.close",()->LanApiClient.closeCashDrawer(sessionId,countedCash,null,key),result->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+        BigDecimal closingCih=currentCihTotal;BigDecimal closingFloat=currentFloatTotal;
+        List<CashDrawerCloseReceiptPrinter.BreakdownLine> closingBreakdown=closingCashBreakdown();
+        UiTaskRunner.submit(this,"cash-drawer.close",()->{
+            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(sessionId,countedCash,null,key);
+            String printError=null;
+            try {
+                CashDrawerCloseReceiptPrinter.print(result.session(),closingCih,closingFloat,closingBreakdown,
+                        result.handlers(),
+                        HardwareSettingsManager.getDefaultReceiptPrinter());
+            } catch (Exception ex) {
+                printError=ex.getMessage();
+            }
+            return new CloseDrawSnapshot(result,printError);
+        },snapshot->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+            clearQuantityDraft(sessionId);
+            LanApiClient.CashDrawerCloseResult result=snapshot.result();
             CashDrawerSession closed=result.session();String handlers=String.join(", ",result.handlers());
             JOptionPane.showMessageDialog(
                     this,
@@ -392,9 +418,25 @@ public class BalanceDraw extends JFrame {
                             + "\nMain Cashier: " + displayName(closed.mainCashierName())
                             + "\nBalanced By: " + displayName(closed.balancedByName())
                             + "\nCash Handlers: " + (handlers.isBlank() ? "None" : handlers)
+                            + (snapshot.printError()==null ? "\n\nClose receipt printed."
+                            : "\n\nThe draw was closed, but the receipt did not print:\n"+snapshot.printError())
             );
             loadState();
         },ex->JOptionPane.showMessageDialog(this,"Failed to close draw: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private record CloseDrawSnapshot(LanApiClient.CashDrawerCloseResult result,String printError) { }
+
+    private List<CashDrawerCloseReceiptPrinter.BreakdownLine> closingCashBreakdown() {
+        List<CashDrawerCloseReceiptPrinter.BreakdownLine> lines=new ArrayList<>();
+        for (int row=0;row<DENOMINATIONS.length;row++) {
+            int denomination=DENOMINATIONS[row];
+            int quantity=quantityAt(row,1);
+            int floatQuantity=currentFloatCounts.getOrDefault(denomination,0);
+            lines.add(new CashDrawerCloseReceiptPrinter.BreakdownLine(
+                    denomination,quantity,floatQuantity,Math.max(quantity-floatQuantity,0)));
+        }
+        return List.copyOf(lines);
     }
 
     private void editClosedDraw() {
@@ -525,9 +567,15 @@ public class BalanceDraw extends JFrame {
         }
         countedLabel.setText(CURRENCY.format(counted));
         floatLabel.setText(CURRENCY.format(floatTotal));
-        cihLabel.setText(CURRENCY.format(cihTotal));
-        varianceLabel.setText(activeSession == null ? "-" : CURRENCY.format(counted.subtract(expectedCash)));
+        BigDecimal expectedCih = expectedCash.subtract(expectedFloatCash);
+        cihLabel.setText(activeSession == null ? "-" : CURRENCY.format(expectedCih));
+        BigDecimal variance = counted.subtract(expectedCash);
+        varianceLabel.setText(activeSession == null ? "-" : CURRENCY.format(variance));
+        varianceLabel.setForeground(activeSession == null
+                ? METRIC_TEXT_COLOR
+                : variance.compareTo(BigDecimal.ZERO) == 0 ? MATCH_COLOR : VARIANCE_COLOR);
         currentFloatTotal = floatTotal;
+        currentCihTotal = cihTotal;
         int totalRow = DENOMINATIONS.length;
         if (denominationModel.getRowCount() > totalRow) {
             denominationModel.setValueAt("TOTAL", totalRow, 0);
@@ -557,6 +605,9 @@ public class BalanceDraw extends JFrame {
     }
 
     private void clearQuantities() {
+        if (activeSession != null) {
+            clearQuantityDraft(activeSession.sessionId());
+        }
         updatingTable = true;
         for (int row = 0; row < DENOMINATIONS.length; row++) {
             denominationModel.setValueAt(0, row, 1);
@@ -567,6 +618,43 @@ public class BalanceDraw extends JFrame {
         floatCalculated = false;
         updatingTable = false;
         recalculateDenominations();
+    }
+
+    private void saveQuantityDraft() {
+        if (activeSession == null || updatingTable) return;
+        List<Integer> quantities = new ArrayList<>(DENOMINATIONS.length);
+        for (int row = 0; row < DENOMINATIONS.length; row++) {
+            quantities.add(quantityAt(row, 1));
+        }
+        SessionDataCache.put(quantityDraftKey(activeSession.sessionId()),
+                new QuantityDraft(List.copyOf(quantities)));
+    }
+
+    private void restoreQuantityDraft(long sessionId) {
+        SessionDataCache.get(quantityDraftKey(sessionId), QuantityDraft.class, java.time.Duration.ofDays(1))
+                .ifPresent(cached -> {
+                    List<Integer> quantities = cached.value().quantities();
+                    if (quantities.size() != DENOMINATIONS.length) return;
+                    updatingTable = true;
+                    for (int row = 0; row < DENOMINATIONS.length; row++) {
+                        denominationModel.setValueAt(Math.max(quantities.get(row), 0), row, 1);
+                    }
+                    updatingTable = false;
+                    currentFloatCounts = calculateFloatCountsFromDrawer();
+                    floatCalculated = true;
+                    recalculateDenominations();
+                });
+    }
+
+    private static void clearQuantityDraft(long sessionId) {
+        SessionDataCache.invalidate(quantityDraftKey(sessionId));
+    }
+
+    private static String quantityDraftKey(long sessionId) {
+        return "balance-draw-draft:" + sessionId;
+    }
+
+    private record QuantityDraft(List<Integer> quantities) {
     }
 
     private BigDecimal countedTotal() {
@@ -920,7 +1008,12 @@ public class BalanceDraw extends JFrame {
                 component.setFont(component.getFont().deriveFont(Font.BOLD));
                 if (column == 2) {
                     boolean matchesFloat = currentFloatTotal.compareTo(expectedFloatCash) == 0;
-                    component.setBackground(matchesFloat ? new Color(34, 139, 34) : new Color(190, 38, 20));
+                    component.setBackground(matchesFloat ? MATCH_COLOR : VARIANCE_COLOR);
+                    component.setForeground(Color.WHITE);
+                } else if (column == 3) {
+                    BigDecimal expectedCih = expectedCash.subtract(expectedFloatCash);
+                    boolean matchesCih = currentCihTotal.compareTo(expectedCih) == 0;
+                    component.setBackground(matchesCih ? MATCH_COLOR : VARIANCE_COLOR);
                     component.setForeground(Color.WHITE);
                 } else if (!isSelected) {
                     component.setBackground(new Color(232, 240, 254));

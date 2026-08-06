@@ -25,6 +25,7 @@ public final class EmailOutboxService {
     public static QueueResult queueInvoice(long id,String recipient,boolean requireEnabled)throws SQLException{return document("INVOICE",id,recipient,requireEnabled);}
     public static QueueResult queueDeliveryBill(long id,String recipient,boolean requireEnabled)throws SQLException{return document("DELIVERY_BILL",id,recipient,requireEnabled);}
     public static QueueResult queueBalanceSheetSubmission(long id)throws SQLException{JsonObject b=new JsonObject();b.addProperty("submissionId",id);return queue("BALANCE_SHEET",b);}
+    public static QueueResult queueRevisedBalanceSheet(long id,int revisionNo)throws SQLException{JsonObject b=new JsonObject();b.addProperty("submissionId",id);b.addProperty("revisionNo",revisionNo);return queue("BALANCE_SHEET",b);}
 
     private static QueueResult document(String action,long id,String recipient,boolean enabled)throws SQLException{JsonObject b=base(recipient,enabled);b.addProperty("documentId",id);return queue(action,b);}
     private static JsonObject base(String recipient,boolean enabled){JsonObject b=new JsonObject();if(recipient!=null)b.addProperty("recipient",recipient);b.addProperty("requireEnabled",enabled);return b;}

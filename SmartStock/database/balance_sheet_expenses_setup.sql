@@ -44,6 +44,36 @@ ON expenses(location_id, expense_date DESC);
 CREATE INDEX IF NOT EXISTS expenses_created_by_user_idx
 ON expenses(created_by_user_id);
 
+CREATE TABLE IF NOT EXISTS other_income_entries (
+    other_income_id BIGSERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES locations(location_id),
+    income_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    source_name TEXT NOT NULL,
+    description TEXT,
+    amount NUMERIC(12, 2) NOT NULL,
+    payment_method TEXT NOT NULL DEFAULT 'CASH',
+    payment_reference TEXT,
+    created_by_user_id INTEGER REFERENCES users(user_id),
+    created_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT other_income_amount_chk CHECK (amount > 0),
+    CONSTRAINT other_income_whole_gyd_chk CHECK (amount = TRUNC(amount)),
+    CONSTRAINT other_income_payment_method_chk CHECK (payment_method = 'CASH')
+);
+
+ALTER TABLE other_income_entries
+DROP CONSTRAINT IF EXISTS other_income_whole_gyd_chk;
+
+ALTER TABLE other_income_entries
+ADD CONSTRAINT other_income_whole_gyd_chk CHECK (amount = TRUNC(amount));
+
+CREATE INDEX IF NOT EXISTS other_income_location_date_idx
+ON other_income_entries(location_id, income_date DESC);
+
+CREATE INDEX IF NOT EXISTS other_income_created_by_user_idx
+ON other_income_entries(created_by_user_id);
+
 CREATE TABLE IF NOT EXISTS cheque_bank_deposits (
     cheque_bank_deposit_id BIGSERIAL PRIMARY KEY,
     location_id INTEGER REFERENCES locations(location_id),
@@ -166,6 +196,66 @@ ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC);
 CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx
 ON balance_sheet_submissions(submitted_by_user_id);
 
+ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS revision_no INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMPTZ;
+
+ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS last_edited_by_user_id INTEGER REFERENCES users(user_id);
+
+ALTER TABLE balance_sheet_submissions
+ADD COLUMN IF NOT EXISTS last_edited_by_name TEXT;
+
+CREATE TABLE IF NOT EXISTS balance_sheet_submission_revisions (
+    balance_sheet_revision_id BIGSERIAL PRIMARY KEY,
+    balance_sheet_submission_id BIGINT NOT NULL REFERENCES balance_sheet_submissions(balance_sheet_submission_id),
+    location_id INTEGER NOT NULL REFERENCES locations(location_id),
+    revision_no INTEGER NOT NULL,
+    action_type TEXT NOT NULL DEFAULT 'EDIT',
+    reason TEXT NOT NULL,
+    change_summary TEXT NOT NULL,
+    before_snapshot JSONB NOT NULL,
+    after_snapshot JSONB NOT NULL,
+    changed_by_user_id INTEGER REFERENCES users(user_id),
+    changed_by_name TEXT,
+    device_id TEXT,
+    device_name TEXT,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT balance_sheet_revision_reason_chk CHECK (LENGTH(TRIM(reason)) > 0),
+    CONSTRAINT balance_sheet_revision_unique UNIQUE (balance_sheet_submission_id, revision_no)
+);
+
+CREATE INDEX IF NOT EXISTS balance_sheet_revision_submission_idx
+ON balance_sheet_submission_revisions(balance_sheet_submission_id, revision_no DESC);
+
+CREATE INDEX IF NOT EXISTS balance_sheet_revision_location_idx
+ON balance_sheet_submission_revisions(location_id);
+
+CREATE INDEX IF NOT EXISTS balance_sheet_revision_changed_by_idx
+ON balance_sheet_submission_revisions(changed_by_user_id);
+
+CREATE INDEX IF NOT EXISTS balance_sheet_submission_last_editor_idx
+ON balance_sheet_submissions(last_edited_by_user_id);
+
+ALTER TABLE balance_sheet_submission_revisions
+ADD COLUMN IF NOT EXISTS change_summary TEXT NOT NULL DEFAULT 'Balance Sheet revised';
+
+CREATE OR REPLACE FUNCTION prevent_balance_sheet_revision_changes()
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Balance sheet revision history is immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS balance_sheet_revisions_immutable ON balance_sheet_submission_revisions;
+CREATE TRIGGER balance_sheet_revisions_immutable
+BEFORE UPDATE OR DELETE ON balance_sheet_submission_revisions
+FOR EACH ROW EXECUTE FUNCTION prevent_balance_sheet_revision_changes();
+
 CREATE TABLE IF NOT EXISTS balance_sheet_bf_overrides (
     balance_sheet_bf_override_id BIGSERIAL PRIMARY KEY,
     location_id INTEGER NOT NULL REFERENCES locations(location_id),
@@ -190,7 +280,7 @@ DECLARE
     has_authenticated BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
     has_service_role BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role');
 BEGIN
-    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'balance_sheet_bf_overrides', 'expenses', 'cheque_bank_deposits', 'bank_transactions']
+    FOREACH target_table IN ARRAY ARRAY['balance_sheet_submissions', 'balance_sheet_submission_revisions', 'balance_sheet_bf_overrides', 'expenses', 'other_income_entries', 'cheque_bank_deposits', 'bank_transactions']
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
         EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC', target_table);
@@ -235,6 +325,17 @@ BEGIN
     END LOOP;
 END $$;
 
+REVOKE ALL ON FUNCTION prevent_balance_sheet_revision_changes() FROM PUBLIC;
+
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON FUNCTION prevent_balance_sheet_revision_changes() FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON FUNCTION prevent_balance_sheet_revision_changes() FROM authenticated;
+    END IF;
+END $$;
+
 INSERT INTO permissions (permission_key, permission_name)
 SELECT 'BALANCE_SHEET', 'Balance Sheet'
 WHERE NOT EXISTS (
@@ -242,10 +343,32 @@ WHERE NOT EXISTS (
 );
 
 UPDATE permissions
-SET description = 'Allows viewing balance sheet totals and logging business expenses.',
+SET description = 'Allows viewing balance sheet totals and logging business expenses or Other income.',
     permission_group = 'Operations',
     permission_subgroup = 'Cash Drawer'
 WHERE UPPER(permission_key) = 'BALANCE_SHEET';
+
+INSERT INTO permissions (permission_key, permission_name, description, permission_group, permission_subgroup)
+VALUES ('EDIT_BALANCE_SHEET', 'Edit Submitted Balance Sheet',
+        'Allows revising the latest submitted Balance Sheet during its 48-hour edit window.',
+        'Operations', 'Cash Drawer')
+ON CONFLICT (permission_key) DO UPDATE SET
+    permission_name = EXCLUDED.permission_name,
+    description = EXCLUDED.description,
+    permission_group = EXCLUDED.permission_group,
+    permission_subgroup = EXCLUDED.permission_subgroup;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.role_id, p.permission_id
+FROM roles r
+JOIN permissions p ON p.permission_key = 'EDIT_BALANCE_SHEET'
+WHERE (UPPER(r.role_name) IN ('ADMIN', 'OWNER', 'CEO') OR UPPER(r.role_name) LIKE '%MANAGER%')
+  AND NOT EXISTS (
+      SELECT 1 FROM role_permissions existing
+      JOIN permissions existing_permission ON existing_permission.permission_id=existing.permission_id
+      WHERE existing_permission.permission_key='EDIT_BALANCE_SHEET'
+  )
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id

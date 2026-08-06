@@ -84,16 +84,11 @@ public final class ServerProvisioningService {
 
         config.save();
         PostgresRuntimeService.CommandResult lanResult = PostgresRuntimeService.ensureServiceOnlyDatabaseAccess(config);
-        PostgresRuntimeService.CommandResult syncServiceResult = PostgresRuntimeService.ensureSyncServiceInstalled();
-        SyncWorker.startIfServerMode();
         steps.add("Saved server-mode configuration.");
         steps.add(lanResult.success()
                 ? "PostgreSQL is restricted to the server; registers use HTTPS port 8443."
                 : "PostgreSQL isolation needs manual attention: " + lanResult.output());
-        steps.add(syncServiceResult.success()
-                ? "Background sync service is installed and ready."
-                : "Background sync service install failed: " + syncServiceResult.output());
-        steps.add("Started the in-app sync worker.");
+        steps.add("Background LAN and sync services remain stopped until the store server role is verified.");
         return new ProvisionResult(String.join("\n", steps));
     }
 

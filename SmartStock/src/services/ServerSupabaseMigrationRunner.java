@@ -103,6 +103,13 @@ public final class ServerSupabaseMigrationRunner {
             "database/migrations/20260723013000_add_employee_nickname.sql",
             "database/migrations/20260723143000_api_only_sync_exchange.sql",
             "database/migrations/20260724062034_harden_remote_admin_internal_tables.sql",
+            "database/migrations/20260724151753_add_device_auto_logout_policy.sql",
+            "database/migrations/20260806120000_add_other_income_entries.sql",
+            "database/migrations/20260806180000_store_server_registry.sql",
+            "database/migrations/20260806181000_store_server_registry_indexes.sql",
+            "database/migrations/20260806193000_require_whole_gyd_other_income.sql",
+            "database/migrations/20260806210000_editable_balance_sheet_revisions.sql",
+            "database/migrations/20260806213000_index_balance_sheet_revision_foreign_keys.sql",
             "database/migrations/20260723220000_first_admin_bootstrap.sql"
     );
 
@@ -289,7 +296,8 @@ public final class ServerSupabaseMigrationRunner {
     private static void verify(Connection connection) throws SQLException {
         List<String> missing = new ArrayList<>();
         for (String object : List.of("users", "locations", "roles", "user_locations",
-                "smartstock_sync_events", "smartstock_store_rows")) {
+                "smartstock_sync_events", "smartstock_store_rows", "store_server_instances",
+                "store_server_handoffs", "store_server_events")) {
             try (PreparedStatement statement = connection.prepareStatement(
                     "SELECT to_regclass(?) IS NOT NULL")) {
                 statement.setString(1, "public." + object);

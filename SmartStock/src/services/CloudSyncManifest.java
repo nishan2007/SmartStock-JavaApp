@@ -74,6 +74,10 @@ public record CloudSyncManifest(Map<String, TableInfo> tables) {
         return info == null ? -1 : info.rowCount();
     }
 
+    public long totalRowCount() {
+        return tables.values().stream().mapToLong(TableInfo::rowCount).sum();
+    }
+
     public record TableInfo(long rowCount, Set<String> columns) {
     }
 }

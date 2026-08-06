@@ -19,6 +19,20 @@ public final class BalanceSheetService {
         mutate("ADD_EXPENSE", object("expense", entry));
     }
 
+    public static void addOtherIncome(OtherIncomeEntry entry) throws SQLException {
+        mutate("ADD_OTHER_INCOME", object("income", entry));
+    }
+
+    public static List<OtherIncomeOption> listDeletableOtherIncome(LocalDate from, LocalDate to) throws SQLException {
+        return array(read("DELETABLE_OTHER_INCOME", range(from, to)), "rows", OtherIncomeOption[].class);
+    }
+
+    public static void deleteOtherIncome(long otherIncomeId, LocalDate from, LocalDate to) throws SQLException {
+        JsonObject body = range(from, to);
+        body.addProperty("otherIncomeId", otherIncomeId);
+        mutate("DELETE_OTHER_INCOME", body);
+    }
+
     public static List<ExpenseOption> listDeletableExpenses(LocalDate from, LocalDate to, String status) throws SQLException {
         JsonObject body = range(from,to); body.addProperty("status",status);
         return array(read("DELETABLE_EXPENSES",body),"rows",ExpenseOption[].class);
@@ -75,6 +89,17 @@ public final class BalanceSheetService {
         JsonObject body=new JsonObject();body.addProperty("submissionId",submissionId);return GSON.fromJson(read("SUBMISSION",body).get("sheet"),BalanceSheet.class);
     }
 
+    public static EditContext loadEditContext(long submissionId) throws SQLException {
+        JsonObject body=new JsonObject();body.addProperty("submissionId",submissionId);
+        return GSON.fromJson(read("EDIT_CONTEXT",body).get("editContext"),EditContext.class);
+    }
+    public static List<RevisionAudit> loadRevisionHistory(long submissionId)throws SQLException{JsonObject body=new JsonObject();body.addProperty("submissionId",submissionId);return array(read("REVISION_HISTORY",body),"rows",RevisionAudit[].class);}
+
+    public static EditResult reviseSubmission(EditRequest edit) throws SQLException {
+        JsonObject body=object("edit",edit);JsonObject result=mutate("REVISE",body);
+        return new EditResult(edit.submissionId(),result.get("revisionNo").getAsInt(),GSON.fromJson(result.get("sheet"),BalanceSheet.class));
+    }
+
     public static void setBalanceBf(LocalDate periodStart, BigDecimal amount) throws SQLException {
         JsonObject body=new JsonObject();
         body.addProperty("periodStart",periodStart.toString());
@@ -100,12 +125,21 @@ public final class BalanceSheetService {
     private static String text(String value){return value==null||value.isBlank()?"Unknown":value;}
 
     public record ExpenseEntry(LocalDate expenseDate,String category,String payee,String description,BigDecimal amount,String paymentMethod,String paymentReference,String status){}
+    public record OtherIncomeEntry(LocalDate incomeDate,String sourceName,String description,BigDecimal amount,String paymentReference){}
+    public record OtherIncomeOption(long otherIncomeId,LocalDate incomeDate,String sourceName,String description,BigDecimal amount,String paymentReference){public String toString(){String d=description==null||description.isBlank()?sourceName:sourceName+" - "+description;return incomeDate+" - "+d+" - "+zero(amount).toPlainString();}}
+    public record EditableExpense(Long expenseId,LocalDate expenseDate,String category,String payee,String description,BigDecimal amount,String paymentMethod,String paymentReference,String status){}
+    public record EditableOtherIncome(Long otherIncomeId,LocalDate incomeDate,String sourceName,String description,BigDecimal amount,String paymentReference){}
+    public record EditEligibility(boolean editable,LocalDateTime expiresAt,int currentRevision,String lockReason){}
+    public record RevisionAudit(int revisionNo,LocalDateTime changedAt,String changedByName,String deviceName,String reason,String changeSummary){}
+    public record EditContext(long submissionId,LocalDate periodStart,LocalDate periodEnd,String notes,EditEligibility eligibility,List<EditableExpense>expenses,List<EditableOtherIncome>otherIncome,List<RevisionAudit>auditHistory){}
+    public record EditRequest(long submissionId,int expectedRevision,String notes,String reason,List<EditableExpense>expenses,List<EditableOtherIncome>otherIncome){}
+    public record EditResult(long submissionId,int revisionNo,BalanceSheet sheet){}
     public record ExpenseOption(long expenseId,LocalDate expenseDate,String category,String payee,String description,BigDecimal amount,String status){public String toString(){String n=payee==null||payee.isBlank()?(description==null||description.isBlank()?category:description):payee;return expenseDate+" - "+n+" - "+zero(amount).toPlainString();}}
     public record PayableOption(long expenseId,LocalDate expenseDate,String category,String payee,String description,BigDecimal amount){public String toString(){String n=payee==null||payee.isBlank()?(description==null||description.isBlank()?category:description):payee;return expenseDate+" - "+n+" - "+zero(amount).toPlainString();}}
     public record ChequeDepositOption(String sourceType,String sourceId,LocalDateTime chequeAt,String sourceLabel,String payer,String reference,BigDecimal amount){public String toString(){String n=payer==null||payer.isBlank()?sourceLabel:sourceLabel+" - "+payer;String ref=reference==null||reference.isBlank()?"":" / "+reference;return(chequeAt==null?"":chequeAt.toLocalDate()+" - ")+n+ref+" - "+zero(amount).toPlainString();}}
     public record SheetLine(String label,BigDecimal amount){}
     public record BankTransactionLine(String transaction,String direction,BigDecimal amount){}
     public record DrawSessionRange(long sessionId,LocalDate openedDate,LocalDate closedDate,String label,String status){}
-    public record SubmissionOption(long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,BigDecimal balanceCf){public String toString(){return periodStart+" to "+periodEnd+" - "+text(submittedByName)+" - CF "+zero(balanceCf).toPlainString();}}
+    public record SubmissionOption(long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,BigDecimal balanceCf,int revisionNo,LocalDateTime lastEditedAt,String lastEditedByName,LocalDateTime editExpiresAt,boolean latestWithinWindow){public String toString(){return periodStart+" to "+periodEnd+" - "+text(submittedByName)+" - CF "+zero(balanceCf).toPlainString()+(revisionNo>0?" - Rev "+revisionNo:"");}}
     public record BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf){}
 }

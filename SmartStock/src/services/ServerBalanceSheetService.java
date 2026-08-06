@@ -1,5 +1,6 @@
 package services;
 
+import com.google.gson.Gson;
 import data.DB;
 import data.DatabaseConfig;
 import data.DatabaseMode;
@@ -18,6 +19,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
@@ -26,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ServerBalanceSheetService {
     private static final long SCHEMA_LOCK_KEY = 7_340_210_001L;
     private static final DateTimeFormatter ACCOUNT_PAYMENT_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd h:mm a");
+    private static final Gson GSON = LanJson.create();
     private static final Set<String> SCHEMA_READY = ConcurrentHashMap.newKeySet();
 
     private ServerBalanceSheetService() {
@@ -86,6 +89,29 @@ public final class ServerBalanceSheetService {
             stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS expenses_source_unique_idx ON expenses(source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS expenses_location_date_idx ON expenses(location_id, expense_date DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS expenses_created_by_user_idx ON expenses(created_by_user_id)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS other_income_entries (
+                        other_income_id BIGSERIAL PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(location_id),
+                        income_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        source_name TEXT NOT NULL,
+                        description TEXT,
+                        amount NUMERIC(12, 2) NOT NULL,
+                        payment_method TEXT NOT NULL DEFAULT 'CASH',
+                        payment_reference TEXT,
+                        created_by_user_id INTEGER REFERENCES users(user_id),
+                        created_by_name TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT other_income_amount_chk CHECK (amount > 0),
+                        CONSTRAINT other_income_whole_gyd_chk CHECK (amount = TRUNC(amount)),
+                        CONSTRAINT other_income_payment_method_chk CHECK (payment_method = 'CASH')
+                    )
+                    """);
+            stmt.executeUpdate("ALTER TABLE other_income_entries DROP CONSTRAINT IF EXISTS other_income_whole_gyd_chk");
+            stmt.executeUpdate("ALTER TABLE other_income_entries ADD CONSTRAINT other_income_whole_gyd_chk CHECK (amount = TRUNC(amount))");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS other_income_location_date_idx ON other_income_entries(location_id, income_date DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS other_income_created_by_user_idx ON other_income_entries(created_by_user_id)");
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS cheque_bank_deposits (
                         cheque_bank_deposit_id BIGSERIAL PRIMARY KEY,
@@ -166,6 +192,34 @@ public final class ServerBalanceSheetService {
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS bank_transaction_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS pending_cheque_lines TEXT");
             stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS drawer_check_lines TEXT");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS revision_no INTEGER NOT NULL DEFAULT 0");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS last_edited_by_user_id INTEGER REFERENCES users(user_id)");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submissions ADD COLUMN IF NOT EXISTS last_edited_by_name TEXT");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS balance_sheet_submission_revisions (
+                        balance_sheet_revision_id BIGSERIAL PRIMARY KEY,
+                        balance_sheet_submission_id BIGINT NOT NULL REFERENCES balance_sheet_submissions(balance_sheet_submission_id),
+                        location_id INTEGER NOT NULL REFERENCES locations(location_id),
+                        revision_no INTEGER NOT NULL,
+                        action_type TEXT NOT NULL DEFAULT 'EDIT', reason TEXT NOT NULL, change_summary TEXT NOT NULL,
+                        before_snapshot JSONB NOT NULL, after_snapshot JSONB NOT NULL,
+                        changed_by_user_id INTEGER REFERENCES users(user_id), changed_by_name TEXT,
+                        device_id TEXT, device_name TEXT,
+                        changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT balance_sheet_revision_reason_chk CHECK (LENGTH(TRIM(reason)) > 0),
+                        CONSTRAINT balance_sheet_revision_unique UNIQUE (balance_sheet_submission_id, revision_no)
+                    )
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_revision_submission_idx ON balance_sheet_submission_revisions(balance_sheet_submission_id, revision_no DESC)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_revision_location_idx ON balance_sheet_submission_revisions(location_id)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_revision_changed_by_idx ON balance_sheet_submission_revisions(changed_by_user_id)");
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submission_last_editor_idx ON balance_sheet_submissions(last_edited_by_user_id)");
+            stmt.executeUpdate("ALTER TABLE balance_sheet_submission_revisions ADD COLUMN IF NOT EXISTS change_summary TEXT NOT NULL DEFAULT 'Balance Sheet revised'");
+            stmt.executeUpdate("CREATE OR REPLACE FUNCTION prevent_balance_sheet_revision_changes() RETURNS TRIGGER LANGUAGE plpgsql SET search_path=pg_catalog,public AS 'BEGIN RAISE EXCEPTION ''Balance sheet revision history is immutable''; END'");
+            stmt.executeUpdate("REVOKE ALL ON FUNCTION prevent_balance_sheet_revision_changes() FROM PUBLIC");
+            stmt.executeUpdate("DROP TRIGGER IF EXISTS balance_sheet_revisions_immutable ON balance_sheet_submission_revisions");
+            stmt.executeUpdate("CREATE TRIGGER balance_sheet_revisions_immutable BEFORE UPDATE OR DELETE ON balance_sheet_submission_revisions FOR EACH ROW EXECUTE FUNCTION prevent_balance_sheet_revision_changes()");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_location_period_idx ON balance_sheet_submissions(location_id, period_start DESC, period_end DESC)");
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS balance_sheet_submissions_submitted_by_user_idx ON balance_sheet_submissions(submitted_by_user_id)");
             stmt.executeUpdate("""
@@ -189,8 +243,10 @@ public final class ServerBalanceSheetService {
             }
         }
         SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_submissions");
+        SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_submission_revisions");
         SupabaseSecurityHardening.protectInternalTable(conn, "balance_sheet_bf_overrides");
         SupabaseSecurityHardening.protectInternalTable(conn, "expenses");
+        SupabaseSecurityHardening.protectInternalTable(conn, "other_income_entries");
         SupabaseSecurityHardening.protectInternalTable(conn, "cheque_bank_deposits");
         SupabaseSecurityHardening.protectInternalTable(conn, "bank_transactions");
     }
@@ -811,6 +867,110 @@ public final class ServerBalanceSheetService {
             try(ResultSet rs=ps.executeQuery()){if(rs.next())SyncOutboxService.recordEvent(conn,"EXPENSE_CREATED",Map.of("expense_id",rs.getLong(1),"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"expense_date",entry.expenseDate(),"category",entry.category(),"amount",defaultZero(entry.amount()),"status",entry.status()));}}
     }
 
+    public static void addOtherIncome(Connection conn, OtherIncomeEntry entry) throws SQLException {
+        ensureSchema(conn);
+        validateOtherIncome(entry);
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO other_income_entries (
+                    location_id, income_date, source_name, description, amount, payment_method,
+                    payment_reference, created_by_user_id, created_by_name
+                ) VALUES (?, ?, ?, ?, ?, 'CASH', ?, ?, ?)
+                RETURNING other_income_id
+                """)) {
+            setNullableInteger(ps, 1, ServerRequestIdentity.locationId());
+            ps.setDate(2, Date.valueOf(entry.incomeDate()));
+            ps.setString(3, entry.sourceName().trim());
+            ps.setString(4, blankToNull(entry.description()));
+            ps.setBigDecimal(5, entry.amount());
+            ps.setString(6, blankToNull(entry.paymentReference()));
+            setNullableInteger(ps, 7, ServerRequestIdentity.userId());
+            ps.setString(8, ServerRequestIdentity.userName());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    SyncOutboxService.recordEvent(conn, "OTHER_INCOME_CREATED", Map.of(
+                            "other_income_id", rs.getLong(1),
+                            "location_id", ServerRequestIdentity.locationId() == null ? "" : ServerRequestIdentity.locationId(),
+                            "income_date", entry.incomeDate(),
+                            "source_name", entry.sourceName().trim(),
+                            "amount", entry.amount(),
+                            "payment_method", "CASH"));
+                }
+            }
+        }
+    }
+
+    public static List<OtherIncomeOption> listDeletableOtherIncome(LocalDate from, LocalDate to) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            ensureSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT other_income_id, income_date, source_name, description, amount, payment_reference
+                    FROM other_income_entries
+                    WHERE (? IS NULL OR location_id = ?)
+                      AND income_date BETWEEN ? AND ?
+                    ORDER BY income_date DESC, other_income_id DESC
+                    """)) {
+                setNullableInteger(ps, 1, ServerRequestIdentity.locationId());
+                setNullableInteger(ps, 2, ServerRequestIdentity.locationId());
+                ps.setDate(3, Date.valueOf(from));
+                ps.setDate(4, Date.valueOf(to));
+                List<OtherIncomeOption> rows = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        rows.add(new OtherIncomeOption(rs.getLong(1), rs.getDate(2).toLocalDate(),
+                                rs.getString(3), rs.getString(4), defaultZero(rs.getBigDecimal(5)), rs.getString(6)));
+                    }
+                }
+                return rows;
+            }
+        }
+    }
+
+    public static void deleteOtherIncome(Connection conn, long otherIncomeId, LocalDate from, LocalDate to) throws SQLException {
+        ensureSchema(conn);
+        try (PreparedStatement ps = conn.prepareStatement("""
+                DELETE FROM other_income_entries
+                WHERE other_income_id = ?
+                  AND (? IS NULL OR location_id = ?)
+                  AND income_date BETWEEN ? AND ?
+                RETURNING other_income_id, income_date, source_name, amount
+                """)) {
+            ps.setLong(1, otherIncomeId);
+            setNullableInteger(ps, 2, ServerRequestIdentity.locationId());
+            setNullableInteger(ps, 3, ServerRequestIdentity.locationId());
+            ps.setDate(4, Date.valueOf(from));
+            ps.setDate(5, Date.valueOf(to));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    SyncOutboxService.recordEvent(conn, "OTHER_INCOME_DELETED", Map.of(
+                            "other_income_id", rs.getLong(1),
+                            "location_id", ServerRequestIdentity.locationId() == null ? "" : ServerRequestIdentity.locationId(),
+                            "income_date", rs.getDate(2).toLocalDate(),
+                            "source_name", rs.getString(3),
+                            "amount", defaultZero(rs.getBigDecimal(4))));
+                    ReferenceDataSyncService.recordTombstone(conn, "other_income_entries",
+                            Map.of("other_income_id", rs.getLong(1)));
+                    return;
+                }
+            }
+        }
+        throw new SQLException("Only manual Other income from the current balance sheet can be deleted.");
+    }
+
+    private static void validateOtherIncome(OtherIncomeEntry entry) throws SQLException {
+        if (entry == null || entry.incomeDate() == null) throw new SQLException("Income date is required.");
+        if (entry.sourceName() == null || entry.sourceName().isBlank()) throw new SQLException("Income source is required.");
+        if (entry.sourceName().trim().length() > 200) throw new SQLException("Income source cannot exceed 200 characters.");
+        if (entry.description() != null && entry.description().length() > 3000) throw new SQLException("Description cannot exceed 3000 characters.");
+        if (entry.paymentReference() != null && entry.paymentReference().length() > 500) throw new SQLException("Reference cannot exceed 500 characters.");
+        if (entry.amount() == null || entry.amount().signum() <= 0) throw new SQLException("Income amount must be greater than zero.");
+        if (entry.amount().remainder(BigDecimal.ONE).signum() != 0) {
+            throw new SQLException("Income amount must be entered in whole GYD; cents are not used.");
+        }
+        if (entry.amount().precision() - entry.amount().scale() > 10) {
+            throw new SQLException("Income amount cannot exceed 10 whole digits.");
+        }
+    }
+
     public static void deleteManualExpense(Connection conn,long expenseId,LocalDate from,LocalDate to,String status)throws SQLException{
         ensureSchema(conn);try(PreparedStatement ps=conn.prepareStatement("""
                 DELETE FROM expenses WHERE expense_id=? AND (? IS NULL OR location_id=?) AND expense_date BETWEEN ? AND ? AND status=? AND source_type IS NULL
@@ -870,7 +1030,14 @@ public final class ServerBalanceSheetService {
                            period_end,
                            submitted_by_name,
                            submitted_at,
-                           balance_cf
+                           balance_cf, revision_no, last_edited_at, last_edited_by_name,
+                           (submitted_at + INTERVAL '48 hours') AS edit_expires_at,
+                           (CURRENT_TIMESTAMP < submitted_at + INTERVAL '48 hours'
+                            AND NOT EXISTS (SELECT 1 FROM balance_sheet_submissions newer
+                                            WHERE newer.location_id = balance_sheet_submissions.location_id
+                                              AND (newer.submitted_at > balance_sheet_submissions.submitted_at
+                                                   OR (newer.submitted_at = balance_sheet_submissions.submitted_at
+                                                       AND newer.balance_sheet_submission_id > balance_sheet_submissions.balance_sheet_submission_id)))) AS latest_within_window
                     FROM balance_sheet_submissions
                     WHERE (? IS NULL OR location_id = ?)
                     ORDER BY submitted_at DESC
@@ -888,7 +1055,10 @@ public final class ServerBalanceSheetService {
                                 rs.getDate("period_end").toLocalDate(),
                                 rs.getTimestamp("submitted_at").toLocalDateTime(),
                                 rs.getString("submitted_by_name"),
-                                defaultZero(rs.getBigDecimal("balance_cf"))
+                                defaultZero(rs.getBigDecimal("balance_cf")), rs.getInt("revision_no"),
+                                rs.getTimestamp("last_edited_at")==null?null:rs.getTimestamp("last_edited_at").toLocalDateTime(),
+                                rs.getString("last_edited_by_name"),rs.getTimestamp("edit_expires_at").toLocalDateTime(),
+                                rs.getBoolean("latest_within_window")
                         ));
                     }
                 }
@@ -908,39 +1078,190 @@ public final class ServerBalanceSheetService {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setLong(1, submissionId);
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        return new BalanceSheet(
-                                rs.getLong("balance_sheet_submission_id"),
-                                rs.getDate("period_start").toLocalDate(),
-                                rs.getDate("period_end").toLocalDate(),
-                                rs.getTimestamp("submitted_at").toLocalDateTime(),
-                                rs.getString("submitted_by_name"),
-                                rs.getString("notes"),
-                                decodeLines(rs.getString("income_lines")),
-                                decodeLines(rs.getString("receivable_lines")),
-                                decodeLines(rs.getString("expense_lines")),
-                                decodeLines(rs.getString("payable_lines")),
-                                decodeLines(rs.getString("drawer_cash_lines")),
-                                decodeLines(rs.getString("device_sales_lines")),
-                                decodeLines(rs.getString("device_order_lines")),
-                                decodeLines(rs.getString("device_payment_lines")),
-                                decodeLines(rs.getString("account_payment_lines")),
-                                decodeBankTransactions(rs.getString("bank_transaction_lines")),
-                                decodeCheques(rs.getString("pending_cheque_lines")),
-                                decodeLines(rs.getString("drawer_check_lines")),
-                                defaultZero(rs.getBigDecimal("cash_in_hand")),
-                                defaultZero(rs.getBigDecimal("balance_bf")),
-                                defaultZero(rs.getBigDecimal("total_income")),
-                                defaultZero(rs.getBigDecimal("total_receivables")),
-                                defaultZero(rs.getBigDecimal("total_expenses")),
-                                defaultZero(rs.getBigDecimal("total_payables")),
-                                defaultZero(rs.getBigDecimal("balance_cf"))
-                        );
-                    }
+                    if (rs.next()) return snapshot(rs);
                 }
             }
         }
         throw new SQLException("Saved balance sheet was not found.");
+    }
+
+    private static BalanceSheet snapshot(ResultSet rs) throws SQLException {
+        return new BalanceSheet(rs.getLong("balance_sheet_submission_id"), rs.getDate("period_start").toLocalDate(),
+                rs.getDate("period_end").toLocalDate(), rs.getTimestamp("submitted_at").toLocalDateTime(),
+                rs.getString("submitted_by_name"), rs.getString("notes"), decodeLines(rs.getString("income_lines")),
+                decodeLines(rs.getString("receivable_lines")), decodeLines(rs.getString("expense_lines")),
+                decodeLines(rs.getString("payable_lines")), decodeLines(rs.getString("drawer_cash_lines")),
+                decodeLines(rs.getString("device_sales_lines")), decodeLines(rs.getString("device_order_lines")),
+                decodeLines(rs.getString("device_payment_lines")), decodeLines(rs.getString("account_payment_lines")),
+                decodeBankTransactions(rs.getString("bank_transaction_lines")), decodeCheques(rs.getString("pending_cheque_lines")),
+                decodeLines(rs.getString("drawer_check_lines")), defaultZero(rs.getBigDecimal("cash_in_hand")),
+                defaultZero(rs.getBigDecimal("balance_bf")), defaultZero(rs.getBigDecimal("total_income")),
+                defaultZero(rs.getBigDecimal("total_receivables")), defaultZero(rs.getBigDecimal("total_expenses")),
+                defaultZero(rs.getBigDecimal("total_payables")), defaultZero(rs.getBigDecimal("balance_cf")));
+    }
+
+    private static LockedSubmission findSubmission(Connection conn, long id, boolean lock) throws SQLException {
+        String sql = "SELECT * FROM balance_sheet_submissions WHERE balance_sheet_submission_id=? AND location_id=?" + (lock ? " FOR UPDATE" : "");
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id); setNullableInteger(ps, 2, ServerRequestIdentity.locationId());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                return new LockedSubmission(id, rs.getInt("location_id"), rs.getDate("period_start").toLocalDate(),
+                        rs.getDate("period_end").toLocalDate(), rs.getTimestamp("submitted_at").toLocalDateTime(),
+                        rs.getInt("revision_no"), rs.getString("notes"), snapshot(rs));
+            }
+        }
+    }
+
+    private static EditEligibility eligibility(Connection conn, LockedSubmission value) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT submitted_at + INTERVAL '48 hours' AS expires_at,
+                       CURRENT_TIMESTAMP < submitted_at + INTERVAL '48 hours' AS within_window,
+                       NOT EXISTS (SELECT 1 FROM balance_sheet_submissions newer
+                                   WHERE newer.location_id=current_sheet.location_id
+                                     AND (newer.submitted_at>current_sheet.submitted_at OR
+                                          (newer.submitted_at=current_sheet.submitted_at AND newer.balance_sheet_submission_id>current_sheet.balance_sheet_submission_id))) AS newest
+                FROM balance_sheet_submissions current_sheet WHERE balance_sheet_submission_id=? AND location_id=?
+                """)) {
+            ps.setLong(1,value.submissionId());ps.setInt(2,value.locationId());
+            try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Saved balance sheet was not found for this store.");
+                LocalDateTime expiresAt=rs.getTimestamp("expires_at").toLocalDateTime();boolean newest=rs.getBoolean("newest"),within=rs.getBoolean("within_window");
+                String reason=!newest?"A newer Balance Sheet has already been submitted for this store.":!within?"The 48-hour Balance Sheet edit window has expired.":null;
+                return new EditEligibility(reason==null,expiresAt,value.revisionNo(),reason);}
+        }
+    }
+
+    private static List<EditableExpense> editableExpenses(Connection conn, LockedSubmission s) throws SQLException {
+        List<EditableExpense> rows = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT expense_id,expense_date,category,payee,description,amount,payment_method,payment_reference,status
+                FROM expenses WHERE location_id=? AND expense_date BETWEEN ? AND ? AND source_type IS NULL ORDER BY expense_date,expense_id
+                """)) {
+            ps.setInt(1,s.locationId()); ps.setDate(2,Date.valueOf(s.periodStart())); ps.setDate(3,Date.valueOf(s.periodEnd()));
+            try(ResultSet rs=ps.executeQuery()){while(rs.next()) rows.add(new EditableExpense(rs.getLong(1),rs.getDate(2).toLocalDate(),rs.getString(3),rs.getString(4),rs.getString(5),defaultZero(rs.getBigDecimal(6)),rs.getString(7),rs.getString(8),rs.getString(9)));}
+        }
+        return rows;
+    }
+
+    private static List<EditableOtherIncome> editableIncome(Connection conn, LockedSubmission s) throws SQLException {
+        List<EditableOtherIncome> rows = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT other_income_id,income_date,source_name,description,amount,payment_reference
+                FROM other_income_entries WHERE location_id=? AND income_date BETWEEN ? AND ? ORDER BY income_date,other_income_id
+                """)) {
+            ps.setInt(1,s.locationId()); ps.setDate(2,Date.valueOf(s.periodStart())); ps.setDate(3,Date.valueOf(s.periodEnd()));
+            try(ResultSet rs=ps.executeQuery()){while(rs.next()) rows.add(new EditableOtherIncome(rs.getLong(1),rs.getDate(2).toLocalDate(),rs.getString(3),rs.getString(4),defaultZero(rs.getBigDecimal(5)),rs.getString(6)));}
+        }
+        return rows;
+    }
+
+    private static List<RevisionAudit> auditHistory(Connection conn,long id)throws SQLException{
+        List<RevisionAudit> rows=new ArrayList<>();try(PreparedStatement ps=conn.prepareStatement("SELECT revision_no,changed_at,changed_by_name,device_name,reason,change_summary FROM balance_sheet_submission_revisions WHERE balance_sheet_submission_id=? ORDER BY revision_no DESC")){ps.setLong(1,id);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(new RevisionAudit(rs.getInt(1),rs.getTimestamp(2).toLocalDateTime(),rs.getString(3),rs.getString(4),rs.getString(5),rs.getString(6)));}}return rows;
+    }
+
+    private static String describeChanges(AuditSnapshot before,AuditSnapshot after){List<String> changes=new ArrayList<>();if(!java.util.Objects.equals(before.sheet().notes(),after.sheet().notes()))changes.add("Notes: '"+defaultText(before.sheet().notes())+"' -> '"+defaultText(after.sheet().notes())+"'");appendRowChanges(changes,"Expense",before.expenses(),after.expenses(),EditableExpense::expenseId,e->e.expenseDate()+" / "+e.category()+" / "+defaultZero(e.amount())+" / "+e.status());appendRowChanges(changes,"Other Income",before.otherIncome(),after.otherIncome(),EditableOtherIncome::otherIncomeId,i->i.incomeDate()+" / "+i.sourceName()+" / "+defaultZero(i.amount()));changes.add("Balance C/F: "+before.sheet().balanceCf()+" -> "+after.sheet().balanceCf());String value=String.join("; ",changes);return value.length()>5000?value.substring(0,4997)+"...":value;}
+    private static <T>void appendRowChanges(List<String>out,String type,List<T>before,List<T>after,java.util.function.Function<T,Long>id,java.util.function.Function<T,String>text){Map<Long,T>old=new LinkedHashMap<>(),now=new LinkedHashMap<>();for(T row:before)old.put(id.apply(row),row);for(T row:after)now.put(id.apply(row),row);for(var entry:old.entrySet()){T current=now.get(entry.getKey());if(current==null)out.add(type+" removed: "+text.apply(entry.getValue()));else if(!GSON.toJson(entry.getValue()).equals(GSON.toJson(current)))out.add(type+" changed: "+text.apply(entry.getValue())+" -> "+text.apply(current));}for(var entry:now.entrySet())if(!old.containsKey(entry.getKey()))out.add(type+" added: "+text.apply(entry.getValue()));}
+
+    private static void validateEditRows(LockedSubmission s,List<EditableExpense> expenses,List<EditableOtherIncome> incomes)throws SQLException{
+        if(expenses==null||incomes==null)throw new SQLException("Expense and Other Income rows are required.");
+        for(EditableExpense e:expenses){if(e.expenseDate()==null||e.expenseDate().isBefore(s.periodStart())||e.expenseDate().isAfter(s.periodEnd()))throw new SQLException("Every expense date must be inside the submitted period.");if(e.category()==null||e.category().isBlank()||e.amount()==null||e.amount().signum()<0)throw new SQLException("Every expense needs a category and a valid amount.");if(!"PAID".equalsIgnoreCase(e.status())&&!"UNPAID".equalsIgnoreCase(e.status()))throw new SQLException("Expense status must be PAID or UNPAID.");}
+        for(EditableOtherIncome i:incomes){if(i.incomeDate()==null||i.incomeDate().isBefore(s.periodStart())||i.incomeDate().isAfter(s.periodEnd()))throw new SQLException("Every Other Income date must be inside the submitted period.");if(i.sourceName()==null||i.sourceName().isBlank()||i.amount()==null||i.amount().signum()<=0||i.amount().stripTrailingZeros().scale()>0)throw new SQLException("Other Income requires a source and a positive whole-GYD amount.");}
+    }
+
+    private static void applyExpenses(Connection conn,LockedSubmission s,List<EditableExpense> rows)throws SQLException{
+        List<Long> keep=new ArrayList<>();for(EditableExpense e:rows)if(e.expenseId()!=null)keep.add(e.expenseId());
+        try(PreparedStatement ps=conn.prepareStatement("DELETE FROM expenses WHERE location_id=? AND expense_date BETWEEN ? AND ? AND source_type IS NULL AND NOT (expense_id = ANY(?))")){ps.setInt(1,s.locationId());ps.setDate(2,Date.valueOf(s.periodStart()));ps.setDate(3,Date.valueOf(s.periodEnd()));ps.setArray(4,conn.createArrayOf("bigint",keep.toArray()));ps.executeUpdate();}
+        for(EditableExpense e:rows){if(e.expenseId()==null){addManualExpense(conn,new ExpenseEntry(e.expenseDate(),e.category(),e.payee(),e.description(),e.amount(),e.paymentMethod(),e.paymentReference(),e.status()));}else try(PreparedStatement ps=conn.prepareStatement("UPDATE expenses SET expense_date=?,category=?,payee=?,description=?,amount=?,payment_method=?,payment_reference=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE expense_id=? AND location_id=? AND source_type IS NULL")){ps.setDate(1,Date.valueOf(e.expenseDate()));ps.setString(2,e.category().trim());ps.setString(3,blankToNull(e.payee()));ps.setString(4,blankToNull(e.description()));ps.setBigDecimal(5,e.amount());ps.setString(6,blankToNull(e.paymentMethod()));ps.setString(7,blankToNull(e.paymentReference()));ps.setString(8,e.status().toUpperCase());ps.setLong(9,e.expenseId());ps.setInt(10,s.locationId());if(ps.executeUpdate()!=1)throw new SQLException("An expense row is no longer available for editing.");}}
+    }
+
+    private static void applyOtherIncome(Connection conn,LockedSubmission s,List<EditableOtherIncome> rows)throws SQLException{
+        List<Long> keep=new ArrayList<>();for(EditableOtherIncome i:rows)if(i.otherIncomeId()!=null)keep.add(i.otherIncomeId());
+        try(PreparedStatement ps=conn.prepareStatement("DELETE FROM other_income_entries WHERE location_id=? AND income_date BETWEEN ? AND ? AND NOT (other_income_id = ANY(?))")){ps.setInt(1,s.locationId());ps.setDate(2,Date.valueOf(s.periodStart()));ps.setDate(3,Date.valueOf(s.periodEnd()));ps.setArray(4,conn.createArrayOf("bigint",keep.toArray()));ps.executeUpdate();}
+        for(EditableOtherIncome i:rows){if(i.otherIncomeId()==null){addOtherIncome(conn,new OtherIncomeEntry(i.incomeDate(),i.sourceName(),i.description(),i.amount(),i.paymentReference()));}else try(PreparedStatement ps=conn.prepareStatement("UPDATE other_income_entries SET income_date=?,source_name=?,description=?,amount=?,payment_reference=?,updated_at=CURRENT_TIMESTAMP WHERE other_income_id=? AND location_id=?")){ps.setDate(1,Date.valueOf(i.incomeDate()));ps.setString(2,i.sourceName().trim());ps.setString(3,blankToNull(i.description()));ps.setBigDecimal(4,i.amount());ps.setString(5,blankToNull(i.paymentReference()));ps.setLong(6,i.otherIncomeId());ps.setInt(7,s.locationId());if(ps.executeUpdate()!=1)throw new SQLException("An Other Income row is no longer available for editing.");}}
+    }
+
+    static List<SheetLine> replaceOtherCash(List<SheetLine> original,BigDecimal amount){List<SheetLine> out=new ArrayList<>();for(SheetLine line:original)if(!"OTHER CASH".equalsIgnoreCase(line.label()))out.add(line);if(amount.signum()!=0)out.add(new SheetLine("OTHER CASH",amount));return out;}
+    private static BigDecimal totalOtherIncome(List<EditableOtherIncome> rows){BigDecimal value=BigDecimal.ZERO;for(EditableOtherIncome row:rows)value=value.add(defaultZero(row.amount()));return value;}
+    static List<SheetLine> replaceManualExpenseLines(List<SheetLine> snapshot,List<EditableExpense> before,List<EditableExpense> after,String status,String emptyLabel){Map<String,BigDecimal> amounts=new LinkedHashMap<>();for(SheetLine line:snapshot)if(!emptyLabel.equals(line.label()))amounts.merge(line.label(),defaultZero(line.amount()),BigDecimal::add);for(var entry:manualExpenseTotals(before,status).entrySet())amounts.merge(entry.getKey(),entry.getValue().negate(),BigDecimal::add);for(var entry:manualExpenseTotals(after,status).entrySet())amounts.merge(entry.getKey(),entry.getValue(),BigDecimal::add);List<SheetLine> out=new ArrayList<>();for(var entry:amounts.entrySet())if(entry.getValue().signum()!=0)out.add(new SheetLine(entry.getKey(),entry.getValue()));if(out.isEmpty())out.add(new SheetLine(emptyLabel,BigDecimal.ZERO));return out;}
+    private static Map<String,BigDecimal>manualExpenseTotals(List<EditableExpense>rows,String status){Map<String,BigDecimal>totals=new LinkedHashMap<>();for(EditableExpense row:rows)if(status.equalsIgnoreCase(row.status())){String detail=row.payee()==null||row.payee().isBlank()?(row.description()==null||row.description().isBlank()?row.category():row.description()):row.payee();totals.merge(row.category()+" - "+detail,defaultZero(row.amount()),BigDecimal::add);}return totals;}
+
+    public static EditContext loadEditContext(Connection conn, long submissionId) throws SQLException {
+        ensureSchema(conn);
+        LockedSubmission locked = findSubmission(conn, submissionId, false);
+        if (locked == null) throw new SQLException("Saved balance sheet was not found for this store.");
+        EditEligibility eligibility = eligibility(conn, locked);
+        return new EditContext(submissionId, locked.periodStart(), locked.periodEnd(), locked.notes(),
+                eligibility, editableExpenses(conn, locked), editableIncome(conn, locked), auditHistory(conn, submissionId));
+    }
+
+    public static List<RevisionAudit> loadRevisionHistory(Connection conn,long submissionId)throws SQLException{
+        ensureSchema(conn);if(findSubmission(conn,submissionId,false)==null)throw new SQLException("Saved balance sheet was not found for this store.");return auditHistory(conn,submissionId);
+    }
+
+    public static EditResult reviseSubmission(Connection conn, EditRequest request) throws SQLException {
+        if (request == null || request.reason() == null || request.reason().trim().isEmpty())
+            throw new SQLException("A reason for the Balance Sheet change is required.");
+        if(request.reason().trim().length()>1000)throw new SQLException("The Balance Sheet change reason cannot exceed 1,000 characters.");
+        if(request.notes()!=null&&request.notes().length()>5000)throw new SQLException("Balance Sheet notes cannot exceed 5,000 characters.");
+        LockedSubmission locked = findSubmission(conn, request.submissionId(), true);
+        if (locked == null) throw new SQLException("Saved balance sheet was not found for this store.");
+        EditEligibility eligibility = eligibility(conn, locked);
+        if (!eligibility.editable()) throw new SQLException(eligibility.lockReason());
+        if (request.expectedRevision() != locked.revisionNo())
+            throw new SQLException("This Balance Sheet was changed by another user. Reopen it before saving.");
+        validateEditRows(locked, request.expenses(), request.otherIncome());
+
+        List<EditableExpense> beforeExpenses = editableExpenses(conn, locked);
+        List<EditableOtherIncome> beforeIncome = editableIncome(conn, locked);
+        BalanceSheet beforeSheet = locked.sheet();
+        applyExpenses(conn, locked, request.expenses());
+        applyOtherIncome(conn, locked, request.otherIncome());
+
+        List<EditableExpense> afterExpenses=editableExpenses(conn,locked);
+        List<EditableOtherIncome> afterIncome=editableIncome(conn,locked);
+        List<SheetLine> income = replaceOtherCash(beforeSheet.income(),totalOtherIncome(afterIncome));
+        List<SheetLine> expenses = replaceManualExpenseLines(beforeSheet.expenses(),beforeExpenses,afterExpenses,"PAID","No expenses");
+        List<SheetLine> payables = replaceManualExpenseLines(beforeSheet.payables(),beforeExpenses,afterExpenses,"UNPAID","No payables");
+        BigDecimal totalIncome = total(income), totalExpenses = total(expenses), totalPayables = total(payables);
+        BigDecimal cf = beforeSheet.balanceBf().add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
+        int nextRevision = locked.revisionNo() + 1;
+        String notes = blankToNull(request.notes());
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE balance_sheet_submissions SET income_lines=?, expense_lines=?, payable_lines=?,
+                  total_income=?, total_expenses=?, total_payables=?, balance_cf=?, notes=?, revision_no=?,
+                  last_edited_at=CURRENT_TIMESTAMP, last_edited_by_user_id=?, last_edited_by_name=?
+                WHERE balance_sheet_submission_id=? AND revision_no=?
+                """)) {
+            ps.setString(1, encodeLines(income)); ps.setString(2, encodeLines(expenses)); ps.setString(3, encodeLines(payables));
+            ps.setBigDecimal(4, totalIncome); ps.setBigDecimal(5, totalExpenses); ps.setBigDecimal(6, totalPayables);
+            ps.setBigDecimal(7, cf); ps.setString(8, notes); ps.setInt(9, nextRevision);
+            setNullableInteger(ps, 10, ServerRequestIdentity.userId()); ps.setString(11, ServerRequestIdentity.userName());
+            ps.setLong(12, request.submissionId()); ps.setInt(13, locked.revisionNo());
+            if (ps.executeUpdate() != 1) throw new SQLException("This Balance Sheet was changed by another user. Reopen it before saving.");
+        }
+        BalanceSheet afterSheet = new BalanceSheet(beforeSheet.submissionId(), beforeSheet.periodStart(), beforeSheet.periodEnd(),
+                beforeSheet.submittedAt(), beforeSheet.submittedByName(), notes, income, beforeSheet.receivables(), expenses,
+                payables, beforeSheet.drawerCash(), beforeSheet.deviceSales(), beforeSheet.deviceOrders(), beforeSheet.devicePayments(),
+                beforeSheet.accountPayments(), beforeSheet.bankTransactions(), beforeSheet.pendingCheques(), beforeSheet.drawerChecks(),
+                beforeSheet.cashInHand(), beforeSheet.balanceBf(), totalIncome, beforeSheet.totalReceivables(), totalExpenses,
+                totalPayables, cf);
+        AuditSnapshot before = new AuditSnapshot(beforeSheet, beforeExpenses, beforeIncome);
+        AuditSnapshot after = new AuditSnapshot(afterSheet, afterExpenses, afterIncome);
+        String changeSummary=describeChanges(before,after);
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO balance_sheet_submission_revisions
+                  (balance_sheet_submission_id,location_id,revision_no,reason,change_summary,before_snapshot,after_snapshot,
+                   changed_by_user_id,changed_by_name,device_id,device_name)
+                VALUES (?,?,?,?,?,?::jsonb,?::jsonb,?,?,?,?)
+                """)) {
+            ps.setLong(1, request.submissionId()); ps.setInt(2, locked.locationId()); ps.setInt(3, nextRevision);
+            ps.setString(4, request.reason().trim());ps.setString(5,changeSummary);ps.setString(6, GSON.toJson(before)); ps.setString(7, GSON.toJson(after));
+            setNullableInteger(ps, 8, ServerRequestIdentity.userId()); ps.setString(9, ServerRequestIdentity.userName());
+            ps.setString(10, ServerRequestIdentity.deviceId()); ps.setString(11, ServerRequestIdentity.deviceName()); ps.executeUpdate();
+        }
+        SyncOutboxService.recordEvent(conn, "BALANCE_SHEET_REVISED", Map.of("balance_sheet_submission_id", request.submissionId(),
+                "location_id", locked.locationId(), "revision_no", nextRevision, "reason", request.reason().trim()));
+        return new EditResult(request.submissionId(), nextRevision, afterSheet);
     }
 
     private static void syncPaidPayrollExpenses(Connection conn, String storeZoneId, Integer fallbackLocationId) throws SQLException {
@@ -1350,6 +1671,26 @@ public final class ServerBalanceSheetService {
                 }
             }
         }
+        if (tableExists(conn, "other_income_entries")) {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT SUM(COALESCE(amount, 0)) AS amount
+                    FROM other_income_entries
+                    WHERE (? IS NULL OR location_id = ?)
+                      AND income_date BETWEEN ? AND ?
+                      AND payment_method = 'CASH'
+                    """)) {
+                setNullableInteger(ps, 1, locationId);
+                setNullableInteger(ps, 2, locationId);
+                ps.setDate(3, Date.valueOf(from));
+                ps.setDate(4, Date.valueOf(to));
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
+                        if (amount.signum() != 0) lines.add(new SheetLine("OTHER CASH", amount));
+                    }
+                }
+            }
+        }
         if (lines.isEmpty()) {
             lines.add(new SheetLine("No income logged", BigDecimal.ZERO));
         }
@@ -1700,7 +2041,7 @@ public final class ServerBalanceSheetService {
                                                          Integer locationId, List<Long> cashDrawerSessionIds) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
         if (cashDrawerSessionIds == null || cashDrawerSessionIds.isEmpty()) {
-            lines.add(new SheetLine("Match a draw session to run cash drawer checks", BigDecimal.ZERO));
+            lines.add(new SheetLine("Match a drawer session to run cash drawer checks", BigDecimal.ZERO));
             return lines;
         }
 
@@ -1771,7 +2112,7 @@ public final class ServerBalanceSheetService {
         }
 
         if (lines.isEmpty()) {
-            lines.add(new SheetLine("All cash sales and orders match the selected draw sessions", BigDecimal.ZERO));
+            lines.add(new SheetLine("All cash sales and orders match the selected drawer sessions", BigDecimal.ZERO));
         }
         return lines;
     }
@@ -2102,6 +2443,38 @@ public final class ServerBalanceSheetService {
                                BigDecimal amount, String paymentMethod, String paymentReference, String status) {
     }
 
+    public record OtherIncomeEntry(LocalDate incomeDate, String sourceName, String description,
+                                   BigDecimal amount, String paymentReference) {
+    }
+
+    public record OtherIncomeOption(long otherIncomeId, LocalDate incomeDate, String sourceName,
+                                    String description, BigDecimal amount, String paymentReference) {
+        @Override
+        public String toString() {
+            String details = description == null || description.isBlank() ? sourceName : sourceName + " - " + description;
+            return incomeDate + " - " + details + " - " + defaultZero(amount).toPlainString();
+        }
+    }
+
+    public record EditableExpense(Long expenseId, LocalDate expenseDate, String category, String payee,
+                                  String description, BigDecimal amount, String paymentMethod,
+                                  String paymentReference, String status) { }
+    public record EditableOtherIncome(Long otherIncomeId, LocalDate incomeDate, String sourceName,
+                                      String description, BigDecimal amount, String paymentReference) { }
+    public record EditEligibility(boolean editable, LocalDateTime expiresAt, int currentRevision, String lockReason) { }
+    public record RevisionAudit(int revisionNo, LocalDateTime changedAt, String changedByName,
+                                String deviceName, String reason, String changeSummary) { }
+    public record EditContext(long submissionId, LocalDate periodStart, LocalDate periodEnd, String notes,
+                              EditEligibility eligibility, List<EditableExpense> expenses,
+                              List<EditableOtherIncome> otherIncome, List<RevisionAudit> auditHistory) { }
+    public record EditRequest(long submissionId, int expectedRevision, String notes, String reason,
+                              List<EditableExpense> expenses, List<EditableOtherIncome> otherIncome) { }
+    public record EditResult(long submissionId, int revisionNo, BalanceSheet sheet) { }
+    private record AuditSnapshot(BalanceSheet sheet, List<EditableExpense> expenses,
+                                 List<EditableOtherIncome> otherIncome) { }
+    private record LockedSubmission(long submissionId, int locationId, LocalDate periodStart, LocalDate periodEnd,
+                                    LocalDateTime submittedAt, int revisionNo, String notes, BalanceSheet sheet) { }
+
     public record ExpenseOption(long expenseId, LocalDate expenseDate, String category, String payee,
                                 String description, BigDecimal amount, String status) {
         @Override
@@ -2149,12 +2522,13 @@ public final class ServerBalanceSheetService {
 
     public record SubmissionOption(long submissionId, LocalDate periodStart, LocalDate periodEnd,
                                    java.time.LocalDateTime submittedAt, String submittedByName,
-                                   BigDecimal balanceCf) {
+                                   BigDecimal balanceCf, int revisionNo, LocalDateTime lastEditedAt,
+                                   String lastEditedByName, LocalDateTime editExpiresAt, boolean latestWithinWindow) {
         @Override
         public String toString() {
             return periodStart + " to " + periodEnd
                     + " - " + defaultText(submittedByName)
-                    + " - CF " + defaultZero(balanceCf).toPlainString();
+                    + " - CF " + defaultZero(balanceCf).toPlainString() + (revisionNo > 0 ? " - Rev " + revisionNo : "");
         }
     }
 

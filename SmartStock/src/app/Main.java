@@ -189,7 +189,7 @@ public class Main {
 
     private static void ensureBackgroundSyncForServerMode() {
         DatabaseConfig config = DatabaseConfig.load();
-        if (config.mode() != DatabaseMode.SERVER) {
+        if (config.mode() != DatabaseMode.SERVER || config.locationId() == null) {
             return;
         }
         Thread installer = new Thread(() -> {

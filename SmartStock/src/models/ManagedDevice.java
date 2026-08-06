@@ -19,6 +19,8 @@ public class ManagedDevice {
     private final String lastStoreName;
     private final boolean approved;
     private final boolean persistentLoginAllowed;
+    private final boolean autoLogoutEnabled;
+    private final int autoLogoutMinutes;
     private final boolean blocked;
     private final boolean allowSales;
     private final boolean allowOrders;
@@ -52,6 +54,8 @@ public class ManagedDevice {
             String lastStoreName,
             boolean approved,
             boolean persistentLoginAllowed,
+            boolean autoLogoutEnabled,
+            int autoLogoutMinutes,
             boolean blocked,
             boolean allowSales,
             boolean allowOrders,
@@ -84,6 +88,8 @@ public class ManagedDevice {
         this.lastStoreName = lastStoreName;
         this.approved = approved;
         this.persistentLoginAllowed = persistentLoginAllowed;
+        this.autoLogoutEnabled = autoLogoutEnabled;
+        this.autoLogoutMinutes = autoLogoutMinutes;
         this.blocked = blocked;
         this.allowSales = allowSales;
         this.allowOrders = allowOrders;
@@ -117,6 +123,8 @@ public class ManagedDevice {
     public String getLastStoreName() { return lastStoreName; }
     public boolean isApproved() { return approved; }
     public boolean isPersistentLoginAllowed() { return persistentLoginAllowed; }
+    public boolean isAutoLogoutEnabled() { return autoLogoutEnabled; }
+    public int getAutoLogoutMinutes() { return autoLogoutMinutes; }
     public boolean isBlocked() { return blocked; }
     public boolean isAllowSales() { return allowSales; }
     public boolean isAllowOrders() { return allowOrders; }

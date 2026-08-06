@@ -1,5 +1,6 @@
 package services;
 
+import com.google.gson.Gson;
 import Receipt.AccountPaymentReceiptData;
 import Receipt.AccountPaymentReceiptFormatter;
 import Receipt.CustomOrderSlipData;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class ServerEmailOutboxService {
+    private static final Gson GSON=LanJson.create();
     private static final ThreadLocal<Connection> REQUEST_CONNECTION = new ThreadLocal<>();
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(12))
@@ -169,6 +171,10 @@ public final class ServerEmailOutboxService {
     }
 
     public static QueueResult queueBalanceSheetSubmission(long submissionId) throws SQLException {
+        return queueBalanceSheetSubmission(submissionId, 0);
+    }
+
+    public static QueueResult queueBalanceSheetSubmission(long submissionId, int revisionNo) throws SQLException {
         try (ConnectionLease lease = connectionLease()) {
             Connection conn = lease.connection();
             EmailSchemaInstaller.ensureSchema(conn);
@@ -181,11 +187,15 @@ public final class ServerEmailOutboxService {
                 return QueueResult.skipped(settings.disabledReason("balance sheet emails"));
             }
 
-            ServerBalanceSheetService.BalanceSheet sheet = ServerBalanceSheetService.loadSubmission(submissionId);
-            String title = "Submitted Balance Sheet";
+            boolean revised = revisionNo > 0;
+            RevisionEmailData revision = revised ? loadRevisionEmailData(conn,submissionId,revisionNo,data.currentRevision()) : null;
+            ServerBalanceSheetService.BalanceSheet sheet = revised ? revision.sheet() : ServerBalanceSheetService.loadSubmission(submissionId);
+            String title = revised ? "Revised Balance Sheet - Revision " + revisionNo : "Submitted Balance Sheet";
             String period = sheet.periodStart() + (sheet.periodStart().equals(sheet.periodEnd()) ? "" : " to " + sheet.periodEnd());
-            String html = buildBalanceSheetHtml(data.locationName(), sheet);
-            String text = buildBalanceSheetText(data.locationName(), sheet);
+            String editor=revised?firstNonBlank(revision.changedByName(),"Unknown user"):"";
+            String revisionBanner = revised ? "Revision " + revisionNo + " - this replaces the previously emailed copy.\nEdited by: "+editor+"\nEdited at: "+revision.changedAt()+"\nReason: "+revision.reason()+"\n\n" : "";
+            String html = (revised ? "<p><strong>Revision " + revisionNo + " - this replaces the previously emailed copy.</strong><br>Edited by: "+htmlEscape(editor)+"<br>Edited at: "+htmlEscape(revision.changedAt().toString())+"<br>Reason: "+htmlEscape(revision.reason())+"</p>" : "") + buildBalanceSheetHtml(data.locationName(), sheet);
+            String text = revisionBanner + buildBalanceSheetText(data.locationName(), sheet);
             EmailDraft draft = new EmailDraft(
                     settings,
                     data.recipientEmail(),
@@ -199,7 +209,7 @@ public final class ServerEmailOutboxService {
                     String.valueOf(submissionId)
             );
             long outboxId = insertDraft(conn, draft);
-            recordEvent(conn, outboxId, "QUEUED", "Submitted balance sheet queued.");
+            recordEvent(conn, outboxId, "QUEUED", revised ? "Revised balance sheet queued (revision " + revisionNo + ")." : "Submitted balance sheet queued.");
             tryProcessOneAsync(outboxId);
             return QueueResult.queued(outboxId);
         }
@@ -387,7 +397,8 @@ public final class ServerEmailOutboxService {
         String sql = """
                 SELECT b.location_id,
                        COALESCE(NULLIF(b.location_name, ''), l.name, 'Store') AS location_name,
-                       COALESCE(l.balance_sheet_recipient_email, '') AS recipient_email
+                       COALESCE(l.balance_sheet_recipient_email, '') AS recipient_email,
+                       COALESCE(b.revision_no,0) AS revision_no
                 FROM balance_sheet_submissions b
                 LEFT JOIN locations l ON l.location_id = b.location_id
                 WHERE b.balance_sheet_submission_id = ?
@@ -401,10 +412,16 @@ public final class ServerEmailOutboxService {
                 return new BalanceSheetEmailData(
                         nullableInt(rs, "location_id"),
                         rs.getString("location_name"),
-                        rs.getString("recipient_email")
+                        rs.getString("recipient_email"),rs.getInt("revision_no")
                 );
             }
         }
+    }
+
+    private static RevisionEmailData loadRevisionEmailData(Connection conn,long submissionId,int revisionNo,int currentRevision)throws SQLException{
+        if(revisionNo!=currentRevision)throw new SQLException("The requested Balance Sheet revision is no longer current. Queue the latest revision instead.");
+        try(PreparedStatement ps=conn.prepareStatement("SELECT changed_by_name,changed_at,reason,after_snapshot->'sheet' AS sheet FROM balance_sheet_submission_revisions WHERE balance_sheet_submission_id=? AND revision_no=?")){ps.setLong(1,submissionId);ps.setInt(2,revisionNo);try(ResultSet rs=ps.executeQuery()){if(rs.next())return new RevisionEmailData(rs.getString(1),rs.getTimestamp(2).toLocalDateTime(),rs.getString(3),GSON.fromJson(rs.getString(4),ServerBalanceSheetService.BalanceSheet.class));}}
+        throw new SQLException("The requested Balance Sheet revision audit record was not found.");
     }
 
     private static StoreEmailSettings loadSettings(Connection conn, Integer locationId) throws SQLException {
@@ -966,8 +983,9 @@ public final class ServerEmailOutboxService {
     private record SalesDocumentEmailData(Integer locationId, String documentNumber, String customerEmail) {
     }
 
-    private record BalanceSheetEmailData(Integer locationId, String locationName, String recipientEmail) {
+    private record BalanceSheetEmailData(Integer locationId, String locationName, String recipientEmail,int currentRevision) {
     }
+    private record RevisionEmailData(String changedByName,java.time.LocalDateTime changedAt,String reason,ServerBalanceSheetService.BalanceSheet sheet){}
 
     private record ConnectionLease(Connection connection,boolean owned) implements AutoCloseable{
         @Override public void close()throws SQLException{if(owned)connection.close();}

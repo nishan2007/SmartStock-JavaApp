@@ -30,6 +30,15 @@ public final class ProductionRecoveryDrillService {
         return new RecoveryResult(targetName, restoredRows, List.copyOf(comparisons));
     }
 
+    /** Validates a replacement server after restore without requiring the drill database suffix. */
+    public static List<TableComparison> verifyRestoredStore(Connection target,
+                                                             CloudSyncManifest storeMirror)
+            throws SQLException {
+        List<TableComparison> comparisons=comparisons(target,storeMirror);
+        requireMatchingComparisons(comparisons);
+        return List.copyOf(comparisons);
+    }
+
     public static RecoveryResult run(Connection cleanTarget, CloudSyncManifest productionCloud)
             throws SQLException {
         String targetName = validateTarget(cleanTarget);

@@ -31,15 +31,16 @@ public class HardwareSettingsManager {
             String displayName = properties.getProperty("printer." + i + ".display_name", "").trim();
             String systemName = properties.getProperty("printer." + i + ".system_name", "").trim();
             boolean defaultReceiptPrinter = Boolean.parseBoolean(properties.getProperty("printer." + i + ".default_receipt", "false"));
+            boolean defaultOrderLabelPrinter = Boolean.parseBoolean(properties.getProperty("printer." + i + ".default_order_label", "false"));
             PrintFormat printFormat = PrintFormat.fromConfigValue(properties.getProperty("printer." + i + ".print_format"));
             if (!displayName.isBlank() && !systemName.isBlank()) {
-                printers.add(new PosPrinter(displayName, systemName, defaultReceiptPrinter, printFormat));
+                printers.add(new PosPrinter(displayName, systemName, defaultReceiptPrinter, defaultOrderLabelPrinter, printFormat));
             }
         }
 
         if (!printers.isEmpty() && printers.stream().noneMatch(PosPrinter::defaultReceiptPrinter)) {
             PosPrinter first = printers.get(0);
-            printers.set(0, new PosPrinter(first.displayName(), first.systemName(), true, first.printFormat()));
+            printers.set(0, new PosPrinter(first.displayName(), first.systemName(), true, first.defaultOrderLabelPrinter(), first.printFormat()));
         }
 
         return printers;
@@ -55,6 +56,7 @@ public class HardwareSettingsManager {
             properties.setProperty("printer." + i + ".display_name", printer.displayName());
             properties.setProperty("printer." + i + ".system_name", printer.systemName());
             properties.setProperty("printer." + i + ".default_receipt", String.valueOf(printer.defaultReceiptPrinter()));
+            properties.setProperty("printer." + i + ".default_order_label", String.valueOf(printer.defaultOrderLabelPrinter()));
             properties.setProperty("printer." + i + ".print_format", printer.printFormat().configValue());
         }
 
@@ -77,6 +79,13 @@ public class HardwareSettingsManager {
     public static PosPrinter getDefaultReceiptPrinter() throws IOException {
         return getConfiguredPrinters().stream()
                 .filter(PosPrinter::defaultReceiptPrinter)
+                .findFirst()
+                .orElse(null);
+    }
+
+    public static PosPrinter getDefaultOrderLabelPrinter() throws IOException {
+        return getConfiguredPrinters().stream()
+                .filter(PosPrinter::defaultOrderLabelPrinter)
                 .findFirst()
                 .orElse(null);
     }
@@ -108,15 +117,20 @@ public class HardwareSettingsManager {
                 continue;
             }
             boolean defaultPrinter = printer.defaultReceiptPrinter() || (!hasDefault && cleanPrinters.isEmpty());
-            cleanPrinters.add(new PosPrinter(printer.displayName().trim(), printer.systemName().trim(), defaultPrinter, printer.printFormat()));
+            cleanPrinters.add(new PosPrinter(printer.displayName().trim(), printer.systemName().trim(), defaultPrinter,
+                    printer.defaultOrderLabelPrinter(), printer.printFormat()));
         }
 
         boolean defaultAlreadySet = false;
+        boolean orderLabelDefaultAlreadySet = false;
         List<PosPrinter> normalized = new ArrayList<>();
         for (PosPrinter printer : cleanPrinters) {
             boolean defaultPrinter = printer.defaultReceiptPrinter() && !defaultAlreadySet;
             defaultAlreadySet = defaultAlreadySet || defaultPrinter;
-            normalized.add(new PosPrinter(printer.displayName(), printer.systemName(), defaultPrinter, printer.printFormat()));
+            boolean orderLabelPrinter = printer.defaultOrderLabelPrinter() && !orderLabelDefaultAlreadySet;
+            orderLabelDefaultAlreadySet = orderLabelDefaultAlreadySet || orderLabelPrinter;
+            normalized.add(new PosPrinter(printer.displayName(), printer.systemName(), defaultPrinter,
+                    orderLabelPrinter, printer.printFormat()));
         }
         return normalized;
     }
@@ -173,9 +187,14 @@ public class HardwareSettingsManager {
         }
     }
 
-    public record PosPrinter(String displayName, String systemName, boolean defaultReceiptPrinter, PrintFormat printFormat) {
+    public record PosPrinter(String displayName, String systemName, boolean defaultReceiptPrinter,
+                             boolean defaultOrderLabelPrinter, PrintFormat printFormat) {
         public PosPrinter(String displayName, String systemName, boolean defaultReceiptPrinter) {
-            this(displayName, systemName, defaultReceiptPrinter, PrintFormat.RECEIPT_40);
+            this(displayName, systemName, defaultReceiptPrinter, false, PrintFormat.RECEIPT_40);
+        }
+
+        public PosPrinter(String displayName, String systemName, boolean defaultReceiptPrinter, PrintFormat printFormat) {
+            this(displayName, systemName, defaultReceiptPrinter, false, printFormat);
         }
 
         public PosPrinter {
@@ -186,7 +205,10 @@ public class HardwareSettingsManager {
 
         @Override
         public String toString() {
-            return defaultReceiptPrinter ? displayName + " (Default)" : displayName;
+            if (defaultReceiptPrinter && defaultOrderLabelPrinter) return displayName + " (Receipt + Order Label Default)";
+            if (defaultReceiptPrinter) return displayName + " (Receipt Default)";
+            if (defaultOrderLabelPrinter) return displayName + " (Order Label Default)";
+            return displayName;
         }
     }
 }

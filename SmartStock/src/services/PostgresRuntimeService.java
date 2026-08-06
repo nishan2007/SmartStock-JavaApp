@@ -547,7 +547,8 @@ public final class PostgresRuntimeService {
         }
         return "#!/usr/bin/env bash\nset -euo pipefail\n"
                 + "cd " + shellSingleQuoted(appDir.toString()) + "\n"
-                + "exec java -jar " + shellSingleQuoted(jarName) + " --sync-service\n";
+                + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
+                + shellSingleQuoted(jarName) + " --sync-service\n";
     }
 
     private static void restartInstalledSyncService() throws Exception {
@@ -610,7 +611,7 @@ public final class PostgresRuntimeService {
                 cat > "$SERVICE_DIR/run-smartstock-sync-service.command" <<EOF
                 #!/usr/bin/env bash
                 cd "$SERVICE_APP_DIR"
-                exec java -jar "$JAR_NAME" --sync-service
+                exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "$JAR_NAME" --sync-service
                 EOF
                 chmod +x "$SERVICE_DIR/run-smartstock-sync-service.command"
                 PLIST="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"

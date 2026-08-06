@@ -2,11 +2,13 @@ package ui.screens;
 
 import data.DatabaseConfig;
 import managers.NavigationManager;
+import managers.AutoLogoutManager;
 import managers.SessionManager;
 import managers.SupabaseSessionManager;
 import models.DeviceSessionRecord;
 import models.ManagedDevice;
 import services.LanApiClient;
+import services.ServerManagementClient;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
@@ -19,9 +21,12 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -58,12 +63,25 @@ public class DeviceManagement extends JFrame {
             "Stay Signed In",
             "Blocked"
     });
+    private final JComboBox<String> activityFilterCombo = new JComboBox<>(new String[]{
+            "Show all activity",
+            "Active within 1 day",
+            "Active within 5 days",
+            "Active within 15 days",
+            "Active within 30 days",
+            "Active within 90 days"
+    });
     private final JTextArea detailsArea = new JTextArea();
     private final JTextArea notesArea = new JTextArea(3, 32);
     private final JTextField deviceNameField = new JTextField();
     private final JTextField receiptCodeField = new JTextField("0001");
     private final JCheckBox approvedBox = new JCheckBox("Approve this device to use SmartStock");
     private final JCheckBox staySignedInBox = new JCheckBox("Allow employee account to stay signed in after the app is closed");
+    private final JCheckBox autoLogoutBox = new JCheckBox("Enable automatic logout after inactivity");
+    private final JSpinner autoLogoutMinutesSpinner =
+            new JSpinner(new SpinnerNumberModel(15, 1, 480, 1));
+    private final JLabel autoLogoutOverrideLabel =
+            new JLabel("Stay Signed In overrides automatic logout on this device.");
     private final JCheckBox allowSalesBox = new JCheckBox("Allow Sales");
     private final JCheckBox allowOrdersBox = new JCheckBox("Allow Orders");
     private final JLabel summaryLabel = new JLabel("Loading devices...");
@@ -73,6 +91,7 @@ public class DeviceManagement extends JFrame {
     private final JButton blockButton = new JButton("Block Device");
     private final JButton refreshButton = new JButton("Refresh");
     private final JButton securityStatusButton = new JButton("Security Status");
+    private final JButton serversButton = new JButton("Servers");
     private final JButton rotateCredentialButton = new JButton("Rotate Device Credential");
     private final JButton closeButton = new JButton("Close");
 
@@ -112,7 +131,10 @@ public class DeviceManagement extends JFrame {
         controlsPanel.setOpaque(false);
         controlsPanel.add(new JLabel("Filter:"));
         controlsPanel.add(filterCombo);
+        controlsPanel.add(new JLabel("Activity:"));
+        controlsPanel.add(activityFilterCombo);
         controlsPanel.add(refreshButton);
+        controlsPanel.add(serversButton);
         controlsPanel.add(securityStatusButton);
 
         headerPanel.add(titleStack, BorderLayout.WEST);
@@ -148,6 +170,11 @@ public class DeviceManagement extends JFrame {
         approvedBox.setFont(new Font("SansSerif", Font.BOLD, 13));
         staySignedInBox.setOpaque(false);
         staySignedInBox.setFont(new Font("SansSerif", Font.BOLD, 13));
+        autoLogoutBox.setOpaque(false);
+        autoLogoutBox.setFont(new Font("SansSerif", Font.BOLD, 13));
+        autoLogoutMinutesSpinner.setEditor(new JSpinner.NumberEditor(autoLogoutMinutesSpinner, "0"));
+        autoLogoutOverrideLabel.setForeground(new Color(180, 83, 9));
+        autoLogoutOverrideLabel.setFont(new Font("SansSerif", Font.ITALIC, 12));
         allowSalesBox.setOpaque(false);
         allowSalesBox.setFont(new Font("SansSerif", Font.BOLD, 13));
         allowOrdersBox.setOpaque(false);
@@ -181,6 +208,15 @@ public class DeviceManagement extends JFrame {
         noteHeaderPanel.add(approvedBox);
         noteHeaderPanel.add(Box.createVerticalStrut(6));
         noteHeaderPanel.add(staySignedInBox);
+        noteHeaderPanel.add(Box.createVerticalStrut(6));
+        noteHeaderPanel.add(autoLogoutBox);
+        JPanel timeoutPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        timeoutPanel.setOpaque(false);
+        timeoutPanel.add(new JLabel("Logout after"));
+        timeoutPanel.add(autoLogoutMinutesSpinner);
+        timeoutPanel.add(new JLabel("minute(s) of inactivity"));
+        noteHeaderPanel.add(timeoutPanel);
+        noteHeaderPanel.add(autoLogoutOverrideLabel);
         noteHeaderPanel.add(Box.createVerticalStrut(6));
         noteHeaderPanel.add(allowSalesBox);
         noteHeaderPanel.add(Box.createVerticalStrut(6));
@@ -224,13 +260,17 @@ public class DeviceManagement extends JFrame {
         rootPanel.add(footerPanel, BorderLayout.SOUTH);
         add(rootPanel);
 
-        filterCombo.addActionListener(e -> applyFilter());
+        filterCombo.addActionListener(e -> refilterDevices());
+        activityFilterCombo.addActionListener(e -> refilterDevices());
         refreshButton.addActionListener(e -> loadDevices());
         securityStatusButton.addActionListener(e -> showSecurityStatus());
+        serversButton.addActionListener(e -> loadServerManagement());
         rotateCredentialButton.addActionListener(e -> rotateSelectedCredential());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveApprovalButton.addActionListener(e -> saveApprovalSetting());
         approvedBox.addActionListener(e -> setButtonState());
+        staySignedInBox.addActionListener(e -> setButtonState());
+        autoLogoutBox.addActionListener(e -> setButtonState());
         saveNameButton.addActionListener(e -> saveDeviceName());
         saveCodeButton.addActionListener(e -> saveDeviceCode());
         blockButton.addActionListener(e -> blockSelectedDevice());
@@ -239,6 +279,8 @@ public class DeviceManagement extends JFrame {
         detailsArea.setText("Select a device to see its full details.");
         approvedBox.setSelected(false);
         staySignedInBox.setSelected(false);
+        autoLogoutBox.setSelected(false);
+        autoLogoutOverrideLabel.setVisible(false);
         setButtonState();
         loadDevices();
         WindowHelper.configurePosWindow(this);
@@ -261,13 +303,21 @@ public class DeviceManagement extends JFrame {
 
     private record DeviceSnapshot(List<ManagedDevice> devices) { }
 
+    private void refilterDevices() {
+        String preserveDeviceId = selectedDevice == null ? null : selectedDevice.getDeviceId();
+        applyFilter();
+        restoreSelection(preserveDeviceId);
+    }
+
     private void applyFilter() {
         String selectedFilter = (String) filterCombo.getSelectedItem();
+        int activityDays = selectedActivityDays();
         filteredDevices.clear();
         deviceTableModel.setRowCount(0);
 
         for (ManagedDevice device : allDevices) {
-            if (!matchesFilter(device, selectedFilter)) {
+            if (!matchesFilter(device, selectedFilter)
+                    || !wasActiveWithinDays(device.getLastSeen(), activityDays, Instant.now())) {
                 continue;
             }
 
@@ -291,6 +341,9 @@ public class DeviceManagement extends JFrame {
             deviceNameField.setText("");
             approvedBox.setSelected(false);
             staySignedInBox.setSelected(false);
+            autoLogoutBox.setSelected(false);
+            autoLogoutMinutesSpinner.setValue(15);
+            autoLogoutOverrideLabel.setVisible(false);
             allowSalesBox.setSelected(false);
             allowOrdersBox.setSelected(false);
             sessionTableModel.setRowCount(0);
@@ -298,6 +351,23 @@ public class DeviceManagement extends JFrame {
 
         updateSummaryLabel();
         setButtonState();
+    }
+
+    private int selectedActivityDays() {
+        String selection = (String) activityFilterCombo.getSelectedItem();
+        if (selection == null || "Show all activity".equals(selection)) return 0;
+        if (selection.contains(" 1 day")) return 1;
+        if (selection.contains(" 5 days")) return 5;
+        if (selection.contains(" 15 days")) return 15;
+        if (selection.contains(" 30 days")) return 30;
+        if (selection.contains(" 90 days")) return 90;
+        return 0;
+    }
+
+    static boolean wasActiveWithinDays(Timestamp lastSeen, int days, Instant now) {
+        if (days <= 0) return true;
+        if (lastSeen == null || now == null) return false;
+        return !lastSeen.toInstant().isBefore(now.minus(days, ChronoUnit.DAYS));
     }
 
     private boolean matchesFilter(ManagedDevice device, String filter) {
@@ -365,6 +435,8 @@ public class DeviceManagement extends JFrame {
         notesArea.setText(device.getStatusNotes() == null ? "" : device.getStatusNotes());
         approvedBox.setSelected(device.isApproved() && !device.isBlocked());
         staySignedInBox.setSelected(device.isPersistentLoginAllowed() && !device.isBlocked());
+        autoLogoutBox.setSelected(device.isAutoLogoutEnabled() && !device.isBlocked());
+        autoLogoutMinutesSpinner.setValue(device.getAutoLogoutMinutes());
         allowSalesBox.setSelected(device.isAllowSales() && !device.isBlocked());
         allowOrdersBox.setSelected(device.isAllowOrders() && !device.isBlocked());
         loadSessionHistory(device.getDeviceId());
@@ -391,6 +463,8 @@ public class DeviceManagement extends JFrame {
                 + "Approved At: " + formatTimestamp(device.getApprovedAt()) + "\n"
                 + "Approved By: " + defaultText(device.getApprovedByName()) + "\n"
                 + "Persistent Employee Login: " + yesNo(device.isPersistentLoginAllowed()) + "\n"
+                + "Automatic Logout: " + yesNo(device.isAutoLogoutEnabled()) + "\n"
+                + "Automatic Logout Minutes: " + device.getAutoLogoutMinutes() + "\n"
                 + "Blocked At: " + formatTimestamp(device.getBlockedAt()) + "\n"
                 + "Blocked By: " + defaultText(device.getBlockedByName()) + "\n"
                 + "OS: " + defaultText(device.getOsName()) + " " + defaultText(device.getOsVersion()) + "\n"
@@ -423,11 +497,16 @@ public class DeviceManagement extends JFrame {
         }
         boolean approved = approvedBox.isSelected();
         boolean allowStaySignedIn = approved && staySignedInBox.isSelected();
+        boolean autoLogoutEnabled = autoLogoutBox.isSelected();
+        int autoLogoutMinutes = ((Number) autoLogoutMinutesSpinner.getValue()).intValue();
         boolean allowSales = allowSalesBox.isSelected();
         boolean allowOrders = allowOrdersBox.isSelected();
         String message = "Save device access settings?\n\n"
                 + "Device Approved: " + yesNo(approved) + "\n"
                 + "Employee Stays Signed In: " + yesNo(allowStaySignedIn) + "\n"
+                + "Automatic Logout: " + yesNo(autoLogoutEnabled) + "\n"
+                + "Inactivity Timeout: " + autoLogoutMinutes + " minute(s)"
+                + (allowStaySignedIn && autoLogoutEnabled ? " (overridden by Stay Signed In)" : "") + "\n"
                 + "Allow Sales: " + yesNo(allowSales) + "\n"
                 + "Allow Orders: " + yesNo(allowOrders) + "\n\n";
 
@@ -444,8 +523,9 @@ public class DeviceManagement extends JFrame {
         }
 
         String targetDeviceId=selectedDevice.getDeviceId();
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ACCESS",targetDeviceId,approved,allowStaySignedIn,
-                allowSales,allowOrders,notesArea.getText(),null,null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
+                "ACCESS",targetDeviceId,approved,allowStaySignedIn,autoLogoutEnabled,
+                autoLogoutMinutes,allowSales,allowOrders,notesArea.getText(),null,null);
         updateDeviceAsync("devices.save-access",request,()->{
             if (targetDeviceId != null && targetDeviceId.equals(SessionManager.getCurrentDeviceId())) {
                 if (approved && allowStaySignedIn) {
@@ -456,6 +536,8 @@ public class DeviceManagement extends JFrame {
                 } else {
                     SupabaseSessionManager.clearPersistedSession();
                 }
+                AutoLogoutManager.applyPolicy(new LanApiClient.SessionPolicy(
+                        allowStaySignedIn, autoLogoutEnabled, autoLogoutMinutes));
             }
             loadDevices();
         },"Could not save device access settings.");
@@ -481,7 +563,9 @@ public class DeviceManagement extends JFrame {
         boolean isCurrentDevice = selectedDevice.getDeviceId() != null
                 && selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId());
 
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("BLOCK",selectedDevice.getDeviceId(),false,false,false,false,notesArea.getText(),null,null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
+                "BLOCK",selectedDevice.getDeviceId(),false,false,false,15,
+                false,false,notesArea.getText(),null,null);
         updateDeviceAsync("devices.block",request,()->{
             if (isCurrentDevice) {
                 SessionManager.clearSessionState();
@@ -505,7 +589,9 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,false,null,null,receiptCodeField.getText());
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
+                "RECEIPT_CODE",selectedDevice.getDeviceId(),false,false,false,15,
+                false,false,null,null,receiptCodeField.getText());
         updateDeviceAsync("devices.save-code",request,()->{loadDevices();JOptionPane.showMessageDialog(this,"Device code saved.");},"Could not save device code.");
     }
 
@@ -513,7 +599,9 @@ public class DeviceManagement extends JFrame {
         if (selectedDevice == null) {
             return;
         }
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("NAME",selectedDevice.getDeviceId(),false,false,false,false,null,deviceNameField.getText(),null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
+                "NAME",selectedDevice.getDeviceId(),false,false,false,15,
+                false,false,null,deviceNameField.getText(),null);
         updateDeviceAsync("devices.save-name",request,()->{loadDevices();JOptionPane.showMessageDialog(this,"Device name saved.");},"Could not save device name.");
     }
 
@@ -523,7 +611,9 @@ public class DeviceManagement extends JFrame {
                 "Rotate this register's secure device credential?\n\nThe register will claim it automatically. Its current credential remains valid during the safe overlap window.",
                 "Rotate Device Credential", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) return;
-        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate("ROTATE",selectedDevice.getDeviceId(),false,false,false,false,null,null,null);
+        LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
+                "ROTATE",selectedDevice.getDeviceId(),false,false,false,15,
+                false,false,null,null,null);
         updateDeviceAsync("devices.rotate",request,()->{
             JOptionPane.showMessageDialog(this,
                     "Rotation queued. The server will issue and the register will claim the replacement automatically.",
@@ -569,6 +659,68 @@ public class DeviceManagement extends JFrame {
         UiTaskRunner.submit(this,jobKey,()->{LanApiClient.updateManagedDevice(request,key);return Boolean.TRUE;},ignored->{clearMutationKey();SessionDataCache.invalidate("devices:list");success.run();},ex->JOptionPane.showMessageDialog(this,failureMessage+"\n\n"+ex.getMessage(),"Device Management",JOptionPane.ERROR_MESSAGE));
     }
 
+    private void loadServerManagement() {
+        loadingState.loading(false, Instant.now());
+        UiTaskRunner.submit(this,"servers:list",ServerManagementClient::load,
+                state->{loadingState.ready(Instant.now());showServerManagement(state);},
+                ex->{loadingState.failed(ex.getMessage(),true,this::loadServerManagement);
+                    JOptionPane.showMessageDialog(this,"Could not load server inventory.\n\n"+ex.getMessage(),"Server Management",JOptionPane.ERROR_MESSAGE);});
+    }
+
+    private void showServerManagement(LanApiClient.ServerAdminState state) {
+        DefaultTableModel model=new DefaultTableModel(new Object[]{"Server","Role","Health","Endpoint","Version","Last Heartbeat","Last Sync","Last Materialization","Recovery Ready","Rows"},0){
+            @Override public boolean isCellEditable(int row,int column){return false;}};
+        for(LanApiClient.ServerRecord server:state.servers())model.addRow(new Object[]{
+                defaultText(server.displayName()),server.role(),server.health(),server.endpointHost()+":"+server.endpointPort(),
+                defaultText(server.appVersion()),formatRegistryTime(server.lastHeartbeatAt()),formatRegistryTime(server.lastSyncAt()),
+                formatRegistryTime(server.lastMaterializationAt()),formatRegistryTime(server.recoveryValidatedAt()),
+                server.materializedRowCount()==null?"":server.materializedRowCount()});
+        JTable table=new JTable(model);table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);table.setRowHeight(27);
+        TableRowSorter<DefaultTableModel> sorter=new TableRowSorter<>(model);table.setRowSorter(sorter);
+        long primaryCount=state.servers().stream().filter(s->"PRIMARY".equals(s.role())||"DRAINING".equals(s.role())).count();
+        long standbyCount=state.servers().stream().filter(s->"STANDBY".equals(s.role())).count();
+        long retiredCount=state.servers().stream().filter(s->"RETIRED".equals(s.role())||"FENCED".equals(s.role())).count();
+        JTextArea note=new JTextArea("Servers: "+state.servers().size()+"   |   Primary: "+primaryCount+"   |   Standby: "+standbyCount+"   |   Retired/Fenced: "+retiredCount+"\n"
+                +"One writable primary is allowed per store. Standbys remain non-writable until a verified handoff or approved emergency recovery completes.");
+        note.setEditable(false);note.setLineWrap(true);note.setWrapStyleWord(true);note.setOpaque(false);
+        JComboBox<String> roleFilter=new JComboBox<>(new String[]{"All roles","PRIMARY","STANDBY","DRAINING","RETIRED","FENCED"});
+        JComboBox<String> healthFilter=new JComboBox<>(new String[]{"All health","ONLINE","STALE","OFFLINE","DEGRADED","FENCED","RETIRED"});
+        JPanel filters=new JPanel(new FlowLayout(FlowLayout.LEFT));filters.add(new JLabel("Role:"));filters.add(roleFilter);filters.add(new JLabel("Health:"));filters.add(healthFilter);
+        JPanel header=new JPanel();header.setLayout(new BoxLayout(header,BoxLayout.Y_AXIS));header.add(note);header.add(filters);
+        JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(header,BorderLayout.NORTH);panel.add(new JScrollPane(table),BorderLayout.CENTER);
+        Runnable applyFilters=()->{java.util.List<RowFilter<Object,Object>> active=new ArrayList<>();String role=(String)roleFilter.getSelectedItem(),health=(String)healthFilter.getSelectedItem();if(role!=null&&!role.startsWith("All"))active.add(RowFilter.regexFilter("^"+java.util.regex.Pattern.quote(role)+"$",1));if(health!=null&&!health.startsWith("All"))active.add(RowFilter.regexFilter("^"+java.util.regex.Pattern.quote(health)+"$",2));sorter.setRowFilter(active.isEmpty()?null:RowFilter.andFilter(active));};
+        roleFilter.addActionListener(e->applyFilters.run());healthFilter.addActionListener(e->applyFilters.run());
+        JButton history=new JButton("History");JButton rename=new JButton("Rename");JButton prepare=new JButton("Prepare Standby");JButton handoff=new JButton("Start Verified Handoff");
+        JButton emergency=new JButton("Emergency Takeover");JButton retire=new JButton("Retire");JButton close=new JButton("Close");
+        JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT));actions.add(history);actions.add(rename);actions.add(prepare);actions.add(handoff);actions.add(emergency);actions.add(retire);actions.add(close);panel.add(actions,BorderLayout.SOUTH);
+        JDialog dialog=new JDialog(this,"Store Server Management",true);dialog.setContentPane(panel);dialog.setSize(1080,470);dialog.setLocationRelativeTo(this);
+        Runnable updateButtons=()->{int row=table.getSelectedRow();boolean selected=row>=0;LanApiClient.ServerRecord s=selected?state.servers().get(table.convertRowIndexToModel(row)):null;
+            rename.setEnabled(selected&&!("RETIRED".equals(s.role())));retire.setEnabled(selected&&!("PRIMARY".equals(s.role())||"DRAINING".equals(s.role())));
+            prepare.setEnabled(selected&&"STANDBY".equals(s.role()));
+            handoff.setEnabled(selected&&"STANDBY".equals(s.role())&&state.currentServerInstanceId()!=null);
+            emergency.setEnabled(selected&&"STANDBY".equals(s.role()));};
+        table.getSelectionModel().addListSelectionListener(e->updateButtons.run());updateButtons.run();close.addActionListener(e->dialog.dispose());
+        history.addActionListener(e->{StringBuilder text=new StringBuilder();for(LanApiClient.ServerEvent event:state.events())text.append(formatRegistryTime(event.createdAt())).append("  ").append(event.eventType()).append(event.actorName()==null||event.actorName().isBlank()?"":" — "+event.actorName()).append("\n").append(event.details()==null?"":event.details()).append("\n\n");JTextArea area=new JTextArea(text.length()==0?"No server events have been recorded.":text.toString(),18,72);area.setEditable(false);area.setCaretPosition(0);JOptionPane.showMessageDialog(dialog,new JScrollPane(area),"Server History",JOptionPane.INFORMATION_MESSAGE);});
+        rename.addActionListener(e->{LanApiClient.ServerRecord s=state.servers().get(table.convertRowIndexToModel(table.getSelectedRow()));String name=JOptionPane.showInputDialog(dialog,"Server name",s.displayName());if(name!=null&&!name.isBlank())runServerMutation(dialog,new LanApiClient.ServerAdminUpdate("RENAME",s.serverInstanceId(),null,name.trim(),UUID.randomUUID().toString(),false));});
+        retire.addActionListener(e->{LanApiClient.ServerRecord s=state.servers().get(table.convertRowIndexToModel(table.getSelectedRow()));if(JOptionPane.showConfirmDialog(dialog,"Retire "+s.displayName()+"?\n\nIts database and computer will not be deleted or powered off.","Retire Server",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)==JOptionPane.OK_OPTION)runServerMutation(dialog,new LanApiClient.ServerAdminUpdate("RETIRE",s.serverInstanceId(),null,null,UUID.randomUUID().toString(),false));});
+        prepare.addActionListener(e->{LanApiClient.ServerRecord s=state.servers().get(table.convertRowIndexToModel(table.getSelectedRow()));runServerMutation(dialog,new LanApiClient.ServerAdminUpdate("PREPARE_STANDBY",s.serverInstanceId(),null,null,UUID.randomUUID().toString(),false));});
+        handoff.addActionListener(e->{LanApiClient.ServerRecord target=state.servers().get(table.convertRowIndexToModel(table.getSelectedRow()));String source=state.currentServerInstanceId();if(JOptionPane.showConfirmDialog(dialog,"Move this store from the current primary to "+target.displayName()+"?\n\nThe primary will drain new changes, complete a final cloud materialization, and mark the standby ready.","Verified Server Handoff",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)==JOptionPane.OK_OPTION)runServerMutation(dialog,new LanApiClient.ServerAdminUpdate("BEGIN_HANDOFF",source,target.serverInstanceId(),null,UUID.randomUUID().toString(),false));});
+        emergency.addActionListener(e->{LanApiClient.ServerRecord target=state.servers().get(table.convertRowIndexToModel(table.getSelectedRow()));LanApiClient.ServerRecord primary=state.servers().stream().filter(s->"PRIMARY".equals(s.role())).findFirst().orElse(null);JCheckBox ack=new JCheckBox("I understand transactions newer than the displayed cloud recovery point may be lost.");JPanel warning=new JPanel();warning.setLayout(new BoxLayout(warning,BoxLayout.Y_AXIS));warning.add(new JLabel("Use emergency takeover only when the primary cannot be reached."));warning.add(new JLabel("Recovery point: "+formatRegistryTime(primary==null?null:primary.lastMaterializationAt())));warning.add(Box.createVerticalStrut(8));warning.add(ack);if(JOptionPane.showConfirmDialog(dialog,warning,"Emergency Server Recovery",JOptionPane.OK_CANCEL_OPTION,JOptionPane.ERROR_MESSAGE)==JOptionPane.OK_OPTION){if(!ack.isSelected()){JOptionPane.showMessageDialog(dialog,"You must acknowledge the recovery warning.");return;}runServerMutation(dialog,new LanApiClient.ServerAdminUpdate("EMERGENCY_TAKEOVER",target.serverInstanceId(),null,null,UUID.randomUUID().toString(),true));}});
+        dialog.setVisible(true);
+    }
+
+    private void runServerMutation(JDialog dialog,LanApiClient.ServerAdminUpdate request){
+        dialog.dispose();String key=request.idempotencyKey();loadingState.loading(true,Instant.now());
+        UiTaskRunner.submit(this,"servers:update",()->ServerManagementClient.update(request,key),
+                ignored->{loadingState.ready(Instant.now());SessionDataCache.invalidate("devices:list");loadServerManagement();},
+                ex->{loadingState.failed(ex.getMessage(),true,this::loadServerManagement);JOptionPane.showMessageDialog(this,"Server operation was not completed.\n\n"+ex.getMessage(),"Server Management",JOptionPane.ERROR_MESSAGE);});
+    }
+
+    private String formatRegistryTime(String value){
+        if(value==null||value.isBlank())return "Not available";
+        try{return Instant.parse(value).atZone(StoreTimeZoneHelper.getStoreZone()).format(DATE_TIME_FORMAT);}catch(Exception ex){return value;}
+    }
+
     private String mutationKey(String fingerprint){if(pendingMutationKey==null||!fingerprint.equals(pendingMutationFingerprint)){
         pendingMutationKey=UUID.randomUUID().toString();pendingMutationFingerprint=fingerprint;}return pendingMutationKey;}
     private void clearMutationKey(){pendingMutationKey=null;pendingMutationFingerprint=null;}
@@ -598,7 +750,11 @@ public class DeviceManagement extends JFrame {
 
         summaryLabel.setText(
                 "Showing " + filteredDevices.size() + " of " + allDevices.size()
-                        + " devices   |   Stay Signed In: " + staySignedIn
+                        + " devices"
+                        + (selectedActivityDays() > 0
+                        ? " active within " + selectedActivityDays() + " day(s)"
+                        : "")
+                        + "   |   Stay Signed In: " + staySignedIn
                         + "   Sales: " + salesAllowed
                         + "   Orders: " + ordersAllowed
                         + "   Pending: " + pending
@@ -610,6 +766,11 @@ public class DeviceManagement extends JFrame {
         boolean hasSelection = selectedDevice != null;
         approvedBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         staySignedInBox.setEnabled(hasSelection && approvedBox.isSelected() && !selectedDevice.isBlocked());
+        autoLogoutBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        autoLogoutMinutesSpinner.setEnabled(hasSelection && autoLogoutBox.isSelected()
+                && !selectedDevice.isBlocked());
+        autoLogoutOverrideLabel.setVisible(hasSelection && staySignedInBox.isSelected()
+                && autoLogoutBox.isSelected() && !selectedDevice.isBlocked());
         allowSalesBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         allowOrdersBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveApprovalButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
