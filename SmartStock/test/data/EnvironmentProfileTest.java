@@ -28,6 +28,7 @@ class EnvironmentProfileTest {
         assertNotEquals(developmentDatabase, productionDatabase);
         assertNotEquals(developmentSupabase, productionSupabase);
         assertNotEquals(developmentSecret, productionSecret);
-        assertTrue(productionDatabase.toString().contains("/profiles/production/"));
+        assertTrue(productionDatabase.endsWith(
+                java.nio.file.Path.of("profiles", "production", "database.properties")));
     }
 }

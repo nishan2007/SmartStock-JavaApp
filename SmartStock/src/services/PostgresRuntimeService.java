@@ -546,9 +546,13 @@ public final class PostgresRuntimeService {
                     + "java -jar \"" + jarName + "\" --sync-service\r\n";
         }
         return "#!/usr/bin/env bash\nset -euo pipefail\n"
-                + "cd " + shellSingleQuoted(appDir.toString()) + "\n"
+                + "cd " + shellSingleQuoted(unixPath(appDir)) + "\n"
                 + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
                 + shellSingleQuoted(jarName) + " --sync-service\n";
+    }
+
+    private static String unixPath(Path path) {
+        return path.toString().replace('\\', '/');
     }
 
     private static void restartInstalledSyncService() throws Exception {

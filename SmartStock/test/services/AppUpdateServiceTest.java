@@ -63,7 +63,7 @@ class AppUpdateServiceTest {
     void updaterUsesOneStableRollbackDirectory() {
         Path rollback = AppUpdateService.rollbackDirectory();
         assertEquals("rollback", rollback.getFileName().toString());
-        assertTrue(rollback.toString().endsWith(".smartstock/rollback"));
+        assertTrue(rollback.endsWith(Path.of(".smartstock", "rollback")));
     }
 
     @Test

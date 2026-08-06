@@ -75,7 +75,7 @@ class NfcAuthenticationCoverageTest {
                         try { return Files.readString(path).contains("JPasswordField"); }
                         catch (Exception ex) { throw new RuntimeException(ex); }
                     })
-                    .map(path -> source.relativize(path).toString())
+                    .map(path -> source.relativize(path).toString().replace('\\', '/'))
                     .sorted()
                     .toList();
         }
