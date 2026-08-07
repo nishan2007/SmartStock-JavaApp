@@ -56,7 +56,10 @@ public final class PostgresRuntimeService {
                       Sort-Object FullName -Descending | Select-Object -First 1
                   }
                   if (-not $psql) { exit 1 }
-                  & $psql.Source --version
+                  $psqlPath = $psql.Source
+                  if (-not $psqlPath) { $psqlPath = $psql.FullName }
+                  if (-not $psqlPath) { exit 1 }
+                  & $psqlPath --version
                   """
                 : "command -v psql >/dev/null 2>&1 && psql --version";
         try {
@@ -95,24 +98,63 @@ public final class PostgresRuntimeService {
         utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
         Path scriptPath = Files.createTempFile(setupDir, "install-postgresql-", ".ps1");
         Path logPath = Files.createTempFile(setupDir, "install-postgresql-", ".log");
+        Path optionPath = Files.createTempFile(setupDir, "postgresql-installer-", ".conf");
+        Path bootstrapCredentialPath = LocalDatabaseBootstrapService.windowsBootstrapCredentialPath();
+        utils.SecureFilePermissions.restrictFileToOwner(optionPath);
         String script = """
                 $ErrorActionPreference = 'Stop'
                 $Log = %s
+                $OptionFile = %s
+                $BootstrapCredential = %s
                 try {
                   $Existing = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
                     Sort-Object FullName -Descending | Select-Object -First 1
+                  $WasInstalled = [bool]$Existing
+                  $PasswordBytes = New-Object byte[] 32
+                  $Rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+                  try { $Rng.GetBytes($PasswordBytes) } finally { $Rng.Dispose() }
+                  $SuperPassword = [Convert]::ToBase64String($PasswordBytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+                  [Array]::Clear($PasswordBytes, 0, $PasswordBytes.Length)
                   if (-not $Existing) {
+                    Set-Content -LiteralPath $OptionFile -Encoding ASCII -Value @(
+                      'mode=unattended',
+                      'unattendedmodeui=minimal',
+                      'superpassword=' + $SuperPassword
+                    )
                     $BundledInstaller = Join-Path (Split-Path -Parent $PSScriptRoot) 'postgresql-installer.exe'
                     if (Test-Path $BundledInstaller) {
-                      $Install = Start-Process -FilePath $BundledInstaller -Wait -PassThru
+                      $Install = Start-Process -FilePath $BundledInstaller `
+                        -ArgumentList @('--optionfile', $OptionFile) -Wait -PassThru
                       if ($Install.ExitCode -ne 0) { throw "PostgreSQL installer exited with code $($Install.ExitCode)." }
                     } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-                      winget install --id PostgreSQL.PostgreSQL.17 --exact --silent `
-                        --accept-package-agreements --accept-source-agreements
-                      if ($LASTEXITCODE -ne 0) { throw "Windows Package Manager could not install PostgreSQL." }
+                      Write-Host 'Starting PostgreSQL installation. This normally takes 5-15 minutes.'
+                      Write-Host 'SmartStock will print a progress message every 15 seconds; leave this window open.'
+                      $Arguments = @(
+                        'install', '--id', 'PostgreSQL.PostgreSQL.17', '--exact', '--silent',
+                        '--override', ('--optionfile "{0}"' -f $OptionFile),
+                        '--accept-package-agreements', '--accept-source-agreements'
+                      )
+                      $Install = Start-Process -FilePath 'winget.exe' -ArgumentList $Arguments `
+                        -PassThru -NoNewWindow
+                      $Started = Get-Date
+                      while (-not $Install.HasExited) {
+                        $Elapsed = (Get-Date) - $Started
+                        if ($Elapsed.TotalMinutes -ge 20) {
+                          Stop-Process -Id $Install.Id -Force -ErrorAction SilentlyContinue
+                          throw 'PostgreSQL installation exceeded 20 minutes. Review the visible installer window or setup log, then retry.'
+                        }
+                        Write-Host ("PostgreSQL installation is still running ({0:mm\\:ss} elapsed)..." -f $Elapsed)
+                        Start-Sleep -Seconds 15
+                        $Install.Refresh()
+                      }
+                      if ($Install.ExitCode -ne 0) {
+                        throw "Windows Package Manager could not install PostgreSQL (exit code $($Install.ExitCode))."
+                      }
+                      Write-Host 'PostgreSQL package installation completed; verifying its service and tools.'
                     } else {
                       throw "PostgreSQL is missing and Windows Package Manager is unavailable. Use a SmartStock installer bundle that includes postgresql-installer.exe."
                     }
+                    Remove-Item -LiteralPath $OptionFile -Force -ErrorAction SilentlyContinue
                   }
                   $Services = Get-Service 'postgresql*' -ErrorAction SilentlyContinue
                   if (-not $Services) { throw 'PostgreSQL installed, but its Windows service was not found.' }
@@ -121,14 +163,51 @@ public final class PostgresRuntimeService {
                   $Psql = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
                     Sort-Object FullName -Descending | Select-Object -First 1
                   if (-not $Psql) { throw 'PostgreSQL command-line tools were not found after installation.' }
+                  if ($WasInstalled) {
+                    $Hba = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\data\\pg_hba.conf' -ErrorAction SilentlyContinue |
+                      Sort-Object FullName -Descending | Select-Object -First 1
+                    if (-not $Hba) { throw 'PostgreSQL pg_hba.conf was not found for secure password repair.' }
+                    $OriginalHba = [IO.File]::ReadAllBytes($Hba.FullName)
+                    try {
+                      $Utf8 = [Text.UTF8Encoding]::new($false)
+                      $OriginalText = $Utf8.GetString($OriginalHba)
+                      [IO.File]::WriteAllText($Hba.FullName,
+                        "host postgres postgres 127.0.0.1/32 trust`r`n" + $OriginalText, $Utf8)
+                      $Services | Restart-Service -Force
+                      $SqlPassword = $SuperPassword.Replace("'", "''")
+                      "ALTER ROLE postgres WITH PASSWORD '$SqlPassword';" |
+                        & $Psql.FullName -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
+                      if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL administrator password repair failed.' }
+                    } finally {
+                      [IO.File]::WriteAllBytes($Hba.FullName, $OriginalHba)
+                      $Services | Restart-Service -Force
+                    }
+                  }
+                  Add-Type -AssemblyName System.Security
+                  $CredentialBytes = [Text.Encoding]::UTF8.GetBytes($SuperPassword)
+                  try {
+                    $Protected = [Security.Cryptography.ProtectedData]::Protect(
+                      $CredentialBytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+                    if ($null -eq $Protected) { throw 'Windows DPAPI returned no PostgreSQL bootstrap credential.' }
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $BootstrapCredential) | Out-Null
+                    Set-Content -LiteralPath $BootstrapCredential -Encoding ASCII `
+                      -Value ([Convert]::ToBase64String($Protected))
+                  } finally {
+                    [Array]::Clear($CredentialBytes, 0, $CredentialBytes.Length)
+                  }
+                  $SuperPassword = $null
                   (& $Psql.FullName --version) | Set-Content -LiteralPath $Log
                   Add-Content -LiteralPath $Log -Value 'PostgreSQL service is installed and set to start automatically.'
                   exit 0
                 } catch {
+                  Remove-Item -LiteralPath $OptionFile -Force -ErrorAction SilentlyContinue
                   $_ | Out-String | Set-Content -LiteralPath $Log
                   exit 1
                 }
-                """.formatted(powerShellSingleQuoted(logPath.toString()));
+                """.formatted(
+                powerShellSingleQuoted(logPath.toString()),
+                powerShellSingleQuoted(optionPath.toString()),
+                powerShellSingleQuoted(bootstrapCredentialPath.toString()));
         Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
         utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
         utils.SecureFilePermissions.restrictFileToOwner(logPath);
@@ -146,6 +225,10 @@ public final class PostgresRuntimeService {
         } finally {
             Files.deleteIfExists(scriptPath);
             Files.deleteIfExists(logPath);
+            Files.deleteIfExists(optionPath);
+            if (Files.isRegularFile(bootstrapCredentialPath)) {
+                utils.SecureFilePermissions.restrictFileToOwner(bootstrapCredentialPath);
+            }
         }
     }
 
@@ -186,7 +269,13 @@ public final class PostgresRuntimeService {
     public static CommandResult startLanService() throws Exception {
         ensureSyncServiceInstalled();
         if (isWindows()) {
-            return runPowerShell("schtasks /Run /TN SmartStockServerService; schtasks /Query /TN SmartStockServerService /FO LIST", Duration.ofSeconds(30));
+            return runPowerShell("""
+                    $ErrorActionPreference = 'Stop'
+                    $task = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
+                    Start-ScheduledTask -InputObject $task -ErrorAction Stop
+                    Start-Sleep -Milliseconds 500
+                    Get-ScheduledTask -TaskName SmartStockServerService | Format-List TaskName,State
+                    """, Duration.ofSeconds(30));
         }
         return runShell("""
                 set -e
@@ -200,7 +289,12 @@ public final class PostgresRuntimeService {
 
     public static CommandResult stopLanService() throws Exception {
         if (isWindows()) {
-            return runPowerShell("schtasks /End /TN SmartStockServerService; schtasks /Query /TN SmartStockServerService /FO LIST", Duration.ofSeconds(30));
+            return runPowerShell("""
+                    $ErrorActionPreference = 'Stop'
+                    $task = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
+                    Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
+                    Get-ScheduledTask -TaskName SmartStockServerService | Format-List TaskName,State
+                    """, Duration.ofSeconds(30));
         }
         return runShell("""
                 plist="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"
@@ -385,15 +479,19 @@ public final class PostgresRuntimeService {
         utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
         Path scriptPath = Files.createTempFile(setupDir, "install-production-server-", ".ps1");
         Path logPath = Files.createTempFile(setupDir, "install-production-server-", ".log");
-        Path bundledJava = Path.of(System.getProperty("java.home"), "bin", "java.exe")
+        Path nativeLauncher = jar.getParent().getParent().resolve("SmartStock.exe")
                 .toAbsolutePath().normalize();
-        if (!Files.isRegularFile(bundledJava)) {
+        boolean useNativeLauncher = Files.isRegularFile(nativeLauncher);
+        Path serviceExecutable = useNativeLauncher ? nativeLauncher
+                : Path.of(System.getProperty("java.home"), "bin", "java.exe")
+                .toAbsolutePath().normalize();
+        if (!Files.isRegularFile(serviceExecutable)) {
             return new CommandResult(false,
-                    "The Java runtime bundled with SmartStock was not found.");
+                    "Neither the packaged SmartStock launcher nor a Java service executable was found.");
         }
         String script = windowsProductionInstallScript(
-                jar, dependencies, bundledJava, project.url(), project.publishableKey(),
-                selected.id(), cleanSubnet, logPath);
+                jar, dependencies, serviceExecutable, useNativeLauncher,
+                project.url(), project.publishableKey(), selected.id(), cleanSubnet, logPath);
         Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
         utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
         utils.SecureFilePermissions.restrictFileToOwner(logPath);
@@ -408,8 +506,12 @@ public final class PostgresRuntimeService {
             elevated = runPowerShell(elevate, Duration.ofMinutes(5));
             String log = Files.isRegularFile(logPath)
                     ? Files.readString(logPath, StandardCharsets.UTF_8).trim() : "";
-            return new CommandResult(elevated.success(),
-                    log.isBlank() ? elevated.output() : log);
+            String output = log.isBlank() ? elevated.output() : log;
+            if (!elevated.success() && output.isBlank()) {
+                output = "Windows did not run the elevated SmartStock service installer. "
+                        + "Approve the administrator prompt and try again.";
+            }
+            return new CommandResult(elevated.success(), output);
         } finally {
             Files.deleteIfExists(scriptPath);
             Files.deleteIfExists(logPath);
@@ -421,11 +523,20 @@ public final class PostgresRuntimeService {
             String supabaseUrl, String publishableKey,
             String lanSubnet, Path logPath) {
         return windowsProductionInstallScript(jar, dependencies, javaExecutable,
-                supabaseUrl, publishableKey, "production", lanSubnet, logPath);
+                false, supabaseUrl, publishableKey, "production", lanSubnet, logPath);
     }
 
     static String windowsProductionInstallScript(
             Path jar, Path dependencies, Path javaExecutable,
+            String supabaseUrl, String publishableKey, String environment,
+            String lanSubnet, Path logPath) {
+        return windowsProductionInstallScriptWithArguments(jar, dependencies, javaExecutable,
+                "-jar \"" + jar.getFileName() + "\" --sync-service",
+                supabaseUrl, publishableKey, environment, lanSubnet, logPath);
+    }
+
+    private static String windowsProductionInstallScriptWithArguments(
+            Path jar, Path dependencies, Path serviceExecutable, String serviceArguments,
             String supabaseUrl, String publishableKey, String environment,
             String lanSubnet, Path logPath) {
         return """
@@ -434,7 +545,7 @@ public final class PostgresRuntimeService {
                 try {
                   $Jar = %s
                   $Dependencies = %s
-                  $Java = %s
+                  $ServiceExecutable = %s
                   $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
                   $ServiceAppDir = Join-Path $ServiceDir 'app'
                   New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
@@ -450,19 +561,29 @@ public final class PostgresRuntimeService {
                     'set "SMARTSTOCK_ENVIRONMENT=%s"',
                     'set "SUPABASE_URL=%s"',
                     'set "SUPABASE_PUBLISHABLE_KEY=%s"',
-                    'cd /d "' + $ServiceAppDir + '"',
-                    '"' + $Java + '" -jar "' + $JarName + '" --sync-service'
+                    ('cd /d "' + $ServiceAppDir + '"'),
+                    ('"' + $ServiceExecutable + '" ' + %s)
                   )
-                  schtasks /Delete /TN SmartStockBackgroundSync /F 2>$null | Out-Null
-                  schtasks /Create /TN SmartStockServerService /TR "`"$Launcher`"" /SC ONSTART /RL HIGHEST /F | Out-Null
+                  Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
+                    -Confirm:$false -ErrorAction SilentlyContinue
+                  $CmdExe = Join-Path $env:SystemRoot 'System32\\cmd.exe'
+                  $TaskAction = New-ScheduledTaskAction -Execute $CmdExe `
+                    -Argument ('/d /c ""' + $Launcher + '""')
+                  $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                  $TaskPrincipal = New-ScheduledTaskPrincipal `
+                    -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+                    -LogonType Interactive -RunLevel Highest
+                  Register-ScheduledTask -TaskName SmartStockServerService `
+                    -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `
+                    -Description 'SmartStock HTTPS LAN and synchronization service' `
+                    -Force -ErrorAction Stop | Out-Null
                   $RuleName = 'SmartStock LAN API 8443'
                   Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue |
                     Remove-NetFirewallRule -ErrorAction SilentlyContinue
                   New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Action Allow `
                     -Protocol TCP -LocalPort 8443 -RemoteAddress %s -Profile Private | Out-Null
-                  schtasks /Run /TN SmartStockServerService | Out-Null
-                  Start-Sleep -Seconds 3
-                  schtasks /Query /TN SmartStockServerService /FO LIST | Out-String | Set-Content -LiteralPath $Log
+                  Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop |
+                    Format-List TaskName,State | Out-String | Set-Content -LiteralPath $Log
                   Add-Content -LiteralPath $Log -Value 'Windows service and private-LAN firewall rule installed.'
                   exit 0
                 } catch {
@@ -473,12 +594,24 @@ public final class PostgresRuntimeService {
                 powerShellSingleQuoted(logPath.toString()),
                 powerShellSingleQuoted(jar.toString()),
                 powerShellSingleQuoted(dependencies.toString()),
-                powerShellSingleQuoted(javaExecutable.toString()),
+                powerShellSingleQuoted(serviceExecutable.toString()),
                 powerShellLiteralValue(environment),
                 powerShellLiteralValue(supabaseUrl),
                 powerShellLiteralValue(publishableKey),
+                powerShellSingleQuoted(serviceArguments),
                 powerShellSingleQuoted(lanSubnet)
         );
+    }
+
+    static String windowsProductionInstallScript(
+            Path jar, Path dependencies, Path serviceExecutable, boolean nativeLauncher,
+            String supabaseUrl, String publishableKey, String environment,
+            String lanSubnet, Path logPath) {
+        String arguments = nativeLauncher ? "--sync-service"
+                : "-jar \"" + jar.getFileName() + "\" --sync-service";
+        return windowsProductionInstallScriptWithArguments(jar, dependencies,
+                serviceExecutable, arguments, supabaseUrl, publishableKey,
+                environment, lanSubnet, logPath);
     }
 
     static boolean validLanSubnet(String value) {
@@ -558,7 +691,8 @@ public final class PostgresRuntimeService {
     private static void restartInstalledSyncService() throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
-            runPowerShell("schtasks /Run /TN SmartStockServerService", Duration.ofSeconds(30));
+            runPowerShell("Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop",
+                    Duration.ofSeconds(30));
         } else {
             runShell("launchctl kickstart -k \"gui/$(id -u)/com.smartstock.sync\"", Duration.ofSeconds(30));
         }
@@ -567,8 +701,13 @@ public final class PostgresRuntimeService {
     public static CommandResult syncServiceStatus() throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
-            return runShell("""
-                    schtasks /Query /TN SmartStockServerService /FO LIST 2>&1 || schtasks /Query /TN SmartStockBackgroundSync /FO LIST 2>&1 || exit 0
+            return runPowerShell("""
+                    $current = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                    if ($current) { $current | Format-List TaskName,State; exit 0 }
+                    $legacy = Get-ScheduledTask -TaskName SmartStockBackgroundSync -ErrorAction SilentlyContinue
+                    if ($legacy) { $legacy | Format-List TaskName,State; exit 0 }
+                    Write-Output 'SmartStock Windows service is not installed.'
+                    exit 0
                     """, Duration.ofSeconds(30));
         }
         return runShell("""
@@ -589,6 +728,11 @@ public final class PostgresRuntimeService {
     }
 
     public static CommandResult runInstallerRepair(Path installerPath, String mode) throws Exception {
+        if (isWindows()) {
+            String script = "& " + powerShellSingleQuoted(installerPath.toAbsolutePath().toString())
+                    + " " + shellWord(mode) + "; exit $LASTEXITCODE";
+            return runPowerShell(script, Duration.ofMinutes(20));
+        }
         String script = "set -e\n\"" + installerPath.toAbsolutePath() + "\" " + shellWord(mode);
         return runShell(script, Duration.ofMinutes(20));
     }
@@ -676,10 +820,11 @@ public final class PostgresRuntimeService {
                 $JarName = Split-Path -Leaf $Jar.FullName
                 Set-Content -Path $Cmd -Encoding ASCII -Value @(
                   '@echo off',
-                  'cd /d "' + $ServiceAppDir + '"',
-                  'java -jar ' + $JarName + ' --sync-service'
+                  ('cd /d "' + $ServiceAppDir + '"'),
+                  ('java -jar "' + $JarName + '" --sync-service')
                 )
-                schtasks /Delete /TN SmartStockBackgroundSync /F 2>$null
+                Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
+                  -Confirm:$false -ErrorAction SilentlyContinue
                 schtasks /Create /TN SmartStockServerService /TR "`"$Cmd`"" /SC ONSTART /F
                 schtasks /Run /TN SmartStockServerService
                 schtasks /Query /TN SmartStockServerService /FO LIST

@@ -140,9 +140,18 @@ public final class EmailSchemaInstaller {
             stmt.executeUpdate("ALTER TABLE email_outbox ENABLE ROW LEVEL SECURITY");
             stmt.executeUpdate("ALTER TABLE email_outbox_events ENABLE ROW LEVEL SECURITY");
             stmt.executeUpdate("DROP POLICY IF EXISTS email_outbox_service_role_all ON email_outbox");
-            stmt.executeUpdate("CREATE POLICY email_outbox_service_role_all ON email_outbox FOR ALL TO service_role USING (true) WITH CHECK (true)");
             stmt.executeUpdate("DROP POLICY IF EXISTS email_outbox_events_service_role_all ON email_outbox_events");
-            stmt.executeUpdate("CREATE POLICY email_outbox_events_service_role_all ON email_outbox_events FOR ALL TO service_role USING (true) WITH CHECK (true)");
+            stmt.executeUpdate("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+                            CREATE POLICY email_outbox_service_role_all ON email_outbox
+                                FOR ALL TO service_role USING (true) WITH CHECK (true);
+                            CREATE POLICY email_outbox_events_service_role_all ON email_outbox_events
+                                FOR ALL TO service_role USING (true) WITH CHECK (true);
+                        END IF;
+                    END $$
+                    """);
         }
     }
 

@@ -139,9 +139,12 @@ public final class ServerSupabaseCredentials {
     }
 
     private static void installWindowsDpapi(String value) throws IOException {
-        String script = "$plain=[Console]::In.ReadToEnd();"
+        String script = "Add-Type -AssemblyName System.Security;"
+                + "$ErrorActionPreference='Stop';"
+                + "$plain=[Console]::In.ReadToEnd();"
                 + "$data=[Text.Encoding]::UTF8.GetBytes($plain);"
                 + "$protected=[Security.Cryptography.ProtectedData]::Protect($data,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
+                + "if($null -eq $protected){throw 'Windows DPAPI returned no encrypted data.'};"
                 + "[Console]::Out.Write([Convert]::ToBase64String($protected))";
         String encrypted = runPowerShell(script, value);
         if (encrypted.isBlank()) throw new IOException("Windows DPAPI returned an empty credential.");
@@ -157,9 +160,12 @@ public final class ServerSupabaseCredentials {
         if (!Files.isRegularFile(credentialPath)) return null;
         try {
             String encrypted = Files.readString(credentialPath, StandardCharsets.US_ASCII).trim();
-            String script = "$encoded=[Console]::In.ReadToEnd();"
+            String script = "Add-Type -AssemblyName System.Security;"
+                    + "$ErrorActionPreference='Stop';"
+                    + "$encoded=[Console]::In.ReadToEnd();"
                     + "$protected=[Convert]::FromBase64String($encoded);"
                     + "$data=[Security.Cryptography.ProtectedData]::Unprotect($protected,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
+                    + "if($null -eq $data){throw 'Windows DPAPI returned no decrypted data.'};"
                     + "[Console]::Out.Write([Text.Encoding]::UTF8.GetString($data))";
             String value = runPowerShell(script, encrypted).trim();
             validate(value);

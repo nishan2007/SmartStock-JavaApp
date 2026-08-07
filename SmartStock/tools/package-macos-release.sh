@@ -139,7 +139,7 @@ JPACKAGE_OUTPUT="$(jpackage \
   --icon "$MAC_ICON_PATH" \
   --mac-package-identifier "com.smartstock.desktop" \
   --add-launcher "SmartStockUpdater=$UPDATER_LAUNCHER_PROPERTIES" \
-  --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.httpserver,jdk.unsupported" \
+  --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.crypto.ec,jdk.httpserver,jdk.unsupported" \
   --java-options "-Dapple.laf.useScreenMenuBar=true" 2>&1)"
 JPACKAGE_STATUS=$?
 set -e

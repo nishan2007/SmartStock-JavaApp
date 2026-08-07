@@ -1,21 +1,35 @@
 package services;
 
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import utils.SecureCredentialStore;
 import utils.SecureFilePermissions;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.HexFormat;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 import java.util.List;
 
 /** Owns the store-local HTTPS certificate and the phrase shown during admin pairing. */
@@ -108,31 +122,40 @@ public final class LanTlsIdentity {
     }
 
     private static void generateKeyStore(String password) throws Exception {
-        String javaHome = System.getProperty("java.home");
-        String executable = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
-                ? "keytool.exe" : "keytool";
-        Path keytool = Path.of(javaHome, "bin", executable);
-        String hostname = tlsHostName();
-        ProcessBuilder builder = new ProcessBuilder(
-                keytool.toString(), "-genkeypair",
-                "-alias", ALIAS,
-                "-keyalg", "RSA", "-keysize", "3072", "-sigalg", "SHA256withRSA",
-                "-validity", "825",
-                "-dname", "CN=" + hostname + ", OU=SmartStock LAN, O=SmartStock",
-                "-ext", "SAN=dns:localhost,dns:" + hostname + ",ip:127.0.0.1",
-                "-storetype", "PKCS12", "-keystore", KEYSTORE.toString(),
-                "-storepass", password, "-keypass", password, "-noprompt"
-        );
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-        String output = new String(process.getInputStream().readAllBytes());
-        if (!process.waitFor(30, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            throw new IllegalStateException("Timed out while creating the SmartStock LAN certificate.");
-        }
-        if (process.exitValue() != 0) {
-            throw new IllegalStateException("Could not create the SmartStock LAN certificate: " + output.trim());
-        }
+        generateKeyStore(KEYSTORE, password, tlsHostName());
         SecureFilePermissions.restrictFileToOwner(KEYSTORE);
+    }
+
+    static void generateKeyStore(Path destination, String password, String hostname)
+            throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(3072, new SecureRandom());
+        var keyPair = generator.generateKeyPair();
+        Instant now = Instant.now();
+        X500Name subject = new X500Name("CN=" + hostname
+                + ",OU=SmartStock LAN,O=SmartStock");
+        var builder = new JcaX509v3CertificateBuilder(
+                subject, new BigInteger(160, new SecureRandom()).abs(),
+                Date.from(now.minus(5, ChronoUnit.MINUTES)),
+                Date.from(now.plus(825, ChronoUnit.DAYS)), subject, keyPair.getPublic());
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        builder.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName[]{
+                new GeneralName(GeneralName.dNSName, "localhost"),
+                new GeneralName(GeneralName.dNSName, hostname),
+                new GeneralName(GeneralName.iPAddress, "127.0.0.1")
+        }));
+        X509Certificate certificate = new JcaX509CertificateConverter().getCertificate(
+                builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                        .build(keyPair.getPrivate())));
+        certificate.checkValidity();
+        certificate.verify(keyPair.getPublic());
+
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(null, password.toCharArray());
+        keyStore.setKeyEntry(ALIAS, keyPair.getPrivate(), password.toCharArray(),
+                new Certificate[]{certificate});
+        try (OutputStream output = Files.newOutputStream(destination)) {
+            keyStore.store(output, password.toCharArray());
+        }
     }
 }

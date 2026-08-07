@@ -5,6 +5,10 @@ import data.DatabaseMode;
 import data.EnvironmentProfile;
 
 import java.security.SecureRandom;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -12,12 +16,21 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.TimeUnit;
 
 /** Creates SmartStock's local server role without exposing technical fields in normal setup. */
 public final class LocalDatabaseBootstrapService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private LocalDatabaseBootstrapService() {
+    }
+
+    static Path windowsBootstrapCredentialPath() {
+        return EnvironmentProfile.active().file("postgres-bootstrap-admin.dpapi");
+    }
+
+    public static boolean hasGeneratedAdministratorCredential() {
+        return Files.isRegularFile(windowsBootstrapCredentialPath());
     }
 
     public static DatabaseConfig ensureConfigured(char[] postgresAdministratorPassword)
@@ -30,6 +43,9 @@ public final class LocalDatabaseBootstrapService {
 
         char[] supplied = postgresAdministratorPassword == null
                 ? new char[0] : postgresAdministratorPassword.clone();
+        if (supplied.length == 0 && hasGeneratedAdministratorCredential()) {
+            supplied = readGeneratedAdministratorCredential();
+        }
         String applicationPassword = generatedPassword();
         String database = EnvironmentProfile.active() == EnvironmentProfile.PRODUCTION
                 ? "smartstock" : "smartstock_dev";
@@ -54,10 +70,46 @@ public final class LocalDatabaseBootstrapService {
                     null,
                     300);
             configured.save();
+            Files.deleteIfExists(windowsBootstrapCredentialPath());
             return configured;
         } finally {
             Arrays.fill(supplied, '\0');
             applicationPassword = null;
+        }
+    }
+
+    private static char[] readGeneratedAdministratorCredential() throws IOException {
+        String encrypted = Files.readString(
+                windowsBootstrapCredentialPath(), StandardCharsets.US_ASCII).trim();
+        String script = "Add-Type -AssemblyName System.Security;"
+                + "$ErrorActionPreference='Stop';"
+                + "$encoded=[Console]::In.ReadToEnd();"
+                + "$protected=[Convert]::FromBase64String($encoded);"
+                + "$data=[Security.Cryptography.ProtectedData]::Unprotect($protected,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
+                + "if($null -eq $data){throw 'Windows DPAPI returned no PostgreSQL bootstrap credential.'};"
+                + "[Console]::Out.Write([Text.Encoding]::UTF8.GetString($data))";
+        Process process = new ProcessBuilder("powershell.exe", "-NoLogo", "-NoProfile",
+                "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+                .redirectErrorStream(true).start();
+        try {
+            process.getOutputStream().write(encrypted.getBytes(StandardCharsets.US_ASCII));
+            process.getOutputStream().close();
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("Reading the generated PostgreSQL credential timed out.");
+            }
+            String output = new String(
+                    process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (process.exitValue() != 0 || output.isBlank()) {
+                throw new IOException(output.isBlank()
+                        ? "Windows could not read the generated PostgreSQL credential." : output);
+            }
+            return output.toCharArray();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Reading the generated PostgreSQL credential was interrupted.", ex);
+        } finally {
+            process.destroy();
         }
     }
 

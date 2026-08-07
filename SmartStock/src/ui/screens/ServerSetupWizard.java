@@ -23,7 +23,9 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Resumable, task-oriented setup for a SmartStock store server.
@@ -60,10 +62,11 @@ public final class ServerSetupWizard extends JFrame {
     private final JLabel localPostgres = new JLabel();
     private final JLabel localDatabase = new JLabel();
     private final JLabel postgresAdminPasswordLabel =
-            new JLabel("PostgreSQL Administrator Password");
+            new JLabel("PostgreSQL Administrator Password (optional)");
     private final JPasswordField postgresAdminPassword = new JPasswordField();
 
     private final JComboBox<ServerStoreSetupService.Store> stores = new JComboBox<>();
+    private final JLabel existingStoreLabel = new JLabel("Existing Store");
     private final JTextField storeName = new JTextField();
     private final JTextField storeCode = new JTextField();
     private final JTextField storeTimezone = new JTextField("America/New_York");
@@ -196,7 +199,7 @@ public final class ServerSetupWizard extends JFrame {
         checks.add(Box.createVerticalStrut(7));
         checks.add(postgresAdminPassword);
         postgresAdminPassword.setToolTipText(
-                "Only needed if PostgreSQL asked you to choose a password during installation.");
+                "Leave blank for SmartStock to generate and securely use a one-time bootstrap password.");
         page.add(note("SmartStock checks Java and PostgreSQL, offers PostgreSQL installation "
                 + "when needed, then creates or repairs the local database. Registers never "
                 + "receive these local credentials."), BorderLayout.NORTH);
@@ -217,12 +220,12 @@ public final class ServerSetupWizard extends JFrame {
         GridBagConstraints full = constraints(0, row++);
         full.gridwidth = 2;
         form.add(selectStore, full);
-        row = addRow(form, row, "Existing Store", stores);
+        row = addRow(form, row, existingStoreLabel, stores);
         full = constraints(0, row++);
         full.gridwidth = 2;
         form.add(createStore, full);
         row = addRow(form, row, "Store Name", storeName);
-        row = addRow(form, row, "Four-digit Store Code", storeCode);
+        row = addRow(form, row, "Four-digit Store Number / Code", storeCode);
         row = addRow(form, row, "Timezone", storeTimezone);
         addRow(form, row, "Address (optional)", storeAddress);
         page.add(note("Choose a store already restored into this local database, or create "
@@ -313,7 +316,23 @@ public final class ServerSetupWizard extends JFrame {
                 } catch (Exception ex) {
                     return 4;
                 }
-                return ServerFirstAdministratorService.isComplete() ? 6 : 5;
+                if (!ServerFirstAdministratorService.isComplete()) {
+                    try {
+                        ServerStoreSetupService.restoreAssignedFromCloud();
+                    } catch (Exception repairFailure) {
+                        return 4;
+                    }
+                }
+                if (!ServerFirstAdministratorService.isComplete()) return 5;
+                try {
+                    DatabaseConfig config = DatabaseConfig.load();
+                    if (services.ServerSetupGuardService.assess(config.locationId()).current() == null) {
+                        return 4;
+                    }
+                } catch (Exception registryFailure) {
+                    return 4;
+                }
+                return 6;
             }
 
             @Override
@@ -520,7 +539,9 @@ public final class ServerSetupWizard extends JFrame {
             @Override
             protected ServerProvisioningService.ProvisionResult doInBackground() throws Exception {
                 var prerequisites = PostgresRuntimeService.checkServerPrerequisites();
-                if (!prerequisites.postgresReady()) {
+                boolean needsAutomaticCredential = administratorPassword.length == 0
+                        && !LocalDatabaseBootstrapService.hasGeneratedAdministratorCredential();
+                if (!prerequisites.postgresReady() || needsAutomaticCredential) {
                     var installed = PostgresRuntimeService.installOrUpdateRuntime();
                     if (!installed.success()) throw new IllegalStateException(installed.output());
                 }
@@ -551,27 +572,57 @@ public final class ServerSetupWizard extends JFrame {
     }
 
     private void loadStores() {
-        try {
-            List<ServerStoreSetupService.Store> available = ServerStoreSetupService.list();
-            stores.removeAllItems();
-            available.forEach(stores::addItem);
-            if (available.isEmpty()) {
-                createStore.setSelected(true);
-            } else {
-                Integer assigned = DatabaseConfig.load().locationId();
-                for (int i = 0; i < stores.getItemCount(); i++) {
-                    if (assigned != null && stores.getItemAt(i).locationId() == assigned) {
-                        stores.setSelectedIndex(i);
-                        break;
+        stores.removeAllItems();
+        stores.setEnabled(false);
+        nextButton.setEnabled(false);
+        statusLabel.setText("Loading existing stores from this environment...");
+        SwingWorker<List<ServerStoreSetupService.Store>, Void> worker = new SwingWorker<>() {
+            @Override
+            protected List<ServerStoreSetupService.Store> doInBackground() throws Exception {
+                Map<Integer, ServerStoreSetupService.Store> available = new LinkedHashMap<>();
+                for (var store : ServerStoreSetupService.list()) {
+                    available.put(store.locationId(), store);
+                }
+                for (var store : ServerStoreSetupService.listCloud()) {
+                    available.putIfAbsent(store.locationId(), store);
+                }
+                return List.copyOf(available.values());
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    List<ServerStoreSetupService.Store> available = get();
+                    available.forEach(stores::addItem);
+                    if (available.isEmpty()) {
+                        createStore.setSelected(true);
+                        if (storeCode.getText().isBlank()) storeCode.setText("0001");
+                        statusLabel.setText("No existing stores were found. Create the first store below.");
+                    } else {
+                        selectStore.setSelected(true);
+                        Integer assigned = DatabaseConfig.load().locationId();
+                        for (int i = 0; i < stores.getItemCount(); i++) {
+                            if (assigned != null && stores.getItemAt(i).locationId() == assigned) {
+                                stores.setSelectedIndex(i);
+                                break;
+                            }
+                        }
+                        statusLabel.setText(available.size() == 1
+                                ? "Found the existing store for this environment."
+                                : "Select the existing store for this server.");
                     }
+                } catch (Exception ex) {
+                    createStore.setSelected(true);
+                    if (storeCode.getText().isBlank()) storeCode.setText("0001");
+                    statusLabel.setText("Existing stores could not be loaded: "
+                            + rootCauseMessage(ex));
+                } finally {
+                    nextButton.setEnabled(true);
+                    refreshStoreControls();
                 }
             }
-            refreshStoreControls();
-        } catch (Exception ex) {
-            stores.removeAllItems();
-            createStore.setSelected(true);
-            refreshStoreControls();
-        }
+        };
+        worker.execute();
     }
 
     private void saveStore() {
@@ -584,6 +635,7 @@ public final class ServerSetupWizard extends JFrame {
                 selected = (ServerStoreSetupService.Store) stores.getSelectedItem();
                 if (selected == null) throw new IllegalArgumentException(
                         "Select an existing store or choose Create a new store.");
+                selected = ServerStoreSetupService.restoreFromCloud(selected);
             }
             DatabaseConfig current = DatabaseConfig.load();
             new DatabaseConfig(DatabaseMode.SERVER, current.jdbcUrl(), current.dbUser(),
@@ -625,12 +677,20 @@ public final class ServerSetupWizard extends JFrame {
     }
 
     private void refreshStoreControls() {
-        boolean creating = createStore.isSelected();
+        boolean hasExistingStores = stores.getItemCount() > 0;
+        if (!hasExistingStores) createStore.setSelected(true);
+        selectStore.setEnabled(hasExistingStores);
+        selectStore.setVisible(hasExistingStores);
+        existingStoreLabel.setVisible(hasExistingStores);
+        stores.setVisible(hasExistingStores);
+        boolean creating = createStore.isSelected() || !hasExistingStores;
         stores.setEnabled(!creating);
         storeName.setEnabled(creating);
         storeCode.setEnabled(creating);
         storeTimezone.setEnabled(creating);
         storeAddress.setEnabled(creating);
+        cardHost.revalidate();
+        cardHost.repaint();
     }
 
     private void refreshAdministratorState() {
@@ -679,6 +739,23 @@ public final class ServerSetupWizard extends JFrame {
                 if (!started.success()) throw new IllegalStateException(started.output());
                 if (!activation.startServices()) {
                     return result.append("✓ Standby coordination heartbeat started; PostgreSQL data is preserved and LAN/sync traffic remains disabled.\n").toString();
+                }
+                var identity = services.LanTlsIdentity.loadOrCreate();
+                boolean ready = false;
+                for (int attempt = 0; attempt < 30; attempt++) {
+                    if (services.LanApiClient.isServerReachable(
+                            services.LanTlsIdentity.tlsHostName(),
+                            services.LanApiServer.DEFAULT_PORT, identity.fingerprint())) {
+                        ready = true;
+                        break;
+                    }
+                    Thread.sleep(1_000);
+                }
+                if (!ready) {
+                    var taskStatus = PostgresRuntimeService.syncServiceStatus();
+                    throw new IllegalStateException("The Windows service was installed but its HTTPS "
+                            + "health endpoint did not become ready within 30 seconds.\n\n"
+                            + taskStatus.output());
                 }
                 result.append("✓ LAN and synchronization service started\n");
                 result.append("✓ Store assignment and first administrator verified\n");
@@ -779,9 +856,13 @@ public final class ServerSetupWizard extends JFrame {
     }
 
     private static int addRow(JPanel panel, int row, String label, Component field) {
+        return addRow(panel, row, new JLabel(label), field);
+    }
+
+    private static int addRow(JPanel panel, int row, JLabel label, Component field) {
         GridBagConstraints left = constraints(0, row);
         left.weightx = 0;
-        panel.add(new JLabel(label), left);
+        panel.add(label, left);
         GridBagConstraints right = constraints(1, row);
         right.weightx = 1;
         panel.add(field, right);

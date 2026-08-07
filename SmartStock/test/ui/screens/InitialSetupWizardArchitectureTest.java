@@ -42,6 +42,9 @@ class InitialSetupWizardArchitectureTest {
         assertTrue(source.contains("ServerProvisioningService.provision"));
         assertTrue(source.contains("LocalDatabaseBootstrapService.ensureConfigured"));
         assertTrue(source.contains("ServerStoreSetupService.create"));
+        assertTrue(source.contains("ServerStoreSetupService.listCloud"));
+        assertTrue(source.contains("ServerStoreSetupService.restoreFromCloud"));
+        assertTrue(source.contains("Loading existing stores from this environment"));
         assertTrue(source.contains("FirstAdministratorSetupDialog"));
         assertTrue(source.contains("\"LocalSubnet\""));
         assertTrue(welcome.contains("new ServerSetupWizard(this)"));

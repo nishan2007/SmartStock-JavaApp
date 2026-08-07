@@ -16,6 +16,9 @@ class LocalDatabaseBootstrapServiceTest {
         assertTrue(source.contains("SecureRandom"));
         assertTrue(source.contains("smartstock_server"));
         assertTrue(source.contains("jdbc:postgresql://127.0.0.1:5432/"));
+        assertTrue(source.contains("postgres-bootstrap-admin.dpapi"));
+        assertTrue(source.contains("readGeneratedAdministratorCredential"));
+        assertTrue(source.contains("Files.deleteIfExists(windowsBootstrapCredentialPath())"));
         assertTrue(source.contains("ALTER SYSTEM SET listen_addresses = 'localhost'"));
         assertTrue(source.contains("configured.save()"));
         assertTrue(source.contains("Arrays.fill(supplied, '\\0')"));

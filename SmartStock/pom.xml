@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-    <version>1.0.32</version>
+    <version>1.0.36</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -40,6 +40,16 @@
         <groupId>com.google.code.gson</groupId>
         <artifactId>gson</artifactId>
         <version>2.11.0</version>
+    </dependency>
+    <dependency>
+        <groupId>org.bouncycastle</groupId>
+        <artifactId>bcprov-jdk18on</artifactId>
+        <version>1.84</version>
+    </dependency>
+    <dependency>
+        <groupId>org.bouncycastle</groupId>
+        <artifactId>bcpkix-jdk18on</artifactId>
+        <version>1.84</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

@@ -20,10 +20,19 @@ public final class SqlScriptRunner {
         Path root = findProjectRoot();
         for (String relativePath : relativePaths) {
             Path script = root.resolve(relativePath).normalize();
-            if (!Files.isRegularFile(script)) {
-                continue;
+            try {
+                if (Files.isRegularFile(script)) {
+                    executed += runScript(conn, script);
+                } else {
+                    // Native installers do not run from a source checkout. Maven packages
+                    // the database directory into the application JAR, so use that copy
+                    // instead of silently omitting required schema scripts.
+                    executed += runResource(conn, relativePath);
+                }
+            } catch (IOException | SQLException ex) {
+                throw new SQLException("Schema setup failed in " + relativePath + ": "
+                        + ex.getMessage(), ex);
             }
-            executed += runScript(conn, script);
         }
         return executed;
     }
@@ -65,7 +74,12 @@ public final class SqlScriptRunner {
                 if (trimmed.isEmpty()) {
                     continue;
                 }
-                stmt.execute(trimmed);
+                try {
+                    stmt.execute(trimmed);
+                } catch (SQLException ex) {
+                    throw new SQLException("statement " + (executed + 1) + " failed: "
+                            + ex.getMessage(), ex.getSQLState(), ex.getErrorCode(), ex);
+                }
                 executed++;
             }
         }

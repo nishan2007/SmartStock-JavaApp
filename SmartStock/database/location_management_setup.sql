@@ -57,7 +57,7 @@ BEGIN
     END IF;
 END $$;
 
-ALTER TABLE company_customization
+ALTER TABLE IF EXISTS company_customization
 DROP COLUMN IF EXISTS company_address_line1,
 DROP COLUMN IF EXISTS company_address_line2,
 DROP COLUMN IF EXISTS company_address_line3,

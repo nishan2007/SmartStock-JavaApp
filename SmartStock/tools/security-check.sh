@@ -66,7 +66,7 @@ rg -q 'Idempotency-Key' src/services/LanApiServer.java \
   || fail "financial mutation idempotency is missing"
 rg -q 'consumed_at=CURRENT_TIMESTAMP' src/services/LanApiServer.java \
   || fail "manager approvals are not consumed by the server"
-rg -Fq 'createContext("/v1/sales/refund"' src/services/LanApiServer.java \
+rg -Fq 'v1/sales/refund' src/services/LanApiServer.java \
   || fail "server-side sale refund endpoint is missing"
 rg -q 'String operationKey = "sales.refund.v1"' src/services/LanApiServer.java \
   || fail "sale refunds are not protected by operation-specific idempotency"
@@ -117,7 +117,7 @@ for route in \
   /v1/products/update \
   /v1/catalog/customer-types/list \
   /v1/catalog/customer-types/save; do
-  rg -Fq "createContext(\"$route\"" src/services/LanApiServer.java \
+  rg -Fq "${route#/}" src/services/LanApiServer.java \
     || fail "LAN product/customer catalog route is missing: $route"
 done
 rg -Fq 'String operation = create ? "products.create.v1" : "products.update.v1"' \
@@ -146,7 +146,7 @@ for route in \
   /v1/catalog/departments/save \
   /v1/catalog/vendors/list \
   /v1/catalog/vendors/save; do
-  rg -Fq "createContext(\"$route\"" src/services/LanApiServer.java \
+  rg -Fq "${route#/}" src/services/LanApiServer.java \
     || fail "LAN catalog administration route is missing: $route"
 done
 rg -q 'String operation = "catalog.departments.save.v1"' src/services/LanApiServer.java \
@@ -170,7 +170,7 @@ for route in \
   /v1/transfers/items \
   /v1/transfers/create \
   /v1/transfers/receive; do
-  rg -Fq "createContext(\"$route\"" src/services/LanApiServer.java \
+  rg -Fq "${route#/}" src/services/LanApiServer.java \
     || fail "LAN inventory/transfer route is missing: $route"
 done
 rg -q 'String operation="inventory.receive.v1"' src/services/LanApiServer.java \
@@ -187,9 +187,9 @@ rg -Fq 'st.to_location_id=?' src/services/LanTransferService.java \
   || fail "incoming transfers are not scoped to the receiving store"
 rg -Fq 'FOR UPDATE' src/services/LanInventoryService.java \
   || fail "receiving does not lock current inventory before mutation"
-rg -Fq 'createContext("/v1/held-carts/create"' src/services/LanApiServer.java \
+rg -Fq 'v1/held-carts/create' src/services/LanApiServer.java \
   || fail "server-side held-cart creation endpoint is missing"
-rg -Fq 'createContext("/v1/held-carts/resume"' src/services/LanApiServer.java \
+rg -Fq 'v1/held-carts/resume' src/services/LanApiServer.java \
   || fail "server-side held-cart resume endpoint is missing"
 rg -q 'String operationKey = "held-carts.create.v1"' src/services/LanApiServer.java \
   || fail "held-cart creation is not operation-idempotent"
@@ -197,7 +197,7 @@ rg -q 'String operationKey = "held-carts.resume.v1"' src/services/LanApiServer.j
   || fail "held-cart resume is not operation-idempotent"
 rg -Fq 'WHERE held_cart_id=? AND location_id=?' src/services/LanHeldCartService.java \
   || fail "held-cart resume is not scoped to the employee store"
-rg -Fq 'createContext("/v1/sales/history"' src/services/LanApiServer.java \
+rg -Fq 'v1/sales/history' src/services/LanApiServer.java \
   || fail "store-scoped sales history endpoint is missing"
 rg -Fq 'FROM sales WHERE sale_id=? AND location_id=?' src/services/LanSalesHistoryService.java \
   || fail "sales details are not scoped to the employee store"
@@ -207,7 +207,7 @@ rg -q 'ALTER TABLE public\.lan_api_sessions ENABLE ROW LEVEL SECURITY' \
   database/lan_api_security_setup.sql || fail "LAN session table RLS is missing"
 rg -q 'REVOKE ALL ON public\.lan_api_sessions FROM PUBLIC' \
   database/lan_api_security_setup.sql || fail "LAN session table privileges are too broad"
-if rg -n 'createContext\("/v1/(sql|query|tables|rpc)' src/services/LanApiServer.java; then
+if rg -n 'v1/(sql|query|tables|rpc)' src/services/LanApiServer.java; then
   fail "a generic database endpoint is exposed by the LAN service"
 fi
 

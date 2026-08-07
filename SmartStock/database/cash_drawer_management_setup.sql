@@ -148,24 +148,23 @@ CREATE TABLE IF NOT EXISTS cash_drawer_sessions (
 ALTER TABLE cash_drawer_sessions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS cash_drawer_sessions_service_role_all ON cash_drawer_sessions;
-CREATE POLICY cash_drawer_sessions_service_role_all
-ON cash_drawer_sessions
-FOR ALL
-TO service_role
-USING (TRUE)
-WITH CHECK (TRUE);
-
 DROP POLICY IF EXISTS cash_drawer_sessions_authenticated_all ON cash_drawer_sessions;
 DROP POLICY IF EXISTS cash_drawer_sessions_location_access ON cash_drawer_sessions;
 DO $$
 BEGIN
-    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
-        CREATE POLICY cash_drawer_sessions_location_access ON cash_drawer_sessions FOR ALL TO authenticated
-        USING ((SELECT public.current_app_user_has_location(location_id)))
-        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
-    ELSE
-        CREATE POLICY cash_drawer_sessions_authenticated_all ON cash_drawer_sessions FOR ALL TO authenticated
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE POLICY cash_drawer_sessions_service_role_all ON cash_drawer_sessions FOR ALL TO service_role
         USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+            CREATE POLICY cash_drawer_sessions_location_access ON cash_drawer_sessions FOR ALL TO authenticated
+            USING ((SELECT public.current_app_user_has_location(location_id)))
+            WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+        ELSE
+            CREATE POLICY cash_drawer_sessions_authenticated_all ON cash_drawer_sessions FOR ALL TO authenticated
+            USING (TRUE) WITH CHECK (TRUE);
+        END IF;
     END IF;
 END $$;
 
@@ -223,24 +222,23 @@ CREATE TABLE IF NOT EXISTS cash_drawer_handovers (
 ALTER TABLE cash_drawer_handovers ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS cash_drawer_handovers_service_role_all ON cash_drawer_handovers;
-CREATE POLICY cash_drawer_handovers_service_role_all
-ON cash_drawer_handovers
-FOR ALL
-TO service_role
-USING (TRUE)
-WITH CHECK (TRUE);
-
 DROP POLICY IF EXISTS cash_drawer_handovers_authenticated_all ON cash_drawer_handovers;
 DROP POLICY IF EXISTS cash_drawer_handovers_location_access ON cash_drawer_handovers;
 DO $$
 BEGIN
-    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
-        CREATE POLICY cash_drawer_handovers_location_access ON cash_drawer_handovers FOR ALL TO authenticated
-        USING ((SELECT public.current_app_user_has_location(location_id)))
-        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
-    ELSE
-        CREATE POLICY cash_drawer_handovers_authenticated_all ON cash_drawer_handovers FOR ALL TO authenticated
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE POLICY cash_drawer_handovers_service_role_all ON cash_drawer_handovers FOR ALL TO service_role
         USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+            CREATE POLICY cash_drawer_handovers_location_access ON cash_drawer_handovers FOR ALL TO authenticated
+            USING ((SELECT public.current_app_user_has_location(location_id)))
+            WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+        ELSE
+            CREATE POLICY cash_drawer_handovers_authenticated_all ON cash_drawer_handovers FOR ALL TO authenticated
+            USING (TRUE) WITH CHECK (TRUE);
+        END IF;
     END IF;
 END $$;
 
@@ -309,24 +307,23 @@ CREATE TABLE IF NOT EXISTS change_basket_updates (
 ALTER TABLE change_basket_updates ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS change_basket_updates_service_role_all ON change_basket_updates;
-CREATE POLICY change_basket_updates_service_role_all
-ON change_basket_updates
-FOR ALL
-TO service_role
-USING (TRUE)
-WITH CHECK (TRUE);
-
 DROP POLICY IF EXISTS change_basket_updates_authenticated_all ON change_basket_updates;
 DROP POLICY IF EXISTS change_basket_updates_location_access ON change_basket_updates;
 DO $$
 BEGIN
-    IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
-        CREATE POLICY change_basket_updates_location_access ON change_basket_updates FOR ALL TO authenticated
-        USING ((SELECT public.current_app_user_has_location(location_id)))
-        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
-    ELSE
-        CREATE POLICY change_basket_updates_authenticated_all ON change_basket_updates FOR ALL TO authenticated
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE POLICY change_basket_updates_service_role_all ON change_basket_updates FOR ALL TO service_role
         USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        IF to_regprocedure('public.current_app_user_has_location(integer)') IS NOT NULL THEN
+            CREATE POLICY change_basket_updates_location_access ON change_basket_updates FOR ALL TO authenticated
+            USING ((SELECT public.current_app_user_has_location(location_id)))
+            WITH CHECK ((SELECT public.current_app_user_has_location(location_id)));
+        ELSE
+            CREATE POLICY change_basket_updates_authenticated_all ON change_basket_updates FOR ALL TO authenticated
+            USING (TRUE) WITH CHECK (TRUE);
+        END IF;
     END IF;
 END $$;
 

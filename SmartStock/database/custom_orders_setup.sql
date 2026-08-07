@@ -508,6 +508,10 @@ CREATE TABLE IF NOT EXISTS custom_orders (
     assigned_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     delivered_at TIMESTAMPTZ,
+    cancellation_reason TEXT,
+    cancelled_at TIMESTAMPTZ,
+    cancelled_by_user_id INTEGER REFERENCES users(user_id),
+    cancelled_by_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT custom_orders_status_chk
@@ -516,6 +520,18 @@ CREATE TABLE IF NOT EXISTS custom_orders (
 
 ALTER TABLE custom_orders
 ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+
+ALTER TABLE custom_orders
+ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+
+ALTER TABLE custom_orders
+ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+
+ALTER TABLE custom_orders
+ADD COLUMN IF NOT EXISTS cancelled_by_user_id INTEGER REFERENCES users(user_id);
+
+ALTER TABLE custom_orders
+ADD COLUMN IF NOT EXISTS cancelled_by_name TEXT;
 
 ALTER TABLE custom_orders
 DROP CONSTRAINT IF EXISTS custom_orders_status_chk;
@@ -617,6 +633,9 @@ CREATE TABLE IF NOT EXISTS custom_order_payments (
     taken_by_user_id INTEGER REFERENCES users(user_id),
     taken_by_name TEXT,
     payment_action TEXT NOT NULL DEFAULT 'PAYMENT',
+    voided_at TIMESTAMPTZ,
+    voided_by_user_id INTEGER REFERENCES users(user_id),
+    voided_by_name TEXT,
     void_reason TEXT,
     device_id TEXT,
     device_name TEXT,
@@ -637,6 +656,15 @@ CHECK (payment_method IN ('CASH', 'CARD', 'CHEQUE', 'MMG', 'ACCOUNT'));
 
 ALTER TABLE custom_order_payments
 ADD COLUMN IF NOT EXISTS payment_action TEXT NOT NULL DEFAULT 'PAYMENT';
+
+ALTER TABLE custom_order_payments
+ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+
+ALTER TABLE custom_order_payments
+ADD COLUMN IF NOT EXISTS voided_by_user_id INTEGER REFERENCES users(user_id);
+
+ALTER TABLE custom_order_payments
+ADD COLUMN IF NOT EXISTS voided_by_name TEXT;
 
 ALTER TABLE custom_order_payments
 ADD COLUMN IF NOT EXISTS void_reason TEXT;

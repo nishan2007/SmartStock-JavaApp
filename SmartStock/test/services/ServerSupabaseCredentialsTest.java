@@ -2,13 +2,27 @@ package services;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ServerSupabaseCredentialsTest {
+    @Test
+    void windowsDpapiScriptsLoadSecurityAssemblyAndStopOnErrors() throws Exception {
+        String source = Files.readString(Path.of("src/services/ServerSupabaseCredentials.java"));
+
+        assertTrue(source.contains("Add-Type -AssemblyName System.Security"));
+        assertTrue(source.contains("$ErrorActionPreference='Stop'"));
+        assertTrue(source.contains("Windows DPAPI returned no encrypted data."));
+        assertTrue(source.contains("Windows DPAPI returned no decrypted data."));
+    }
+
     @Test
     void acceptsOnlyConfiguredProjectServiceRoleJwt() {
         assertDoesNotThrow(() -> ServerSupabaseCredentials.validate(

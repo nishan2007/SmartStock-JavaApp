@@ -1,12 +1,19 @@
 package services;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import data.DB;
+import data.DatabaseConfig;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.time.ZoneId;
 
@@ -27,6 +34,140 @@ public final class ServerStoreSetupService {
             while (rows.next()) stores.add(store(rows));
         }
         return stores;
+    }
+
+    public static List<Store> listCloud() throws SQLException {
+        JsonArray rows = cloudLocationRows();
+        List<Store> stores = new ArrayList<>();
+        for (JsonElement element : rows) {
+            JsonObject row = element.getAsJsonObject();
+            int id = requiredPositiveInt(row, "location_id");
+            String name = requiredText(row, "name", 200);
+            String code = requiredText(row, "receipt_store_code", 20);
+            String timezone = requiredText(row, "timezone", 100);
+            if (!validStoreCode(code)) {
+                throw new SQLException("Cloud store " + id + " has an invalid four-digit store code.");
+            }
+            try {
+                ZoneId.of(timezone);
+            } catch (Exception ex) {
+                throw new SQLException("Cloud store " + id + " has an invalid timezone.", ex);
+            }
+            stores.add(new Store(id, name, code, timezone));
+        }
+        stores.sort(Comparator.comparing(Store::name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(Store::locationId));
+        return stores;
+    }
+
+    public static Store restoreFromCloud(Store selected) throws SQLException {
+        if (selected == null) throw new IllegalArgumentException("Select an existing store.");
+        JsonArray selectedRows = new JsonArray();
+        for (JsonElement element : cloudLocationRows()) {
+            JsonObject row = element.getAsJsonObject();
+            if (requiredPositiveInt(row, "location_id") == selected.locationId()) {
+                selectedRows.add(row);
+                break;
+            }
+        }
+        if (selectedRows.isEmpty()) {
+            throw new SQLException("The selected store is no longer available in this environment.");
+        }
+        try (Connection connection = DB.getConnection()) {
+            CloudRecoveryService.restoreRows(connection, "locations", selectedRows);
+            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(selected.locationId());
+            CloudRecoveryService.restoreStoreMirror(connection, selected.locationId(), mirror);
+            try (PreparedStatement sequence = connection.prepareStatement("""
+                    SELECT setval(pg_get_serial_sequence('locations','location_id'),
+                                  GREATEST(COALESCE((SELECT MAX(location_id) FROM locations), 1), 1),
+                                  EXISTS (SELECT 1 FROM locations))
+                    """)) {
+                sequence.execute();
+            }
+        } catch (IOException ex) {
+            throw new SQLException("Could not restore the selected store from Supabase.", ex);
+        }
+        Store restored = find(String.valueOf(selected.locationId()));
+        if (restored == null) throw new SQLException("The selected store could not be restored locally.");
+        return restored;
+    }
+
+    /** Repairs an interrupted existing-store restore using the saved assignment. */
+    public static Store restoreAssignedFromCloud() throws SQLException {
+        Integer locationId = DatabaseConfig.load().locationId();
+        if (locationId == null) throw new SQLException("No existing store is assigned locally.");
+        Store selected = listCloud().stream()
+                .filter(store -> store.locationId() == locationId)
+                .findFirst()
+                .orElseThrow(() -> new SQLException(
+                        "The assigned store is no longer available in this environment."));
+        return restoreFromCloud(selected);
+    }
+
+    static List<Store> parseCloudStores(String json) throws SQLException {
+        try {
+            JsonElement parsed = JsonParser.parseString(json);
+            if (!parsed.isJsonArray()) throw new SQLException("Cloud stores response was not a list.");
+            List<Store> stores = new ArrayList<>();
+            for (JsonElement element : parsed.getAsJsonArray()) {
+                JsonObject row = element.getAsJsonObject();
+                stores.add(new Store(requiredPositiveInt(row, "location_id"),
+                        requiredText(row, "name", 200),
+                        requiredText(row, "receipt_store_code", 20),
+                        requiredText(row, "timezone", 100)));
+            }
+            return stores;
+        } catch (RuntimeException ex) {
+            throw new SQLException("Supabase returned invalid store information.", ex);
+        }
+    }
+
+    private static JsonArray cloudLocationRows() throws SQLException {
+        JsonArray all = new JsonArray();
+        int offset = 0;
+        try {
+            while (true) {
+                SupabaseServerApi.Response response =
+                        SupabaseServerApi.getTablePage("locations", offset, 1_000);
+                if (!response.successful()) {
+                    throw new SQLException(SupabaseServerApi.failureMessage(
+                            "Loading existing stores", response));
+                }
+                JsonElement parsed = JsonParser.parseString(response.body());
+                if (!parsed.isJsonArray()) throw new SQLException("Cloud stores response was not a list.");
+                JsonArray page = parsed.getAsJsonArray();
+                page.forEach(all::add);
+                if (page.size() < 1_000) break;
+                offset += page.size();
+            }
+            return all;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Loading existing stores was interrupted.", ex);
+        } catch (IOException | RuntimeException ex) {
+            throw new SQLException("Could not load existing stores from Supabase.", ex);
+        }
+    }
+
+    private static int requiredPositiveInt(JsonObject row, String field) throws SQLException {
+        if (!row.has(field) || row.get(field).isJsonNull()) {
+            throw new SQLException("Cloud store is missing " + field + ".");
+        }
+        int value = row.get(field).getAsInt();
+        if (value <= 0) throw new SQLException("Cloud store has an invalid " + field + ".");
+        return value;
+    }
+
+    private static String requiredText(JsonObject row, String field, int maxLength)
+            throws SQLException {
+        if (!row.has(field) || row.get(field).isJsonNull()) {
+            throw new SQLException("Cloud store is missing " + field + ".");
+        }
+        String value = row.get(field).getAsString().trim();
+        if (value.isBlank() || value.length() > maxLength) {
+            throw new SQLException("Cloud store has an invalid " + field + ".");
+        }
+        return value;
     }
 
     public static Store find(String identifier) throws SQLException {

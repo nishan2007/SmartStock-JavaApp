@@ -14,6 +14,48 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class ServerProvisioningService {
+    private static final List<String> LOCAL_WORKFLOW_SCHEMAS = List.of(
+            "database/permission_descriptions_setup.sql",
+            "database/permission_descriptions_and_sections_backfill.sql",
+            "database/employee_schedule_setup.sql",
+            "database/location_management_setup.sql",
+            "database/store_timezone_setup.sql",
+            "database/department_setup.sql",
+            "database/item_details_setup.sql",
+            "database/vendor_setup.sql",
+            "database/held_cart_setup.sql",
+            "database/product_type_setup.sql",
+            "database/product_size_setup.sql",
+            "database/product_sku_setup.sql",
+            "database/customer_type_setup.sql",
+            "database/device_management_setup.sql",
+            "database/hardware_setup_permission.sql",
+            "database/company_customization_setup.sql",
+            "database/company_customization_permission.sql",
+            "database/company_preferences_permission.sql",
+            "database/returns_setup.sql",
+            "database/sale_discount_setup.sql",
+            "database/normal_sales_audit_setup.sql",
+            "database/sale_override_controls_setup.sql",
+            "database/sales_transaction_source_setup.sql",
+            "database/custom_orders_setup.sql",
+            "database/cash_drawer_management_setup.sql",
+            "database/balance_sheet_expenses_setup.sql",
+            "database/time_clock_setup.sql",
+            "database/store_transfer_setup.sql",
+            "database/end_of_day_setup.sql",
+            "database/maintenance_management_setup.sql",
+            "database/inventory_sensitive_permissions.sql",
+            "database/custom_order_sku_setup.sql",
+            "database/custom_order_controls_setup.sql",
+            "database/custom_order_line_discount_setup.sql",
+            "database/custom_order_safety_controls_setup.sql",
+            "database/quotations_invoices_setup.sql",
+            "database/notification_permissions_setup.sql",
+            "database/workflow_sync_identity_setup.sql",
+            "database/app_updates_setup.sql"
+    );
+
     public static void testLocalConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getConnection()) { } }
     public static void testCloudConnection() throws Exception {
         if (!ServerSupabaseCredentials.isConfigured()) {
@@ -93,47 +135,11 @@ public final class ServerProvisioningService {
     }
 
     private static int installLocalWorkflowSchemas(Connection local) throws Exception {
-        return SqlScriptRunner.runScripts(local, List.of(
-                "database/permission_descriptions_setup.sql",
-                "database/permission_descriptions_and_sections_backfill.sql",
-                "database/employee_schedule_setup.sql",
-                "database/location_management_setup.sql",
-                "database/store_timezone_setup.sql",
-                "database/department_setup.sql",
-                "database/item_details_setup.sql",
-                "database/vendor_setup.sql",
-                "database/held_cart_setup.sql",
-                "database/product_type_setup.sql",
-                "database/product_size_setup.sql",
-                "database/product_sku_setup.sql",
-                "database/customer_type_setup.sql",
-                "database/device_management_setup.sql",
-                "database/hardware_setup_permission.sql",
-                "database/company_customization_setup.sql",
-                "database/company_customization_permission.sql",
-                "database/company_preferences_permission.sql",
-                "database/returns_setup.sql",
-                "database/sale_discount_setup.sql",
-                "database/normal_sales_audit_setup.sql",
-                "database/sale_override_controls_setup.sql",
-                "database/sales_transaction_source_setup.sql",
-                "database/cash_drawer_management_setup.sql",
-                "database/balance_sheet_expenses_setup.sql",
-                "database/time_clock_setup.sql",
-                "database/store_transfer_setup.sql",
-                "database/end_of_day_setup.sql",
-                "database/maintenance_management_setup.sql",
-                "database/inventory_sensitive_permissions.sql",
-                "database/custom_orders_setup.sql",
-                "database/custom_order_sku_setup.sql",
-                "database/custom_order_controls_setup.sql",
-                "database/custom_order_line_discount_setup.sql",
-                "database/custom_order_safety_controls_setup.sql",
-                "database/quotations_invoices_setup.sql",
-                "database/notification_permissions_setup.sql",
-                "database/workflow_sync_identity_setup.sql",
-                "database/app_updates_setup.sql"
-        ));
+        return SqlScriptRunner.runScripts(local, LOCAL_WORKFLOW_SCHEMAS);
+    }
+
+    static List<String> localWorkflowSchemaResources() {
+        return LOCAL_WORKFLOW_SCHEMAS;
     }
 
     private static void installWorkflowSyncIdentitySchema(Connection cloud) throws Exception {

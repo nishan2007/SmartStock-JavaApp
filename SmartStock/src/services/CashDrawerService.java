@@ -1043,30 +1043,7 @@ public final class CashDrawerService {
                         )
                         """);
                 stmt.executeUpdate("ALTER TABLE cash_drawer_sessions ENABLE ROW LEVEL SECURITY");
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_sessions_service_role_all ON cash_drawer_sessions");
-                stmt.executeUpdate("""
-                        CREATE POLICY cash_drawer_sessions_service_role_all
-                        ON cash_drawer_sessions
-                        FOR ALL
-                        TO service_role
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_sessions_authenticated_all ON cash_drawer_sessions");
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_sessions_location_access ON cash_drawer_sessions");
-                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
-                        CREATE POLICY cash_drawer_sessions_location_access
-                        ON cash_drawer_sessions FOR ALL TO authenticated
-                        USING ((SELECT public.current_app_user_has_location(location_id)))
-                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
-                        """ : """
-                        CREATE POLICY cash_drawer_sessions_authenticated_all
-                        ON cash_drawer_sessions
-                        FOR ALL
-                        TO authenticated
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
+                installHostedPolicies(conn, stmt, "cash_drawer_sessions");
                 stmt.executeUpdate("ALTER TABLE cash_drawer_sessions ADD COLUMN IF NOT EXISTS main_cashier_user_id INTEGER REFERENCES users(user_id)");
                 stmt.executeUpdate("ALTER TABLE cash_drawer_sessions ADD COLUMN IF NOT EXISTS main_cashier_name TEXT");
                 stmt.executeUpdate("ALTER TABLE cash_drawer_sessions ADD COLUMN IF NOT EXISTS current_cashier_user_id INTEGER REFERENCES users(user_id)");
@@ -1108,30 +1085,7 @@ public final class CashDrawerService {
                         )
                         """);
                 stmt.executeUpdate("ALTER TABLE cash_drawer_handovers ENABLE ROW LEVEL SECURITY");
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_handovers_service_role_all ON cash_drawer_handovers");
-                stmt.executeUpdate("""
-                        CREATE POLICY cash_drawer_handovers_service_role_all
-                        ON cash_drawer_handovers
-                        FOR ALL
-                        TO service_role
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_handovers_authenticated_all ON cash_drawer_handovers");
-                stmt.executeUpdate("DROP POLICY IF EXISTS cash_drawer_handovers_location_access ON cash_drawer_handovers");
-                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
-                        CREATE POLICY cash_drawer_handovers_location_access
-                        ON cash_drawer_handovers FOR ALL TO authenticated
-                        USING ((SELECT public.current_app_user_has_location(location_id)))
-                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
-                        """ : """
-                        CREATE POLICY cash_drawer_handovers_authenticated_all
-                        ON cash_drawer_handovers
-                        FOR ALL
-                        TO authenticated
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
+                installHostedPolicies(conn, stmt, "cash_drawer_handovers");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cash_drawer_handovers_session_idx ON cash_drawer_handovers(cash_drawer_session_id, handed_over_at DESC)");
                 stmt.executeUpdate("""
                         CREATE UNIQUE INDEX IF NOT EXISTS cash_drawer_one_open_session_idx
@@ -1169,30 +1123,7 @@ public final class CashDrawerService {
                         )
                         """);
                 stmt.executeUpdate("ALTER TABLE change_basket_updates ENABLE ROW LEVEL SECURITY");
-                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_service_role_all ON change_basket_updates");
-                stmt.executeUpdate("""
-                        CREATE POLICY change_basket_updates_service_role_all
-                        ON change_basket_updates
-                        FOR ALL
-                        TO service_role
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
-                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_authenticated_all ON change_basket_updates");
-                stmt.executeUpdate("DROP POLICY IF EXISTS change_basket_updates_location_access ON change_basket_updates");
-                stmt.executeUpdate(hasLocationAuthorization(conn) ? """
-                        CREATE POLICY change_basket_updates_location_access
-                        ON change_basket_updates FOR ALL TO authenticated
-                        USING ((SELECT public.current_app_user_has_location(location_id)))
-                        WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))
-                        """ : """
-                        CREATE POLICY change_basket_updates_authenticated_all
-                        ON change_basket_updates
-                        FOR ALL
-                        TO authenticated
-                        USING (TRUE)
-                        WITH CHECK (TRUE)
-                        """);
+                installHostedPolicies(conn, stmt, "change_basket_updates");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_location_updated_idx ON change_basket_updates(location_id, updated_at DESC)");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_updated_by_user_idx ON change_basket_updates(updated_by_user_id) WHERE updated_by_user_id IS NOT NULL");
                 stmt.executeUpdate("CREATE INDEX IF NOT EXISTS change_basket_updates_device_idx ON change_basket_updates(device_id) WHERE device_id IS NOT NULL");
@@ -1599,6 +1530,43 @@ public final class CashDrawerService {
     private static boolean tableExists(Connection conn, String table) throws SQLException {
         try (ResultSet rs = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"})) {
             return rs.next();
+        }
+    }
+
+    private static void installHostedPolicies(Connection conn, Statement stmt, String table)
+            throws SQLException {
+        String quotedTable = quote(table);
+        stmt.executeUpdate("DROP POLICY IF EXISTS " + quote(table + "_service_role_all")
+                + " ON " + quotedTable);
+        stmt.executeUpdate("DROP POLICY IF EXISTS " + quote(table + "_authenticated_all")
+                + " ON " + quotedTable);
+        stmt.executeUpdate("DROP POLICY IF EXISTS " + quote(table + "_location_access")
+                + " ON " + quotedTable);
+        if (roleExists(conn, "service_role")) {
+            stmt.executeUpdate("CREATE POLICY " + quote(table + "_service_role_all")
+                    + " ON " + quotedTable
+                    + " FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE)");
+        }
+        if (roleExists(conn, "authenticated")) {
+            String policy = hasLocationAuthorization(conn)
+                    ? "CREATE POLICY " + quote(table + "_location_access")
+                    + " ON " + quotedTable + " FOR ALL TO authenticated "
+                    + "USING ((SELECT public.current_app_user_has_location(location_id))) "
+                    + "WITH CHECK ((SELECT public.current_app_user_has_location(location_id)))"
+                    : "CREATE POLICY " + quote(table + "_authenticated_all")
+                    + " ON " + quotedTable + " FOR ALL TO authenticated "
+                    + "USING (TRUE) WITH CHECK (TRUE)";
+            stmt.executeUpdate(policy);
+        }
+    }
+
+    private static boolean roleExists(Connection conn, String role) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ?)")) {
+            ps.setString(1, role);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
         }
     }
 
