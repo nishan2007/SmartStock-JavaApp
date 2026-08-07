@@ -828,7 +828,7 @@ public class DatabaseSetup extends JFrame {
 
         int confirm = JOptionPane.showConfirmDialog(this,
                 "SmartStock will now:\n"
-                        + "• Save this production Supabase project\n"
+                        + "• Save this environment's Supabase project\n"
                         + "• Install automatic Windows startup\n"
                         + "• Allow port 8443 only from " + lanSubnet + "\n"
                         + "• Start the LAN and background sync service\n\n"
@@ -845,7 +845,7 @@ public class DatabaseSetup extends JFrame {
                 throw new IllegalStateException(
                         "Complete the local database, Store Location ID, and Supabase Server Key fields first.");
             }
-            SupabaseProjectConfig.saveProductionPublicConfig(
+            SupabaseProjectConfig.savePublicConfig(EnvironmentProfile.active(),
                     projectUrl, publishableKey, lanSubnet);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
@@ -868,8 +868,8 @@ public class DatabaseSetup extends JFrame {
                 try {
                     PostgresRuntimeService.CommandResult result = get();
                     statusLabel.setText(result.success()
-                            ? "Status: Windows production server setup completed."
-                            : "Status: Windows production server setup failed.");
+                            ? "Status: Windows server setup completed."
+                            : "Status: Windows server setup failed.");
                     showCommandOutput("Complete Windows Server Setup", result.output());
                     if (result.success()) {
                         JOptionPane.showMessageDialog(DatabaseSetup.this,
@@ -878,7 +878,7 @@ public class DatabaseSetup extends JFrame {
                                 "Production Server Ready", JOptionPane.INFORMATION_MESSAGE);
                     }
                 } catch (Exception ex) {
-                    statusLabel.setText("Status: Windows production server setup failed.");
+                    statusLabel.setText("Status: Windows server setup failed.");
                     JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex),
                             "Production Server Setup", JOptionPane.ERROR_MESSAGE);
                 }

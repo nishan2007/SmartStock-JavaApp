@@ -42,6 +42,19 @@ final class CloudRecoveryService {
 
     static int restoreStoreMirror(Connection target, int locationId,
                                   CloudSyncManifest mirrorManifest) throws SQLException {
+        return restoreStoreMirror(target, locationId, mirrorManifest, false);
+    }
+
+    static int restoreReplacementStoreMirror(Connection target, int locationId,
+                                              CloudSyncManifest mirrorManifest)
+            throws SQLException {
+        return restoreStoreMirror(target, locationId, mirrorManifest, true);
+    }
+
+    private static int restoreStoreMirror(Connection target, int locationId,
+                                          CloudSyncManifest mirrorManifest,
+                                          boolean reconcilePermissionAssignments)
+            throws SQLException {
         List<String> ordered = new ArrayList<>(ReferenceDataSyncService.cloudPullOrderForApi());
         Set<String> remaining = new LinkedHashSet<>(mirrorManifest.tables().keySet());
         remaining.removeAll(ordered);
@@ -50,7 +63,8 @@ final class CloudRecoveryService {
         RecoveryReferences references = new RecoveryReferences();
         for (String table : ordered) {
             if (!mirrorManifest.hasTable(table) || !tableExists(target, table)) continue;
-            restored += restoreMirroredTable(target, locationId, table, references);
+            restored += restoreMirroredTable(target, locationId, table, references,
+                    reconcilePermissionAssignments);
         }
         repairOwnedSequences(target);
         return restored;
@@ -77,7 +91,8 @@ final class CloudRecoveryService {
     }
 
     private static int restoreMirroredTable(Connection target, int locationId, String table,
-                                            RecoveryReferences references)
+                                            RecoveryReferences references,
+                                            boolean reconcilePermissionAssignments)
             throws SQLException {
         Map<String, String> targetTypes = writableColumnTypes(target, table);
         if (targetTypes.isEmpty()) return 0;
@@ -86,6 +101,12 @@ final class CloudRecoveryService {
         boolean oldAutoCommit = target.getAutoCommit();
         target.setAutoCommit(false);
         try {
+            if (reconcilePermissionAssignments && "role_permissions".equals(table)) {
+                try (PreparedStatement delete = target.prepareStatement(
+                        "DELETE FROM role_permissions")) {
+                    delete.executeUpdate();
+                }
+            }
             while (true) {
                 JsonObject page = fetchMirrorPage(locationId, table, cursor);
                 JsonArray envelopeRows = page.getAsJsonArray("rows");

@@ -29,7 +29,7 @@ public final class StoreHydrationService {
         if(locationId==null)return VerifiedHydrationResult.skipped("No store selected.");
         try{
             CloudSyncManifest mirror=CloudSyncManifest.fetchStoreSnapshot(locationId);
-            int rows=CloudRecoveryService.restoreStoreMirror(local,locationId,mirror);
+            int rows=CloudRecoveryService.restoreReplacementStoreMirror(local,locationId,mirror);
             ProductionRecoveryDrillService.verifyRestoredStore(local,mirror);
             ImageCacheWarmupService.warmLocalCache(local);
             return VerifiedHydrationResult.synced(rows,mirror.totalRowCount());

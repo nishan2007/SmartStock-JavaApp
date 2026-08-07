@@ -171,6 +171,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/sales/settings", exchange -> handle(exchange, this::salesSettings));
         server.createContext("/v1/sales/checkout", exchange -> handle(exchange, this::checkout));
         server.createContext("/v1/sales/search", exchange -> handle(exchange, this::searchSales));
+        server.createContext("/v1/sales/return-stores", exchange -> handle(exchange, this::returnStores));
         server.createContext("/v1/sales/return-details", exchange -> handle(exchange, this::returnDetails));
         server.createContext("/v1/sales/refund", exchange -> handle(exchange, this::refund));
         server.createContext("/v1/sales/receipt", exchange -> handle(exchange, this::saleReceipt));
@@ -180,6 +181,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/held-carts/list", exchange -> handle(exchange, this::listHeldCarts));
         server.createContext("/v1/held-carts/resume", exchange -> handle(exchange, this::resumeHeldCart));
         server.createContext("/v1/inventory/lookups", exchange -> handle(exchange, this::inventoryLookups));
+        server.createContext("/v1/inventory/cross-store-search", exchange -> handle(exchange, this::crossStoreInventorySearch));
         server.createContext("/v1/inventory/receiving-search", exchange -> handle(exchange, this::receivingSearch));
         server.createContext("/v1/inventory/list", exchange -> handle(exchange, this::inventoryList));
         server.createContext("/v1/inventory/details", exchange -> handle(exchange, this::inventoryDetails));
@@ -1387,11 +1389,28 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device = authenticateDevice(context.exchange());
         SessionPrincipal session = authenticateSession(context.exchange(), device, true);
         try (Connection connection = DB.getConnection()) {
+            Integer requested=context.body().has("locationId")&&!context.body().get("locationId").isJsonNull()
+                    ?context.body().get("locationId").getAsInt():session.locationId();
+            boolean all=context.body().has("allStores")&&context.body().get("allStores").getAsBoolean();
             try {
-                return ApiResult.ok(Map.of("transactions", LanSalesHistoryService.history(
-                        connection, context.body(), session.userId(), session.locationId())));
+                List<Map<String,Object>> transactions=new ArrayList<>();
+                List<?> stores=List.of();
+                if(all||requested==session.locationId())transactions.addAll(LanSalesHistoryService.history(
+                        connection,context.body(),session.userId(),session.locationId()));
+                if(all||requested!=session.locationId()){
+                    CrossStoreSalesService.HistoryResult remote=CrossStoreSalesService.history(connection,
+                            session.userId(),session.locationId(),optional(context.body(),"search",300),
+                            optional(context.body(),"fromDate",20),optional(context.body(),"toDate",20),
+                            all?null:requested);
+                    transactions.addAll(remote.transactions());stores=remote.stores();
+                }
+                transactions.sort((a,b)->Long.compare(((Number)b.get("createdAtEpochMillis")).longValue(),((Number)a.get("createdAtEpochMillis")).longValue()));
+                Map<String,Object> result=new LinkedHashMap<>();result.put("transactions",transactions);result.put("stores",stores);
+                result.put("currentLocationId",session.locationId());return ApiResult.ok(result);
             } catch (LanSalesHistoryService.RuleViolation ex) {
                 throw apiException(ex);
+            } catch(CrossStoreSalesService.RuleViolation ex){
+                throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
             }
         }
     }
@@ -1401,12 +1420,16 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device = authenticateDevice(context.exchange());
         SessionPrincipal session = authenticateSession(context.exchange(), device, true);
         int saleId = requiredInt(context.body(), "saleId");
+        Integer sourceLocationId=context.body().has("sourceLocationId")&&!context.body().get("sourceLocationId").isJsonNull()
+                ?context.body().get("sourceLocationId").getAsInt():session.locationId();
         try (Connection connection = DB.getConnection()) {
             try {
-                return ApiResult.ok(LanSalesHistoryService.details(
-                        connection, saleId, session.userId(), session.locationId()));
+                return ApiResult.ok(sourceLocationId==session.locationId()
+                        ?LanSalesHistoryService.details(connection,saleId,session.userId(),session.locationId())
+                        :CrossStoreSalesService.details(connection,session.userId(),session.locationId(),sourceLocationId,saleId));
             } catch (LanSalesHistoryService.RuleViolation ex) {
                 throw apiException(ex);
+            } catch(CrossStoreSalesService.RuleViolation ex){throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
             }
         }
     }
@@ -1439,6 +1462,22 @@ public final class LanApiServer implements AutoCloseable {
         try(Connection connection=DB.getConnection()){
             try{return ApiResult.ok(LanInventoryService.inventory(connection,context.body(),session.userId(),session.locationId()));}
             catch(LanInventoryService.RuleViolation ex){throw apiException(ex);}
+        }
+    }
+
+    private ApiResult crossStoreInventorySearch(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        String query=optional(context.body(),"query",300);
+        Integer locationId=context.body().has("locationId")&&!context.body().get("locationId").isJsonNull()
+                ? context.body().get("locationId").getAsInt():null;
+        try(Connection connection=DB.getConnection()){
+            try{return ApiResult.ok(CrossStoreInventoryService.search(
+                    connection,session.userId(),session.locationId(),query,locationId));}
+            catch(CrossStoreInventoryService.RuleViolation ex){
+                throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
+            }
         }
     }
 
@@ -2692,13 +2731,27 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device = authenticateDevice(context.exchange());
         SessionPrincipal session = authenticateSession(context.exchange(), device, true);
         String query = optional(context.body(), "query", 300);
+        Integer source=context.body().has("sourceLocationId")&&!context.body().get("sourceLocationId").isJsonNull()
+                ?context.body().get("sourceLocationId").getAsInt():session.locationId();
         try (Connection connection = DB.getConnection()) {
             try {
-                return ApiResult.ok(Map.of("sales", LanRefundService.search(
-                        connection, query, session.userId(), session.locationId())));
+                return ApiResult.ok(Map.of("sales",source==session.locationId()
+                        ?LanRefundService.search(connection,query,session.userId(),session.locationId())
+                        :CrossStoreSalesService.searchForReturn(connection,session.userId(),session.locationId(),query,source)));
             } catch (LanRefundService.RuleViolation ex) {
                 throw apiException(ex);
+            } catch(CrossStoreSalesService.RuleViolation ex){throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
             }
+        }
+    }
+
+    private ApiResult returnStores(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection connection=DB.getConnection()){
+            try{return ApiResult.ok(Map.of("stores",CrossStoreSalesService.returnStoreOptions(connection,session.userId(),session.locationId())));}
+            catch(CrossStoreSalesService.RuleViolation ex){throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
         }
     }
 
@@ -2707,12 +2760,16 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device = authenticateDevice(context.exchange());
         SessionPrincipal session = authenticateSession(context.exchange(), device, true);
         int saleId = requiredInt(context.body(), "saleId");
+        Integer source=context.body().has("sourceLocationId")&&!context.body().get("sourceLocationId").isJsonNull()
+                ?context.body().get("sourceLocationId").getAsInt():session.locationId();
         try (Connection connection = DB.getConnection()) {
             try {
-                return ApiResult.ok(LanRefundService.details(
-                        connection, saleId, session.userId(), session.locationId()));
+                return ApiResult.ok(source==session.locationId()
+                        ?LanRefundService.details(connection,saleId,session.userId(),session.locationId())
+                        :CrossStoreSalesService.returnDetails(connection,session.userId(),session.locationId(),source,saleId));
             } catch (LanRefundService.RuleViolation ex) {
                 throw apiException(ex);
+            } catch(CrossStoreSalesService.RuleViolation ex){throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
             }
         }
     }
@@ -2740,7 +2797,13 @@ public final class LanApiServer implements AutoCloseable {
                 AuthenticatedUser user = loadUser(connection, session.userId(), session.locationId());
                 Map<String, Object> result;
                 try {
-                    result = LanRefundService.refund(connection, context.body(), device.deviceId(),
+                    boolean cross=context.body().has("sourceLocationId")&&!context.body().get("sourceLocationId").isJsonNull()
+                            &&context.body().get("sourceLocationId").getAsInt()!=session.locationId();
+                    result = cross?CrossStoreRefundService.refund(connection,context.body(),device.deviceId(),
+                            session.userId(),user.fullName()==null||user.fullName().isBlank()?user.username():user.fullName(),
+                            session.locationId(),(token,permission,action,reason,resourceIdentity)->consumeResourceApproval(
+                                    connection,device,session,token,permission,action,reason,resourceIdentity))
+                            :LanRefundService.refund(connection, context.body(), device.deviceId(),
                             session.userId(), user.fullName() == null || user.fullName().isBlank()
                                     ? user.username() : user.fullName(), session.locationId(),
                             (token, permission, action, reason, resourceIdentity) ->
@@ -2748,6 +2811,8 @@ public final class LanApiServer implements AutoCloseable {
                                             permission, action, reason, resourceIdentity));
                 } catch (LanRefundService.RuleViolation ex) {
                     throw apiException(ex);
+                } catch(CrossStoreRefundService.RuleViolation ex){
+                    throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),ex.retryable());
                 }
                 completeIdempotency(connection, device.deviceId(), idempotencyKey.trim(), result);
                 connection.commit();

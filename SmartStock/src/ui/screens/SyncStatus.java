@@ -1,19 +1,25 @@
 package ui.screens;
 
+import data.DatabaseConfig;
 import services.LanApiClient;
 import ui.helpers.ThemeManager;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
+import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 
 public class SyncStatus extends JFrame {
     private final JLabel statusLabel = new JLabel();
+    private final JLabel syncTimingLabel = new JLabel();
+    private static final DateTimeFormatter SYNC_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("MMM d, yyyy h:mm:ss a");
     private final DefaultTableModel conflictModel = new DefaultTableModel(
             new Object[]{"ID", "Event", "Type", "Status", "Created"}, 0
     ) {
@@ -71,7 +77,12 @@ public class SyncStatus extends JFrame {
 
         JPanel root = new JPanel(new BorderLayout(10, 10));
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        root.add(statusLabel, BorderLayout.NORTH);
+        JPanel statusHeader = new JPanel();
+        statusHeader.setLayout(new BoxLayout(statusHeader, BoxLayout.Y_AXIS));
+        statusHeader.add(statusLabel);
+        statusHeader.add(Box.createVerticalStrut(5));
+        statusHeader.add(syncTimingLabel);
+        root.add(statusHeader, BorderLayout.NORTH);
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Conflicts", new JScrollPane(conflictsTable));
         tabs.addTab("Audit History", new JScrollPane(auditTable));
@@ -105,8 +116,11 @@ public class SyncStatus extends JFrame {
                     + " | Pending: " + status.pendingCount()
                     + " | Failed: " + status.failedCount()
                     + " | Conflicts: " + status.conflictCount()
-                    + " | Last success: " + instantOrNever(status.lastSuccessEpochMillis())
                     + (status.lastError() == null ? "" : " | Error: " + status.lastError()));
+            long intervalMillis = Math.max(15, DatabaseConfig.load().syncIntervalSeconds()) * 1_000L;
+            long nextSync = nextSyncEpochMillis(status.lastSuccessEpochMillis(), intervalMillis);
+            syncTimingLabel.setText("Last Sync: " + displayTimeOrNever(status.lastSuccessEpochMillis())
+                    + "   |   Next Sync: " + displayNextSync(nextSync));
     }
 
     private void resolveSelected(JTable table) {
@@ -122,7 +136,24 @@ public class SyncStatus extends JFrame {
         return epochMillis <= 0 ? "" : Instant.ofEpochMilli(epochMillis);
     }
 
-    private static Object instantOrNever(long epochMillis) {
-        return epochMillis <= 0 ? "Never" : Instant.ofEpochMilli(epochMillis);
+    static long nextSyncEpochMillis(long lastSuccessEpochMillis, long intervalMillis) {
+        if (lastSuccessEpochMillis <= 0 || intervalMillis <= 0) return 0;
+        return lastSuccessEpochMillis + intervalMillis;
+    }
+
+    private static String displayTimeOrNever(long epochMillis) {
+        return epochMillis <= 0 ? "Never" : displayTime(epochMillis);
+    }
+
+    private static String displayNextSync(long epochMillis) {
+        if (epochMillis <= 0) return "Waiting for first sync";
+        return epochMillis <= System.currentTimeMillis()
+                ? "Due now (scheduled " + displayTime(epochMillis) + ")"
+                : displayTime(epochMillis);
+    }
+
+    private static String displayTime(long epochMillis) {
+        return SYNC_TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis)
+                .atZone(StoreTimeZoneHelper.getStoreZone()));
     }
 }

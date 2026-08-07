@@ -81,18 +81,30 @@ try {
     New-Item -ItemType Directory -Force -Path $DependencyDir | Out-Null
     Copy-Item -LiteralPath $Jar.FullName -Destination $InputDir
     Copy-Item -Path (Join-Path $Target "dependency\*") -Destination $DependencyDir -Recurse
+    $ServerLauncherProperties = Join-Path $Work "SmartStockServer.properties"
+    Set-Content -LiteralPath $ServerLauncherProperties -Encoding ASCII -Value @(
+        "main-jar=$($Jar.Name)",
+        "main-class=app.Main",
+        "arguments=--sync-service",
+        "description=SmartStock LAN API and synchronization server",
+        "icon=$WindowsIcon"
+    )
 
     New-Item -ItemType Directory -Force -Path $Release | Out-Null
     & jpackage --type app-image --name SmartStock --input $InputDir `
         --main-jar $Jar.Name --main-class app.Main --dest $Work `
         --app-version $Version `
         --icon $WindowsIcon `
+        --add-launcher "SmartStockServer=$ServerLauncherProperties" `
         --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.crypto.ec,jdk.httpserver,jdk.unsupported"
     if ($LASTEXITCODE -ne 0) { throw "jpackage failed." }
 
     $AppImage = Join-Path $Work "SmartStock"
     if (-not (Test-Path (Join-Path $AppImage "runtime"))) {
         throw "The Windows package was created without its bundled Java runtime."
+    }
+    if (-not (Test-Path (Join-Path $AppImage "SmartStockServer.exe"))) {
+        throw "The Windows package was created without the named SmartStock server launcher."
     }
     Set-Content -LiteralPath (Join-Path $AppImage "START-SMARTSTOCK-SETUP.cmd") -Encoding ASCII -Value @(
         "@echo off",
@@ -142,7 +154,7 @@ Name: "{group}\SmartStock"; Filename: "{app}\SmartStock.exe"
 Name: "{autodesktop}\SmartStock"; Filename: "{app}\SmartStock.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\SmartStock.exe"; Description: "Launch SmartStock and continue Guided Setup"; Flags: nowait skipifsilent runasoriginaluser
+Filename: "{app}\SmartStock.exe"; Description: "Launch SmartStock"; Flags: nowait skipifsilent runasoriginaluser
 "@
 
     & iscc $InstallerScript

@@ -588,12 +588,29 @@ public final class BaseSchemaInstaller {
                         ('VIEW_EMPLOYEE_SCHEDULE', 'View Employee Schedule', 'Allows viewing who is scheduled to work each day.', 'People', 'Scheduling'),
                         ('EDIT_EMPLOYEE_SCHEDULE', 'Edit Employee Schedule', 'Allows adding and removing employees from the weekly schedule.', 'People', 'Scheduling'),
                         ('SCHEDULE_OTHER_STORES', 'Schedule Other Stores', 'Allows viewing and scheduling employees at stores other than the selected login store.', 'People', 'Scheduling'),
+                        ('VIEW_MULTI_STORE_STOCK', 'View Multistore Stock', 'Allows viewing synchronized stock quantities from other stores.', 'Inventory', 'Item Visibility'),
+                        ('VIEW_MULTI_STORE_SALES', 'View Multistore Sales', 'Allows viewing synchronized sales and returns from other stores.', 'Point of Sale', 'Sales History'),
+                        ('PROCESS_MULTI_STORE_RETURNS', 'Process Multistore Returns', 'Allows paying and queuing returns for sales from another store.', 'Point of Sale', 'Returns'),
                         ('EDIT_BALANCE_SHEET', 'Edit Submitted Balance Sheet', 'Allows revising the latest submitted Balance Sheet during its 48-hour edit window.', 'Operations', 'Cash Drawer')
                     ON CONFLICT (permission_key) DO UPDATE SET
                         permission_name = EXCLUDED.permission_name,
                         description = EXCLUDED.description,
                         permission_group = EXCLUDED.permission_group,
                         permission_subgroup = EXCLUDED.permission_subgroup
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions(role_id,permission_id)
+                    SELECT r.role_id,p.permission_id FROM roles r CROSS JOIN permissions p
+                    WHERE UPPER(r.role_name) IN ('ADMIN','OWNER','CEO')
+                      AND p.permission_key IN ('VIEW_MULTI_STORE_STOCK','VIEW_MULTI_STORE_SALES','PROCESS_MULTI_STORE_RETURNS')
+                    ON CONFLICT(role_id,permission_id) DO NOTHING
+                    """);
+            stmt.executeUpdate("""
+                    INSERT INTO role_permissions(role_id,permission_id)
+                    SELECT legacy.role_id,target.permission_id FROM role_permissions legacy
+                    JOIN permissions oldp ON oldp.permission_id=legacy.permission_id AND oldp.permission_key='VIEW_ALL_STORES_INVENTORY'
+                    JOIN permissions target ON target.permission_key='VIEW_MULTI_STORE_STOCK'
+                    ON CONFLICT(role_id,permission_id) DO NOTHING
                     """);
             stmt.executeUpdate("""
                     INSERT INTO role_permissions (role_id, permission_id)

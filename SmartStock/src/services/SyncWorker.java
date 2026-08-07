@@ -137,6 +137,15 @@ public final class SyncWorker {
                         CloudRowMirrorService.synchronize(local, config.locationId());
                 mirroredRows = mirror.uploaded();
                 ignored.heartbeat();
+                CrossStoreInventoryService.RefreshResult crossStore =
+                        CrossStoreInventoryService.refreshAll(local, config.locationId());
+                ignored.heartbeat();
+                CrossStoreSalesService.RefreshResult crossStoreSales =
+                        CrossStoreSalesService.refreshAll(local, config.locationId());
+                ignored.heartbeat();
+                CrossStoreRefundService.QueueResult crossStoreRefunds =
+                        CrossStoreRefundService.synchronize(local,config.locationId());
+                ignored.heartbeat();
                 CloudSyncApi.ExchangeResult exchange =
                         CloudSyncApi.exchange(local, config.locationId());
                 pushed = mirror.uploaded() + exchange.acknowledged();
@@ -150,11 +159,22 @@ public final class SyncWorker {
                         : "; materialized rows=" + mirroredRows;
                 String deltaMessage = downloadedEvents == 0 ? ""
                         : "; cloud deltas downloaded=" + downloadedEvents;
+                String crossStoreMessage = crossStore.storesRefreshed() == 0 ? ""
+                        : "; cross-store inventory rows=" + crossStore.rowsRefreshed();
+                if (crossStore.storesFailed() > 0) {
+                    crossStoreMessage += "; cross-store inventory stale stores=" + crossStore.storesFailed();
+                }
+                String crossStoreSalesMessage = "; cross-store sales=" + crossStoreSales.salesRefreshed();
+                if (crossStoreSales.storesFailed() > 0) {
+                    crossStoreSalesMessage += "; cross-store sales stale stores=" + crossStoreSales.storesFailed();
+                }
+                String crossStoreRefundMessage=crossStoreRefunds.sourceApplied()+crossStoreRefunds.destinationsApplied()==0?""
+                        :"; cross-store refunds applied="+(crossStoreRefunds.sourceApplied()+crossStoreRefunds.destinationsApplied());
                 String message = (automaticClosures == 0 ? "Cloud reachable"
                         : "Cloud reachable; automatically closed " + automaticClosures
                         + " stale time clock record"
                         + (automaticClosures == 1 ? "" : "s"))
-                        + imageMessage + mirrorMessage + deltaMessage + ".";
+                        + imageMessage + mirrorMessage + deltaMessage + crossStoreMessage + crossStoreSalesMessage + crossStoreRefundMessage + ".";
                 latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
                         countPending(local), countFailed(local), countConflicts(local), null,
                         SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));

@@ -42,7 +42,7 @@ class MacPackagingModulesTest {
     }
 
     @Test
-    void windowsReleaseBuildsNativeInstallerAndLaunchesFirstRunSetup() throws Exception {
+    void windowsReleaseBuildsNativeInstallerWithoutForcingSetupOnUpgrades() throws Exception {
         String windowsScript = Files.readString(Path.of("tools/package-windows-release.ps1"));
 
         assertTrue(windowsScript.contains("iscc"),
@@ -51,8 +51,16 @@ class MacPackagingModulesTest {
                 "The all-in-one installer must be able to install under Program Files");
         assertTrue(windowsScript.contains("runasoriginaluser"),
                 "SmartStock must launch as the signed-in user after installation");
-        assertTrue(windowsScript.contains("Launch SmartStock and continue Guided Setup"),
-                "A new installation must continue into SmartStock Guided Setup");
+        assertTrue(windowsScript.contains("Description: \"Launch SmartStock\""),
+                "The installer must launch SmartStock normally so saved setup is reused");
+        assertTrue(!windowsScript.contains("Launch SmartStock and continue Guided Setup"),
+                "An upgrade must not force Guided Setup");
+        assertTrue(windowsScript.contains("SmartStock.exe\" --setup-wizard"),
+                "The explicit setup launcher must remain available for first-time recovery");
+        assertTrue(windowsScript.contains("--add-launcher \"SmartStockServer=$ServerLauncherProperties\""),
+                "The background server must have a distinct Task Manager process name");
+        assertTrue(windowsScript.contains("arguments=--sync-service"),
+                "The named server launcher must always use background service mode");
         assertTrue(windowsScript.contains("--icon $WindowsIcon"),
                 "The installed executable and shortcuts must use the SmartStock icon");
         assertTrue(windowsScript.contains("SetupIconFile=$WindowsIcon"),

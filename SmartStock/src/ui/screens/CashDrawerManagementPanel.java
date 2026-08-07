@@ -168,7 +168,7 @@ public class CashDrawerManagementPanel extends JPanel {
     private JPanel buildEditorPanel() {
         JPanel panel = new JPanel(new BorderLayout(12, 12));
         panel.setOpaque(false);
-        panel.setPreferredSize(new Dimension(390, 0));
+        panel.setPreferredSize(new Dimension(420, 0));
 
         JPanel drawerEditor = new JPanel(new GridBagLayout());
         drawerEditor.setBackground(Color.WHITE);
@@ -206,7 +206,7 @@ public class CashDrawerManagementPanel extends JPanel {
         gbc.insets = new Insets(0, 0, 12, 0);
         drawerEditor.add(activeBox, gbc);
 
-        JPanel drawerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel drawerButtons = new JPanel(new GridLayout(1, 3, 8, 0));
         drawerButtons.setOpaque(false);
         drawerButtons.add(newButton);
         drawerButtons.add(clearButton);
@@ -237,7 +237,7 @@ public class CashDrawerManagementPanel extends JPanel {
         addFormRow(assignmentEditor, gbc, 1, "Device:", deviceBox);
         addFormRow(assignmentEditor, gbc, 2, "Notes:", new JScrollPane(assignmentNotesArea));
 
-        JPanel assignmentButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel assignmentButtons = new JPanel(new GridLayout(1, 2, 8, 0));
         assignmentButtons.setOpaque(false);
         assignmentButtons.add(unassignButton);
         assignmentButtons.add(assignButton);
@@ -252,7 +252,7 @@ public class CashDrawerManagementPanel extends JPanel {
         assignButton.addActionListener(e -> assignDevice());
         unassignButton.addActionListener(e -> unassignSelectedAssignment());
 
-        JPanel editorStack = new JPanel();
+        JPanel editorStack = new VerticalScrollablePanel();
         editorStack.setOpaque(false);
         editorStack.setLayout(new BoxLayout(editorStack, BoxLayout.Y_AXIS));
         drawerEditor.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -265,8 +265,44 @@ public class CashDrawerManagementPanel extends JPanel {
         editorStack.add(Box.createVerticalStrut(12));
         editorStack.add(assignmentEditor);
 
-        panel.add(editorStack, BorderLayout.NORTH);
+        JScrollPane editorScroll = new JScrollPane(editorStack,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        editorScroll.setBorder(BorderFactory.createEmptyBorder());
+        editorScroll.setOpaque(false);
+        editorScroll.getViewport().setOpaque(false);
+        editorScroll.getVerticalScrollBar().setUnitIncrement(16);
+        panel.add(editorScroll, BorderLayout.CENTER);
         return panel;
+    }
+
+    private static final class VerticalScrollablePanel extends JPanel implements Scrollable {
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation,
+                                              int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation,
+                                               int direction) {
+            return Math.max(16, visibleRect.height - 32);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
     }
 
     private JComponent buildChangeBasketPanel() {

@@ -50,6 +50,16 @@ public final class SyncSchemaInstaller {
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_inbox");
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_row_mirror_state");
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_row_mirror_completion");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_inventory_cache");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_inventory_status");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_sales_cache");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_sale_items_cache");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_returns_cache");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_return_items_cache");
+            SupabaseSecurityHardening.protectInternalTable(conn, "sync_cross_store_sales_status");
+            SupabaseSecurityHardening.protectInternalTable(conn, "cross_store_refund_requests");
+            SupabaseSecurityHardening.protectInternalTable(conn, "cross_store_refund_lines");
+            SupabaseSecurityHardening.protectInternalTable(conn, "cross_store_refund_reconciliation");
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_transfer_metrics");
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_applied_events");
             SupabaseSecurityHardening.protectInternalTable(conn, "sync_id_map");
@@ -116,6 +126,106 @@ public final class SyncSchemaInstaller {
                         completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_cache (
+                        source_location_id INTEGER NOT NULL,
+                        product_id INTEGER NOT NULL,
+                        store_name TEXT NOT NULL,
+                        sku TEXT,
+                        barcode TEXT,
+                        additional_barcodes TEXT,
+                        product_name TEXT NOT NULL,
+                        size TEXT,
+                        description TEXT,
+                        quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+                        reorder_level INTEGER NOT NULL DEFAULT 0,
+                        source_updated_at TIMESTAMPTZ,
+                        cache_refreshed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY(source_location_id,product_id)
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE INDEX IF NOT EXISTS sync_cross_store_inventory_store_name_idx
+                    ON sync_cross_store_inventory_cache(source_location_id,product_name)
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_status (
+                        source_location_id INTEGER PRIMARY KEY,
+                        store_name TEXT NOT NULL,
+                        row_count INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL,
+                        last_error TEXT,
+                        refreshed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_sales_cache(
+                      source_location_id INTEGER NOT NULL,sale_id INTEGER NOT NULL,store_name TEXT NOT NULL,
+                      receipt_number TEXT,customer_id INTEGER,user_name TEXT,payment_method TEXT,payment_status TEXT,
+                      subtotal_amount NUMERIC(14,2) NOT NULL DEFAULT 0,discount_percent NUMERIC(8,4) NOT NULL DEFAULT 0,
+                      discount_amount NUMERIC(14,2) NOT NULL DEFAULT 0,total_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+                      amount_paid NUMERIC(14,2) NOT NULL DEFAULT 0,returned_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+                      source_created_at TIMESTAMPTZ,source_updated_at TIMESTAMPTZ,cache_refreshed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      cache_status TEXT NOT NULL DEFAULT 'CURRENT',PRIMARY KEY(source_location_id,sale_id))
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sync_cross_store_sales_search_idx ON sync_cross_store_sales_cache(source_location_id,source_created_at DESC,receipt_number)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_sale_items_cache(
+                      source_location_id INTEGER NOT NULL,sale_id INTEGER NOT NULL,sale_item_id INTEGER NOT NULL,product_id INTEGER NOT NULL,
+                      sku TEXT,product_name TEXT NOT NULL,product_type TEXT NOT NULL DEFAULT 'INVENTORY',quantity INTEGER NOT NULL DEFAULT 0,
+                      unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,original_unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,
+                      discount_percent NUMERIC(8,4) NOT NULL DEFAULT 0,discount_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+                      PRIMARY KEY(source_location_id,sale_item_id))
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sync_cross_store_sale_items_sale_idx ON sync_cross_store_sale_items_cache(source_location_id,sale_id)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_returns_cache(
+                      source_location_id INTEGER NOT NULL,return_id BIGINT NOT NULL,sale_id INTEGER NOT NULL,user_name TEXT,refund_method TEXT,
+                      refund_amount NUMERIC(14,2) NOT NULL DEFAULT 0,reason TEXT,source_created_at TIMESTAMPTZ,
+                      PRIMARY KEY(source_location_id,return_id))
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sync_cross_store_returns_sale_idx ON sync_cross_store_returns_cache(source_location_id,sale_id)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_return_items_cache(
+                      source_location_id INTEGER NOT NULL,return_item_id BIGINT NOT NULL,return_id BIGINT NOT NULL,sale_item_id INTEGER NOT NULL,
+                      product_id INTEGER NOT NULL,quantity INTEGER NOT NULL DEFAULT 0,unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,
+                      PRIMARY KEY(source_location_id,return_item_id))
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS sync_cross_store_return_items_sale_item_idx ON sync_cross_store_return_items_cache(source_location_id,sale_item_id)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_cross_store_sales_status(
+                      source_location_id INTEGER PRIMARY KEY,store_name TEXT NOT NULL,row_count INTEGER NOT NULL DEFAULT 0,
+                      status TEXT NOT NULL,last_error TEXT,refreshed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS cross_store_refund_requests(
+                      request_id UUID PRIMARY KEY,source_location_id INTEGER NOT NULL,receiving_location_id INTEGER NOT NULL,
+                      source_sale_id INTEGER NOT NULL,cloud_request_sequence BIGINT,refund_method TEXT NOT NULL,
+                      refund_amount NUMERIC(14,2) NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL,user_id INTEGER,
+                      user_name TEXT,device_id UUID,cash_drawer_id BIGINT,cash_drawer_session_id BIGINT,last_error TEXT,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(source_location_id,source_sale_id,request_id))
+                    """);
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS cross_store_refund_requests_status_idx ON cross_store_refund_requests(status,created_at)");
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS cross_store_refund_lines(
+                      request_id UUID NOT NULL REFERENCES cross_store_refund_requests(request_id) ON DELETE CASCADE,
+                      source_sale_item_id INTEGER NOT NULL,product_id INTEGER NOT NULL,quantity INTEGER NOT NULL CHECK(quantity>0),
+                      unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,disposition TEXT NOT NULL CHECK(disposition IN('RESTOCK','DISCARD')),
+                      destination_location_id INTEGER,disposition_reason TEXT,confirmed_quantity INTEGER NOT NULL DEFAULT 0,
+                      conflict_quantity INTEGER NOT NULL DEFAULT 0,destination_status TEXT NOT NULL DEFAULT 'PENDING',
+                      PRIMARY KEY(request_id,source_sale_item_id))
+                    """);
+            stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS cross_store_refund_reconciliation(
+                      reconciliation_id BIGSERIAL PRIMARY KEY,request_id UUID NOT NULL REFERENCES cross_store_refund_requests(request_id),
+                      source_sale_item_id INTEGER,source_location_id INTEGER NOT NULL,receiving_location_id INTEGER NOT NULL,product_id INTEGER,
+                      conflict_quantity INTEGER NOT NULL DEFAULT 0,financial_loss NUMERIC(14,2) NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'OPEN',
+                      detail TEXT NOT NULL,resolved_by_user_id INTEGER,resolution_note TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,resolved_at TIMESTAMPTZ)
+                    """);
+            stmt.executeUpdate("ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS cross_store_request_id UUID");
+            stmt.executeUpdate("ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS receiving_location_id INTEGER");
+            stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS sale_returns_cross_store_request_uidx ON sale_returns(cross_store_request_id) WHERE cross_store_request_id IS NOT NULL");
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS sync_transfer_metrics (
                         metric_id BIGSERIAL PRIMARY KEY,

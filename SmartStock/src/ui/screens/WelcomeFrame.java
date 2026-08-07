@@ -59,6 +59,7 @@ public class WelcomeFrame extends JFrame {
     private final JLabel deckersLogoLabel = new JLabel("Deckers", SwingConstants.CENTER);
     private final JLabel smartStockLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
     private final JButton refreshStatusBtn = new JButton("Refresh System Status");
+    private final JButton startProcessesBtn = new JButton("Start Server Processes");
     private final JButton setupBtn = new JButton("Guided Setup");
     private final JButton environmentBtn = new JButton("Switch Environment");
     private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
@@ -146,6 +147,7 @@ public class WelcomeFrame extends JFrame {
         pairRegisterBtn.setVisible(apiClientMode && !LanApiClient.isPaired());
         serverAddressBtn.setVisible(apiClientMode);
         setupBtn.setVisible(isInitialSetupRequired(DatabaseConfig.load()));
+        startProcessesBtn.setVisible(false);
         refreshModeLabel();
         refreshSystemStats();
         updateGreeting();
@@ -250,12 +252,18 @@ public class WelcomeFrame extends JFrame {
         actionRow.setMaximumSize(actionRowSize);
         actionRow.add(continueBtn, BorderLayout.WEST);
 
+        styleWelcomeButton(startProcessesBtn, DeckersPalette.ORANGE);
+        startProcessesBtn.setHorizontalAlignment(SwingConstants.CENTER);
+        startProcessesBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+
         content.add(Box.createVerticalStrut(22));
         content.add(readyLabel);
         content.add(Box.createVerticalStrut(8));
         content.add(helperLabel);
         content.add(Box.createVerticalStrut(12));
         content.add(actionRow);
+        content.add(Box.createVerticalStrut(12));
+        content.add(startProcessesBtn);
         content.add(Box.createVerticalGlue());
         panel.add(content, BorderLayout.CENTER);
         return panel;
@@ -271,6 +279,7 @@ public class WelcomeFrame extends JFrame {
 
     private void wireActions() {
         refreshStatusBtn.addActionListener(e -> refreshSystemStatus());
+        startProcessesBtn.addActionListener(e -> startServerProcesses());
         setupBtn.addActionListener(e -> openGuidedSetup());
         environmentBtn.addActionListener(e -> openEnvironmentSetup());
         pairRegisterBtn.addActionListener(e -> pairRegister());
@@ -607,6 +616,7 @@ public class WelcomeFrame extends JFrame {
             continueBtn.setEnabled(false);
             loginAvailable = false;
             refreshStatusBtn.setEnabled(true);
+            startProcessesBtn.setVisible(false);
             return;
         }
         if (showCheckingState) {
@@ -629,6 +639,16 @@ public class WelcomeFrame extends JFrame {
                 String localStatus = startingServerDatabase
                         ? startServerDatabaseAndCheck(config)
                         : checkLocalDb(config);
+                if (config.mode() == DatabaseMode.SERVER
+                        && localStatus.startsWith("Online")
+                        && !LanApiClient.isPaired()) {
+                    try {
+                        LanApiClient.ensureLocalServerCredential();
+                    } catch (Exception ex) {
+                        localStatus = "Online - server UI credential unavailable: "
+                                + getRootCauseMessage(ex);
+                    }
+                }
                 String onlineStatus = checkOnlineDb(config);
                 boolean setupRequired = isInitialSetupRequired(config);
                 if (!setupRequired && config.mode() == DatabaseMode.SERVER) {
@@ -676,6 +696,8 @@ public class WelcomeFrame extends JFrame {
                     }
                     continueBtn.setEnabled(result.canLogin());
                     loginAvailable = result.canLogin();
+                    startProcessesBtn.setVisible(config.mode() == DatabaseMode.SERVER
+                            && !result.canLogin() && !result.setupRequired());
                 } catch (Exception ex) {
                     localDbLabel.setText(connectionLabel + "Failed");
                     onlineDbLabel.setText("Online DB: Failed");
@@ -684,11 +706,51 @@ public class WelcomeFrame extends JFrame {
                     statusLabel.setText("Status: " + getRootCauseMessage(ex));
                     continueBtn.setEnabled(false);
                     loginAvailable = false;
+                    startProcessesBtn.setVisible(config.mode() == DatabaseMode.SERVER);
                 }
             }
         };
 
         worker.execute();
+    }
+
+    private void startServerProcesses() {
+        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) return;
+        startProcessesBtn.setEnabled(false);
+        refreshStatusBtn.setEnabled(false);
+        continueBtn.setEnabled(false);
+        loginAvailable = false;
+        statusLabel.setText("Status: Starting PostgreSQL and SmartStock Server Service...");
+        new SwingWorker<PostgresRuntimeService.CommandResult, Void>() {
+            @Override
+            protected PostgresRuntimeService.CommandResult doInBackground() throws Exception {
+                return PostgresRuntimeService.startServerProcesses();
+            }
+
+            @Override
+            protected void done() {
+                startProcessesBtn.setEnabled(true);
+                refreshStatusBtn.setEnabled(true);
+                try {
+                    PostgresRuntimeService.CommandResult result = get();
+                    if (!result.success()) {
+                        statusLabel.setText("Status: Server processes could not be started.");
+                        JOptionPane.showMessageDialog(WelcomeFrame.this, result.output(),
+                                "Start Server Processes", JOptionPane.ERROR_MESSAGE);
+                        return;
+                    }
+                    statusLabel.setText("Status: Server processes started. Checking login service...");
+                    Timer verify = new Timer(2_000, e -> refreshSystemStatus());
+                    verify.setRepeats(false);
+                    verify.start();
+                } catch (Exception ex) {
+                    statusLabel.setText("Status: Server processes could not be started.");
+                    JOptionPane.showMessageDialog(WelcomeFrame.this,
+                            getRootCauseMessage(ex), "Start Server Processes",
+                            JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private boolean isInitialSetupRequired(DatabaseConfig config) {

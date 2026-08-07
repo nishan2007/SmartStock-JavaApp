@@ -3,6 +3,7 @@ package ui.screens;
 
 import utils.CurrencyFormatter;
 import managers.PermissionManager;
+import managers.SessionManager;
 import services.LanApiClient;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
@@ -31,6 +32,9 @@ public class ViewSales extends JFrame {
     private JTextField searchField;
     private JTextField fromDateField;
     private JTextField toDateField;
+    private JComboBox<StoreChoice> storeFilter;
+    private boolean loadingStores;
+    private List<LanApiClient.SalesHistoryRow> displayedRows=List.of();
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     private final DateTimeFormatter displayDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -157,6 +161,13 @@ public class ViewSales extends JFrame {
         gbc.weightx = 0.35;
         filterPanel.add(toDateField, gbc);
 
+        if(canViewMultistore()){
+            gbc.gridx=0;gbc.gridy=1;gbc.weightx=0;filterPanel.add(new JLabel("Store"),gbc);
+            storeFilter=new JComboBox<>();storeFilter.addItem(new StoreChoice(SessionManager.getCurrentLocationId(),"Current Store",false));
+            gbc.gridx=1;gbc.gridy=1;gbc.weightx=0.5;filterPanel.add(storeFilter,gbc);
+            storeFilter.addActionListener(e->{if(!loadingStores)loadSales();});
+        }
+
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         JButton refreshButton = new JButton("Refresh");
         JButton clearButton = new JButton("Clear Filters");
@@ -169,7 +180,7 @@ public class ViewSales extends JFrame {
         buttonPanel.add(returnButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 1;
+        gbc.gridy = 2;
         gbc.gridwidth = 6;
         gbc.weightx = 1;
         filterPanel.add(buttonPanel, gbc);
@@ -204,15 +215,20 @@ public class ViewSales extends JFrame {
         String from = fromDate == null ? "" : fromDate.toString();
         String to = toDate == null ? "" : toDate.toString();
         String cacheKey = "view-sales:" + search + ":" + from + ":" + to;
+        StoreChoice selected=storeFilter==null?null:(StoreChoice)storeFilter.getSelectedItem();
+        Integer locationId=selected==null?SessionManager.getCurrentLocationId():selected.locationId();boolean all=selected!=null&&selected.allStores();
+        cacheKey += ":"+(all?"all":locationId);
         CachedUiLoader.load(this, "view-sales.search", cacheKey, SalesSnapshot.class, SessionDataCache.SCREEN_TTL,
                 loadingState,
-                () -> new SalesSnapshot(LanApiClient.loadSalesHistory(search, from, to)),
+                () -> new SalesSnapshot(LanApiClient.loadSalesHistory(search,from,to,locationId,all)),
                 this::applySales);
     }
 
     private void applySales(SalesSnapshot snapshot) {
         salesTableModel.setRowCount(0);
-        for (LanApiClient.SalesHistoryRow row : snapshot.rows()) {
+        displayedRows=snapshot.result().transactions();
+        populateStores(snapshot.result());
+        for (LanApiClient.SalesHistoryRow row : displayedRows) {
                 boolean returnRow = "RETURN".equalsIgnoreCase(row.transactionType());
                 salesTableModel.addRow(new Object[]{
                         row.saleId(),
@@ -232,7 +248,7 @@ public class ViewSales extends JFrame {
         }
     }
 
-    private record SalesSnapshot(List<LanApiClient.SalesHistoryRow> rows) { }
+    private record SalesSnapshot(LanApiClient.SalesHistoryResult result) { }
 
     private void showSelectedSaleDetails() {
         int selectedRow = salesTable.getSelectedRow();
@@ -245,8 +261,8 @@ public class ViewSales extends JFrame {
         }
 
         int modelRow = salesTable.convertRowIndexToModel(selectedRow);
-        int saleId = Integer.parseInt(String.valueOf(salesTableModel.getValueAt(modelRow, 0)));
-        showSaleDetailsDialog(saleId);
+        LanApiClient.SalesHistoryRow selected=displayedRows.get(modelRow);
+        showSaleDetailsDialog(selected.saleId(),selected.sourceLocationId());
     }
 
     private void openReturnForSelectedSale() {
@@ -264,19 +280,27 @@ public class ViewSales extends JFrame {
         }
 
         int modelRow = salesTable.convertRowIndexToModel(selectedRow);
-        int saleId = Integer.parseInt(String.valueOf(salesTableModel.getValueAt(modelRow, 0)));
-        WindowHelper.showPosWindow(new ReturnSale(saleId), this);
+        LanApiClient.SalesHistoryRow selected=displayedRows.get(modelRow);
+        boolean remote=selected.sourceLocationId()!=null&&!selected.sourceLocationId().equals(SessionManager.getCurrentLocationId());
+        if(remote&&!PermissionManager.hasPermission("PROCESS_MULTI_STORE_RETURNS")){
+            JOptionPane.showMessageDialog(this,"You do not have permission to return another store's sale.");return;
+        }
+        WindowHelper.showPosWindow(new ReturnSale(selected.saleId(),selected.sourceLocationId()), this);
     }
 
-    private void showSaleDetailsDialog(int saleId) {
+    private void showSaleDetailsDialog(int saleId,Integer sourceLocationId) {
         loadingState.loading(false, java.time.Instant.now());
-        UiTaskRunner.submit(this, "sales.details", () -> LanApiClient.loadSaleHistoryDetails(saleId),
+        UiTaskRunner.submit(this, "sales.details", () -> LanApiClient.loadSaleHistoryDetails(saleId,sourceLocationId),
                 details -> {
                     loadingState.ready(java.time.Instant.now());
                     renderSaleDetailsDialog(saleId, details);
                 }, failure -> loadingState.failed(failure.getMessage(), false,
-                        () -> showSaleDetailsDialog(saleId)));
+                        () -> showSaleDetailsDialog(saleId,sourceLocationId)));
     }
+
+    private boolean canViewMultistore(){return PermissionManager.hasPermission("VIEW_SALES")&&PermissionManager.hasPermission("VIEW_MULTI_STORE_SALES");}
+    private void populateStores(LanApiClient.SalesHistoryResult result){if(storeFilter==null)return;StoreChoice selected=(StoreChoice)storeFilter.getSelectedItem();loadingStores=true;try{storeFilter.removeAllItems();storeFilter.addItem(new StoreChoice(result.currentLocationId(),"Current Store",false));storeFilter.addItem(new StoreChoice(null,"All Stores",true));for(var store:result.stores())storeFilter.addItem(new StoreChoice(store.locationId(),store.name()+("CURRENT".equals(store.status())?"":" ("+store.status()+")"),false));if(selected!=null)for(int i=0;i<storeFilter.getItemCount();i++){StoreChoice option=storeFilter.getItemAt(i);if(option.allStores()==selected.allStores()&&java.util.Objects.equals(option.locationId(),selected.locationId())){storeFilter.setSelectedIndex(i);break;}}}finally{loadingStores=false;}}
+    private record StoreChoice(Integer locationId,String label,boolean allStores){@Override public String toString(){return label;}}
 
     private void renderSaleDetailsDialog(int saleId, LanApiClient.SaleHistoryDetails details) {
         DefaultTableModel detailsModel = readOnlyModel(

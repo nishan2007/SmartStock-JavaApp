@@ -97,6 +97,7 @@ public class MakeASale extends JFrame {
     private JButton productDropdownButton;
     private JButton editItemBtn;
     private JButton newItemBtn;
+    private JButton storeStockBtn;
     private JLabel currentDateLabel;
     private JLabel currentTimeLabel;
     private String lastShownDate;
@@ -217,6 +218,7 @@ public class MakeASale extends JFrame {
        selectedStoreLabel = createMetaLabel("Store: Not selected");
        currentUserLabel = createMetaLabel("No User currently logged in");
        editItemBtn = createUtilityButton("Edit Item", DeckersPalette.PURPLE);
+       storeStockBtn = createUtilityButton("Store Stock", DeckersPalette.MAGENTA);
        currentDateLabel = createMetaLabel("No date yet");
        currentTimeLabel = createMetaLabel("No time yet");
 
@@ -246,6 +248,7 @@ public class MakeASale extends JFrame {
        leftSidePanel.setOpaque(false);
        leftSidePanel.add(newItemBtn);
        leftSidePanel.add(editItemBtn);
+       leftSidePanel.add(storeStockBtn);
 
        JPanel centerSection = new JPanel(new BorderLayout(20, 0));
        centerSection.setOpaque(true);
@@ -451,6 +454,17 @@ public class MakeASale extends JFrame {
                EditItem screen = new EditItem();
                WindowHelper.showPosWindow(screen, MakeASale.this);
            }
+       });
+       storeStockBtn.addActionListener(e -> {
+           if (!PermissionManager.hasPermission("VIEW_INVENTORY")
+                   || !PermissionManager.hasPermission("VIEW_MULTI_STORE_STOCK")) {
+               JOptionPane.showMessageDialog(MakeASale.this,
+                       "You do not have permission to view store inventory.");
+               refreshPermissionButtons();
+               return;
+           }
+           if (WindowHelper.focusIfAlreadyOpen(CrossStoreInventory.class)) return;
+           WindowHelper.showPosWindow(new CrossStoreInventory(), MakeASale.this);
        });
        searchField.addActionListener(new ActionListener() {
            public void actionPerformed(ActionEvent e) {
@@ -1094,6 +1108,10 @@ public class MakeASale extends JFrame {
         }
         if (editItemBtn != null) {
             editItemBtn.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
+        }
+        if (storeStockBtn != null) {
+            storeStockBtn.setEnabled(PermissionManager.hasPermission("VIEW_INVENTORY")
+                    && PermissionManager.hasPermission("VIEW_MULTI_STORE_STOCK"));
         }
 	        if (discountPercentField != null) {
                 discountPercentField.setEnabled(true);

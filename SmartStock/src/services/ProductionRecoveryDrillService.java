@@ -23,7 +23,7 @@ public final class ProductionRecoveryDrillService {
     public static RecoveryResult run(Connection cleanTarget, int locationId,
                                      CloudSyncManifest storeMirror) throws SQLException {
         String targetName = validateTarget(cleanTarget);
-        int restoredRows = CloudRecoveryService.restoreStoreMirror(
+        int restoredRows = CloudRecoveryService.restoreReplacementStoreMirror(
                 cleanTarget, locationId, storeMirror);
         List<TableComparison> comparisons = comparisons(cleanTarget, storeMirror);
         requireMatchingComparisons(comparisons);

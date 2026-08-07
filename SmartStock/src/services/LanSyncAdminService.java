@@ -8,6 +8,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,7 +25,7 @@ final class LanSyncAdminService {
         SyncWorker.SyncStatus worker = SyncWorker.latestStatus(connection);
         Map<String, Object> result = statusMap(worker);
         addImageCounts(connection, result);
-        result.put("serverWorkerStarted", SyncWorker.isStarted());
+        addRuntimeState(result, worker.serviceInfo());
         result.put("conflicts", conflicts(connection));
         result.put("audits", audits(connection));
         return result;
@@ -37,6 +38,7 @@ final class LanSyncAdminService {
         }
         Map<String,Object> result = statusMap(SyncWorker.runOnceNow());
         addImageCounts(connection, result);
+        addRuntimeState(result, SyncServiceStatusService.current(connection));
         return result;
     }
 
@@ -111,6 +113,24 @@ final class LanSyncAdminService {
         result.put("imageMissingCloud", counts.missingCloud());
         result.put("imageUnused", counts.unused());
         result.put("imageFailedPurges", counts.failedPurges());
+    }
+
+    private static void addRuntimeState(Map<String, Object> result,
+                                        SyncServiceStatusService.ServiceInfo service) {
+        result.put("serverWorkerStarted", SyncWorker.isStarted()
+                || isFreshServiceLoop(service, Instant.now(),
+                DatabaseConfig.load().syncIntervalSeconds()));
+    }
+
+    static boolean isFreshServiceLoop(SyncServiceStatusService.ServiceInfo service,
+                                      Instant now, int intervalSeconds) {
+        if (service == null || service.lastSeenAt() == null || now == null) return false;
+        String status = service.status() == null ? "" : service.status().trim();
+        if (status.equalsIgnoreCase("Stopped")
+                || status.equalsIgnoreCase("Not Installed")
+                || status.equalsIgnoreCase("Unknown")) return false;
+        long freshnessSeconds = Math.max(60L, Math.max(15, intervalSeconds) * 2L + 30L);
+        return !service.lastSeenAt().isBefore(now.minus(Duration.ofSeconds(freshnessSeconds)));
     }
 
     private static void requirePermission(Connection connection, int userId) throws Exception {

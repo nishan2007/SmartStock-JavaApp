@@ -729,6 +729,11 @@ public final class CashDrawerService {
                 WHERE cash_drawer_session_id = ?
                   AND refund_method = 'CASH'
                 """, sessionId));
+        total = total.subtract(sum(conn, """
+                SELECT COALESCE(SUM(refund_amount),0) FROM cross_store_refund_requests
+                WHERE cash_drawer_session_id=? AND refund_method='CASH'
+                  AND status NOT IN ('REJECTED','CANCELLED')
+                """,sessionId));
         total = total.add(sum(conn, """
                 SELECT COALESCE(SUM(CASE
                     WHEN COALESCE(payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL') THEN -payment_amount

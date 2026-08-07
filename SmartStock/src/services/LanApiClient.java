@@ -460,16 +460,28 @@ public final class LanApiClient {
     }
 
     public static List<SalesHistoryRow> loadSalesHistory(String search, String fromDate, String toDate) throws Exception {
+        return loadSalesHistory(search,fromDate,toDate,null,false).transactions();
+    }
+
+    public static SalesHistoryResult loadSalesHistory(String search,String fromDate,String toDate,
+                                                       Integer locationId,boolean allStores)throws Exception{
         JsonObject request = new JsonObject(); request.addProperty("search", search == null ? "" : search);
         request.addProperty("fromDate", fromDate == null ? "" : fromDate);
         request.addProperty("toDate", toDate == null ? "" : toDate);
+        if(locationId!=null)request.addProperty("locationId",locationId);request.addProperty("allStores",allStores);
         JsonObject data = post("/v1/sales/history", request, true, true);
         SalesHistoryRow[] rows = GSON.fromJson(data.getAsJsonArray("transactions"), SalesHistoryRow[].class);
-        return rows == null ? List.of() : List.of(rows);
+        CrossStoreStoreOption[]stores=GSON.fromJson(data.getAsJsonArray("stores"),CrossStoreStoreOption[].class);
+        return new SalesHistoryResult(rows==null?List.of():List.of(rows),stores==null?List.of():List.of(stores),
+                data.has("currentLocationId")?data.get("currentLocationId").getAsInt():0);
     }
 
     public static SaleHistoryDetails loadSaleHistoryDetails(int saleId) throws Exception {
+        return loadSaleHistoryDetails(saleId,null);
+    }
+    public static SaleHistoryDetails loadSaleHistoryDetails(int saleId,Integer sourceLocationId)throws Exception{
         JsonObject request = new JsonObject(); request.addProperty("saleId", saleId);
+        if(sourceLocationId!=null)request.addProperty("sourceLocationId",sourceLocationId);
         return GSON.fromJson(post("/v1/sales/details", request, true, true), SaleHistoryDetails.class);
     }
 
@@ -487,6 +499,12 @@ public final class LanApiClient {
 
     public static InventoryResult loadInventory(InventoryRequest request)throws Exception{
         return GSON.fromJson(post("/v1/inventory/list",GSON.toJsonTree(request).getAsJsonObject(),true,true),InventoryResult.class);
+    }
+
+    public static CrossStoreInventoryResult loadCrossStoreInventory(String query,Integer locationId)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("query",query==null?"":query);
+        if(locationId!=null)request.addProperty("locationId",locationId);
+        return GSON.fromJson(post("/v1/inventory/cross-store-search",request,true,true),CrossStoreInventoryResult.class);
     }
 
     public static InventoryDetails loadInventoryDetails(int productId)throws Exception{
@@ -859,16 +877,30 @@ public final class LanApiClient {
     }
 
     public static List<SaleSearchResult> searchSalesForReturn(String query) throws Exception {
+        return searchSalesForReturn(query,null);
+    }
+    public static List<SaleSearchResult> searchSalesForReturn(String query,Integer sourceLocationId)throws Exception{
         JsonObject request = new JsonObject();
         request.addProperty("query", query == null ? "" : query);
+        if(sourceLocationId!=null)request.addProperty("sourceLocationId",sourceLocationId);
         JsonObject data = post("/v1/sales/search", request, true, true);
         SaleSearchResult[] sales = GSON.fromJson(data.getAsJsonArray("sales"), SaleSearchResult[].class);
         return sales == null ? List.of() : List.of(sales);
     }
 
+    public static List<CrossStoreStoreOption> loadReturnStores()throws Exception{
+        JsonObject data=post("/v1/sales/return-stores",new JsonObject(),true,true);
+        CrossStoreStoreOption[] stores=GSON.fromJson(data.getAsJsonArray("stores"),CrossStoreStoreOption[].class);
+        return stores==null?List.of():List.of(stores);
+    }
+
     public static ReturnSaleDetails loadReturnSaleDetails(int saleId) throws Exception {
+        return loadReturnSaleDetails(saleId,null);
+    }
+    public static ReturnSaleDetails loadReturnSaleDetails(int saleId,Integer sourceLocationId)throws Exception{
         JsonObject request = new JsonObject();
         request.addProperty("saleId", saleId);
+        if(sourceLocationId!=null)request.addProperty("sourceLocationId",sourceLocationId);
         return GSON.fromJson(post("/v1/sales/return-details", request, true, true),
                 ReturnSaleDetails.class);
     }
@@ -1356,12 +1388,16 @@ public final class LanApiClient {
                                   long createdAtEpochMillis, String cashierName, String storeName, int itemCount,
                                   String paymentMethod, String paymentStatus, BigDecimal amountPaid,
                                   BigDecimal returnedAmount, BigDecimal discountAmount,
-                                  BigDecimal totalAmount, BigDecimal netAmount) { }
+                                  BigDecimal totalAmount, BigDecimal netAmount,Integer sourceLocationId,
+                                  long cacheRefreshedAtEpochMillis,String cacheStatus) { }
+    public record SalesHistoryResult(List<SalesHistoryRow>transactions,List<CrossStoreStoreOption>stores,
+                                     int currentLocationId) { }
     public record SaleHistoryDetails(int saleId, BigDecimal subtotalAmount, BigDecimal discountPercent,
                                      BigDecimal discountAmount, BigDecimal totalAmount,
                                      List<SaleHistoryItem> items, List<SaleHistoryReturn> returns,
                                      List<SaleHistoryReturnItem> returnItems,
-                                     List<SaleHistoryAudit> overrideAudit) { }
+                                     List<SaleHistoryAudit> overrideAudit,Integer sourceLocationId,String sourceStoreName,
+                                     long cacheRefreshedAtEpochMillis,String cacheStatus) { }
     public record SaleHistoryItem(int productId, String productName, int quantity, int returnedQuantity,
                                   BigDecimal originalUnitPrice, BigDecimal discountPercent,
                                   BigDecimal discountAmount, BigDecimal unitPrice, BigDecimal lineTotal) { }
@@ -1386,6 +1422,12 @@ public final class LanApiClient {
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,
                                    int reorderLevel,String createdBy) { }
     public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities) { }
+    public record CrossStoreInventoryResult(List<CrossStoreStoreOption> stores,List<CrossStoreInventoryItem> items) { }
+    public record CrossStoreStoreOption(int locationId,String name,String status,long refreshedAtEpochMillis) { }
+    public record CrossStoreInventoryItem(int locationId,String storeName,int productId,String sku,String barcode,
+                                          String productName,String size,String description,int quantityOnHand,
+                                          int reorderLevel,long sourceUpdatedAtEpochMillis,
+                                          long cacheRefreshedAtEpochMillis,String cacheStatus,String cacheError) { }
     public record InventoryActivity(long createdAtEpochMillis,String activityType,int quantity,String amount,
                                     String reference,String userName,String note) { }
     public record ReceivingHistoryRow(long movementId,String receiveId,long createdAtEpochMillis,String productName,
@@ -1531,22 +1573,28 @@ public final class LanApiClient {
                                  BigDecimal cashCollected, BigDecimal changeDue,
                                  String cashDrawerName) { }
     public record SaleSearchResult(int saleId, String receiptNumber, long createdAtEpochMillis,
-                                   BigDecimal totalAmount, String cashierName, String deviceId) { }
+                                   BigDecimal totalAmount, String cashierName, String deviceId,
+                                   Integer sourceLocationId,String storeName,long cacheRefreshedAtEpochMillis,String cacheStatus) { }
     public record ReturnSaleDetails(int saleId, String receiptNumber, Integer customerId,
                                     String paymentMethod, String paymentStatus,
                                     BigDecimal totalAmount, BigDecimal returnedAmount,
                                     BigDecimal returnApprovalLimit, boolean requesterCanOverride,
-                                    List<ReturnSaleLine> items) { }
+                                    List<ReturnSaleLine> items,Integer sourceLocationId) { }
     public record ReturnSaleLine(int saleItemId, int productId, String sku, String productName,
                                  String productType, int soldQuantity, int returnedQuantity,
                                  int availableQuantity, BigDecimal unitPrice) { }
-    public record RefundRequest(int saleId, String refundMethod, String reason,
-                                String approvalToken, String approvalReason,
-                                List<RefundLine> lines) { }
-    public record RefundLine(int saleItemId, int quantity) { }
+    public record RefundRequest(UUID requestId,Integer sourceLocationId,int saleId,String refundMethod,String reason,
+                                String approvalToken,String approvalReason,List<RefundLine>lines) {
+        public RefundRequest(int saleId,String refundMethod,String reason,String approvalToken,String approvalReason,List<RefundLine>lines){
+            this(null,null,saleId,refundMethod,reason,approvalToken,approvalReason,lines);
+        }
+    }
+    public record RefundLine(int saleItemId,int quantity,String disposition,Integer destinationLocationId,String dispositionReason) {
+        public RefundLine(int saleItemId,int quantity){this(saleItemId,quantity,null,null,null);}
+    }
     public record RefundResult(long returnId, int saleId, BigDecimal refundAmount,
                                String refundMethod, boolean approvalRequired,
-                               String approvedByName) { }
+                               String approvedByName,String requestId,Integer sourceLocationId,String status) { }
     private record ReceiptPayload(int saleId,String receiptNumber,long saleTimeEpochMillis,String storeName,
                                   String cashierName,String customerName,String accountNumber,String paymentMethod,
                                   String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,

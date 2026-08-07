@@ -28,11 +28,12 @@ class DatabaseSetupServiceStatusTest {
     }
 
     @Test
-    void windowsProductionSetupIsAvailableInsideDatabaseSetup() throws Exception {
+    void windowsSetupUsesTheActiveEnvironmentInsideDatabaseSetup() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/DatabaseSetup.java"));
         assertTrue(source.contains("Complete Windows Server Setup"));
         assertTrue(source.contains("installWindowsProductionServer"));
         assertTrue(source.contains("Windows will ask for administrator approval"));
-        assertTrue(source.contains("saveProductionPublicConfig"));
+        assertTrue(source.contains("savePublicConfig(EnvironmentProfile.active()"));
+        assertFalse(source.contains("saveProductionPublicConfig("));
     }
 }

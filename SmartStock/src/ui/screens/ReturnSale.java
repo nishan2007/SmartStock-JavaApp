@@ -52,10 +52,15 @@ public class ReturnSale extends JFrame {
     private final DefaultTableModel itemModel;
     private final DefaultTableModel saleSearchModel;
     private final JTable saleSearchTable;
+    private JTable returnItemsTable;
     private final JPopupMenu saleSearchPopup = new JPopupMenu();
     private final Timer saleSearchTimer;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private final JButton submitButton = new JButton("Submit Return");
+    private final JComboBox<StoreChoice> searchStoreBox=new JComboBox<>();
+    private final List<LanApiClient.SaleSearchResult> searchResults=new ArrayList<>();
+    private final List<StoreChoice> storeChoices=new ArrayList<>();
+    private final Integer initialSourceLocationId;
 
     private SaleSnapshot loadedSale;
     private boolean updatingModel;
@@ -66,12 +71,18 @@ public class ReturnSale extends JFrame {
     private String overrideApprovedResource;
     private String pendingRefundKey;
     private String pendingRefundFingerprint;
+    private UUID pendingCrossStoreRequestId;
 
     public ReturnSale() {
-        this(null);
+        this(null,null);
     }
 
     public ReturnSale(Integer saleId) {
+        this(saleId,null);
+    }
+
+    public ReturnSale(Integer saleId,Integer sourceLocationId) {
+        initialSourceLocationId=sourceLocationId;
         setTitle("Process Return");
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
@@ -79,10 +90,10 @@ public class ReturnSale extends JFrame {
 
         itemModel = new DefaultTableModel(
                 new Object[]{"Sale Item ID", "Product ID", "SKU", "Item", "Sold", "Returned",
-                        "Available", "Unit Price", "Product Type", "Return Qty"}, 0) {
+                        "Available", "Unit Price", "Product Type", "Return Qty","Disposition","Destination","Disposition Reason"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 9;
+                return column == 9 || (loadedSale!=null&&loadedSale.remote()&&column>=10);
             }
         };
         saleSearchModel = new DefaultTableModel(
@@ -114,8 +125,9 @@ public class ReturnSale extends JFrame {
 
         if (saleId != null) {
             saleSearchField.setText(String.valueOf(saleId));
-            loadSaleById(saleId);
+            loadSaleById(saleId,sourceLocationId);
         }
+        loadStoreChoices();
         WindowHelper.configurePosWindow(this);
     }
 
@@ -147,7 +159,9 @@ public class ReturnSale extends JFrame {
         DeckersSwing.styleField(saleSearchField);
         JButton loadButton = new JButton("Load Sale");
         DeckersSwing.styleUtilityButton(loadButton, DeckersPalette.MAGENTA);
-        searchPanel.add(DeckersSwing.metaLabel("Sale / Receipt"), BorderLayout.WEST);
+        JPanel searchLeft=new JPanel(new FlowLayout(FlowLayout.LEFT,6,0));searchLeft.setOpaque(false);
+        searchLeft.add(DeckersSwing.metaLabel("Sale / Receipt"));searchLeft.add(searchStoreBox);
+        searchPanel.add(searchLeft, BorderLayout.WEST);
         searchPanel.add(saleSearchField, BorderLayout.CENTER);
         searchPanel.add(loadButton, BorderLayout.EAST);
 
@@ -209,6 +223,7 @@ public class ReturnSale extends JFrame {
 
     private JPanel buildTablePanel() {
         JTable table = new JTable(itemModel);
+        returnItemsTable=table;
         DeckersSwing.styleTable(table, DeckersPalette.LIME);
         table.setFillsViewportHeight(true);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -223,6 +238,11 @@ public class ReturnSale extends JFrame {
         table.getColumnModel().getColumn(4).setPreferredWidth(90);
         table.getColumnModel().getColumn(5).setPreferredWidth(110);
         table.getColumnModel().getColumn(6).setPreferredWidth(110);
+        table.getColumnModel().getColumn(7).setPreferredWidth(100);
+        table.getColumnModel().getColumn(8).setPreferredWidth(150);
+        table.getColumnModel().getColumn(9).setPreferredWidth(190);
+        JComboBox<String> dispositions=new JComboBox<>(new String[]{"RESTOCK","DISCARD"});
+        table.getColumnModel().getColumn(7).setCellEditor(new DefaultCellEditor(dispositions));
 
         JScrollPane scrollPane = new JScrollPane(table);
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -322,7 +342,8 @@ public class ReturnSale extends JFrame {
             saleSearchPopup.setVisible(false);
             return;
         }
-        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search),results->{
+        Integer source=selectedSourceLocation();
+        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search,source),results->{
             populateSearchResults(results);
             if (results.isEmpty()) {
                 saleSearchPopup.setVisible(false);
@@ -334,11 +355,13 @@ public class ReturnSale extends JFrame {
 
     private void populateSearchResults(List<LanApiClient.SaleSearchResult> results) {
         saleSearchModel.setRowCount(0);
+        searchResults.clear();searchResults.addAll(results);
         for (LanApiClient.SaleSearchResult sale : results) {
             String localTime = Instant.ofEpochMilli(sale.createdAtEpochMillis())
                     .atZone(StoreTimeZoneHelper.getStoreZone()).format(DATE_TIME_FORMAT);
             saleSearchModel.addRow(new Object[]{sale.saleId(), sale.receiptNumber(), localTime,
-                    CURRENCY.format(sale.totalAmount()), sale.cashierName(), sale.deviceId()});
+                    CURRENCY.format(sale.totalAmount()), sale.cashierName(),
+                    sale.storeName()==null||sale.storeName().isBlank()?sale.deviceId():sale.storeName()});
         }
     }
 
@@ -364,7 +387,8 @@ public class ReturnSale extends JFrame {
             selectingSearchResult = false;
         }
         saleSearchPopup.setVisible(false);
-        loadSaleById(saleId);
+        Integer source=modelRow<searchResults.size()?searchResults.get(modelRow).sourceLocationId():selectedSourceLocation();
+        loadSaleById(saleId,source);
     }
 
     private void loadSale() {
@@ -374,7 +398,8 @@ public class ReturnSale extends JFrame {
             JOptionPane.showMessageDialog(this, "Enter a sale ID or receipt number.");
             return;
         }
-        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search),matches->{
+        Integer source=selectedSourceLocation();
+        UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search,source),matches->{
             if (matches.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "Sale was not found.");
             } else if (matches.size() > 1) {
@@ -383,13 +408,16 @@ public class ReturnSale extends JFrame {
                 JOptionPane.showMessageDialog(this,
                         "Multiple sales matched. Select the correct sale from the search list.");
             } else {
-                loadSaleById(matches.get(0).saleId());
+                loadSaleById(matches.get(0).saleId(),matches.get(0).sourceLocationId());
             }
         },ex->showApiError("Failed to load sale",ex));
     }
 
     private void loadSaleById(int saleId) {
-        UiTaskRunner.submit(this,"return-sale.details",()->LanApiClient.loadReturnSaleDetails(saleId),this::applySaleDetails,
+        loadSaleById(saleId,selectedSourceLocation());
+    }
+    private void loadSaleById(int saleId,Integer sourceLocationId) {
+        UiTaskRunner.submit(this,"return-sale.details",()->LanApiClient.loadReturnSaleDetails(saleId,sourceLocationId),this::applySaleDetails,
                 ex->{updatingModel=false;showApiError("Failed to load sale",ex);});
     }
 
@@ -397,10 +425,11 @@ public class ReturnSale extends JFrame {
             loadedSale = new SaleSnapshot(details.saleId(), details.receiptNumber(), details.customerId(),
                     safe(details.paymentMethod()), safe(details.paymentStatus()), zero(details.totalAmount()),
                     zero(details.returnedAmount()), zero(details.returnApprovalLimit()),
-                    details.requesterCanOverride());
+                    details.requesterCanOverride(),details.sourceLocationId());
             clearApproval();
             pendingRefundKey = null;
             pendingRefundFingerprint = null;
+            pendingCrossStoreRequestId = null;
             updatingModel = true;
             itemModel.setRowCount(0);
             if (details.items() != null) {
@@ -408,7 +437,8 @@ public class ReturnSale extends JFrame {
                     itemModel.addRow(new Object[]{item.saleItemId(), item.productId(), safe(item.sku()),
                             safe(item.productName()), item.soldQuantity(), item.returnedQuantity(),
                             item.availableQuantity(), zero(item.unitPrice()),
-                            normalizeProductType(item.productType()), 0});
+                            normalizeProductType(item.productType()),0,
+                            details.sourceLocationId()==null?"":"RESTOCK",defaultDestination(),""});
                 }
             }
             updatingModel = false;
@@ -419,6 +449,7 @@ public class ReturnSale extends JFrame {
                     + "  Payment: " + loadedSale.paymentMethod()
                     + "  Sale Total: " + CURRENCY.format(loadedSale.totalAmount())
                     + "  Previously Returned: " + CURRENCY.format(loadedSale.returnedAmount()));
+            if(loadedSale.remote())saleInfoLabel.setText(saleInfoLabel.getText()+"  [MULTISTORE - synchronized data]");
             updateReturnTotal();
     }
 
@@ -427,6 +458,9 @@ public class ReturnSale extends JFrame {
         if (loadedSale == null) {
             JOptionPane.showMessageDialog(this, "Load a sale first.");
             return;
+        }
+        if(loadedSale.remote()&&!PermissionManager.hasPermission("PROCESS_MULTI_STORE_RETURNS")){
+            JOptionPane.showMessageDialog(this,"You do not have permission to process another store's return.");return;
         }
         if (SessionManager.getCurrentUserId() == null) {
             JOptionPane.showMessageDialog(this, "No employee is logged in.");
@@ -462,12 +496,16 @@ public class ReturnSale extends JFrame {
                 "Confirm Return", JOptionPane.YES_NO_OPTION);
         if (confirmed != JOptionPane.YES_OPTION) return;
 
-        List<LanApiClient.RefundLine> apiLines = lines.stream()
-                .map(line -> new LanApiClient.RefundLine(line.saleItemId(), line.quantity()))
-                .toList();
-        LanApiClient.RefundRequest request = new LanApiClient.RefundRequest(
-                loadedSale.saleId(), String.valueOf(refundMethodBox.getSelectedItem()), reason,
-                overrideApprovalToken, overrideApprovalReason, apiLines);
+        List<LanApiClient.RefundLine> apiLines=new ArrayList<>();
+        for(ReturnLine line:lines){int row=line.row();String disposition=loadedSale.remote()?String.valueOf(itemModel.getValueAt(row,10)):null;StoreChoice destination=loadedSale.remote()?storeByLabel(String.valueOf(itemModel.getValueAt(row,11))):null;String dispositionReason=loadedSale.remote()?String.valueOf(itemModel.getValueAt(row,12)):null;
+            if(loadedSale.remote()&&"RESTOCK".equals(disposition)&&destination==null){JOptionPane.showMessageDialog(this,"Select a destination store for every restocked item.");return;}
+            if(loadedSale.remote()&&"DISCARD".equals(disposition)&&dispositionReason.isBlank()){JOptionPane.showMessageDialog(this,"Enter a discard reason for damaged or discarded items.");return;}
+            apiLines.add(new LanApiClient.RefundLine(line.saleItemId(),line.quantity(),disposition,destination==null?null:destination.locationId(),dispositionReason));}
+        if(loadedSale.remote()&&pendingCrossStoreRequestId==null)pendingCrossStoreRequestId=UUID.randomUUID();
+        UUID requestId=loadedSale.remote()?pendingCrossStoreRequestId:null;
+        LanApiClient.RefundRequest request = new LanApiClient.RefundRequest(requestId,loadedSale.sourceLocationId(),
+                loadedSale.saleId(),String.valueOf(refundMethodBox.getSelectedItem()),reason,
+                overrideApprovalToken,overrideApprovalReason,apiLines);
         String fingerprint = refundFingerprint(request);
         if (!fingerprint.equals(pendingRefundFingerprint)) {
             pendingRefundFingerprint = fingerprint;
@@ -480,12 +518,14 @@ public class ReturnSale extends JFrame {
         UiTaskRunner.submit(this,"return-sale.refund",()->LanApiClient.refund(request,refundKey),result->{
             pendingRefundKey = null;
             pendingRefundFingerprint = null;
+            pendingCrossStoreRequestId = null;
             submitButton.setEnabled(true);
             loadingState.ready(java.time.Instant.now());
             JOptionPane.showMessageDialog(this,
                     "Return processed successfully.\nReturn ID: " + result.returnId()
-                            + "\nRefund amount: " + CURRENCY.format(result.refundAmount()));
-            loadSaleById(saleId);
+                            + "\nRefund amount: " + CURRENCY.format(result.refundAmount())
+                            +(result.status()==null?"":"\nStatus: "+result.status()));
+            loadSaleById(saleId,loadedSale==null?null:loadedSale.sourceLocationId());
         },failure->{submitButton.setEnabled(true);loadingState.actionFailed("Return",failure.getMessage(),this::submitReturn);});
     }
 
@@ -538,8 +578,8 @@ public class ReturnSale extends JFrame {
                 throw new IllegalArgumentException("Return quantity cannot be more than available for "
                         + itemModel.getValueAt(row, 3));
             }
-            lines.add(new ReturnLine(parseInt(itemModel.getValueAt(row, 0), 0), quantity,
-                    parseMoney(itemModel.getValueAt(row, 7))));
+            lines.add(new ReturnLine(row,parseInt(itemModel.getValueAt(row,0),0),quantity,
+                    parseMoney(itemModel.getValueAt(row,7))));
         }
         return lines;
     }
@@ -625,10 +665,11 @@ public class ReturnSale extends JFrame {
     private String refundFingerprint(LanApiClient.RefundRequest request) {
         StringBuilder value = new StringBuilder();
         value.append(request.saleId()).append('|').append(request.refundMethod()).append('|')
+                .append(request.sourceLocationId()).append('|')
                 .append(request.reason()).append('|').append(safe(request.approvalToken())).append('|')
                 .append(safe(request.approvalReason()));
         for (LanApiClient.RefundLine line : request.lines()) {
-            value.append('|').append(line.saleItemId()).append(':').append(line.quantity());
+            value.append('|').append(line.saleItemId()).append(':').append(line.quantity()).append(':').append(line.disposition()).append(':').append(line.destinationLocationId());
         }
         return value.toString();
     }
@@ -668,11 +709,18 @@ public class ReturnSale extends JFrame {
     private record SaleSnapshot(int saleId, String receiptNumber, Integer customerId,
                                 String paymentMethod, String paymentStatus, BigDecimal totalAmount,
                                 BigDecimal returnedAmount, BigDecimal returnApprovalLimit,
-                                boolean requesterCanOverride) {
+                                boolean requesterCanOverride,Integer sourceLocationId) {
+        boolean remote(){return sourceLocationId!=null&&!sourceLocationId.equals(SessionManager.getCurrentLocationId());}
     }
 
-    private record ReturnLine(int saleItemId, int quantity, BigDecimal unitPrice) {
+    private record ReturnLine(int row,int saleItemId, int quantity, BigDecimal unitPrice) {
     }
+
+    private void loadStoreChoices(){Integer current=SessionManager.getCurrentLocationId();StoreChoice local=new StoreChoice(current,"Current Store");storeChoices.add(local);searchStoreBox.addItem(local);if(PermissionManager.hasPermission("PROCESS_RETURNS")&&PermissionManager.hasPermission("PROCESS_MULTI_STORE_RETURNS"))UiTaskRunner.submit(this,"return-sale.stores",LanApiClient::loadReturnStores,result->{for(var s:result){StoreChoice option=new StoreChoice(s.locationId(),s.name());storeChoices.add(option);searchStoreBox.addItem(option);if(java.util.Objects.equals(initialSourceLocationId,s.locationId()))searchStoreBox.setSelectedItem(option);}JComboBox<StoreChoice> destinations=new JComboBox<>(storeChoices.toArray(StoreChoice[]::new));if(returnItemsTable!=null)returnItemsTable.getColumnModel().getColumn(8).setCellEditor(new DefaultCellEditor(destinations));},ignored->{});}
+    private Integer selectedSourceLocation(){StoreChoice value=(StoreChoice)searchStoreBox.getSelectedItem();return value==null?SessionManager.getCurrentLocationId():value.locationId();}
+    private String defaultDestination(){Integer current=SessionManager.getCurrentLocationId();for(StoreChoice s:storeChoices)if(java.util.Objects.equals(s.locationId(),current))return s.label();return "Current Store";}
+    private StoreChoice storeByLabel(String label){for(StoreChoice s:storeChoices)if(s.label().equals(label))return s;return null;}
+    private record StoreChoice(Integer locationId,String label){@Override public String toString(){return label;}}
 
     private static final class NumberFormatAdapter {
         private final java.text.NumberFormat formatter = CurrencyFormatter.create(Locale.US);

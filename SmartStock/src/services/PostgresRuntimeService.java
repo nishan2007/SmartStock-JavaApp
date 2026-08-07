@@ -4,12 +4,14 @@ import data.DatabaseConfig;
 import data.EnvironmentProfile;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -287,6 +289,17 @@ public final class PostgresRuntimeService {
                 """, Duration.ofSeconds(30));
     }
 
+    public static CommandResult startServerProcesses() throws Exception {
+        if (isWindows()) {
+            return installWindowsServer(SupabaseProjectConfig.load(),
+                    EnvironmentProfile.active(), SupabaseProjectConfig.loadLanSubnet());
+        }
+        CommandResult database = startPostgres();
+        if (!database.success()) return database;
+        CommandResult lan = startLanService();
+        return new CommandResult(lan.success(), database.output() + "\n" + lan.output());
+    }
+
     public static CommandResult stopLanService() throws Exception {
         if (isWindows()) {
             return runPowerShell("""
@@ -411,15 +424,38 @@ public final class PostgresRuntimeService {
     }
 
     public static CommandResult ensureSyncServiceInstalled() throws Exception {
-        boolean repairedLauncher = repairInstalledSyncLauncherIfNeeded();
         CommandResult status = syncServiceStatus();
         if (isSyncServiceInstalled(status.output())) {
-            if (repairedLauncher) {
+            if(isWindows()){
+                if(!isWindowsTaskActionHardened())return installWindowsServer(SupabaseProjectConfig.load(),
+                        EnvironmentProfile.active(),SupabaseProjectConfig.loadLanSubnet());
+                if(!isSyncServiceRunning(status.output()))restartInstalledSyncService();
+                return new CommandResult(true,"SmartStock background server is already installed.\n\n"+status.output());
+            }
+            boolean repairedLauncher = repairInstalledSyncLauncherIfNeeded();
+            if (repairedLauncher || isWindows() && !isSyncServiceRunning(status.output())) {
                 restartInstalledSyncService();
             }
             return new CommandResult(true, "SmartStock background sync service is already installed.\n\n" + status.output());
         }
+        if (isWindows()) {
+            return installWindowsServer(SupabaseProjectConfig.load(),
+                    EnvironmentProfile.active(), SupabaseProjectConfig.loadLanSubnet());
+        }
         return installSyncService();
+    }
+
+    private static boolean isWindowsTaskActionHardened() throws Exception {
+        CommandResult result=runPowerShell("""
+                $task=Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                if(-not $task){exit 1}
+                $action=$task.Actions | Select-Object -First 1
+                if($action.Execute -and
+                   (($action.Execute -match '(?i)SmartStock\\\\SmartStockServer\\.exe$' -and [string]::IsNullOrWhiteSpace($action.Arguments)) -or
+                    ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)'))) { exit 0 }
+                exit 1
+                """,Duration.ofSeconds(30));
+        return result.success();
     }
 
     /**
@@ -453,17 +489,6 @@ public final class PostgresRuntimeService {
         }
 
         Path jar = currentPackagedJar();
-        if (jar == null) {
-            Path target = Path.of(System.getProperty("user.dir"))
-                    .toAbsolutePath().normalize().resolve("target");
-            try (var jars = Files.list(target)) {
-                jar = jars.filter(path -> path.getFileName().toString()
-                                .startsWith("inventory-management-"))
-                        .filter(path -> path.getFileName().toString().endsWith(".jar"))
-                        .max(java.util.Comparator.comparingLong(path -> path.toFile().lastModified()))
-                        .orElse(null);
-            }
-        }
         if (jar == null || !Files.isRegularFile(jar)) {
             return new CommandResult(false,
                     "The packaged SmartStock JAR was not found. Build or install SmartStock first.");
@@ -479,7 +504,9 @@ public final class PostgresRuntimeService {
         utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
         Path scriptPath = Files.createTempFile(setupDir, "install-production-server-", ".ps1");
         Path logPath = Files.createTempFile(setupDir, "install-production-server-", ".log");
-        Path nativeLauncher = jar.getParent().getParent().resolve("SmartStock.exe")
+        Path installRoot=jar.getParent().getParent();
+        Path namedServerLauncher=installRoot.resolve("SmartStockServer.exe").toAbsolutePath().normalize();
+        Path nativeLauncher=(Files.isRegularFile(namedServerLauncher)?namedServerLauncher:installRoot.resolve("SmartStock.exe"))
                 .toAbsolutePath().normalize();
         boolean useNativeLauncher = Files.isRegularFile(nativeLauncher);
         Path serviceExecutable = useNativeLauncher ? nativeLauncher
@@ -555,20 +582,10 @@ public final class PostgresRuntimeService {
                   Remove-Item -Recurse -Force $TargetDependencies -ErrorAction SilentlyContinue
                   Copy-Item -LiteralPath $Dependencies -Destination $TargetDependencies -Recurse -Force
                   $JarName = Split-Path -Leaf $Jar
-                  $Launcher = Join-Path $ServiceDir 'run-smartstock-sync-service.cmd'
-                  Set-Content -LiteralPath $Launcher -Encoding ASCII -Value @(
-                    '@echo off',
-                    'set "SMARTSTOCK_ENVIRONMENT=%s"',
-                    'set "SUPABASE_URL=%s"',
-                    'set "SUPABASE_PUBLISHABLE_KEY=%s"',
-                    ('cd /d "' + $ServiceAppDir + '"'),
-                    ('"' + $ServiceExecutable + '" ' + %s)
-                  )
                   Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
                     -Confirm:$false -ErrorAction SilentlyContinue
-                  $CmdExe = Join-Path $env:SystemRoot 'System32\\cmd.exe'
-                  $TaskAction = New-ScheduledTaskAction -Execute $CmdExe `
-                    -Argument ('/d /c ""' + $Launcher + '""')
+                  $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
+                    -Argument %s -WorkingDirectory $ServiceAppDir
                   $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
                   $TaskPrincipal = New-ScheduledTaskPrincipal `
                     -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
@@ -577,6 +594,11 @@ public final class PostgresRuntimeService {
                     -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `
                     -Description 'SmartStock HTTPS LAN and synchronization service' `
                     -Force -ErrorAction Stop | Out-Null
+                  $PostgresServices = Get-Service 'postgresql*' -ErrorAction SilentlyContinue
+                  if (-not $PostgresServices) { throw 'PostgreSQL Windows service was not found.' }
+                  $PostgresServices | Set-Service -StartupType Automatic
+                  $PostgresServices | Start-Service
+                  Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
                   $RuleName = 'SmartStock LAN API 8443'
                   Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue |
                     Remove-NetFirewallRule -ErrorAction SilentlyContinue
@@ -585,6 +607,7 @@ public final class PostgresRuntimeService {
                   Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop |
                     Format-List TaskName,State | Out-String | Set-Content -LiteralPath $Log
                   Add-Content -LiteralPath $Log -Value 'Windows service and private-LAN firewall rule installed.'
+                  Add-Content -LiteralPath $Log -Value 'PostgreSQL and SmartStock Server Service started.'
                   exit 0
                 } catch {
                   $_ | Out-String | Set-Content -LiteralPath $Log
@@ -595,9 +618,6 @@ public final class PostgresRuntimeService {
                 powerShellSingleQuoted(jar.toString()),
                 powerShellSingleQuoted(dependencies.toString()),
                 powerShellSingleQuoted(serviceExecutable.toString()),
-                powerShellLiteralValue(environment),
-                powerShellLiteralValue(supabaseUrl),
-                powerShellLiteralValue(publishableKey),
                 powerShellSingleQuoted(serviceArguments),
                 powerShellSingleQuoted(lanSubnet)
         );
@@ -607,7 +627,7 @@ public final class PostgresRuntimeService {
             Path jar, Path dependencies, Path serviceExecutable, boolean nativeLauncher,
             String supabaseUrl, String publishableKey, String environment,
             String lanSubnet, Path logPath) {
-        String arguments = nativeLauncher ? "--sync-service"
+        String arguments = nativeLauncher ? (serviceExecutable.getFileName().toString().equalsIgnoreCase("SmartStockServer.exe") ? "" : "--sync-service")
                 : "-jar \"" + jar.getFileName() + "\" --sync-service";
         return windowsProductionInstallScriptWithArguments(jar, dependencies,
                 serviceExecutable, arguments, supabaseUrl, publishableKey,
@@ -632,23 +652,38 @@ public final class PostgresRuntimeService {
         Path serviceAppDir = serviceDir.resolve("app");
         if (!Files.isDirectory(serviceAppDir)) return false;
         Path serviceJar = serviceAppDir.resolve(currentJar.getFileName().toString());
-        if (!Files.exists(serviceJar)) {
-            Files.copy(currentJar, serviceJar);
-        }
+        boolean replacedServiceJar = !Files.exists(serviceJar)
+                || Files.mismatch(currentJar, serviceJar) != -1L;
         boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        if (replacedServiceJar) {
+            if (windows) {
+                runPowerShell("$task=Get-ScheduledTask -TaskName SmartStockServerService "
+                                + "-ErrorAction SilentlyContinue; if($task){Stop-ScheduledTask "
+                                + "-TaskName SmartStockServerService -ErrorAction SilentlyContinue; "
+                                + "Start-Sleep -Seconds 1}",
+                        Duration.ofSeconds(30));
+            }
+            Files.copy(currentJar, serviceJar,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         Path launcher = serviceDir.resolve(windows
                 ? "run-smartstock-sync-service.cmd" : "run-smartstock-sync-service.command");
         String existing = Files.exists(launcher) ? Files.readString(launcher) : "";
         if (windows && existing.contains("SMARTSTOCK_ENVIRONMENT=")) {
-            String updated = existing.replaceAll(
-                    "inventory-management-[^\"\\r\\n]+\\.jar",
-                    java.util.regex.Matcher.quoteReplacement(currentJar.getFileName().toString()));
+            StringBuilder preserved = new StringBuilder("@echo off\r\n");
+            existing.lines().filter(line -> line.regionMatches(true, 0, "set \"", 0, 5))
+                    .forEach(line -> preserved.append(line).append("\r\n"));
+            preserved.append("cd /d \"").append(serviceAppDir).append("\"\r\n")
+                    .append(windowsServiceCommand(currentJar, currentJar.getFileName().toString()))
+                    .append(" >> \"").append(serviceDir.resolve("sync-service.log"))
+                    .append("\" 2>&1\r\n");
+            String updated = preserved.toString();
             if (!updated.equals(existing)) Files.writeString(launcher, updated);
-            return !updated.equals(existing);
+            return replacedServiceJar || !updated.equals(existing);
         }
         String expected = installedSyncLauncherContent(windows, serviceAppDir,
                 currentJar.getFileName().toString());
-        if (expected.equals(existing)) return false;
+        if (expected.equals(existing)) return replacedServiceJar;
         Files.writeString(launcher, expected);
         if (!windows) {
             try {
@@ -664,24 +699,66 @@ public final class PostgresRuntimeService {
     private static Path currentPackagedJar() {
         try {
             var source = PostgresRuntimeService.class.getProtectionDomain().getCodeSource();
-            if (source == null || source.getLocation() == null) return null;
-            Path path = Path.of(source.getLocation().toURI()).toAbsolutePath().normalize();
-            String name = path.getFileName() == null ? "" : path.getFileName().toString();
-            return name.startsWith("inventory-management-") && name.endsWith(".jar") ? path : null;
+            if (source != null && source.getLocation() != null) {
+                Path path = Path.of(source.getLocation().toURI()).toAbsolutePath().normalize();
+                String name = path.getFileName() == null ? "" : path.getFileName().toString();
+                if (Files.isRegularFile(path) && name.startsWith("inventory-management-")
+                        && name.endsWith(".jar")) return path;
+            }
+            return findPackagedJar(Path.of(System.getProperty("user.dir"))
+                    .toAbsolutePath().normalize());
         } catch (Exception ignored) {
             return null;
         }
     }
 
+    static Path findPackagedJar(Path applicationDirectory) {
+        if (applicationDirectory == null) return null;
+        for (Path directory : List.of(applicationDirectory.resolve("app"),
+                applicationDirectory.resolve("target"), applicationDirectory)) {
+            if (!Files.isDirectory(directory)) continue;
+            try (var jars = Files.list(directory)) {
+                Path found = jars.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString()
+                                .startsWith("inventory-management-"))
+                        .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                        .max(java.util.Comparator.comparingLong(
+                                path -> path.toFile().lastModified()))
+                        .orElse(null);
+                if (found != null) return found.toAbsolutePath().normalize();
+            } catch (IOException ignored) {
+            }
+        }
+        return null;
+    }
+
     static String installedSyncLauncherContent(boolean windows, Path appDir, String jarName) {
         if (windows) {
+            Path serviceDir = appDir.getParent();
             return "@echo off\r\ncd /d \"" + appDir + "\"\r\n"
-                    + "java -jar \"" + jarName + "\" --sync-service\r\n";
+                    + windowsServiceCommand(appDir.resolve(jarName), jarName)
+                    + " >> \"" + serviceDir.resolve("sync-service.log")
+                    + "\" 2>&1\r\n";
         }
         return "#!/usr/bin/env bash\nset -euo pipefail\n"
                 + "cd " + shellSingleQuoted(unixPath(appDir)) + "\n"
                 + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
                 + shellSingleQuoted(jarName) + " --sync-service\n";
+    }
+
+    private static String windowsServiceCommand(Path packagedJar, String jarName) {
+        Path appDirectory = packagedJar.toAbsolutePath().normalize().getParent();
+        Path installDirectory = appDirectory == null ? null : appDirectory.getParent();
+        Path nativeLauncher = installDirectory == null ? null
+                : installDirectory.resolve("SmartStockServer.exe");
+        if (nativeLauncher != null && Files.isRegularFile(nativeLauncher)) {
+            return "\"" + nativeLauncher + "\"";
+        }
+        nativeLauncher=installDirectory==null?null:installDirectory.resolve("SmartStock.exe");
+        if(nativeLauncher!=null&&Files.isRegularFile(nativeLauncher))return "\""+nativeLauncher+"\" --sync-service";
+        Path javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java.exe")
+                .toAbsolutePath().normalize();
+        return "\"" + javaExecutable + "\" -jar \"" + jarName + "\" --sync-service";
     }
 
     private static String unixPath(Path path) {
@@ -725,6 +802,14 @@ public final class PostgresRuntimeService {
                 || lower.contains("taskname:") && lower.contains("smartstockserverservice")
                 || lower.contains("taskname:") && lower.contains("smartstockbackgroundsync")
                 || lower.contains("task to run:") && lower.contains("run-smartstock-sync-service");
+    }
+
+    static boolean isSyncServiceRunning(String statusOutput) {
+        if (statusOutput == null || statusOutput.isBlank()) return false;
+        String lower = statusOutput.toLowerCase(Locale.ROOT);
+        return lower.matches("(?s).*state\\s*:\\s*running.*")
+                || lower.contains("status: running")
+                || lower.contains("state = running");
     }
 
     public static CommandResult runInstallerRepair(Path installerPath, String mode) throws Exception {
@@ -802,15 +887,20 @@ public final class PostgresRuntimeService {
                 $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
                 $ServiceAppDir = Join-Path $ServiceDir 'app'
                 New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
-                $Jar = Get-ChildItem -Path (Join-Path $AppDir 'target') -Filter 'inventory-management-*.jar' |
-                  Sort-Object LastWriteTime -Descending |
-                  Select-Object -First 1
+                $Jar = $null
+                foreach ($SearchDir in @((Join-Path $AppDir 'app'), (Join-Path $AppDir 'target'), $AppDir)) {
+                  if (-not (Test-Path -LiteralPath $SearchDir -PathType Container)) { continue }
+                  $Jar = Get-ChildItem -LiteralPath $SearchDir -Filter 'inventory-management-*.jar' |
+                    Sort-Object LastWriteTime -Descending |
+                    Select-Object -First 1
+                  if ($null -ne $Jar) { break }
+                }
                 if ($null -eq $Jar) {
                   throw "No SmartStock jar found in $AppDir\\target. Run mvn package first."
                 }
                 Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
                 Copy-Item -Force $Jar.FullName $ServiceAppDir
-                $SourceDependency = Join-Path $AppDir 'target\\dependency'
+                $SourceDependency = Join-Path $Jar.DirectoryName 'dependency'
                 $TargetDependency = Join-Path $ServiceAppDir 'dependency'
                 if (Test-Path $SourceDependency) {
                   Remove-Item -Recurse -Force $TargetDependency -ErrorAction SilentlyContinue
