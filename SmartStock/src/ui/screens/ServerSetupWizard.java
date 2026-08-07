@@ -638,37 +638,57 @@ public final class ServerSetupWizard extends JFrame {
                 selected = ServerStoreSetupService.restoreFromCloud(selected);
             }
             DatabaseConfig current = DatabaseConfig.load();
-            new DatabaseConfig(DatabaseMode.SERVER, current.jdbcUrl(), current.dbUser(),
-                    current.dbPassword(), current.serverHost(), current.serverPort(),
-                    selected.locationId(), current.syncIntervalSeconds()).save();
-            services.ServerSetupGuardService.Assessment assessment =
-                    services.ServerSetupGuardService.assess(selected.locationId());
-            java.util.List<services.LanApiClient.DiscoveredServer> lanServers =
-                    services.ServerSetupGuardService.discoverStoreServers(selected.storeCode());
-            if (assessment.primary()==null&&!lanServers.isEmpty()) {
-                throw new IllegalStateException("LAN discovery found an existing SmartStock server for this store, but it is not in the secured server registry. Open Server Setup on the existing server so it can register before adding this machine.");
-            }
-            boolean anotherPrimary = assessment.primary() != null
-                    && (assessment.current() == null || !assessment.primary().serverInstanceId()
-                    .equals(assessment.current().serverInstanceId()));
-            if (anotherPrimary) {
-                Object[] options = {"Configure as Standby", "Prepare Replacement", "Cancel"};
-                int choice = JOptionPane.showOptionDialog(this,
-                        "This store already has an " + assessment.primary().health().toLowerCase()
-                                + " primary server:\n\n" + assessment.primary().displayName()
-                                + " (" + assessment.primary().endpointHost() + ")\n\n"
-                                + "LAN discovery: " + (lanServers.isEmpty()?"not currently detected":"server detected") + "\n\n"
-                                + "SmartStock will not start a second writable server.",
-                        "Existing Store Server", JOptionPane.DEFAULT_OPTION,
-                        JOptionPane.WARNING_MESSAGE, null, options, options[0]);
-                if (choice < 0 || choice == 2) return;
-                services.ServerSetupGuardService.registerForStore(selected.locationId(), true);
-                statusLabel.setText(choice == 1
-                        ? "Replacement standby prepared. Start the verified handoff from the current primary server."
-                        : "Recovery-ready standby registered for " + selected.name() + ".");
-            } else {
-                services.ServerSetupGuardService.registerForStore(selected.locationId(), false);
-                statusLabel.setText("Store " + selected.name() + " is assigned to this primary server.");
+            DatabaseConfig selectedConfig = new DatabaseConfig(DatabaseMode.SERVER, current.jdbcUrl(),
+                    current.dbUser(), current.dbPassword(), current.serverHost(), current.serverPort(),
+                    selected.locationId(), current.syncIntervalSeconds());
+            selectedConfig.save();
+            try {
+                services.ServerSetupGuardService.Assessment assessment =
+                        services.ServerSetupGuardService.assess(selected.locationId());
+                java.util.List<services.LanApiClient.DiscoveredServer> lanServers =
+                        services.ServerSetupGuardService.discoverStoreServers(selected.storeCode());
+                if (assessment.primary()==null&&!lanServers.isEmpty()) {
+                    throw new IllegalStateException("LAN discovery found an existing SmartStock server for this store, but it is not in the secured server registry. Open Server Setup on the existing server so it can register before adding this machine.");
+                }
+                boolean anotherPrimary = assessment.primary() != null
+                        && (assessment.current() == null || !assessment.primary().serverInstanceId()
+                        .equals(assessment.current().serverInstanceId()));
+                if (anotherPrimary) {
+                    Object[] options = {"Configure as Standby", "Prepare Replacement", "Cancel"};
+                    int choice = JOptionPane.showOptionDialog(this,
+                            "This store already has an " + assessment.primary().health().toLowerCase()
+                                    + " primary server:\n\n" + assessment.primary().displayName()
+                                    + " (" + assessment.primary().endpointHost() + ")\n\n"
+                                    + "LAN discovery: " + (lanServers.isEmpty()?"not currently detected":"server detected") + "\n\n"
+                                    + "SmartStock will not start a second writable server.",
+                            "Existing Store Server", JOptionPane.DEFAULT_OPTION,
+                            JOptionPane.WARNING_MESSAGE, null, options, options[0]);
+                    if (choice < 0 || choice == 2) {
+                        current.save();
+                        return;
+                    }
+                    services.ServerSetupGuardService.registerForStore(selected.locationId(), true);
+                    statusLabel.setText(choice == 1
+                            ? "Replacement standby prepared. Start the verified handoff from the current primary server."
+                            : "Recovery-ready standby registered for " + selected.name() + ".");
+                } else {
+                    services.ServerSetupGuardService.registerForStore(selected.locationId(), false);
+                    statusLabel.setText("Store " + selected.name() + " is assigned to this primary server.");
+                }
+                try (java.sql.Connection connection = data.DB.getConnection()) {
+                    connection.setAutoCommit(false);
+                    try {
+                        services.DeviceCredentialService.assignLocalInstallationToStore(
+                                connection, selected.locationId());
+                        connection.commit();
+                    } catch (Exception ex) {
+                        connection.rollback();
+                        throw ex;
+                    }
+                }
+            } catch (Exception ex) {
+                current.save();
+                throw ex;
             }
             showStep(5);
         } catch (Exception ex) {

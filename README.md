@@ -77,8 +77,23 @@ merge it with the main development work.
 
 ## Platform packaging
 
+- Current synchronized Windows/macOS release version: `1.0.36`
+- Version source of truth: `SmartStock/pom.xml`
 - Windows: `SmartStock/tools/package-windows-release.ps1`
 - macOS: `SmartStock/tools/package-macos-release.sh`
+
+Both packaging scripts read the Maven project version and use it in the JAR,
+application image, and release artifact names. Before packaging either platform,
+update the single `<version>` value in `SmartStock/pom.xml`, commit that version
+change with the release work, and build both platforms from the same commit.
+Do not maintain separate Windows and macOS version numbers.
+
+Confirm the shared version from the repository root with:
+
+```sh
+mvn -q -f SmartStock/pom.xml help:evaluate \
+  -Dexpression=project.version -DforceStdout
+```
 
 Packaging success does not prove an installed release. Verify the actual
 installed app, service health, database route, and relevant hardware on the

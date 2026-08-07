@@ -1,6 +1,7 @@
 package services;
 
 import data.EnvironmentProfile;
+import utils.DeviceUtils;
 import utils.SecureCredentialStore;
 
 import javax.crypto.Cipher;
@@ -85,6 +86,38 @@ public final class DeviceCredentialService {
             }
         }
         audit(conn, "DEVICE_CREDENTIAL_REVOKED", deviceId, actorUserId, "Device credential revoked");
+    }
+
+    /** Keeps an already-paired server installation aligned with its selected store. */
+    public static void assignLocalInstallationToStore(Connection conn, int locationId) throws SQLException {
+        String installationId = DeviceUtils.collectDeviceInfo().getInstallationId();
+        String deviceId;
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE devices
+                SET last_store_id = ?, last_seen = CURRENT_TIMESTAMP
+                WHERE installation_id = ? AND is_approved = TRUE AND is_blocked = FALSE
+                RETURNING device_id::text
+                """)) {
+            ps.setInt(1, locationId);
+            ps.setString(2, installationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("The approved device record for this server installation was not found.");
+                }
+                deviceId = rs.getString(1);
+            }
+        }
+        if (hasColumn(conn, "lan_api_sessions", "device_id")) {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    UPDATE lan_api_sessions SET revoked_at = CURRENT_TIMESTAMP
+                    WHERE device_id = ?::uuid AND revoked_at IS NULL
+                    """)) {
+                ps.setString(1, deviceId);
+                ps.executeUpdate();
+            }
+        }
+        audit(conn, "DEVICE_STORE_REASSIGNED", deviceId, null,
+                "Server installation assigned to store " + locationId);
     }
 
     private static String decrypt(String envelope) throws Exception {

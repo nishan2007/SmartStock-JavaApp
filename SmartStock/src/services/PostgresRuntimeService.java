@@ -735,9 +735,17 @@ public final class PostgresRuntimeService {
     static String installedSyncLauncherContent(boolean windows, Path appDir, String jarName) {
         if (windows) {
             Path serviceDir = appDir.getParent();
+            String serviceDirText;
+            if (serviceDir != null) {
+                serviceDirText = serviceDir.toString();
+            } else {
+                String appDirText = appDir.toString().replace('/', '\\');
+                int separator = appDirText.lastIndexOf('\\');
+                serviceDirText = separator < 0 ? appDirText : appDirText.substring(0, separator);
+            }
             return "@echo off\r\ncd /d \"" + appDir + "\"\r\n"
                     + windowsServiceCommand(appDir.resolve(jarName), jarName)
-                    + " >> \"" + serviceDir.resolve("sync-service.log")
+                    + " >> \"" + serviceDirText + "\\sync-service.log"
                     + "\" 2>&1\r\n";
         }
         return "#!/usr/bin/env bash\nset -euo pipefail\n"
@@ -758,7 +766,8 @@ public final class PostgresRuntimeService {
         if(nativeLauncher!=null&&Files.isRegularFile(nativeLauncher))return "\""+nativeLauncher+"\" --sync-service";
         Path javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java.exe")
                 .toAbsolutePath().normalize();
-        return "\"" + javaExecutable + "\" -jar \"" + jarName + "\" --sync-service";
+        return "\"" + javaExecutable.toString().replace('/', '\\')
+                + "\" -jar \"" + jarName + "\" --sync-service";
     }
 
     private static String unixPath(Path path) {
