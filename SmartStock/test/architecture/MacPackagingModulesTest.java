@@ -65,6 +65,15 @@ class MacPackagingModulesTest {
                 "The installed executable and shortcuts must use the SmartStock icon");
         assertTrue(windowsScript.contains("SetupIconFile=$WindowsIcon"),
                 "The native Windows installer must use the SmartStock icon");
+        assertTrue(windowsScript.contains("[InstallDelete]")
+                        && windowsScript.contains("inventory-management-*.jar"),
+                "Windows upgrades must remove stale versioned application JARs");
+        assertTrue(windowsScript.contains("Split-Path -Parent $IconPath"),
+                "The Windows icon builder must recreate its temporary output directory if needed");
+        assertTrue(windowsScript.contains("runtime\\bin\\java.exe"),
+                "The Windows runtime must include java.exe for the independent updater process");
+        assertTrue(windowsScript.contains("runtime\\bin\\javaw.exe"),
+                "The Windows runtime must include javaw.exe for the windowless server process");
         assertTrue(!windowsScript.contains("-DSMARTSTOCK_ENVIRONMENT"),
                 "The universal Windows installer must honor the environment selected in Guided Setup");
     }

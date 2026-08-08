@@ -74,7 +74,7 @@ class PostgresRuntimeServiceTest {
     }
 
     @Test
-    void packagedWindowsServiceUsesNativeSmartStockLauncher() {
+    void packagedWindowsServiceCanUseSmartStockLauncher() {
         String script = PostgresRuntimeService.windowsProductionInstallScript(
                 Path.of("C:\\Program Files\\SmartStock\\app\\inventory-management-1.0.36.jar"),
                 Path.of("C:\\Program Files\\SmartStock\\app\\dependency"),
@@ -85,15 +85,34 @@ class PostgresRuntimeServiceTest {
         assertTrue(script.contains("SmartStock.exe"));
         assertTrue(script.contains("--sync-service"));
         assertTrue(script.contains("New-ScheduledTaskAction -Execute $ServiceExecutable"));
-        assertTrue(script.contains("-Argument '--sync-service' -WorkingDirectory $ServiceAppDir"));
+        assertTrue(script.contains("$ServiceArguments = '--sync-service'"));
+        assertTrue(script.contains("-Argument $ServiceArguments -WorkingDirectory $ServiceAppDir"));
         assertTrue(script.contains("Unregister-ScheduledTask"));
         assertTrue(script.contains("Register-ScheduledTask"));
         assertFalse(script.contains("System32\\cmd.exe"));
         assertFalse(script.contains("run-smartstock-sync-service.cmd"));
         assertTrue(script.contains("New-ScheduledTaskTrigger -AtLogOn"));
+        assertTrue(script.contains("-RunLevel Limited"));
+        assertFalse(script.contains("-RunLevel Highest"));
         assertFalse(script.contains("schtasks /Run"));
         assertFalse(script.contains("schtasks /Create"));
         assertFalse(script.contains("-jar \\\"inventory-management"));
+    }
+
+    @Test
+    void namedWindowsServerLauncherOmitsEmptyTaskArgument() {
+        String script = PostgresRuntimeService.windowsProductionInstallScript(
+                Path.of("C:\\Program Files\\SmartStock\\app\\inventory-management-1.0.39.jar"),
+                Path.of("C:\\Program Files\\SmartStock\\app\\dependency"),
+                Path.of("C:\\Program Files\\SmartStock\\SmartStockServer.exe"), true,
+                "https://abcdefghijklmnopqrst.supabase.co", "sb_publishable_example",
+                "development", "LocalSubnet",
+                Path.of("C:\\Users\\test\\.smartstock\\setup\\result.log"));
+
+        assertTrue(script.contains("$ServiceArguments = ''"));
+        assertTrue(script.contains("if ([string]::IsNullOrWhiteSpace($ServiceArguments))"));
+        assertTrue(script.contains("New-ScheduledTaskAction -Execute $ServiceExecutable"));
+        assertTrue(script.contains("-WorkingDirectory $ServiceAppDir"));
     }
 
     @Test

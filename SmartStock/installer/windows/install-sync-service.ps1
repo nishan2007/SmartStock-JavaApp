@@ -45,7 +45,7 @@ $runnerLines += @(
 )
 Set-Content -Path $runner -Encoding ASCII -Value $runnerLines
 
-schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /RL HIGHEST /F | Out-Host
+schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /RL LIMITED /F | Out-Host
 schtasks /Run /TN $TaskName | Out-Host
 schtasks /Query /TN $TaskName /FO LIST | Out-Host
 

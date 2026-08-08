@@ -203,6 +203,10 @@ public final class AppUpdateService {
         manifest.setProperty("platform", release.platform());
         manifest.setProperty("install.layout", appBundle == null ? "jar-dir" : "mac-app");
         manifest.setProperty("app.dir", appDir.toString());
+        if (detectPlatform().equals("windows") && appDir.getParent() != null) {
+            manifest.setProperty("app.launcher.path",
+                    appDir.getParent().resolve("SmartStock.exe").toString());
+        }
         if (appBundle != null) {
             manifest.setProperty("app.bundle.path", appBundle.toString());
         }
@@ -211,7 +215,7 @@ public final class AppUpdateService {
         manifest.setProperty("backup.dir", rollbackDirectory().toString());
         manifest.setProperty("java.bin", javaBinary().toString());
         manifest.setProperty("sync.service.app.dir", Path.of(System.getProperty("user.home"), ".smartstock", "sync-service", "app").toString());
-        manifest.setProperty("sync.service.task.name", "SmartStockBackgroundSync");
+        manifest.setProperty("sync.service.task.name", "SmartStockServerService");
         manifest.setProperty("sync.service.launch.agent.label", "com.smartstock.sync");
         manifest.setProperty("relaunch", "true");
         Path manifestPath = stagingDir.resolve("update.properties");
@@ -290,6 +294,13 @@ public final class AppUpdateService {
         ProcessBuilder process;
         if (nativeUpdater != null && Files.isExecutable(nativeUpdater)) {
             process = new ProcessBuilder(nativeUpdater.toString(), manifestPath.toString());
+        } else if (detectPlatform().equals("windows")) {
+            Path java = windowsUpdaterJavaBinary();
+            if (!Files.isExecutable(java)) {
+                throw new IOException("No updater launcher or Java executable was found at " + java + ".");
+            }
+            process = new ProcessBuilder(buildWindowsElevatedUpdaterCommand(
+                    java, runner, manifestPath));
         } else {
             Path java = javaBinary();
             if (!Files.isExecutable(java)) {
@@ -300,6 +311,29 @@ public final class AppUpdateService {
         }
         process.directory(manifestPath.getParent().toFile()).start();
         System.exit(0);
+    }
+
+    static List<String> buildWindowsElevatedUpdaterCommand(
+            Path java, Path runner, Path manifestPath) {
+        Path workingDirectory = manifestPath.getParent();
+        String command = "$p=Start-Process -FilePath '" + quotePowerShell(java.toString())
+                + "' -Verb RunAs -WindowStyle Hidden -WorkingDirectory '"
+                + quotePowerShell(workingDirectory.toString())
+                + "' -ArgumentList @('-cp','" + quotePowerShell(runner.toString())
+                + "','app.SmartStockUpdater','" + quotePowerShell(manifestPath.toString())
+                + "') -PassThru; if ($null -eq $p) { exit 1 }";
+        return List.of("powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", command);
+    }
+
+    private static Path windowsUpdaterJavaBinary() {
+        Path java = javaBinary();
+        Path javaw = java.resolveSibling("javaw.exe");
+        return Files.isExecutable(javaw) ? javaw : java;
+    }
+
+    private static String quotePowerShell(String value) {
+        return value.replace("'", "''");
     }
 
     private static Path currentAppJar() throws IOException {
@@ -350,6 +384,19 @@ public final class AppUpdateService {
         String executable = isWindows() ? "java.exe" : "java";
         Path bundled = Path.of(System.getProperty("java.home"), "bin", executable);
         if (Files.isExecutable(bundled)) return bundled;
+        String javaHome = System.getenv("JAVA_HOME");
+        if (!isBlank(javaHome)) {
+            Path configured = Path.of(javaHome, "bin", executable);
+            if (Files.isExecutable(configured)) return configured;
+        }
+        String path = System.getenv("PATH");
+        if (!isBlank(path)) {
+            for (String directory : path.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+                if (isBlank(directory)) continue;
+                Path candidate = Path.of(directory, executable);
+                if (Files.isExecutable(candidate)) return candidate;
+            }
+        }
         if (detectPlatform().equals("mac")) {
             Path systemJava = Path.of("/usr/bin/java");
             if (Files.isExecutable(systemJava)) return systemJava;

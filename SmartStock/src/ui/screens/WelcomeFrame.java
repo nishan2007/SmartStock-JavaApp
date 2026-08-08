@@ -23,6 +23,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -35,14 +36,18 @@ import javax.swing.Timer;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.BorderLayout;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Insets;
+import java.awt.RenderingHints;
 import java.time.LocalDateTime;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
@@ -58,7 +63,7 @@ public class WelcomeFrame extends JFrame {
     private final JLabel modeLabel = new JLabel();
     private final JLabel deckersLogoLabel = new JLabel("Deckers", SwingConstants.CENTER);
     private final JLabel smartStockLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
-    private final JButton refreshStatusBtn = new JButton("Refresh System Status");
+    private final JButton refreshStatusBtn = new JButton(createRefreshIcon());
     private final JButton startProcessesBtn = new JButton("Start Server Processes");
     private final JButton setupBtn = new JButton("Guided Setup");
     private final JButton environmentBtn = new JButton("Switch Environment");
@@ -175,6 +180,23 @@ public class WelcomeFrame extends JFrame {
         DeckersSwing.styleBand(panel, DeckersPalette.LIME, new Insets(18, 18, 18, 18));
 
         JLabel title = sectionTitle("System Status");
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.setAlignmentX(Component.LEFT_ALIGNMENT);
+        header.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
+        header.add(title, BorderLayout.WEST);
+
+        styleWelcomeButton(refreshStatusBtn, DeckersPalette.ORANGE);
+        refreshStatusBtn.setToolTipText("Refresh system status");
+        refreshStatusBtn.getAccessibleContext().setAccessibleName("Refresh system status");
+        refreshStatusBtn.setHorizontalAlignment(SwingConstants.CENTER);
+        refreshStatusBtn.setMargin(new Insets(0, 0, 2, 0));
+        refreshStatusBtn.setFocusable(false);
+        refreshStatusBtn.setPreferredSize(new Dimension(32, 32));
+        refreshStatusBtn.setMinimumSize(new Dimension(32, 32));
+        refreshStatusBtn.setMaximumSize(new Dimension(32, 32));
+        refreshStatusBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        header.add(refreshStatusBtn, BorderLayout.EAST);
         modeLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
         modeLabel.setForeground(DeckersPalette.text());
         modeLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
@@ -188,14 +210,13 @@ public class WelcomeFrame extends JFrame {
         statusLabel.setFont(new Font("SansSerif", Font.BOLD, 13));
         statusLabel.setForeground(DeckersPalette.text());
         statusLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
-        styleWelcomeButton(refreshStatusBtn, DeckersPalette.ORANGE);
         styleWelcomeButton(syncStatusBtn, DeckersPalette.MAGENTA);
         styleWelcomeButton(setupBtn, DeckersPalette.PURPLE);
         styleWelcomeButton(environmentBtn, DeckersPalette.CORAL);
         styleWelcomeButton(pairRegisterBtn, DeckersPalette.PURPLE);
         styleWelcomeButton(serverAddressBtn, DeckersPalette.LIME);
 
-        panel.add(title);
+        panel.add(header);
         panel.add(Box.createVerticalStrut(12));
         panel.add(modeLabel);
         panel.add(Box.createVerticalStrut(12));
@@ -206,8 +227,6 @@ public class WelcomeFrame extends JFrame {
         panel.add(systemStatsLabel);
         panel.add(Box.createVerticalStrut(12));
         panel.add(statusLabel);
-        panel.add(Box.createVerticalStrut(12));
-        panel.add(refreshStatusBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(syncStatusBtn);
         panel.add(Box.createVerticalStrut(8));
@@ -275,6 +294,33 @@ public class WelcomeFrame extends JFrame {
         label.setForeground(DeckersPalette.text());
         label.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         return label;
+    }
+
+    private static Icon createRefreshIcon() {
+        return new Icon() {
+            @Override
+            public void paintIcon(Component component, Graphics graphics, int x, int y) {
+                Graphics2D drawing = (Graphics2D) graphics.create();
+                drawing.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                drawing.setColor(component.getForeground());
+                drawing.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                drawing.drawArc(x + 2, y + 2, 14, 14, 40, 285);
+                drawing.drawLine(x + 16, y + 10, x + 12, y + 10);
+                drawing.drawLine(x + 16, y + 10, x + 15, y + 14);
+                drawing.dispose();
+            }
+
+            @Override
+            public int getIconWidth() {
+                return 18;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return 18;
+            }
+        };
     }
 
     private void wireActions() {

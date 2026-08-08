@@ -451,7 +451,7 @@ public final class PostgresRuntimeService {
                 if(-not $task){exit 1}
                 $action=$task.Actions | Select-Object -First 1
                 if($action.Execute -and
-                   (($action.Execute -match '(?i)SmartStock\\\\SmartStockServer\\.exe$' -and [string]::IsNullOrWhiteSpace($action.Arguments)) -or
+                   (($action.Execute -match '(?i)SmartStock\\\\runtime\\\\bin\\\\javaw?\\.exe$' -and $action.Arguments -match '(?i)-jar.+--sync-service') -or
                     ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)'))) { exit 0 }
                 exit 1
                 """,Duration.ofSeconds(30));
@@ -505,13 +505,16 @@ public final class PostgresRuntimeService {
         Path scriptPath = Files.createTempFile(setupDir, "install-production-server-", ".ps1");
         Path logPath = Files.createTempFile(setupDir, "install-production-server-", ".log");
         Path installRoot=jar.getParent().getParent();
-        Path namedServerLauncher=installRoot.resolve("SmartStockServer.exe").toAbsolutePath().normalize();
-        Path nativeLauncher=(Files.isRegularFile(namedServerLauncher)?namedServerLauncher:installRoot.resolve("SmartStock.exe"))
+        Path bundledJava = installRoot.resolve("runtime").resolve("bin").resolve("javaw.exe")
                 .toAbsolutePath().normalize();
-        boolean useNativeLauncher = Files.isRegularFile(nativeLauncher);
-        Path serviceExecutable = useNativeLauncher ? nativeLauncher
+        if (!Files.isRegularFile(bundledJava)) {
+            bundledJava = installRoot.resolve("runtime").resolve("bin").resolve("java.exe")
+                    .toAbsolutePath().normalize();
+        }
+        Path serviceExecutable = Files.isRegularFile(bundledJava) ? bundledJava
                 : Path.of(System.getProperty("java.home"), "bin", "java.exe")
-                .toAbsolutePath().normalize();
+                        .toAbsolutePath().normalize();
+        boolean useNativeLauncher = false;
         if (!Files.isRegularFile(serviceExecutable)) {
             return new CommandResult(false,
                     "Neither the packaged SmartStock launcher nor a Java service executable was found.");
@@ -584,12 +587,18 @@ public final class PostgresRuntimeService {
                   $JarName = Split-Path -Leaf $Jar
                   Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
                     -Confirm:$false -ErrorAction SilentlyContinue
-                  $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
-                    -Argument %s -WorkingDirectory $ServiceAppDir
+                  $ServiceArguments = %s
+                  if ([string]::IsNullOrWhiteSpace($ServiceArguments)) {
+                    $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
+                      -WorkingDirectory $ServiceAppDir
+                  } else {
+                    $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
+                      -Argument $ServiceArguments -WorkingDirectory $ServiceAppDir
+                  }
                   $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
                   $TaskPrincipal = New-ScheduledTaskPrincipal `
                     -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-                    -LogonType Interactive -RunLevel Highest
+                    -LogonType Interactive -RunLevel Limited
                   Register-ScheduledTask -TaskName SmartStockServerService `
                     -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `
                     -Description 'SmartStock HTTPS LAN and synchronization service' `

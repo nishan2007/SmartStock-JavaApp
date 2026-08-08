@@ -9,10 +9,13 @@ SRC_DIR="$ROOT_DIR/src"
 # pre-launch installer leaves no register database login enabled.
 violations="$({
   rg -l 'import data\.DB;|import java\.sql\.(Connection|PreparedStatement|ResultSet|Statement);|DB\.getConnection\(|DriverManager\.getConnection\(' "$SRC_DIR/ui" "$SRC_DIR/Receipt" 2>/dev/null \
+    | tr '\\' '/' \
     | rg -v ' 2\.java$|/Server[^/]*\.java$' || true
   rg -l 'import data\.DB;|import java\.sql\.(Connection|PreparedStatement|ResultSet|Statement);|DB\.getConnection\(|DriverManager\.getConnection\(' "$SRC_DIR/managers" 2>/dev/null \
+    | tr '\\' '/' \
     | rg -v ' 2\.java$|/(ServerTimeClockManager|ServerCompanyCustomizationRepository|ServerReceiptNumberManager)\.java$' || true
   rg -l 'DB\.getConnection\(|DriverManager\.getConnection\(' "$SRC_DIR/services" 2>/dev/null \
+    | tr '\\' '/' \
     | rg -v ' 2\.java$|/(LanApiServer|ServerNotificationService|ServerEmployeeScheduleService|ServerEmployeeAutoScheduleService|ServerCustomOrderDataService|ServerQuotationInvoiceService|ServerQuotationInvoiceViewService|ServerBalanceSheetService|ServerEmailOutboxService|ServerImageAssetService|ServerImageAssetMaintenance|ServerStoreSetupService|ServerFirstAdministratorService|ServerSupabaseMigrationRunner|CloudServerRegistryService|ServerManagementClient|ServerSetupGuardService|SyncWorker|SyncServiceStatusService|WorkflowSyncIdentityCollisionVerifier|ServerProvisioningService|LocalDatabaseBootstrapService|CompanyBackupService|LocalServerRepairService|.*SchemaInstaller|ReferenceDataSyncService)\.java$' || true
 } | sort -u)"
 

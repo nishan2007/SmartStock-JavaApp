@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,5 +74,46 @@ class SmartStockUpdaterTest {
         try (var files = Files.list(rollback)) {
             assertEquals(0, files.count());
         }
+    }
+
+    @Test
+    void updatesNativeLauncherConfigsForInstalledJar(@TempDir Path appDir) throws Exception {
+        String config = "[Application]\n"
+                + "app.classpath=$APPDIR\\inventory-management-1.0.36.jar\n"
+                + "app.mainclass=app.Main\n"
+                + "app.classpath=$APPDIR\\dependency\\postgresql-42.7.3.jar\n\n"
+                + "[JavaOptions]\n"
+                + "java-options=-Djpackage.app-version=1.0.36\n";
+        Path appConfig = appDir.resolve("SmartStock.cfg");
+        Path serverConfig = appDir.resolve("SmartStockServer.cfg");
+        Files.writeString(appConfig, config);
+        Files.writeString(serverConfig, config + "\n[ArgOptions]\narguments=--sync-service\n");
+
+        SmartStockUpdater.updateNativeLauncherConfigs(appDir, "inventory-management-1.0.37.jar");
+
+        for (Path launcherConfig : List.of(appConfig, serverConfig)) {
+            String updated = Files.readString(launcherConfig);
+            assertTrue(updated.contains("app.classpath=$APPDIR\\inventory-management-1.0.37.jar"));
+            assertTrue(updated.contains("java-options=-Djpackage.app-version=1.0.37"));
+            assertTrue(updated.contains("app.classpath=$APPDIR\\dependency\\postgresql-42.7.3.jar"));
+            assertFalse(updated.contains("inventory-management-1.0.36.jar"));
+        }
+    }
+
+    @Test
+    void terminatesTheCompleteWindowsServerProcessTree() {
+        assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe"),
+                SmartStockUpdater.windowsServerTerminationCommand());
+    }
+
+    @Test
+    void relaunchesThroughNativeWindowsLauncherWhenAvailable(@TempDir Path tempDir) throws Exception {
+        Path launcher = tempDir.resolve("SmartStock.exe");
+        Files.writeString(launcher, "launcher");
+        Properties properties = new Properties();
+        properties.setProperty("app.launcher.path", launcher.toString());
+
+        assertEquals(List.of(launcher.toString()), SmartStockUpdater.relaunchCommand(
+                properties, tempDir.resolve("java.exe"), tempDir.resolve("inventory-management-1.0.38.jar")));
     }
 }

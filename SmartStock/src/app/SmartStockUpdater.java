@@ -86,6 +86,7 @@ public final class SmartStockUpdater {
             stopSyncService(props);
             try {
                 replaceApp(appDir, payloadDir);
+                updateNativeLauncherConfigs(appDir, newJar.getFileName().toString());
                 updateSyncServiceCopy(appDir, props.getProperty("sync.service.app.dir"));
             } catch (Exception ex) {
                 restoreBackup(appDir, backupDir);
@@ -101,7 +102,7 @@ public final class SmartStockUpdater {
             if ("mac-app".equals(layout) && isMac()) {
                 relaunchMacApp(launchTarget);
             } else {
-                new ProcessBuilder(javaBin.toString(), "-jar", launchTarget.toString())
+                new ProcessBuilder(relaunchCommand(props, javaBin, launchTarget))
                         .directory(appDir.toFile())
                         .start();
             }
@@ -312,6 +313,27 @@ public final class SmartStockUpdater {
         }
     }
 
+    static void updateNativeLauncherConfigs(Path appDir, String jarName) throws IOException {
+        if (appDir == null || jarName == null || !isAppJar(jarName)) return;
+        String version = jarName.substring("inventory-management-".length(),
+                jarName.length() - ".jar".length());
+        for (String configName : List.of("SmartStock.cfg", "SmartStockServer.cfg")) {
+            Path config = appDir.resolve(configName);
+            if (!Files.isRegularFile(config)) continue;
+            List<String> lines = Files.readAllLines(config);
+            for (int index = 0; index < lines.size(); index++) {
+                String line = lines.get(index);
+                if (line.startsWith("app.classpath=$APPDIR\\inventory-management-")
+                        && line.endsWith(".jar")) {
+                    lines.set(index, "app.classpath=$APPDIR\\" + jarName);
+                } else if (line.startsWith("java-options=-Djpackage.app-version=")) {
+                    lines.set(index, "java-options=-Djpackage.app-version=" + version);
+                }
+            }
+            Files.write(config, lines);
+        }
+    }
+
     private static void updateSyncServiceCopy(Path appDir, String syncServiceAppDirValue) throws IOException {
         if (syncServiceAppDirValue == null || syncServiceAppDirValue.isBlank()) {
             return;
@@ -512,6 +534,7 @@ public final class SmartStockUpdater {
             return;
         }
         runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
+        terminateWindowsServerProcessTree();
     }
 
     private static void startSyncService(Properties props) {
@@ -577,6 +600,30 @@ public final class SmartStockUpdater {
             new ProcessBuilder("schtasks", action, "/TN", taskName).start().waitFor();
         } catch (Exception ignored) {
         }
+    }
+
+    static List<String> windowsServerTerminationCommand() {
+        return List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe");
+    }
+
+    private static void terminateWindowsServerProcessTree() {
+        if (!isWindows()) return;
+        try {
+            runCommand(windowsServerTerminationCommand());
+            Thread.sleep(750);
+        } catch (Exception ignored) {
+        }
+    }
+
+    static List<String> relaunchCommand(Properties props, Path javaBin, Path launchTarget) {
+        String nativeLauncher = props.getProperty("app.launcher.path", "").trim();
+        if (isWindows() && !nativeLauncher.isEmpty()) {
+            Path launcher = Path.of(nativeLauncher);
+            if (Files.isRegularFile(launcher)) {
+                return List.of(launcher.toString());
+            }
+        }
+        return List.of(javaBin.toString(), "-jar", launchTarget.toString());
     }
 
     private static boolean isWindows() {

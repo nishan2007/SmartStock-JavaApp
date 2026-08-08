@@ -73,6 +73,7 @@ public final class ThemeManager {
         cachedDarkMode = enabled;
         applyLookAndFeelDefaults();
         applyToOpenWindows();
+        AppIconManager.refreshOpenWindows();
     }
 
     public static void applyLookAndFeelDefaults() {
@@ -168,6 +169,7 @@ public final class ThemeManager {
             return;
         }
         applyLookAndFeelDefaults();
+        AppIconManager.applyTo(window);
         SwingUtilities.updateComponentTreeUI(window);
         applyToComponent(window);
         window.invalidate();

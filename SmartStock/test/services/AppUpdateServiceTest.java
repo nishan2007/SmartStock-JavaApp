@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 
 import managers.SupabaseSessionManager;
 
@@ -64,6 +65,28 @@ class AppUpdateServiceTest {
         Path rollback = AppUpdateService.rollbackDirectory();
         assertEquals("rollback", rollback.getFileName().toString());
         assertTrue(rollback.endsWith(Path.of(".smartstock", "rollback")));
+    }
+
+    @Test
+    void windowsUpdaterTargetsInstalledServerTask() throws Exception {
+        String source = Files.readString(Path.of("src/services/AppUpdateService.java"));
+        assertTrue(source.contains("sync.service.task.name\", \"SmartStockServerService"));
+        assertTrue(!source.contains("sync.service.task.name\", \"SmartStockBackgroundSync"));
+    }
+
+    @Test
+    void windowsUpdaterRequestsElevationAndQuotesPaths() {
+        List<String> command = AppUpdateService.buildWindowsElevatedUpdaterCommand(
+                Path.of("C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe"),
+                Path.of("C:\\Users\\Test User\\stage's\\updater.jar"),
+                Path.of("C:\\Users\\Test User\\stage's\\update.properties"));
+
+        assertEquals("powershell.exe", command.get(0));
+        String script = command.get(command.size() - 1);
+        assertTrue(script.contains("-Verb RunAs"));
+        assertTrue(script.contains("-WindowStyle Hidden"));
+        assertTrue(script.contains("stage''s\\updater.jar"));
+        assertTrue(script.contains("stage''s\\update.properties"));
     }
 
     @Test

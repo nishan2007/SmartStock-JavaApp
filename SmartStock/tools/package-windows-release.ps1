@@ -3,13 +3,14 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Target = Join-Path $Root "target"
 $Release = Join-Path $Target "release-windows"
 $Work = Join-Path $env:TEMP ("smartstock-windows-" + [guid]::NewGuid())
-$IconSource = Join-Path $Root "src\Images\SmartStockLogoVariations\SmartStockLogo_AppIcon_Square.png"
+$IconSource = Join-Path $Root "src\Images\AppIconLight.png"
 
 function New-WindowsIcon {
     param(
         [Parameter(Mandatory = $true)][string]$PngPath,
         [Parameter(Mandatory = $true)][string]$IconPath
     )
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $IconPath) | Out-Null
     Add-Type -AssemblyName System.Drawing
     $Source = [System.Drawing.Image]::FromFile($PngPath)
     try {
@@ -106,6 +107,18 @@ try {
     if (-not (Test-Path (Join-Path $AppImage "SmartStockServer.exe"))) {
         throw "The Windows package was created without the named SmartStock server launcher."
     }
+    # jpackage app images contain the Java runtime libraries used by the native
+    # launcher but may omit java.exe itself. The in-app updater needs that
+    # matching launcher to run independently after SmartStock exits.
+    $JavaLauncher = (Get-Command java -ErrorAction Stop).Source
+    Copy-Item -LiteralPath $JavaLauncher `
+        -Destination (Join-Path $AppImage "runtime\bin\java.exe") -Force
+    $JavawLauncher = Join-Path (Split-Path -Parent $JavaLauncher) "javaw.exe"
+    if (-not (Test-Path -LiteralPath $JavawLauncher)) {
+        throw "The matching javaw.exe launcher was not found beside java.exe."
+    }
+    Copy-Item -LiteralPath $JavawLauncher `
+        -Destination (Join-Path $AppImage "runtime\bin\javaw.exe") -Force
     Set-Content -LiteralPath (Join-Path $AppImage "START-SMARTSTOCK-SETUP.cmd") -Encoding ASCII -Value @(
         "@echo off",
         'start "" "%~dp0SmartStock.exe" --setup-wizard'
@@ -145,6 +158,9 @@ SetupIconFile=$WindowsIcon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+
+[InstallDelete]
+Type: files; Name: "{app}\app\inventory-management-*.jar"
 
 [Files]
 Source: "$AppImage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -3,6 +3,7 @@ package app;
 import ui.screens.WelcomeFrame;
 import ui.screens.InitialSetupWizard;
 import ui.helpers.ThemeManager;
+import ui.helpers.AppIconManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.PostgresRuntimeService;
@@ -52,6 +53,7 @@ public class Main {
             }
             try {
                 ThemeManager.applyLookAndFeelDefaults();
+                AppIconManager.install();
                 LanApiClient.setConnectionLossHandler(NavigationManager::returnToWelcomeForConnectionLoss);
                 WelcomeFrame frame = new WelcomeFrame();
                 frame.setVisible(true);
