@@ -114,6 +114,7 @@ class SmartStockUpdaterTest {
         properties.setProperty("app.launcher.path", launcher.toString());
 
         assertEquals(List.of(launcher.toString()), SmartStockUpdater.relaunchCommand(
-                properties, tempDir.resolve("java.exe"), tempDir.resolve("inventory-management-1.0.38.jar")));
+                properties, tempDir.resolve("java.exe"),
+                tempDir.resolve("inventory-management-1.0.38.jar"), true));
     }
 }

@@ -104,7 +104,7 @@ class PostgresRuntimeServiceTest {
         String script = PostgresRuntimeService.windowsProductionInstallScript(
                 Path.of("C:\\Program Files\\SmartStock\\app\\inventory-management-1.0.39.jar"),
                 Path.of("C:\\Program Files\\SmartStock\\app\\dependency"),
-                Path.of("C:\\Program Files\\SmartStock\\SmartStockServer.exe"), true,
+                Path.of("SmartStockServer.exe"), true,
                 "https://abcdefghijklmnopqrst.supabase.co", "sb_publishable_example",
                 "development", "LocalSubnet",
                 Path.of("C:\\Users\\test\\.smartstock\\setup\\result.log"));

@@ -616,8 +616,13 @@ public final class SmartStockUpdater {
     }
 
     static List<String> relaunchCommand(Properties props, Path javaBin, Path launchTarget) {
+        return relaunchCommand(props, javaBin, launchTarget, isWindows());
+    }
+
+    static List<String> relaunchCommand(
+            Properties props, Path javaBin, Path launchTarget, boolean windows) {
         String nativeLauncher = props.getProperty("app.launcher.path", "").trim();
-        if (isWindows() && !nativeLauncher.isEmpty()) {
+        if (windows && !nativeLauncher.isEmpty()) {
             Path launcher = Path.of(nativeLauncher);
             if (Files.isRegularFile(launcher)) {
                 return List.of(launcher.toString());

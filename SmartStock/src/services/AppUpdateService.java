@@ -315,7 +315,7 @@ public final class AppUpdateService {
 
     static List<String> buildWindowsElevatedUpdaterCommand(
             Path java, Path runner, Path manifestPath) {
-        Path workingDirectory = manifestPath.getParent();
+        Path workingDirectory = manifestPath.toAbsolutePath().normalize().getParent();
         String command = "$p=Start-Process -FilePath '" + quotePowerShell(java.toString())
                 + "' -Verb RunAs -WindowStyle Hidden -WorkingDirectory '"
                 + quotePowerShell(workingDirectory.toString())
