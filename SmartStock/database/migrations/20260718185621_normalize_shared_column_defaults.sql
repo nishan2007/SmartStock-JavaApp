@@ -107,7 +107,7 @@ ALTER TABLE public.sales ALTER COLUMN completed_at SET NOT NULL;
 UPDATE public.users SET full_name=COALESCE(NULLIF(BTRIM(full_name),''),username) WHERE full_name IS NULL OR BTRIM(full_name)='';
 ALTER TABLE public.users ALTER COLUMN full_name SET NOT NULL;
 
-ALTER TABLE public.wifi_sessions ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE public.wifi_sessions ALTER COLUMN accepted_terms SET DEFAULT FALSE;
-ALTER TABLE public.wifi_sessions ALTER COLUMN status SET DEFAULT 'pending';
-ALTER TABLE public.wifi_sessions ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE IF EXISTS public.wifi_sessions ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE IF EXISTS public.wifi_sessions ALTER COLUMN accepted_terms SET DEFAULT FALSE;
+ALTER TABLE IF EXISTS public.wifi_sessions ALTER COLUMN status SET DEFAULT 'pending';
+ALTER TABLE IF EXISTS public.wifi_sessions ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;

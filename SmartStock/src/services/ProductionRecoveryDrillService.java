@@ -39,35 +39,6 @@ public final class ProductionRecoveryDrillService {
         return List.copyOf(comparisons);
     }
 
-    public static RecoveryResult run(Connection cleanTarget, CloudSyncManifest productionCloud)
-            throws SQLException {
-        String targetName = validateTarget(cleanTarget);
-        int restoredRows = CloudRecoveryService.restore(cleanTarget, productionCloud);
-        List<TableComparison> comparisons = comparisons(cleanTarget, productionCloud);
-        requireMatchingComparisons(comparisons);
-        return new RecoveryResult(targetName, restoredRows, List.copyOf(comparisons));
-    }
-
-    public static RecoveryResult run(Connection cleanTarget, Connection productionCloud)
-            throws SQLException {
-        String targetName = validateTarget(cleanTarget);
-
-        int restoredRows = ReferenceDataSyncService.pullExistingLocationHistory(
-                cleanTarget, productionCloud, null);
-        List<TableComparison> comparisons = new ArrayList<>();
-        for (String table : RECOVERY_TABLES) {
-            if (!tableExists(cleanTarget, table) || !tableExists(productionCloud, table)) {
-                throw new SQLException("Recovery schema is missing required table: " + table);
-            }
-            long targetCount = count(cleanTarget, table);
-            long cloudCount = count(productionCloud, table);
-            comparisons.add(new TableComparison(table, cloudCount, targetCount,
-                    cloudCount == targetCount));
-        }
-        requireMatchingComparisons(comparisons);
-        return new RecoveryResult(targetName, restoredRows, List.copyOf(comparisons));
-    }
-
     private static String validateTarget(Connection cleanTarget) throws SQLException {
         String targetName = cleanTarget.getCatalog();
         if (targetName == null || !targetName.endsWith("_recovery_drill")) {
@@ -92,8 +63,13 @@ public final class ProductionRecoveryDrillService {
     private static List<TableComparison> comparisons(Connection cleanTarget,
                                                        CloudSyncManifest cloud)
             throws SQLException {
+        for (String required : RECOVERY_TABLES) {
+            if (!cloud.hasTable(required)) {
+                throw new SQLException("Recovery snapshot is missing required table: " + required);
+            }
+        }
         List<TableComparison> comparisons = new ArrayList<>();
-        for (String table : RECOVERY_TABLES) {
+        for (String table : cloud.tables().keySet().stream().sorted().toList()) {
             if (!tableExists(cleanTarget, table) || !cloud.hasTable(table)) {
                 throw new SQLException("Recovery schema is missing required table: " + table);
             }

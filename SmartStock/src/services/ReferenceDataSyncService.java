@@ -135,7 +135,6 @@ public final class ReferenceDataSyncService {
             "balance_sheet_submissions",
             "balance_sheet_submission_revisions",
             "cheque_bank_deposits",
-            "expense_categories",
             "expenses",
             "other_income_entries",
             "employee_time_clock",
@@ -151,7 +150,6 @@ public final class ReferenceDataSyncService {
             "maintenance_parts",
             "maintenance_machine_parts",
             "maintenance_tickets",
-            "wifi_sessions",
             "email_outbox",
             "email_outbox_events"
     );
@@ -229,7 +227,6 @@ public final class ReferenceDataSyncService {
             "balance_sheet_submissions",
             "balance_sheet_submission_revisions",
             "cheque_bank_deposits",
-            "expense_categories",
             "expenses",
             "other_income_entries",
             "employee_time_clock",
@@ -251,6 +248,11 @@ public final class ReferenceDataSyncService {
     private static final Set<String> UPDATED_AT_SCHEMA_READY = ConcurrentHashMap.newKeySet();
     private static final Set<String> TOMBSTONE_SCHEMA_READY = ConcurrentHashMap.newKeySet();
     private static final Set<String> DEVICE_UPDATED_AT_SCHEMA_READY = ConcurrentHashMap.newKeySet();
+    private static final Set<String> PROTECTED_USER_CLOUD_COLUMNS = Set.of(
+            "password_hash", "password_cache_invalidated_at",
+            "employee_pin_salt", "employee_pin_hash", "employee_pin_updated_at",
+            "badge_secret_salt", "badge_secret_hash"
+    );
 
     private ReferenceDataSyncService() {
     }
@@ -3963,6 +3965,9 @@ public final class ReferenceDataSyncService {
         List<String> common = new ArrayList<>();
         for (String column : cloudColumns) {
             if (generatedColumns.contains(column)) {
+                continue;
+            }
+            if ("users".equals(table) && PROTECTED_USER_CLOUD_COLUMNS.contains(column)) {
                 continue;
             }
             if ("product_barcodes".equals(table)

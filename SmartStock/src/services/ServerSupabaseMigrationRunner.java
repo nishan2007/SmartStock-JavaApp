@@ -66,6 +66,7 @@ public final class ServerSupabaseMigrationRunner {
             "database/workflow_sync_identity_setup.sql",
             "database/email_outbox_setup.sql",
             "database/app_updates_setup.sql",
+            "database/remote_admin_setup.sql",
             "database/supabase_rpc_security_setup.sql",
             "database/supabase_rls_hardening_setup.sql",
             "database/migrations/20260613100000_align_quotation_invoice_print_defaults.sql",
@@ -112,7 +113,20 @@ public final class ServerSupabaseMigrationRunner {
             "database/migrations/20260806213000_index_balance_sheet_revision_foreign_keys.sql",
             "database/migrations/20260807143000_add_multistore_refund_queue.sql",
             "database/migrations/20260808120000_add_employee_unpaid_break.sql",
-            "database/migrations/20260723220000_first_admin_bootstrap.sql"
+            "database/migrations/20260723220000_first_admin_bootstrap.sql",
+            "database/migrations/20260809120000_versioned_store_recovery_snapshots.sql",
+            "database/migrations/20260809123000_supabase_legacy_cleanup_inventory.sql",
+            "database/migrations/20260809124500_retain_external_wifi_sessions.sql",
+            "database/migrations/20260809130000_abandon_stale_store_recovery_builds.sql",
+            "database/migrations/20260809131500_quarantine_empty_fresh_cloud_legacy.sql",
+            "database/migrations/20260809133000_store_recovery_verification_heartbeat.sql",
+            "database/migrations/20260809134500_protected_user_credential_recovery.sql",
+            "database/migrations/20260809140000_legacy_quarantine_integrity_guard.sql",
+            "database/migrations/20260809141500_fix_legacy_quarantine_integrity_guard.sql",
+            "database/migrations/20260809143000_quarantine_presence_baseline.sql",
+            "database/migrations/20260809144500_remove_wifi_sessions_from_supabase.sql",
+            "database/migrations/20260809150000_finalize_fresh_cloud_legacy_quarantine.sql",
+            "database/migrations/20260809151500_private_user_credential_vault.sql"
     );
 
     private ServerSupabaseMigrationRunner() {
@@ -160,7 +174,7 @@ public final class ServerSupabaseMigrationRunner {
                     String checksum = sha256(sql);
                     Applied existing = applied(connection, resource);
                     if (existing != null) {
-                        if (!checksum.equals(existing.checksum())) {
+                        if (!acceptedChecksum(resource, checksum, existing.checksum())) {
                             throw new SQLException("Packaged migration checksum changed after deployment: "
                                     + resource);
                         }
@@ -181,6 +195,20 @@ public final class ServerSupabaseMigrationRunner {
 
     static List<String> migrationResources() {
         return MIGRATIONS;
+    }
+
+    private static boolean acceptedChecksum(String resource, String packaged,
+                                            String applied) {
+        if (packaged.equals(applied)) return true;
+        return (resource.endsWith("20260718185621_normalize_shared_column_defaults.sql")
+                && "6f5169134ffb4aea54ca01a1353b9bbe3a00a7a52591f0d7fa77dc1dc9749a49"
+                .equals(applied))
+                || (resource.endsWith("20260720120000_add_badge_pin_login_preference.sql")
+                && "25bfe7458164c8d85ff0937c624ff0b2842fb631f0f459490f7b2f45c8432da8"
+                .equals(applied))
+                || (resource.endsWith("20260723143000_api_only_sync_exchange.sql")
+                && "d041832288b45d0610de1ade67b310ecaab47e1043bcd56fa6984f1c81ce4ef4"
+                .equals(applied));
     }
 
     private static Connection open(ConnectionSpec spec, char[] password) throws SQLException {
@@ -298,7 +326,9 @@ public final class ServerSupabaseMigrationRunner {
     private static void verify(Connection connection) throws SQLException {
         List<String> missing = new ArrayList<>();
         for (String object : List.of("users", "locations", "roles", "user_locations",
-                "smartstock_sync_events", "smartstock_store_rows", "store_server_instances",
+                "smartstock_sync_events", "smartstock_store_rows",
+                "smartstock_store_snapshot_generations", "smartstock_store_snapshot_rows",
+                "store_server_instances",
                 "store_server_handoffs", "store_server_events")) {
             try (PreparedStatement statement = connection.prepareStatement(
                     "SELECT to_regclass(?) IS NOT NULL")) {

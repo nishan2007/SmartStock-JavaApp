@@ -18,13 +18,19 @@ import java.util.List;
 
 public final class ProductionReadinessService {
     private static final Gson GSON = new Gson();
-    private static final List<String> REQUIRED_SHARED_TABLES = List.of(
+    private static final List<String> REQUIRED_RECOVERY_TABLES = List.of(
             "locations", "roles", "permissions", "users", "user_locations",
             "products", "product_barcodes", "inventory", "vendors",
             "customer_accounts", "sales", "sale_items", "sale_returns",
             "cash_drawers", "cash_drawer_sessions", "custom_orders",
             "quotations", "invoices", "employee_time_clock", "payroll_payments",
-            "expenses", "bank_transactions", "sync_outbox", "sync_conflicts"
+            "expenses", "bank_transactions"
+    );
+    private static final List<String> REQUIRED_CLOUD_CONTROL_TABLES = List.of(
+            "sync_outbox", "sync_applied_events", "smartstock_store_rows",
+            "smartstock_store_mirror_status", "smartstock_store_snapshot_generations",
+            "smartstock_store_snapshot_rows", "store_sync_status",
+            "remote_admin_commands", "store_server_instances"
     );
 
     private ProductionReadinessService() {
@@ -51,49 +57,30 @@ public final class ProductionReadinessService {
         return List.copyOf(checks);
     }
 
-    public static List<Check> databaseChecks(Connection local, CloudSyncManifest cloud)
-            throws SQLException {
-        List<Check> checks = new ArrayList<>();
-        for (String table : REQUIRED_SHARED_TABLES) {
-            boolean localExists = tableExists(local, table);
-            boolean cloudExists = cloud != null && cloud.hasTable(table);
-            checks.add(check("schema-" + table, localExists && cloudExists,
-                    "Required shared table is missing locally or in production cloud: " + table));
-        }
-        checks.addAll(localOperationalChecks(local));
-        return List.copyOf(checks);
-    }
-
     public static List<Check> databaseChecks(Connection local, CloudSyncManifest cloudSchema,
-                                              CloudSyncManifest storeMirror)
+                                              CloudSyncManifest storeMirror, int locationId)
             throws SQLException {
         List<Check> checks = new ArrayList<>();
-        for (String table : REQUIRED_SHARED_TABLES) {
-            boolean localExists = tableExists(local, table);
+        for (String table : REQUIRED_CLOUD_CONTROL_TABLES) {
             boolean cloudExists = cloudSchema != null && cloudSchema.hasTable(table);
-            checks.add(check("schema-" + table, localExists && cloudExists,
-                    "Required shared table is missing locally or in production cloud: " + table));
-            if (!table.startsWith("sync_")) {
-                long localRows = localExists ? count(local,
-                        "SELECT COUNT(*) FROM \"" + table + "\"") : -1;
-                long mirrorRows = storeMirror == null ? -1 : storeMirror.rowCount(table);
-                checks.add(check("materialized-" + table, localRows >= 0 && localRows == mirrorRows,
-                        "Cloud mirror is incomplete for " + table + ": local="
-                                + localRows + ", cloud=" + mirrorRows));
-            }
+            checks.add(check("cloud-control-" + table, cloudExists,
+                    "Required cloud control table is missing: " + table));
         }
-        checks.addAll(localOperationalChecks(local));
-        return List.copyOf(checks);
-    }
-
-    public static List<Check> databaseChecks(Connection local, Connection cloud)
-            throws SQLException {
-        List<Check> checks = new ArrayList<>();
-        for (String table : REQUIRED_SHARED_TABLES) {
+        checks.add(check("verified-snapshot-generation",
+                storeMirror != null && storeMirror.hasVerifiedSnapshot(),
+                "The store does not have a completed, immutable recovery generation."));
+        for (String table : REQUIRED_RECOVERY_TABLES) {
             boolean localExists = tableExists(local, table);
-            boolean cloudExists = tableExists(cloud, table);
-            checks.add(check("schema-" + table, localExists && cloudExists,
-                    "Required shared table is missing locally or in production cloud: " + table));
+            boolean mirrored = storeMirror != null && storeMirror.hasTable(table);
+            checks.add(check("recovery-schema-" + table, localExists && mirrored,
+                    "Required recovery table is missing locally or from the store snapshot: "
+                            + table));
+            long localRows = localExists
+                    ? CloudRowMirrorService.countScopedRows(local, locationId, table) : -1;
+            long mirrorRows = storeMirror == null ? -1 : storeMirror.rowCount(table);
+            checks.add(check("materialized-" + table, localRows >= 0 && localRows == mirrorRows,
+                    "Cloud mirror is incomplete for " + table + ": local="
+                            + localRows + ", cloud=" + mirrorRows));
         }
         checks.addAll(localOperationalChecks(local));
         return List.copyOf(checks);

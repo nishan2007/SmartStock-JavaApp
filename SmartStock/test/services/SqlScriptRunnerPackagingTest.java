@@ -50,6 +50,17 @@ class SqlScriptRunnerPackagingTest {
                 < schemas.indexOf("database/cash_drawer_management_setup.sql"));
     }
 
+    @Test
+    void localProvisioningPermanentlyRemovesWifiSessionsWithoutCascade() throws Exception {
+        String resource = "database/migrations/20260809153000_remove_local_wifi_sessions.sql";
+        String migration = SqlScriptRunner.readResource(resource);
+        String normalized = migration.toUpperCase().replaceAll("\\s+", " ");
+
+        assertTrue(ServerProvisioningService.localWorkflowSchemaResources().contains(resource));
+        assertTrue(migration.contains("DROP TABLE public.wifi_sessions"));
+        assertFalse(normalized.contains("DROP TABLE PUBLIC.WIFI_SESSIONS CASCADE"));
+    }
+
     private static boolean assertPackaged(String resource) {
         try {
             return !SqlScriptRunner.readResource(resource).isBlank();

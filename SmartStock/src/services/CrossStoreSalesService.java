@@ -106,9 +106,12 @@ final class CrossStoreSalesService {
     }
 
     private static int refreshStore(Connection c,CrossStoreInventoryService.Store store)throws SQLException{
-        Map<Integer,JsonObject> products=map(CrossStoreInventoryService.fetchTable(store.locationId(),"products"),"product_id");
-        List<JsonObject> sales=CrossStoreInventoryService.fetchTable(store.locationId(),"sales"),items=CrossStoreInventoryService.fetchTable(store.locationId(),"sale_items"),
-          returns=CrossStoreInventoryService.fetchTable(store.locationId(),"sale_returns"),returnItems=CrossStoreInventoryService.fetchTable(store.locationId(),"sale_return_items");
+        CloudSyncManifest manifest;try{manifest=CloudSyncManifest.fetchStoreSnapshot(store.locationId());}
+        catch(java.io.IOException ex){throw new SQLException("The verified snapshot for "+store.name()+" is unavailable.",ex);}
+        String generation=manifest.snapshotGenerationId();
+        Map<Integer,JsonObject> products=map(CrossStoreInventoryService.fetchTable(store.locationId(),generation,"products"),"product_id");
+        List<JsonObject> sales=CrossStoreInventoryService.fetchTable(store.locationId(),generation,"sales"),items=CrossStoreInventoryService.fetchTable(store.locationId(),generation,"sale_items"),
+          returns=CrossStoreInventoryService.fetchTable(store.locationId(),generation,"sale_returns"),returnItems=CrossStoreInventoryService.fetchTable(store.locationId(),generation,"sale_return_items");
         Set<Integer> saleIds=new HashSet<>();
         for(JsonObject sale:sales)if(integer(sale,"location_id")==store.locationId())saleIds.add(integer(sale,"sale_id"));
         Set<Long> returnIds=new HashSet<>();

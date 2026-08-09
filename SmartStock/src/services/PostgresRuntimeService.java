@@ -445,6 +445,11 @@ public final class PostgresRuntimeService {
         return installSyncService();
     }
 
+    /** Replaces the installed service payload and restarts it after an explicit maintenance request. */
+    public static CommandResult refreshSyncServiceInstallation() throws Exception {
+        return installSyncService();
+    }
+
     private static boolean isWindowsTaskActionHardened() throws Exception {
         CommandResult result=runPowerShell("""
                 $task=Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue

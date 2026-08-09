@@ -15,12 +15,14 @@ class CloudSyncManifestTest {
                 {"tables":[
                   {"name":"users","row_count":3,"columns":["user_id","email"]},
                   {"name":"sales","row_count":20,"columns":["sale_id","location_id"]}
-                ]}
+                ],"generation_id":"44c38a27-1f91-4c47-992c-bf01ce17ca4d",
+                   "completed_at":"2026-08-09T12:00:00Z"}
                 """);
 
         assertTrue(manifest.hasTable("users"));
         assertEquals(3, manifest.rowCount("users"));
         assertTrue(manifest.tables().get("sales").columns().contains("location_id"));
+        assertTrue(manifest.hasVerifiedSnapshot());
     }
 
     @Test

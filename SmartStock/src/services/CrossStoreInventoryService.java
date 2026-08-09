@@ -95,16 +95,26 @@ final class CrossStoreInventoryService {
     }
 
     private static int refreshStore(Connection local, Store store) throws SQLException {
-        Map<Integer, JsonObject> products = keyed(fetchTable(store.locationId(), "products"), "product_id");
+        CloudSyncManifest manifest;
+        try {
+            manifest = CloudSyncManifest.fetchStoreSnapshot(store.locationId());
+        } catch (IOException ex) {
+            throw new SQLException("The verified snapshot for " + store.name()
+                    + " is unavailable.", ex);
+        }
+        String generationId = manifest.snapshotGenerationId();
+        Map<Integer, JsonObject> products = keyed(
+                fetchTable(store.locationId(), generationId, "products"), "product_id");
         Map<Integer, List<String>> additionalBarcodes = new HashMap<>();
-        for (JsonObject barcode : fetchTable(store.locationId(), "product_barcodes")) {
+        for (JsonObject barcode : fetchTable(
+                store.locationId(), generationId, "product_barcodes")) {
             int productId = integer(barcode, "product_id");
             String value = text(barcode, "barcode");
             if (value != null && !value.isBlank()) {
                 additionalBarcodes.computeIfAbsent(productId, ignored -> new ArrayList<>()).add(value);
             }
         }
-        List<JsonObject> inventory = fetchTable(store.locationId(), "inventory");
+        List<JsonObject> inventory = fetchTable(store.locationId(), generationId, "inventory");
         boolean oldAutoCommit = local.getAutoCommit();
         local.setAutoCommit(false);
         try (PreparedStatement delete = local.prepareStatement(
@@ -151,11 +161,25 @@ final class CrossStoreInventoryService {
     }
 
     static List<JsonObject> fetchTable(int locationId, String table) throws SQLException {
+        try {
+            CloudSyncManifest manifest = CloudSyncManifest.fetchStoreSnapshot(locationId);
+            return fetchTable(locationId, manifest.snapshotGenerationId(), table);
+        } catch (IOException ex) {
+            throw new SQLException("The verified store snapshot is unavailable.", ex);
+        }
+    }
+
+    static List<JsonObject> fetchTable(int locationId, String generationId, String table)
+            throws SQLException {
+        if (generationId == null || generationId.isBlank()) {
+            throw new SQLException("A verified store snapshot generation is required.");
+        }
         List<JsonObject> rows = new ArrayList<>();
         long cursor = 0;
         while (true) {
             JsonObject body = new JsonObject();
             body.addProperty("p_location_id", locationId);
+            body.addProperty("p_generation_id", generationId);
             body.addProperty("p_table_name", table);
             body.addProperty("p_after_sequence", cursor);
             body.addProperty("p_limit", PAGE_SIZE);

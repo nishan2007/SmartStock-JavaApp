@@ -6,13 +6,16 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
 /** Read-only schema/count evidence returned by the server-only Supabase RPC. */
-public record CloudSyncManifest(Map<String, TableInfo> tables) {
+public record CloudSyncManifest(Map<String, TableInfo> tables,
+                                String snapshotGenerationId,
+                                Instant completedAt) {
     public static CloudSyncManifest fetch() throws IOException {
         return fetchRpc("smartstock_sync_manifest", new JsonObject());
     }
@@ -20,7 +23,11 @@ public record CloudSyncManifest(Map<String, TableInfo> tables) {
     public static CloudSyncManifest fetchStoreSnapshot(int locationId) throws IOException {
         JsonObject body = new JsonObject();
         body.addProperty("p_location_id", locationId);
-        return fetchRpc("smartstock_store_snapshot_manifest", body);
+        CloudSyncManifest manifest = fetchRpc("smartstock_store_snapshot_manifest", body);
+        if (!manifest.tables().isEmpty() && !manifest.hasVerifiedSnapshot()) {
+            throw new IOException("Supabase did not return a completed recovery generation.");
+        }
+        return manifest;
     }
 
     private static CloudSyncManifest fetchRpc(String function, JsonObject body) throws IOException {
@@ -59,7 +66,14 @@ public record CloudSyncManifest(Map<String, TableInfo> tables) {
                 }
                 tables.put(name, new TableInfo(rowCount, Set.copyOf(columns)));
             }
-            return new CloudSyncManifest(Map.copyOf(tables));
+            String generationId = root.has("generation_id")
+                    && !root.get("generation_id").isJsonNull()
+                    ? root.get("generation_id").getAsString() : null;
+            if (generationId != null) java.util.UUID.fromString(generationId);
+            Instant completedAt = root.has("completed_at")
+                    && !root.get("completed_at").isJsonNull()
+                    ? Instant.parse(root.get("completed_at").getAsString()) : null;
+            return new CloudSyncManifest(Map.copyOf(tables), generationId, completedAt);
         } catch (RuntimeException ex) {
             throw new IOException("Supabase returned an invalid schema manifest.", ex);
         }
@@ -76,6 +90,10 @@ public record CloudSyncManifest(Map<String, TableInfo> tables) {
 
     public long totalRowCount() {
         return tables.values().stream().mapToLong(TableInfo::rowCount).sum();
+    }
+
+    public boolean hasVerifiedSnapshot() {
+        return snapshotGenerationId != null && completedAt != null;
     }
 
     public record TableInfo(long rowCount, Set<String> columns) {

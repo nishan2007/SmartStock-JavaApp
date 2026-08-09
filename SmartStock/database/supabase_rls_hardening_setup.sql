@@ -194,15 +194,46 @@ REVOKE INSERT, UPDATE, DELETE ON public.invoice_audit_log FROM authenticated;
 
 -- Device rows are exposed only through validated RPCs, never as a directly writable table.
 REVOKE ALL ON public.devices, public.device_sessions FROM anon, authenticated;
-REVOKE ALL ON public.sync_locks, public.sync_service_status, public.wifi_sessions FROM anon, authenticated;
+DO $$
+DECLARE
+    internal_table text;
+BEGIN
+    FOREACH internal_table IN ARRAY ARRAY[
+        'sync_locks', 'sync_service_status', 'wifi_sessions'
+    ] LOOP
+        IF pg_catalog.to_regclass('public.' || internal_table) IS NOT NULL THEN
+            EXECUTE pg_catalog.format(
+                'REVOKE ALL ON TABLE public.%I FROM anon, authenticated',
+                internal_table
+            );
+        END IF;
+    END LOOP;
+END
+$$;
 
-REVOKE ALL ON FUNCTION public.assign_employee_badge_id() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.generate_employee_badge_id() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.current_app_user_can_return_at_location(integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.current_app_user_can_return_at_location(integer) TO authenticated, service_role;
-ALTER FUNCTION public.assign_employee_badge_id() SET search_path TO '';
-ALTER FUNCTION public.generate_employee_badge_id() SET search_path TO '';
-ALTER FUNCTION public.current_app_user_can_return_at_location(integer) SET search_path TO '';
+DO $$
+BEGIN
+    IF pg_catalog.to_regprocedure('public.assign_employee_badge_id()') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.assign_employee_badge_id()
+            FROM PUBLIC, anon, authenticated;
+        ALTER FUNCTION public.assign_employee_badge_id() SET search_path TO '';
+    END IF;
+    IF pg_catalog.to_regprocedure('public.generate_employee_badge_id()') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.generate_employee_badge_id()
+            FROM PUBLIC, anon, authenticated;
+        ALTER FUNCTION public.generate_employee_badge_id() SET search_path TO '';
+    END IF;
+    IF pg_catalog.to_regprocedure(
+            'public.current_app_user_can_return_at_location(integer)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.current_app_user_can_return_at_location(integer)
+            FROM PUBLIC, anon;
+        GRANT EXECUTE ON FUNCTION public.current_app_user_can_return_at_location(integer)
+            TO authenticated, service_role;
+        ALTER FUNCTION public.current_app_user_can_return_at_location(integer)
+            SET search_path TO '';
+    END IF;
+END
+$$;
 
 -- Public function execution is opt-in. Explicit grants in supabase_rpc_security_setup.sql remain.
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;

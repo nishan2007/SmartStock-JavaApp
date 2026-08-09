@@ -123,9 +123,11 @@ public final class SyncSchemaInstaller {
                         location_id INTEGER PRIMARY KEY,
                         table_counts JSONB NOT NULL,
                         active_row_count BIGINT NOT NULL,
+                        generation_id UUID,
                         completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """);
+            stmt.executeUpdate("ALTER TABLE sync_row_mirror_completion ADD COLUMN IF NOT EXISTS generation_id UUID");
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_cache (
                         source_location_id INTEGER NOT NULL,

@@ -31,7 +31,7 @@ public final class ProductionReadinessMain {
                 Integer locationId = database.locationId();
                 checks.addAll(ProductionReadinessService.databaseChecks(
                         local, CloudSyncManifest.fetch(),
-                        CloudSyncManifest.fetchStoreSnapshot(locationId)));
+                        CloudSyncManifest.fetchStoreSnapshot(locationId), locationId));
             }
         }
         checks.add(ProductionReadinessService.recoveryEvidenceCheck(Path.of(args[0])));

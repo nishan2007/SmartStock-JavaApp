@@ -27,6 +27,16 @@ CREATE TABLE IF NOT EXISTS sale_return_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE sale_returns
+ADD COLUMN IF NOT EXISTS cross_store_request_id UUID;
+
+ALTER TABLE sale_returns
+ADD COLUMN IF NOT EXISTS receiving_location_id INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS sale_returns_cross_store_request_uidx
+ON sale_returns(cross_store_request_id)
+WHERE cross_store_request_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS sale_returns_sale_idx
 ON sale_returns(sale_id);
 

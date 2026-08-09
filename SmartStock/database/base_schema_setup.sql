@@ -522,8 +522,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-ALTER FUNCTION set_email_outbox_updated_at() SET search_path = public;
-
 DROP TRIGGER IF EXISTS users_set_updated_at ON users;
 CREATE TRIGGER users_set_updated_at
 BEFORE INSERT OR UPDATE ON users
@@ -985,7 +983,9 @@ CREATE TABLE IF NOT EXISTS email_outbox_events (
 );
 
 CREATE OR REPLACE FUNCTION set_email_outbox_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SET search_path = public
+AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
@@ -1362,6 +1362,14 @@ CREATE INDEX IF NOT EXISTS cross_store_refund_requests_status_idx ON cross_store
 CREATE TABLE IF NOT EXISTS cross_store_refund_lines (request_id UUID NOT NULL REFERENCES cross_store_refund_requests(request_id) ON DELETE CASCADE,source_sale_item_id INTEGER NOT NULL,product_id INTEGER NOT NULL,quantity INTEGER NOT NULL CHECK(quantity>0),unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,disposition TEXT NOT NULL CHECK(disposition IN ('RESTOCK','DISCARD')),destination_location_id INTEGER,disposition_reason TEXT,confirmed_quantity INTEGER NOT NULL DEFAULT 0,conflict_quantity INTEGER NOT NULL DEFAULT 0,destination_status TEXT NOT NULL DEFAULT 'PENDING',PRIMARY KEY(request_id,source_sale_item_id));
 CREATE TABLE IF NOT EXISTS cross_store_refund_reconciliation (reconciliation_id BIGSERIAL PRIMARY KEY,request_id UUID NOT NULL REFERENCES cross_store_refund_requests(request_id),source_sale_item_id INTEGER,source_location_id INTEGER NOT NULL,receiving_location_id INTEGER NOT NULL,product_id INTEGER,conflict_quantity INTEGER NOT NULL DEFAULT 0,financial_loss NUMERIC(14,2) NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'OPEN',detail TEXT NOT NULL,resolved_by_user_id INTEGER,resolution_note TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,resolved_at TIMESTAMPTZ);
 CREATE INDEX IF NOT EXISTS cross_store_refund_reconciliation_open_idx ON cross_store_refund_reconciliation(status,created_at DESC);
-ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS cross_store_request_id UUID;
-ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS receiving_location_id INTEGER;
-CREATE UNIQUE INDEX IF NOT EXISTS sale_returns_cross_store_request_uidx ON sale_returns(cross_store_request_id) WHERE cross_store_request_id IS NOT NULL;
+
+-- Retired permanently. Keep fresh installs and repeat provisioning from
+-- resurrecting the obsolete local Wi-Fi session store.
+DO $$
+BEGIN
+    PERFORM pg_catalog.set_config('lock_timeout', '5s', true);
+    IF pg_catalog.to_regclass('public.wifi_sessions') IS NOT NULL THEN
+        EXECUTE 'DROP TABLE public.wifi_sessions';
+    END IF;
+END
+$$;

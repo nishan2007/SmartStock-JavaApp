@@ -10,7 +10,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -21,23 +23,7 @@ import java.util.StringJoiner;
 
 /** Restores materialized cloud tables through Supabase's server-only Data API. */
 final class CloudRecoveryService {
-    private static final int PAGE_SIZE = 1_000;
-
     private CloudRecoveryService() {
-    }
-
-    static int restore(Connection target, CloudSyncManifest manifest) throws SQLException {
-        List<String> ordered = new ArrayList<>(ReferenceDataSyncService.cloudPullOrderForApi());
-        Set<String> remaining = new LinkedHashSet<>(manifest.tables().keySet());
-        remaining.removeAll(ordered);
-        remaining.stream().filter(table -> !table.startsWith("sync_")).sorted().forEach(ordered::add);
-
-        int restored = 0;
-        for (String table : ordered) {
-            if (!manifest.hasTable(table) || !tableExists(target, table)) continue;
-            restored += restoreTable(target, table);
-        }
-        return restored;
     }
 
     static int restoreStoreMirror(Connection target, int locationId,
@@ -55,6 +41,9 @@ final class CloudRecoveryService {
                                           CloudSyncManifest mirrorManifest,
                                           boolean reconcilePermissionAssignments)
             throws SQLException {
+        if (!mirrorManifest.hasVerifiedSnapshot()) {
+            throw new SQLException("Cloud recovery requires a completed snapshot generation.");
+        }
         List<String> ordered = new ArrayList<>(ReferenceDataSyncService.cloudPullOrderForApi());
         Set<String> remaining = new LinkedHashSet<>(mirrorManifest.tables().keySet());
         remaining.removeAll(ordered);
@@ -63,11 +52,133 @@ final class CloudRecoveryService {
         RecoveryReferences references = new RecoveryReferences();
         for (String table : ordered) {
             if (!mirrorManifest.hasTable(table) || !tableExists(target, table)) continue;
-            restored += restoreMirroredTable(target, locationId, table, references,
+            restored += restoreMirroredTable(target, locationId,
+                    mirrorManifest.snapshotGenerationId(), table, references,
                     reconcilePermissionAssignments);
         }
+        restored += restoreProtectedUserCredentials(target, locationId,
+                mirrorManifest.snapshotGenerationId(), mirrorManifest.rowCount("users"));
         repairOwnedSequences(target);
         return restored;
+    }
+
+    private static int restoreProtectedUserCredentials(Connection target, int locationId,
+                                                        String generationId,
+                                                        long expectedUsers)
+            throws SQLException {
+        JsonObject body = new JsonObject();
+        body.addProperty("p_location_id", locationId);
+        body.addProperty("p_generation_id", generationId);
+        JsonObject envelope;
+        try {
+            SupabaseServerApi.Response response = SupabaseServerApi.postRpc(
+                    "smartstock_store_user_credentials", body);
+            if (!response.successful()) {
+                throw new SQLException(SupabaseServerApi.failureMessage(
+                        "Protected user credential recovery", response));
+            }
+            envelope = JsonParser.parseString(response.body()).getAsJsonObject();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Protected user credential recovery was interrupted.", ex);
+        } catch (IOException | RuntimeException ex) {
+            throw new SQLException("Protected user credentials could not be downloaded.", ex);
+        }
+        if (!envelope.has("generation_id")
+                || !generationId.equals(envelope.get("generation_id").getAsString())
+                || !envelope.has("rows") || !envelope.get("rows").isJsonArray()) {
+            throw new SQLException("Protected user credential recovery returned invalid data.");
+        }
+        JsonArray rows = envelope.getAsJsonArray("rows");
+        if (rows.size() != expectedUsers) {
+            throw new SQLException("Protected credential count does not match snapshot users.");
+        }
+
+        boolean oldAutoCommit = target.getAutoCommit();
+        target.setAutoCommit(false);
+        try (PreparedStatement update = target.prepareStatement("""
+                UPDATE users SET password_hash=?,password_cache_invalidated_at=?,
+                    employee_pin_salt=?,employee_pin_hash=?,employee_pin_updated_at=?,
+                    badge_secret_salt=?,badge_secret_hash=?
+                WHERE user_id=?
+                """)) {
+            for (JsonElement element : rows) {
+                JsonObject row = element.getAsJsonObject();
+                int userId = row.get("user_id").getAsInt();
+                setNullableText(update, 1, optionalText(row, "password_hash"));
+                setNullableTimestamp(update, 2,
+                        optionalText(row, "password_cache_invalidated_at"));
+                setNullableText(update, 3, optionalText(row, "employee_pin_salt"));
+                setNullableText(update, 4, optionalText(row, "employee_pin_hash"));
+                setNullableTimestamp(update, 5, optionalText(row, "employee_pin_updated_at"));
+                setNullableText(update, 6, optionalText(row, "badge_secret_salt"));
+                setNullableText(update, 7, optionalText(row, "badge_secret_hash"));
+                update.setInt(8, userId);
+                if (update.executeUpdate() != 1) {
+                    throw new SQLException(
+                            "Protected credentials reference a missing restored user.");
+                }
+                verifyProtectedCredentialRow(target, userId, row);
+            }
+            target.commit();
+            return rows.size();
+        } catch (SQLException | RuntimeException ex) {
+            target.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("Protected user credential recovery failed.", ex);
+        } finally {
+            target.setAutoCommit(oldAutoCommit);
+        }
+    }
+
+    private static void verifyProtectedCredentialRow(Connection target, int userId,
+                                                       JsonObject expected)
+            throws SQLException {
+        try (PreparedStatement ps = target.prepareStatement("""
+                SELECT password_hash,password_cache_invalidated_at,
+                       employee_pin_salt,employee_pin_hash,employee_pin_updated_at,
+                       badge_secret_salt,badge_secret_hash
+                FROM users WHERE user_id=?
+                """)) {
+            ps.setInt(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()
+                        || !java.util.Objects.equals(rs.getString(1),
+                        optionalText(expected, "password_hash"))
+                        || !sameInstant(rs.getTimestamp(2),
+                        optionalText(expected, "password_cache_invalidated_at"))
+                        || !java.util.Objects.equals(rs.getString(3),
+                        optionalText(expected, "employee_pin_salt"))
+                        || !java.util.Objects.equals(rs.getString(4),
+                        optionalText(expected, "employee_pin_hash"))
+                        || !sameInstant(rs.getTimestamp(5),
+                        optionalText(expected, "employee_pin_updated_at"))
+                        || !java.util.Objects.equals(rs.getString(6),
+                        optionalText(expected, "badge_secret_salt"))
+                        || !java.util.Objects.equals(rs.getString(7),
+                        optionalText(expected, "badge_secret_hash"))) {
+                    throw new SQLException(
+                            "Protected credential verification failed for a restored user.");
+                }
+            }
+        }
+    }
+
+    private static void setNullableText(PreparedStatement ps, int index, String value)
+            throws SQLException {
+        if (value == null) ps.setNull(index, Types.VARCHAR);
+        else ps.setString(index, value);
+    }
+
+    private static void setNullableTimestamp(PreparedStatement ps, int index, String value)
+            throws SQLException {
+        if (value == null) ps.setNull(index, Types.TIMESTAMP_WITH_TIMEZONE);
+        else ps.setTimestamp(index, Timestamp.from(Instant.parse(value)));
+    }
+
+    private static boolean sameInstant(Timestamp actual, String expected) {
+        return actual == null ? expected == null
+                : expected != null && actual.toInstant().equals(Instant.parse(expected));
     }
 
     static int restoreReferenceRows(Connection target, Map<String, JsonArray> tables)
@@ -90,7 +201,8 @@ final class CloudRecoveryService {
         return insertRows(target, table, writableColumnTypes(target, table), rows);
     }
 
-    private static int restoreMirroredTable(Connection target, int locationId, String table,
+    private static int restoreMirroredTable(Connection target, int locationId,
+                                            String generationId, String table,
                                             RecoveryReferences references,
                                             boolean reconcilePermissionAssignments)
             throws SQLException {
@@ -108,7 +220,7 @@ final class CloudRecoveryService {
                 }
             }
             while (true) {
-                JsonObject page = fetchMirrorPage(locationId, table, cursor);
+                JsonObject page = fetchMirrorPage(locationId, generationId, table, cursor);
                 JsonArray envelopeRows = page.getAsJsonArray("rows");
                 if (envelopeRows == null || envelopeRows.isEmpty()) break;
                 JsonArray activeRows = new JsonArray();
@@ -413,10 +525,12 @@ final class CloudRecoveryService {
 
     private record SequenceColumn(String table, String column, String sequence) { }
 
-    private static JsonObject fetchMirrorPage(int locationId, String table, long cursor)
+    private static JsonObject fetchMirrorPage(int locationId, String generationId,
+                                              String table, long cursor)
             throws SQLException {
         JsonObject body = new JsonObject();
         body.addProperty("p_location_id", locationId);
+        body.addProperty("p_generation_id", generationId);
         body.addProperty("p_table_name", table);
         body.addProperty("p_after_sequence", cursor);
         body.addProperty("p_limit", 1_000);
@@ -437,52 +551,6 @@ final class CloudRecoveryService {
             throw new SQLException("Cloud mirror recovery was interrupted for " + table + ".", ex);
         } catch (IOException | RuntimeException ex) {
             throw new SQLException("Cloud mirror recovery could not download " + table + ".", ex);
-        }
-    }
-
-    private static int restoreTable(Connection target, String table) throws SQLException {
-        Map<String, String> targetTypes = writableColumnTypes(target, table);
-        if (targetTypes.isEmpty()) return 0;
-        int restored = 0;
-        int offset = 0;
-        boolean oldAutoCommit = target.getAutoCommit();
-        target.setAutoCommit(false);
-        try {
-            while (true) {
-                JsonArray rows = fetchPage(table, offset);
-                if (rows.isEmpty()) break;
-                restored += insertRows(target, table, targetTypes, rows);
-                offset += rows.size();
-                if (rows.size() < PAGE_SIZE) break;
-            }
-            target.commit();
-            return restored;
-        } catch (SQLException ex) {
-            target.rollback();
-            throw ex;
-        } finally {
-            target.setAutoCommit(oldAutoCommit);
-        }
-    }
-
-    private static JsonArray fetchPage(String table, int offset) throws SQLException {
-        try {
-            SupabaseServerApi.Response response =
-                    SupabaseServerApi.getTablePage(table, offset, PAGE_SIZE);
-            if (!response.successful()) {
-                throw new SQLException(SupabaseServerApi.failureMessage(
-                        "Cloud recovery download for " + table, response));
-            }
-            JsonElement parsed = JsonParser.parseString(response.body());
-            if (!parsed.isJsonArray()) {
-                throw new SQLException("Cloud recovery returned invalid rows for " + table + ".");
-            }
-            return parsed.getAsJsonArray();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("Cloud recovery was interrupted while downloading " + table + ".", ex);
-        } catch (IOException | RuntimeException ex) {
-            throw new SQLException("Cloud recovery could not download " + table + ".", ex);
         }
     }
 
