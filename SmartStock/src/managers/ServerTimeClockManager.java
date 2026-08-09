@@ -244,6 +244,14 @@ public final class ServerTimeClockManager {
         updateCurrentClock(conn, "lunch_end");
     }
 
+    public static void breakStart(Connection conn) throws SQLException, TimeClockException {
+        updateCurrentClock(conn, "break_start");
+    }
+
+    public static void breakEnd(Connection conn) throws SQLException, TimeClockException {
+        updateCurrentClock(conn, "break_end");
+    }
+
     public static void clockOut(Connection conn) throws SQLException, TimeClockException {
         updateCurrentClock(conn, "clock_out");
     }
@@ -260,6 +268,8 @@ public final class ServerTimeClockManager {
                        (tc.clock_in AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_in,
                        (tc.lunch_start AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_start,
                        (tc.lunch_end AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_lunch_end,
+                       (tc.break_start AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_break_start,
+                       (tc.break_end AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_break_end,
                        (tc.clock_out AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_out,
                        COALESCE(u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
                        COALESCE(u.salary, 0) AS salary,
@@ -268,7 +278,9 @@ public final class ServerTimeClockManager {
                        tc.location_id,
                        COALESCE(tc.location_name, l.name, '') AS location_name,
                        COALESCE(tc.auto_clock_out, FALSE) AS auto_clock_out,
-                       tc.auto_clock_out_review_status
+                       tc.auto_clock_out_review_status,
+                       COALESCE(tc.auto_break_end, FALSE) AS auto_break_end,
+                       tc.auto_break_end_review_status
                 FROM employee_time_clock tc
                 LEFT JOIN users u ON u.user_id = tc.user_id
                 LEFT JOIN roles r ON r.role_id = u.role_id
@@ -285,8 +297,10 @@ public final class ServerTimeClockManager {
             ps.setString(2, currentStoreZoneId());
             ps.setString(3, currentStoreZoneId());
             ps.setString(4, currentStoreZoneId());
-            ps.setInt(5, request().locationId());
-            if (!canViewAllRecords) ps.setInt(6, requireCurrentUserId());
+            ps.setString(5, currentStoreZoneId());
+            ps.setString(6, currentStoreZoneId());
+            ps.setInt(7, request().locationId());
+            if (!canViewAllRecords) ps.setInt(8, requireCurrentUserId());
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -299,6 +313,8 @@ public final class ServerTimeClockManager {
                             toLocalDateTime(rs.getTimestamp("local_clock_in")),
                             toLocalDateTime(rs.getTimestamp("local_lunch_start")),
                             toLocalDateTime(rs.getTimestamp("local_lunch_end")),
+                            toLocalDateTime(rs.getTimestamp("local_break_start")),
+                            toLocalDateTime(rs.getTimestamp("local_break_end")),
                             toLocalDateTime(rs.getTimestamp("local_clock_out")),
                             rs.getString("compensation_type"),
                             rs.getBigDecimal("salary"),
@@ -307,7 +323,9 @@ public final class ServerTimeClockManager {
                             (Integer) rs.getObject("location_id"),
                             rs.getString("location_name"),
                             rs.getBoolean("auto_clock_out"),
-                            rs.getString("auto_clock_out_review_status")
+                            rs.getString("auto_clock_out_review_status"),
+                            rs.getBoolean("auto_break_end"),
+                            rs.getString("auto_break_end_review_status")
                     ));
                 }
             }
@@ -387,6 +405,8 @@ public final class ServerTimeClockManager {
                     segment.clockIn,
                     segment.lunchStart,
                     segment.lunchEnd,
+                    segment.breakStart,
+                    segment.breakEnd,
                     segment.clockOut,
                     segment.hours,
                     payPeriod.start(),
@@ -407,9 +427,13 @@ public final class ServerTimeClockManager {
                     record.clockIn,
                     record.lunchStart,
                     record.lunchEnd,
+                    record.breakStart,
+                    record.breakEnd,
                     record.clockOut,
                     record.autoClockOut,
-                    record.autoClockOutReviewStatus
+                    record.autoClockOutReviewStatus,
+                    record.autoBreakEnd,
+                    record.autoBreakEndReviewStatus
             ));
         }
         rows.sort((a, b) -> {
@@ -809,24 +833,28 @@ public final class ServerTimeClockManager {
     private static ClockStatus getCurrentStatus(Connection conn) throws SQLException {
         CurrentClock current = getCurrentClock(conn);
         if (current == null) {
-            return new ClockStatus(ClockState.NOT_CLOCKED_IN, true, false, false, false);
+            return new ClockStatus(ClockState.NOT_CLOCKED_IN, true, false, false, false, false, false);
         }
 
         if (current.clockOut != null) {
-            return new ClockStatus(ClockState.CLOCKED_OUT, false, false, false, false);
+            return new ClockStatus(ClockState.CLOCKED_OUT, false, false, false, false, false, false);
         }
         if (current.lunchStart != null && current.lunchEnd == null) {
-            return new ClockStatus(ClockState.ON_LUNCH, false, false, true, false);
+            return new ClockStatus(ClockState.ON_LUNCH, false, false, true, false, false, false);
+        }
+        if (current.breakStart != null && current.breakEnd == null) {
+            return new ClockStatus(ClockState.ON_BREAK, false, false, false, false, true, false);
         }
         if (current.clockIn != null) {
-            return new ClockStatus(ClockState.CLOCKED_IN, false, true, false, true);
+            return new ClockStatus(ClockState.CLOCKED_IN, false, current.lunchStart == null, false,
+                    current.breakStart == null, false, true);
         }
 
-        return new ClockStatus(ClockState.NOT_CLOCKED_IN, true, false, false, false);
+        return new ClockStatus(ClockState.NOT_CLOCKED_IN, true, false, false, false, false, false);
     }
 
     private static void updateCurrentClock(Connection conn, String columnName) throws SQLException, TimeClockException {
-        if (!List.of("lunch_start", "lunch_end", "clock_out").contains(columnName)) {
+        if (!List.of("lunch_start", "lunch_end", "break_start", "break_end", "clock_out").contains(columnName)) {
             return;
         }
 
@@ -840,6 +868,11 @@ public final class ServerTimeClockManager {
                                    - CASE
                                        WHEN tc.lunch_start IS NOT NULL AND tc.lunch_end IS NOT NULL
                                            THEN tc.lunch_end - tc.lunch_start
+                                       ELSE INTERVAL '0 seconds'
+                                     END
+                                   - CASE
+                                       WHEN tc.break_start IS NOT NULL AND tc.break_end IS NOT NULL
+                                           THEN tc.break_end - tc.break_start
                                        ELSE INTERVAL '0 seconds'
                                      END
                                )) / 3600, 0)::NUMERIC,
@@ -885,11 +918,26 @@ public final class ServerTimeClockManager {
             if ("lunch_start".equals(columnName) && current.lunchStart != null) {
                 throw new TimeClockException("Lunch start has already been recorded.");
             }
+            if ("lunch_start".equals(columnName) && current.breakStart != null && current.breakEnd == null) {
+                throw new TimeClockException("End your 10-minute break before starting lunch.");
+            }
             if ("lunch_end".equals(columnName) && (current.lunchStart == null || current.lunchEnd != null)) {
                 throw new TimeClockException("Lunch start must be recorded before lunch end.");
             }
+            if ("break_start".equals(columnName) && current.breakStart != null) {
+                throw new TimeClockException("Your 10-minute break has already been recorded for this session.");
+            }
+            if ("break_start".equals(columnName) && current.lunchStart != null && current.lunchEnd == null) {
+                throw new TimeClockException("End lunch before starting your 10-minute break.");
+            }
+            if ("break_end".equals(columnName) && (current.breakStart == null || current.breakEnd != null)) {
+                throw new TimeClockException("Start your 10-minute break before ending it.");
+            }
             if ("clock_out".equals(columnName) && current.lunchStart != null && current.lunchEnd == null) {
                 throw new TimeClockException("Punch lunch end before clocking out.");
+            }
+            if ("clock_out".equals(columnName) && current.breakStart != null && current.breakEnd == null) {
+                throw new TimeClockException("Punch End Break before clocking out.");
             }
 
             try (PreparedStatement ps = conn.prepareStatement("clock_out".equals(columnName) ? clockOutSql : sql)) {
@@ -906,7 +954,7 @@ public final class ServerTimeClockManager {
 
     private static CurrentClock getCurrentClock(Connection conn) throws SQLException {
         String sql = """
-                SELECT clock_id, clock_in, lunch_start, lunch_end, clock_out
+                SELECT clock_id, clock_in, lunch_start, lunch_end, break_start, break_end, clock_out
                 FROM employee_time_clock
                 WHERE user_id = ?
                   AND clock_out IS NULL
@@ -923,6 +971,8 @@ public final class ServerTimeClockManager {
                             toLocalDateTime(rs.getTimestamp("clock_in")),
                             toLocalDateTime(rs.getTimestamp("lunch_start")),
                             toLocalDateTime(rs.getTimestamp("lunch_end")),
+                            toLocalDateTime(rs.getTimestamp("break_start")),
+                            toLocalDateTime(rs.getTimestamp("break_end")),
                             toLocalDateTime(rs.getTimestamp("clock_out"))
                     );
                 }
@@ -944,6 +994,10 @@ public final class ServerTimeClockManager {
         if (record.lunchStart != null) {
             LocalDateTime lunchEnd = record.lunchEnd == null ? now : record.lunchEnd;
             totalMinutes = totalMinutes.subtract(BigDecimal.valueOf(minutesBetween(record.lunchStart, lunchEnd)));
+        }
+        if (record.breakStart != null) {
+            LocalDateTime breakEnd = record.breakEnd == null ? now : record.breakEnd;
+            totalMinutes = totalMinutes.subtract(BigDecimal.valueOf(minutesBetween(record.breakStart, breakEnd)));
         }
 
         if (totalMinutes.compareTo(BigDecimal.ZERO) < 0) {
@@ -983,6 +1037,8 @@ public final class ServerTimeClockManager {
                     record.clockIn,
                     null,
                     null,
+                    null,
+                    null,
                     record.clockOut,
                     BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
             ));
@@ -999,7 +1055,8 @@ public final class ServerTimeClockManager {
             if (segmentEnd.isAfter(segmentStart)) {
                 long totalMinutes = minutesBetween(segmentStart, segmentEnd);
                 long lunchMinutes = lunchOverlapMinutes(record, segmentStart, segmentEnd, shiftEnd);
-                long workedMinutes = Math.max(0, totalMinutes - lunchMinutes);
+                long breakMinutes = breakOverlapMinutes(record, segmentStart, segmentEnd, shiftEnd);
+                long workedMinutes = Math.max(0, totalMinutes - lunchMinutes - breakMinutes);
                 BigDecimal hours = BigDecimal.valueOf(workedMinutes)
                         .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
 
@@ -1010,6 +1067,12 @@ public final class ServerTimeClockManager {
                     if (record.lunchEnd != null) {
                         segmentLunchEnd = minDateTime(record.lunchEnd, segmentEnd);
                     }
+                }
+                LocalDateTime segmentBreakStart = null;
+                LocalDateTime segmentBreakEnd = null;
+                if (breakMinutes > 0 && record.breakStart != null) {
+                    segmentBreakStart = maxDateTime(record.breakStart, segmentStart);
+                    if (record.breakEnd != null) segmentBreakEnd = minDateTime(record.breakEnd, segmentEnd);
                 }
 
                 LocalDateTime segmentClockOut = record.clockOut == null && segmentEnd.equals(shiftEnd)
@@ -1022,6 +1085,8 @@ public final class ServerTimeClockManager {
                         segmentStart,
                         segmentLunchStart,
                         segmentLunchEnd,
+                        segmentBreakStart,
+                        segmentBreakEnd,
                         segmentClockOut,
                         hours
                 ));
@@ -1040,6 +1105,15 @@ public final class ServerTimeClockManager {
         LocalDateTime lunchEnd = record.lunchEnd == null ? shiftEnd : record.lunchEnd;
         LocalDateTime overlapStart = maxDateTime(record.lunchStart, segmentStart);
         LocalDateTime overlapEnd = minDateTime(lunchEnd, segmentEnd);
+        return minutesBetween(overlapStart, overlapEnd);
+    }
+
+    private static long breakOverlapMinutes(TimeRecord record, LocalDateTime segmentStart,
+                                            LocalDateTime segmentEnd, LocalDateTime shiftEnd) {
+        if (record.breakStart == null) return 0;
+        LocalDateTime breakEnd = record.breakEnd == null ? shiftEnd : record.breakEnd;
+        LocalDateTime overlapStart = maxDateTime(record.breakStart, segmentStart);
+        LocalDateTime overlapEnd = minDateTime(breakEnd, segmentEnd);
         return minutesBetween(overlapStart, overlapEnd);
     }
 
@@ -1216,6 +1290,7 @@ public final class ServerTimeClockManager {
         NOT_CLOCKED_IN,
         CLOCKED_IN,
         ON_LUNCH,
+        ON_BREAK,
         CLOCKED_OUT
     }
 
@@ -1269,6 +1344,8 @@ public final class ServerTimeClockManager {
             boolean canClockIn,
             boolean canLunchStart,
             boolean canLunchEnd,
+            boolean canBreakStart,
+            boolean canBreakEnd,
             boolean canClockOut
     ) {
     }
@@ -1282,6 +1359,8 @@ public final class ServerTimeClockManager {
             LocalDateTime clockIn,
             LocalDateTime lunchStart,
             LocalDateTime lunchEnd,
+            LocalDateTime breakStart,
+            LocalDateTime breakEnd,
             LocalDateTime clockOut,
             BigDecimal dailyHours,
             LocalDate payPeriodStart,
@@ -1302,9 +1381,13 @@ public final class ServerTimeClockManager {
             LocalDateTime shiftClockIn,
             LocalDateTime shiftLunchStart,
             LocalDateTime shiftLunchEnd,
+            LocalDateTime shiftBreakStart,
+            LocalDateTime shiftBreakEnd,
             LocalDateTime shiftClockOut,
             boolean autoClockOut,
-            String autoClockOutReviewStatus
+            String autoClockOutReviewStatus,
+            boolean autoBreakEnd,
+            String autoBreakEndReviewStatus
     ) {
     }
 
@@ -1328,6 +1411,8 @@ public final class ServerTimeClockManager {
             LocalDateTime clockIn,
             LocalDateTime lunchStart,
             LocalDateTime lunchEnd,
+            LocalDateTime breakStart,
+            LocalDateTime breakEnd,
             LocalDateTime clockOut,
             BigDecimal hours
     ) {
@@ -1355,6 +1440,8 @@ public final class ServerTimeClockManager {
             LocalDateTime clockIn,
             LocalDateTime lunchStart,
             LocalDateTime lunchEnd,
+            LocalDateTime breakStart,
+            LocalDateTime breakEnd,
             LocalDateTime clockOut,
             String compensationType,
             BigDecimal salary,
@@ -1363,7 +1450,9 @@ public final class ServerTimeClockManager {
             Integer locationId,
             String locationName,
             boolean autoClockOut,
-            String autoClockOutReviewStatus
+            String autoClockOutReviewStatus,
+            boolean autoBreakEnd,
+            String autoBreakEndReviewStatus
     ) {
         private TimeRecord {
             if (compensationType == null || compensationType.isBlank()) {
@@ -1410,6 +1499,8 @@ public final class ServerTimeClockManager {
             LocalDateTime clockIn,
             LocalDateTime lunchStart,
             LocalDateTime lunchEnd,
+            LocalDateTime breakStart,
+            LocalDateTime breakEnd,
             LocalDateTime clockOut
     ) {
     }

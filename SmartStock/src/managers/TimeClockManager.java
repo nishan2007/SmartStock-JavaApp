@@ -47,6 +47,8 @@ public final class TimeClockManager {
 
     public static void lunchStart() throws SQLException, TimeClockException { punch("LUNCH_START", null, null); }
     public static void lunchEnd() throws SQLException, TimeClockException { punch("LUNCH_END", null, null); }
+    public static void breakStart() throws SQLException, TimeClockException { punch("BREAK_START", null, null); }
+    public static void breakEnd() throws SQLException, TimeClockException { punch("BREAK_END", null, null); }
     public static void clockOut() throws SQLException, TimeClockException { punch("CLOCK_OUT", null, null); }
 
     private static void punch(String action, String approvalToken, String approvalReason)
@@ -88,7 +90,7 @@ public final class TimeClockManager {
         return cause instanceof SQLException existing ? existing : new SQLException(message, cause);
     }
 
-    public enum ClockState { NOT_CLOCKED_IN, CLOCKED_IN, ON_LUNCH, CLOCKED_OUT }
+    public enum ClockState { NOT_CLOCKED_IN, CLOCKED_IN, ON_LUNCH, ON_BREAK, CLOCKED_OUT }
     public record TimeClockDashboard(List<TimeClockRow> rows, ClockStatus status) { }
     public record PayrollDashboard(List<TimeClockRow> timeRows, List<PayrollSummary> summaries) { }
     public record PayrollSummary(int userId, String employeeName, String employeeRole,
@@ -109,18 +111,22 @@ public final class TimeClockManager {
         }
     }
     public record ClockStatus(ClockState state, boolean canClockIn, boolean canLunchStart,
-                              boolean canLunchEnd, boolean canClockOut) { }
+                              boolean canLunchEnd, boolean canBreakStart, boolean canBreakEnd,
+                              boolean canClockOut) { }
     public record TimeClockRow(int clockId, int userId, String employeeName, String employeeRole,
                                LocalDate workDate, LocalDateTime clockIn, LocalDateTime lunchStart,
-                               LocalDateTime lunchEnd, LocalDateTime clockOut, BigDecimal dailyHours,
+                               LocalDateTime lunchEnd, LocalDateTime breakStart, LocalDateTime breakEnd,
+                               LocalDateTime clockOut, BigDecimal dailyHours,
                                LocalDate payPeriodStart, LocalDate payPeriodEnd, LocalDate payDate,
                                BigDecimal totalHours, String compensationType, BigDecimal salary,
                                BigDecimal regularHours, BigDecimal overtimeHours, BigDecimal regularPay,
                                BigDecimal overtimePay, BigDecimal totalPay, String payPeriodType,
                                BigDecimal workHourLimit, Integer locationId, String locationName,
                                LocalDateTime shiftClockIn, LocalDateTime shiftLunchStart,
-                               LocalDateTime shiftLunchEnd, LocalDateTime shiftClockOut,
-                               boolean autoClockOut, String autoClockOutReviewStatus) { }
+                               LocalDateTime shiftLunchEnd, LocalDateTime shiftBreakStart,
+                               LocalDateTime shiftBreakEnd, LocalDateTime shiftClockOut,
+                               boolean autoClockOut, String autoClockOutReviewStatus,
+                               boolean autoBreakEnd, String autoBreakEndReviewStatus) { }
 
     public static class TimeClockException extends Exception {
         public TimeClockException(String message) { super(message); }

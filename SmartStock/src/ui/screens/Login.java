@@ -17,6 +17,8 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.Arrays;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,6 +34,7 @@ public class Login extends JFrame {
     private long badgeEntryLastKeyAtMillis;
     private int badgeEntryKeyCount;
     private volatile boolean nfcMonitorRunning;
+    private volatile Thread nfcMonitorThread;
     private String lastNfcBadgeIdentifier;
     private final AtomicBoolean authenticationInProgress = new AtomicBoolean(false);
     private final AtomicBoolean mainMenuOpened = new AtomicBoolean(false);
@@ -92,7 +95,12 @@ public class Login extends JFrame {
         getRootPane().setDefaultButton(loginButton);
         ThemeManager.applyToWindow(this);
         setVisible(true);
-        startNfcMonitor();
+        addWindowListener(new WindowAdapter() {
+            @Override public void windowOpened(WindowEvent event) { ensureNfcMonitorRunning(); }
+            @Override public void windowActivated(WindowEvent event) { ensureNfcMonitorRunning(); }
+            @Override public void windowClosed(WindowEvent event) { stopNfcMonitor(); }
+        });
+        ensureNfcMonitorRunning();
         if (initialNfcCard != null) {
             SwingUtilities.invokeLater(() -> acceptNfcBadge(initialNfcCard));
         }
@@ -273,7 +281,8 @@ public class Login extends JFrame {
     }
 
     private void startNfcMonitor() {
-        if (nfcMonitorRunning) return;
+        Thread existing = nfcMonitorThread;
+        if (nfcMonitorRunning && existing != null && existing.isAlive()) return;
         nfcMonitorRunning = true;
         Thread monitor = new Thread(() -> {
             String lastUid = null;
@@ -306,7 +315,20 @@ public class Login extends JFrame {
             }
         }, "smartstock-nfc-login");
         monitor.setDaemon(true);
+        nfcMonitorThread = monitor;
         monitor.start();
+    }
+
+    private void ensureNfcMonitorRunning() {
+        if (!isDisplayable() || authenticationInProgress.get() || mainMenuOpened.get()) return;
+        startNfcMonitor();
+    }
+
+    private void stopNfcMonitor() {
+        nfcMonitorRunning = false;
+        Thread monitor = nfcMonitorThread;
+        nfcMonitorThread = null;
+        if (monitor != null) monitor.interrupt();
     }
 
     private void acceptNfcBadge(PcscNfcService.ReadResult card) {
@@ -435,7 +457,7 @@ public class Login extends JFrame {
 
     private void returnToWelcome() {
         if (authenticationInProgress.get()) return;
-        nfcMonitorRunning = false;
+        stopNfcMonitor();
         passwordField.setText("");
         lastNfcBadgeIdentifier = null;
         NavigationManager.returnToWelcomeFromLogin(this);
@@ -459,7 +481,7 @@ public class Login extends JFrame {
         if (!mainMenuOpened.compareAndSet(false, true)) {
             return;
         }
-        nfcMonitorRunning = false;
+        stopNfcMonitor();
         NavigationManager.showMainMenuAfterLogin(this);
     }
 

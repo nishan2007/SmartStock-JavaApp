@@ -132,7 +132,7 @@ public class MainMenu extends JFrame {
         balanceDrawButton = createMenuButtonLazy("Balance Draw", "Start, count, and close the cash drawer", "src/ICONS/MainMenuBalanceDraw.png");
         changeBasketButton = createMenuButtonLazy("Change Basket", "Count the store change basket against its target", "src/ICONS/MainMenuBalanceDraw.png");
         balanceSheetButton = createMenuButtonLazy("Balance Sheet", "Review income, expenses, assets, and liabilities", "src/ICONS/MainMenuBalanceSheet.png");
-        ordersManagerDashboardButton = createMenuButtonLazy("Orders Manager Dashboard", "Review order risk, refunds, balances, and audit activity", "src/ICONS/MainMenuOrdersDashboard.png");
+        ordersManagerDashboardButton = createMenuButtonLazy("Orders Dashboard", "Review order risk, refunds, balances, and audit activity", "src/ICONS/MainMenuOrdersDashboard.png");
         reportsButton = createMenuButtonLazy("Reports", "Analyze sales, products, employees, cash flow, and expenses", "src/ICONS/MainMenuEndOfDay.png");
         enterInventoryButton = createMenuButtonLazy("Receiving Inventory", "Add received stock to inventory", "src/ICONS/MainMenuReceivingInventory.png");
         receivingHistoryButton = createMenuButtonLazy("Receiving History", "Review received inventory", "src/ICONS/MainMenuReceivingHistory.png");
@@ -152,7 +152,7 @@ public class MainMenu extends JFrame {
         editItemsButton = createMenuButtonLazy("Edit Items", "Update product information", "src/ICONS/MainMenuEditItems.png");
         timeClockButton = createMenuButtonLazy("Time Clock", "Clock employees in and out", "src/ICONS/MainMenuTimeClock.png");
         payrollDashboardButton = createMenuButtonLazy("Payroll", "Review pay periods and time records", "src/ICONS/MainMenuPayroll.png");
-        weeklyScheduleButton = createMenuButtonLazy("Weekly Schedule", "See who is working each day", "src/ICONS/MainMenuEmployees.png");
+        weeklyScheduleButton = createMenuButtonLazy("Employee Schedule", "See who is working each day", "src/ICONS/MainMenuEmployees.png");
         employeeManagementButton = createMenuButtonLazy("Employees", "Manage employee accounts", "src/ICONS/MainMenuEmployees.png");
         rolesPermissionsButton = createMenuButtonLazy("Roles & Permissions", "Configure user access", "src/ICONS/MainMenuRolesPermissions.png");
         deviceManagementButton = createMenuButtonLazy("Device Management", "Review devices and approve or block sign-ins", "src/ICONS/MainMenuDeviceManagement.png");
@@ -585,7 +585,7 @@ public class MainMenu extends JFrame {
         }
         JLabel iconLabel = findNamedLabel(button, "menuButtonIcon");
         JPanel textPanel = findNamedPanel(button, "menuButtonTextPanel");
-        JLabel descriptionLabel = findNamedLabel(button, "menuButtonDescription");
+        JTextArea descriptionLabel = findNamedTextArea(button, "menuButtonDescription");
         if (iconLabel == null || textPanel == null || descriptionLabel == null) {
             button.putClientProperty("SmartStock.requestVerticalMenuButton", Boolean.TRUE);
             button.setPreferredSize(new Dimension(OPERATION_MENU_TILE_WIDTH, VERTICAL_MENU_TILE_HEIGHT));
@@ -612,7 +612,8 @@ public class MainMenu extends JFrame {
                 label.setAlignmentX(Component.CENTER_ALIGNMENT);
             }
         }
-        descriptionLabel.setText("<html><div style='width:198px; text-align:center;'>" + getMenuDescription(button) + "</div></html>");
+        descriptionLabel.setText(getMenuDescription(button));
+        descriptionLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         JPanel iconWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
         iconWrap.setName("menuButtonIconWrap");
@@ -662,6 +663,21 @@ public class MainMenu extends JFrame {
         return null;
     }
 
+    private JTextArea findNamedTextArea(Container container, String name) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JTextArea textArea && name.equals(textArea.getName())) {
+                return textArea;
+            }
+            if (component instanceof Container childContainer) {
+                JTextArea match = findNamedTextArea(childContainer, name);
+                if (match != null) {
+                    return match;
+                }
+            }
+        }
+        return null;
+    }
+
     private void updateMenuButtonText(JButton button) {
         Color titleColor = button.isEnabled() ? textColor() : mutedColor();
         Color descriptionColor = button.isEnabled() ? mutedColor() : blend(mutedColor(), backgroundColor(), 0.38);
@@ -678,6 +694,9 @@ public class MainMenu extends JFrame {
             } else if ("menuButtonDescription".equals(label.getName())) {
                 label.setForeground(descriptionColor);
             }
+        } else if (component instanceof JTextArea textArea && "menuButtonDescription".equals(textArea.getName())) {
+            textArea.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+            textArea.setForeground(descriptionColor);
         }
         if (component instanceof Container container) {
             for (Component child : container.getComponents()) {
@@ -1290,7 +1309,7 @@ public class MainMenu extends JFrame {
         });
         ordersManagerDashboardButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {
-                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders Manager Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "You do not have permission to access Orders Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             NavigationManager.openOrdersManagerDashboard(this);
@@ -1419,7 +1438,7 @@ public class MainMenu extends JFrame {
             NavigationManager.openPayrollDashboard(this);
         });
         weeklyScheduleButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", this, "Weekly Schedule")) {
+            if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", this, "Employee Schedule")) {
                 return;
             }
             NavigationManager.openWeeklySchedule(this);
@@ -1794,9 +1813,16 @@ public class MainMenu extends JFrame {
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 17));
         titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
-        JLabel descriptionLabel = new JLabel("<html><div style='width:172px;'>" + description + "</div></html>");
+        JTextArea descriptionLabel = new JTextArea(description, 4, 1);
         descriptionLabel.setName("menuButtonDescription");
         descriptionLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        descriptionLabel.setLineWrap(true);
+        descriptionLabel.setWrapStyleWord(true);
+        descriptionLabel.setEditable(false);
+        descriptionLabel.setFocusable(false);
+        descriptionLabel.setOpaque(false);
+        descriptionLabel.setBorder(null);
+        descriptionLabel.setMargin(new Insets(0, 0, 0, 0));
         descriptionLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel textPanel = new JPanel();

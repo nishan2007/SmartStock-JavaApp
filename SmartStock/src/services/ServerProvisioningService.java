@@ -42,6 +42,7 @@ public final class ServerProvisioningService {
             "database/cash_drawer_management_setup.sql",
             "database/balance_sheet_expenses_setup.sql",
             "database/time_clock_setup.sql",
+            "database/migrations/20260808120000_add_employee_unpaid_break.sql",
             "database/store_transfer_setup.sql",
             "database/end_of_day_setup.sql",
             "database/maintenance_management_setup.sql",

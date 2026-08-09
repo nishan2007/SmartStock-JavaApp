@@ -43,13 +43,15 @@ public final class TimeClockAutoCloseService {
                                 String locationName, ZoneId locationZone,
                                 LocalDate workDate, LocalDateTime clockIn,
                                 LocalDateTime lunchStart, LocalDateTime lunchEnd,
+                                LocalDateTime breakStart, LocalDateTime breakEnd,
                                 LocalDateTime clockOut, BigDecimal workedHours,
                                 String rule, LocalDateTime detectedAt,
                                 String reviewStatus) {
     }
 
     public record Correction(LocalDateTime clockIn, LocalDateTime lunchStart,
-                             LocalDateTime lunchEnd, LocalDateTime clockOut,
+                             LocalDateTime lunchEnd, LocalDateTime breakStart,
+                             LocalDateTime breakEnd, LocalDateTime clockOut,
                              String reason) {
     }
 
@@ -62,12 +64,14 @@ public final class TimeClockAutoCloseService {
     private record OpenPunch(long clockId, int userId, String employeeName,
                              int locationId, String locationName, String timezone,
                              LocalDate workDate, Instant clockIn, Instant lunchStart,
-                             Instant lunchEnd, String compensationType, BigDecimal rate,
+                             Instant lunchEnd, Instant breakStart, Instant breakEnd,
+                             String compensationType, BigDecimal rate,
                              String rule, Instant detectionAt, int maxWorkHours) {
     }
 
     private record PunchValues(Instant clockIn, Instant lunchStart, Instant lunchEnd,
-                               Instant clockOut, BigDecimal hours, BigDecimal earned) {
+                               Instant breakStart, Instant breakEnd, Instant clockOut,
+                               BigDecimal hours, BigDecimal earned) {
     }
 
     private record LegacyOpenPunch(long clockId, int userId, Integer locationId,
@@ -141,6 +145,21 @@ public final class TimeClockAutoCloseService {
             stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_clock_out_reviewed_by_user_id INTEGER REFERENCES users(user_id)");
             stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_clock_out_reviewed_by_name TEXT");
             stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_clock_out_review_reason TEXT");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS break_start TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS break_end TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end BOOLEAN NOT NULL DEFAULT FALSE");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end_detected_at TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end_review_status TEXT");
+            stmt.executeUpdate("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                            WHERE conname = 'employee_time_clock_break_order'
+                              AND conrelid = 'employee_time_clock'::regclass) THEN
+                            ALTER TABLE employee_time_clock ADD CONSTRAINT employee_time_clock_break_order
+                                CHECK (break_start IS NULL OR break_end IS NULL OR break_end >= break_start);
+                        END IF;
+                    END $$
+                    """);
             stmt.executeUpdate("""
                     DO $$
                     BEGIN
@@ -175,6 +194,11 @@ public final class TimeClockAutoCloseService {
                     ON employee_time_clock(auto_clock_out_review_status, auto_clock_out_detected_at DESC)
                     WHERE auto_clock_out
                     """);
+            stmt.executeUpdate("""
+                    CREATE INDEX IF NOT EXISTS employee_time_clock_open_break_due_idx
+                    ON employee_time_clock(break_start)
+                    WHERE clock_out IS NULL AND break_start IS NOT NULL AND break_end IS NULL
+                    """);
 
             stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS employee_time_clock_adjustments (
@@ -185,11 +209,15 @@ public final class TimeClockAutoCloseService {
                         before_clock_in TIMESTAMPTZ,
                         before_lunch_start TIMESTAMPTZ,
                         before_lunch_end TIMESTAMPTZ,
+                        before_break_start TIMESTAMPTZ,
+                        before_break_end TIMESTAMPTZ,
                         before_clock_out TIMESTAMPTZ,
                         before_hours NUMERIC(10,2),
                         after_clock_in TIMESTAMPTZ,
                         after_lunch_start TIMESTAMPTZ,
                         after_lunch_end TIMESTAMPTZ,
+                        after_break_start TIMESTAMPTZ,
+                        after_break_end TIMESTAMPTZ,
                         after_clock_out TIMESTAMPTZ,
                         after_hours NUMERIC(10,2),
                         reason TEXT NOT NULL,
@@ -197,9 +225,15 @@ public final class TimeClockAutoCloseService {
                         actor_name TEXT,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         CONSTRAINT employee_time_clock_adjustments_action_chk
-                            CHECK (action_type IN ('AUTO_CLOSE', 'CONFIRM', 'CORRECT'))
+                            CHECK (action_type IN ('AUTO_CLOSE', 'BREAK_AUTO_END', 'CONFIRM', 'CORRECT'))
                     )
                     """);
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS before_break_start TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS before_break_end TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS after_break_start TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS after_break_end TIMESTAMPTZ");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments DROP CONSTRAINT IF EXISTS employee_time_clock_adjustments_action_chk");
+            stmt.executeUpdate("ALTER TABLE employee_time_clock_adjustments ADD CONSTRAINT employee_time_clock_adjustments_action_chk CHECK (action_type IN ('AUTO_CLOSE', 'BREAK_AUTO_END', 'CONFIRM', 'CORRECT'))");
             stmt.executeUpdate("""
                     CREATE INDEX IF NOT EXISTS employee_time_clock_adjustments_clock_idx
                     ON employee_time_clock_adjustments(clock_id, created_at DESC)
@@ -331,6 +365,7 @@ public final class TimeClockAutoCloseService {
         try {
             ensureSchema(conn);
             snapshotLegacyOpenPunches(conn);
+            processOverdueBreaks(conn);
             int closed = processDuePunches(conn, Instant.now());
             if (ownsTransaction) conn.commit();
             return closed;
@@ -339,6 +374,41 @@ public final class TimeClockAutoCloseService {
             throw ex;
         } finally {
             if (ownsTransaction) conn.setAutoCommit(true);
+        }
+    }
+
+    static int processOverdueBreaks(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                WITH closed_breaks AS (
+                    UPDATE employee_time_clock
+                    SET break_end = break_start + INTERVAL '15 minutes',
+                        auto_break_end = TRUE,
+                        auto_break_end_detected_at = CURRENT_TIMESTAMP,
+                        auto_break_end_review_status = 'PENDING',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE clock_out IS NULL
+                      AND break_start IS NOT NULL
+                      AND break_end IS NULL
+                      AND CURRENT_TIMESTAMP > break_start + INTERVAL '20 minutes'
+                    RETURNING clock_id, user_id, clock_in, lunch_start, lunch_end,
+                              break_start, break_end, clock_out, total_hours_worked
+                )
+                INSERT INTO employee_time_clock_adjustments (
+                    adjustment_id, clock_id, user_id, action_type,
+                    before_clock_in, before_lunch_start, before_lunch_end,
+                    before_break_start, before_break_end, before_clock_out, before_hours,
+                    after_clock_in, after_lunch_start, after_lunch_end,
+                    after_break_start, after_break_end, after_clock_out, after_hours,
+                    reason, actor_name
+                )
+                SELECT gen_random_uuid(), clock_id, user_id, 'BREAK_AUTO_END',
+                       clock_in, lunch_start, lunch_end, break_start, NULL, clock_out, total_hours_worked,
+                       clock_in, lunch_start, lunch_end, break_start, break_end, clock_out, total_hours_worked,
+                       '10-minute break left open beyond 20 minutes; automatically ended at 15 minutes.',
+                       'SmartStock automatic time clock'
+                FROM closed_breaks
+                """)) {
+            return ps.executeUpdate();
         }
     }
 
@@ -351,6 +421,7 @@ public final class TimeClockAutoCloseService {
                        COALESCE(tc.location_name, l.name, '') AS location_name,
                        COALESCE(NULLIF(l.timezone, ''), 'America/New_York') AS timezone,
                        tc.work_date, tc.clock_in, tc.lunch_start, tc.lunch_end,
+                       tc.break_start, tc.break_end,
                        COALESCE(u.compensation_type::text, 'HOURLY') AS compensation_type,
                        COALESCE(u.salary, 0) AS rate,
                        COALESCE(tc.auto_close_rule_snapshot, 'UNSCHEDULED') AS auto_rule,
@@ -373,6 +444,7 @@ public final class TimeClockAutoCloseService {
                             rs.getString("location_name"), rs.getString("timezone"),
                             rs.getDate("work_date").toLocalDate(), instant(rs, "clock_in"),
                             instant(rs, "lunch_start"), instant(rs, "lunch_end"),
+                            instant(rs, "break_start"), instant(rs, "break_end"),
                             rs.getString("compensation_type"), rs.getBigDecimal("rate"),
                             rs.getString("auto_rule"), instant(rs, "auto_close_detection_at"),
                             rs.getInt("max_work_hours")));
@@ -430,7 +502,7 @@ public final class TimeClockAutoCloseService {
 
     public static List<PendingReview> loadPendingReviews() throws SQLException {
         try { return LanApiClient.loadPendingTimeClockReviews(); }
-        catch (Exception ex) { throw sql("Unable to load automatic clock-out reviews from the SmartStock server.", ex); }
+        catch (Exception ex) { throw sql("Unable to load automatic time-clock reviews from the SmartStock server.", ex); }
     }
 
     public static List<PendingReview> loadPendingReviews(Connection conn) throws SQLException {
@@ -441,16 +513,21 @@ public final class TimeClockAutoCloseService {
                            COALESCE(tc.user_name, u.full_name, u.username, '') AS employee_name,
                            COALESCE(tc.location_name, l.name, '') AS location_name,
                            COALESCE(NULLIF(l.timezone, ''), 'America/New_York') AS timezone,
-                           tc.work_date, tc.clock_in, tc.lunch_start, tc.lunch_end, tc.clock_out,
+                           tc.work_date, tc.clock_in, tc.lunch_start, tc.lunch_end,
+                           tc.break_start, tc.break_end, tc.clock_out,
                            COALESCE(tc.total_hours_worked, 0) AS worked_hours,
-                           tc.auto_close_rule_snapshot, tc.auto_clock_out_detected_at,
-                           tc.auto_clock_out_review_status
+                           CASE WHEN tc.auto_clock_out_review_status = 'PENDING'
+                                THEN tc.auto_close_rule_snapshot ELSE 'BREAK_AUTO_END' END AS review_rule,
+                           CASE WHEN tc.auto_clock_out_review_status = 'PENDING'
+                                THEN tc.auto_clock_out_detected_at ELSE tc.auto_break_end_detected_at END AS review_detected_at,
+                           'PENDING' AS review_status
                     FROM employee_time_clock tc
                     JOIN users u ON u.user_id = tc.user_id
                     LEFT JOIN locations l ON l.location_id = tc.location_id
-                    WHERE tc.auto_clock_out
-                      AND tc.auto_clock_out_review_status = 'PENDING'
-                    ORDER BY tc.auto_clock_out_detected_at, tc.clock_id
+                    WHERE (tc.auto_clock_out AND tc.auto_clock_out_review_status = 'PENDING')
+                       OR (tc.auto_break_end AND tc.auto_break_end_review_status = 'PENDING'
+                           AND tc.clock_out IS NOT NULL)
+                    ORDER BY COALESCE(tc.auto_break_end_detected_at, tc.auto_clock_out_detected_at), tc.clock_id
                     """)) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -459,10 +536,11 @@ public final class TimeClockAutoCloseService {
                                 rs.getString("employee_name"), rs.getString("location_name"), zone,
                                 rs.getDate("work_date").toLocalDate(), local(rs, "clock_in", zone),
                                 local(rs, "lunch_start", zone), local(rs, "lunch_end", zone),
+                                local(rs, "break_start", zone), local(rs, "break_end", zone),
                                 local(rs, "clock_out", zone), rs.getBigDecimal("worked_hours"),
-                                rs.getString("auto_close_rule_snapshot"),
-                                local(rs, "auto_clock_out_detected_at", zone),
-                                rs.getString("auto_clock_out_review_status")));
+                                rs.getString("review_rule"),
+                                local(rs, "review_detected_at", zone),
+                                rs.getString("review_status")));
                     }
                 }
             }
@@ -509,7 +587,7 @@ public final class TimeClockAutoCloseService {
 
     public static void confirm(long clockId, String reason) throws SQLException {
         try { LanApiClient.confirmTimeClockAutoClose(clockId, reason, UUID.randomUUID().toString()); }
-        catch (Exception ex) { throw sql("Unable to confirm the automatic clock-out through the SmartStock server.", ex); }
+        catch (Exception ex) { throw sql("Unable to confirm the automatic time-clock adjustment through the SmartStock server.", ex); }
     }
 
     public static void confirm(Connection conn, long clockId, String reason,
@@ -519,12 +597,13 @@ public final class TimeClockAutoCloseService {
                 String note = reason == null || reason.isBlank() ? "Automatic clock-out confirmed." : reason.trim();
                 try (PreparedStatement ps = conn.prepareStatement("""
                         UPDATE employee_time_clock
-                        SET auto_clock_out_review_status = 'CONFIRMED',
+                        SET auto_clock_out_review_status = CASE WHEN auto_clock_out_review_status = 'PENDING' THEN 'CONFIRMED' ELSE auto_clock_out_review_status END,
+                            auto_break_end_review_status = CASE WHEN auto_break_end_review_status = 'PENDING' THEN 'CONFIRMED' ELSE auto_break_end_review_status END,
                             auto_clock_out_reviewed_at = CURRENT_TIMESTAMP,
                             auto_clock_out_reviewed_by_user_id = ?,
                             auto_clock_out_reviewed_by_name = ?,
                             auto_clock_out_review_reason = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE clock_id = ? AND auto_clock_out_review_status = 'PENDING'
+                        WHERE clock_id = ? AND (auto_clock_out_review_status = 'PENDING' OR auto_break_end_review_status = 'PENDING')
                         """)) {
                     setNullableInteger(ps, 1, actorUserId);
                     ps.setString(2, actorName);
@@ -538,7 +617,7 @@ public final class TimeClockAutoCloseService {
 
     public static void correct(long clockId, ZoneId zone, Correction correction) throws SQLException {
         try { LanApiClient.correctTimeClockAutoClose(clockId, zone, correction, UUID.randomUUID().toString()); }
-        catch (Exception ex) { throw sql("Unable to correct the automatic clock-out through the SmartStock server.", ex); }
+        catch (Exception ex) { throw sql("Unable to correct the automatic time-clock adjustment through the SmartStock server.", ex); }
     }
 
     public static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
@@ -571,27 +650,31 @@ public final class TimeClockAutoCloseService {
                 Instant in = correction.clockIn().atZone(zone).toInstant();
                 Instant lunchStart = toInstant(correction.lunchStart(), zone);
                 Instant lunchEnd = toInstant(correction.lunchEnd(), zone);
+                Instant breakStart = toInstant(correction.breakStart(), zone);
+                Instant breakEnd = toInstant(correction.breakEnd(), zone);
                 Instant out = correction.clockOut().atZone(zone).toInstant();
-                BigDecimal hours = workedHours(in, lunchStart, lunchEnd, out);
+                BigDecimal hours = workedHours(in, lunchStart, lunchEnd, breakStart, breakEnd, out);
                 BigDecimal earned = earned(conn, userId, workDate, compensationType, rate, hours, clockId);
-                PunchValues after = new PunchValues(in, lunchStart, lunchEnd, out, hours, earned);
+                PunchValues after = new PunchValues(in, lunchStart, lunchEnd, breakStart, breakEnd, out, hours, earned);
                 try (PreparedStatement ps = conn.prepareStatement("""
                         UPDATE employee_time_clock
-                        SET clock_in = ?, lunch_start = ?, lunch_end = ?, clock_out = ?,
+                        SET clock_in = ?, lunch_start = ?, lunch_end = ?, break_start = ?, break_end = ?, clock_out = ?,
                             total_hours_worked = ?, total_earned = ?,
-                            auto_clock_out_review_status = 'CORRECTED',
+                            auto_clock_out_review_status = CASE WHEN auto_clock_out_review_status = 'PENDING' THEN 'CORRECTED' ELSE auto_clock_out_review_status END,
+                            auto_break_end_review_status = CASE WHEN auto_break_end_review_status = 'PENDING' THEN 'CORRECTED' ELSE auto_break_end_review_status END,
                             auto_clock_out_reviewed_at = CURRENT_TIMESTAMP,
                             auto_clock_out_reviewed_by_user_id = ?,
                             auto_clock_out_reviewed_by_name = ?,
                             auto_clock_out_review_reason = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE clock_id = ? AND auto_clock_out_review_status = 'PENDING'
+                        WHERE clock_id = ? AND (auto_clock_out_review_status = 'PENDING' OR auto_break_end_review_status = 'PENDING')
                         """)) {
-                    setTimestamp(ps, 1, in); setTimestamp(ps, 2, lunchStart); setTimestamp(ps, 3, lunchEnd); setTimestamp(ps, 4, out);
-                    ps.setBigDecimal(5, hours); setNullableDecimal(ps, 6, earned);
-                    setNullableInteger(ps, 7, actorUserId);
-                    ps.setString(8, actorName);
-                    ps.setString(9, correction.reason().trim());
-                    ps.setLong(10, clockId);
+                    setTimestamp(ps, 1, in); setTimestamp(ps, 2, lunchStart); setTimestamp(ps, 3, lunchEnd);
+                    setTimestamp(ps, 4, breakStart); setTimestamp(ps, 5, breakEnd); setTimestamp(ps, 6, out);
+                    ps.setBigDecimal(7, hours); setNullableDecimal(ps, 8, earned);
+                    setNullableInteger(ps, 9, actorUserId);
+                    ps.setString(10, actorName);
+                    ps.setString(11, correction.reason().trim());
+                    ps.setLong(12, clockId);
                     if (ps.executeUpdate() != 1) throw new SQLException("This automatic clock-out was already reviewed.");
                 }
                 insertAdjustment(conn, clockId, userId, "CORRECT", before, after,
@@ -602,6 +685,11 @@ public final class TimeClockAutoCloseService {
         Instant maxTarget = punch.clockIn.plus(Duration.ofHours(punch.maxWorkHours));
         Instant lunchStart = punch.lunchStart;
         Instant lunchEnd = punch.lunchEnd;
+        Instant breakStart = punch.breakStart;
+        Instant breakEnd = punch.breakEnd;
+        if (breakStart != null && breakEnd != null && !breakEnd.isBefore(breakStart)) {
+            maxTarget = maxTarget.plus(Duration.between(breakStart, breakEnd));
+        }
         Instant clockOut;
         if (lunchStart == null) {
             clockOut = earlier(maxTarget, detectedAt);
@@ -614,20 +702,23 @@ public final class TimeClockAutoCloseService {
             lunchEnd = clockOut;
         }
         if (clockOut.isBefore(punch.clockIn)) clockOut = punch.clockIn;
-        BigDecimal hours = workedHours(punch.clockIn, lunchStart, lunchEnd, clockOut)
+        if (breakStart != null && breakEnd == null) breakEnd = clockOut.isBefore(breakStart) ? breakStart : clockOut;
+        BigDecimal hours = workedHours(punch.clockIn, lunchStart, lunchEnd,
+                breakStart, breakEnd, clockOut)
                 .min(BigDecimal.valueOf(punch.maxWorkHours)).max(BigDecimal.ZERO);
         BigDecimal earned = earned(conn, punch.userId, punch.workDate, punch.compensationType,
                 punch.rate, hours, punch.clockId);
-        return new PunchValues(punch.clockIn, lunchStart, lunchEnd, clockOut, hours, earned);
+        return new PunchValues(punch.clockIn, lunchStart, lunchEnd, breakStart,
+                breakEnd, clockOut, hours, earned);
     }
 
     private static boolean applyAutomaticClose(Connection conn, OpenPunch punch, PunchValues after,
                                                Instant detectedAt) throws SQLException {
         PunchValues before = new PunchValues(punch.clockIn, punch.lunchStart, punch.lunchEnd,
-                null, null, null);
+                punch.breakStart, punch.breakEnd, null, null, null);
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE employee_time_clock
-                SET lunch_start = ?, lunch_end = ?, clock_out = ?,
+                SET lunch_start = ?, lunch_end = ?, break_start = ?, break_end = ?, clock_out = ?,
                     total_hours_worked = ?, total_earned = ?,
                     auto_clock_out = TRUE,
                     auto_clock_out_detected_at = ?,
@@ -636,9 +727,10 @@ public final class TimeClockAutoCloseService {
                 WHERE clock_id = ? AND clock_out IS NULL
                 """)) {
             setTimestamp(ps, 1, after.lunchStart); setTimestamp(ps, 2, after.lunchEnd);
-            setTimestamp(ps, 3, after.clockOut); ps.setBigDecimal(4, after.hours);
-            setNullableDecimal(ps, 5, after.earned); setTimestamp(ps, 6, detectedAt);
-            ps.setLong(7, punch.clockId);
+            setTimestamp(ps, 3, after.breakStart); setTimestamp(ps, 4, after.breakEnd);
+            setTimestamp(ps, 5, after.clockOut); ps.setBigDecimal(6, after.hours);
+            setNullableDecimal(ps, 7, after.earned); setTimestamp(ps, 8, detectedAt);
+            ps.setLong(9, punch.clockId);
             if (ps.executeUpdate() != 1) return false;
         }
         String reason = "Automatic clock-out using " + punch.rule.toLowerCase()
@@ -657,7 +749,7 @@ public final class TimeClockAutoCloseService {
 
     private static PunchValues lockPunch(Connection conn, long clockId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT clock_in, lunch_start, lunch_end, clock_out,
+                SELECT clock_in, lunch_start, lunch_end, break_start, break_end, clock_out,
                        total_hours_worked, total_earned
                 FROM employee_time_clock WHERE clock_id = ? FOR UPDATE
                 """)) {
@@ -665,7 +757,8 @@ public final class TimeClockAutoCloseService {
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw new SQLException("Time-clock record was not found.");
                 return new PunchValues(instant(rs, "clock_in"), instant(rs, "lunch_start"),
-                        instant(rs, "lunch_end"), instant(rs, "clock_out"),
+                        instant(rs, "lunch_end"), instant(rs, "break_start"), instant(rs, "break_end"),
+                        instant(rs, "clock_out"),
                         rs.getBigDecimal("total_hours_worked"), rs.getBigDecimal("total_earned"));
             }
         }
@@ -687,24 +780,25 @@ public final class TimeClockAutoCloseService {
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO employee_time_clock_adjustments (
                     adjustment_id, clock_id, user_id, action_type,
-                    before_clock_in, before_lunch_start, before_lunch_end, before_clock_out, before_hours,
-                    after_clock_in, after_lunch_start, after_lunch_end, after_clock_out, after_hours,
+                    before_clock_in, before_lunch_start, before_lunch_end, before_break_start, before_break_end, before_clock_out, before_hours,
+                    after_clock_in, after_lunch_start, after_lunch_end, after_break_start, after_break_end, after_clock_out, after_hours,
                     reason, actor_user_id, actor_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             ps.setObject(1, UUID.randomUUID()); ps.setLong(2, clockId); ps.setInt(3, userId); ps.setString(4, action);
-            bindValues(ps, 5, before); bindValues(ps, 10, after);
-            ps.setString(15, reason);
-            setNullableInteger(ps, 16, actorUserId);
-            ps.setString(17, actorName);
+            bindValues(ps, 5, before); bindValues(ps, 12, after);
+            ps.setString(19, reason);
+            setNullableInteger(ps, 20, actorUserId);
+            ps.setString(21, actorName);
             ps.executeUpdate();
         }
     }
 
     private static void bindValues(PreparedStatement ps, int start, PunchValues values) throws SQLException {
         setTimestamp(ps, start, values.clockIn); setTimestamp(ps, start + 1, values.lunchStart);
-        setTimestamp(ps, start + 2, values.lunchEnd); setTimestamp(ps, start + 3, values.clockOut);
-        setNullableDecimal(ps, start + 4, values.hours);
+        setTimestamp(ps, start + 2, values.lunchEnd); setTimestamp(ps, start + 3, values.breakStart);
+        setTimestamp(ps, start + 4, values.breakEnd); setTimestamp(ps, start + 5, values.clockOut);
+        setNullableDecimal(ps, start + 6, values.hours);
     }
 
     private static BigDecimal earned(Connection conn, int userId, LocalDate workDate,
@@ -727,11 +821,17 @@ public final class TimeClockAutoCloseService {
         return normalizeMoney((rate == null ? BigDecimal.ZERO : rate).multiply(hours));
     }
 
-    private static BigDecimal workedHours(Instant in, Instant lunchStart, Instant lunchEnd, Instant out) {
+    static BigDecimal workedHours(Instant in, Instant lunchStart, Instant lunchEnd,
+                                  Instant breakStart, Instant breakEnd, Instant out) {
         long minutes = Math.max(0, Duration.between(in, out).toMinutes());
         if (lunchStart != null && lunchEnd != null && !lunchEnd.isBefore(lunchStart)) {
             Instant clippedStart = lunchStart.isBefore(in) ? in : lunchStart;
             Instant clippedEnd = lunchEnd.isAfter(out) ? out : lunchEnd;
+            if (clippedEnd.isAfter(clippedStart)) minutes -= Duration.between(clippedStart, clippedEnd).toMinutes();
+        }
+        if (breakStart != null && breakEnd != null && !breakEnd.isBefore(breakStart)) {
+            Instant clippedStart = breakStart.isBefore(in) ? in : breakStart;
+            Instant clippedEnd = breakEnd.isAfter(out) ? out : breakEnd;
             if (clippedEnd.isAfter(clippedStart)) minutes -= Duration.between(clippedStart, clippedEnd).toMinutes();
         }
         return BigDecimal.valueOf(Math.max(0, minutes)).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
@@ -761,6 +861,14 @@ public final class TimeClockAutoCloseService {
                 || correction.lunchEnd().isBefore(correction.lunchStart())
                 || correction.lunchEnd().isAfter(correction.clockOut()))) {
             throw new SQLException("Lunch must fall between clock-in and clock-out.");
+        }
+        if ((correction.breakStart() == null) != (correction.breakEnd() == null)) {
+            throw new SQLException("Enter both break start and break end, or leave both blank.");
+        }
+        if (correction.breakStart() != null && (correction.breakStart().isBefore(correction.clockIn())
+                || correction.breakEnd().isBefore(correction.breakStart())
+                || correction.breakEnd().isAfter(correction.clockOut()))) {
+            throw new SQLException("Break must fall between clock-in and clock-out.");
         }
     }
 

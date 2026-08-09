@@ -166,7 +166,7 @@ public class PayrollDashboard extends JFrame {
         summaryTable.setRowSorter(summarySorter);
 
         detailModel = new DefaultTableModel(
-                new Object[]{"Clock ID", "Employee", "Role", "Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Daily Hours", "Regular Hours", "OT Hours", "Regular Pay", "OT Pay", "Total Pay", "Pay Period", "Period Type", "Hour Limit", "Pay Date", "Location", "Clock Review"},
+                new Object[]{"Clock ID", "Employee", "Role", "Date", "Clock In", "Lunch Start", "Lunch End", "Break Start", "Break End", "Clock Out", "Daily Hours", "Regular Hours", "OT Hours", "Regular Pay", "OT Pay", "Total Pay", "Pay Period", "Period Type", "Hour Limit", "Pay Date", "Location", "Clock Review"},
                 0
         ) {
             @Override
@@ -392,6 +392,8 @@ public class PayrollDashboard extends JFrame {
                     formatTime(row.clockIn()),
                     formatTime(row.lunchStart()),
                     formatTime(row.lunchEnd()),
+                    formatTime(row.breakStart()),
+                    formatTime(row.breakEnd()),
                     formatTime(row.clockOut()),
                     formatHours(row.dailyHours()),
                     formatHours(row.regularHours()),
@@ -405,7 +407,9 @@ public class PayrollDashboard extends JFrame {
                     row.payDate().format(DATE_FORMAT),
                     row.locationName(),
                     row.autoClockOut() ? "Auto clock-out — " + (row.autoClockOutReviewStatus() == null
-                            ? "Pending" : row.autoClockOutReviewStatus()) : ""
+                            ? "Pending" : row.autoClockOutReviewStatus())
+                            : row.autoBreakEnd() ? "Auto break end — " + (row.autoBreakEndReviewStatus() == null
+                            ? "Pending" : row.autoBreakEndReviewStatus()) : ""
             });
         }
 

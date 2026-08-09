@@ -52,6 +52,8 @@ public class TimeClock extends JFrame {
     private JButton clockInButton;
     private JButton lunchStartButton;
     private JButton lunchEndButton;
+    private JButton breakStartButton;
+    private JButton breakEndButton;
     private JButton clockOutButton;
     private JButton refreshButton;
     private JButton autoClockOutReviewsButton;
@@ -69,6 +71,8 @@ public class TimeClock extends JFrame {
     private JLabel sessionClockInLabel;
     private JLabel sessionLunchStartLabel;
     private JLabel sessionLunchEndLabel;
+    private JLabel sessionBreakStartLabel;
+    private JLabel sessionBreakEndLabel;
     private JLabel sessionClockOutLabel;
     private JLabel monthHoursLabel;
     private JLabel monthPayLabel;
@@ -90,6 +94,8 @@ public class TimeClock extends JFrame {
     private LocalDateTime currentClockIn;
     private LocalDateTime currentLunchStart;
     private LocalDateTime currentLunchEnd;
+    private LocalDateTime currentBreakStart;
+    private LocalDateTime currentBreakEnd;
     private boolean isCurrentlyWorking = false;
     private float pulseAlpha = 1.0f;
     private boolean pulseIncreasing = false;
@@ -168,17 +174,21 @@ public class TimeClock extends JFrame {
         preserveForeground(sessionTimeLabel);
         sessionTimeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JPanel sessionDetailsGrid = new JPanel(new GridLayout(2, 2, 8, 4));
+        JPanel sessionDetailsGrid = new JPanel(new GridLayout(3, 2, 8, 4));
         sessionDetailsGrid.setOpaque(false);
 
         sessionClockInLabel = createSessionDetailLabel("Clock In: --");
         sessionLunchStartLabel = createSessionDetailLabel("Lunch Start: --");
         sessionLunchEndLabel = createSessionDetailLabel("Lunch End: --");
+        sessionBreakStartLabel = createSessionDetailLabel("Break Start: --");
+        sessionBreakEndLabel = createSessionDetailLabel("Break End: --");
         sessionClockOutLabel = createSessionDetailLabel("Clock Out: --");
 
         sessionDetailsGrid.add(sessionClockInLabel);
         sessionDetailsGrid.add(sessionLunchStartLabel);
         sessionDetailsGrid.add(sessionLunchEndLabel);
+        sessionDetailsGrid.add(sessionBreakStartLabel);
+        sessionDetailsGrid.add(sessionBreakEndLabel);
         sessionDetailsGrid.add(sessionClockOutLabel);
 
         currentSessionPanel.add(sessionTitle);
@@ -206,15 +216,19 @@ public class TimeClock extends JFrame {
         clockInButton = createActionButton("Clock In", clockInColor);
         lunchStartButton = createActionButton("Lunch Start", lunchStartColor);
         lunchEndButton = createActionButton("Lunch End", lunchEndColor);
+        breakStartButton = createActionButton("Start Break", DeckersPalette.PURPLE);
+        breakEndButton = createActionButton("End Break", DeckersPalette.YELLOW);
         clockOutButton = createActionButton("Clock Out", clockOutColor);
         refreshButton = createStyledButton("Refresh", DeckersPalette.PURPLE);
         actionPanel.add(clockInButton);
         actionPanel.add(lunchStartButton);
         actionPanel.add(lunchEndButton);
+        actionPanel.add(breakStartButton);
+        actionPanel.add(breakEndButton);
         actionPanel.add(clockOutButton);
         actionPanel.add(refreshButton);
         if (PermissionManager.hasPermission("TIME_CLOCK_MANAGEMENT")) {
-            autoClockOutReviewsButton = createStyledButton("Auto Clock-Out Reviews", DeckersPalette.ORANGE);
+            autoClockOutReviewsButton = createStyledButton("Time Clock Reviews", DeckersPalette.ORANGE);
             autoClockOutReviewsButton.setPreferredSize(new Dimension(210, 42));
             actionPanel.add(autoClockOutReviewsButton);
         }
@@ -306,7 +320,7 @@ public class TimeClock extends JFrame {
         preserveForeground(detailsTitle);
 
         detailsModel = new DefaultTableModel(
-                new Object[]{"Date", "Clock In", "Lunch Start", "Lunch End", "Clock Out", "Hours", "Pay", "Type", "Location", "Review"},
+                new Object[]{"Date", "Clock In", "Lunch Start", "Lunch End", "Break Start", "Break End", "Clock Out", "Hours", "Pay", "Type", "Location", "Review"},
                 0
         ) {
             @Override
@@ -448,6 +462,8 @@ public class TimeClock extends JFrame {
         clockInButton.addActionListener(e -> runPunch(this::clockInWithRequiredOverride, "Failed to clock in."));
         lunchStartButton.addActionListener(e -> runPunch(TimeClockManager::lunchStart, "Failed to punch lunch start."));
         lunchEndButton.addActionListener(e -> runPunch(TimeClockManager::lunchEnd, "Failed to punch lunch end."));
+        breakStartButton.addActionListener(e -> runPunch(TimeClockManager::breakStart, "Failed to start break."));
+        breakEndButton.addActionListener(e -> runPunch(TimeClockManager::breakEnd, "Failed to end break."));
         clockOutButton.addActionListener(e -> runPunch(TimeClockManager::clockOut, "Failed to clock out."));
         refreshButton.addActionListener(e -> loadTimeClock());
         if (autoClockOutReviewsButton != null) {
@@ -560,6 +576,19 @@ public class TimeClock extends JFrame {
         processDayData();
         renderCalendar();
         applyAutoClockOutNotice(snapshot.notice(), snapshot.reviewCount());
+        applyAutomaticBreakNotice();
+    }
+
+    private void applyAutomaticBreakNotice() {
+        Integer userId = SessionManager.getCurrentUserId();
+        boolean pending = userId != null && allRows.stream().anyMatch(row -> row.userId() == userId
+                && row.autoBreakEnd() && "PENDING".equals(row.autoBreakEndReviewStatus()));
+        if (pending) {
+            autoClockOutNoticeLabel.setText("Your 10-minute break was left open for more than 20 minutes. "
+                    + "SmartStock ended it at 15 minutes, deducted 15 unpaid minutes, and kept you clocked in. "
+                    + "Please inform management so the adjustment can be reviewed.");
+            autoClockOutNoticeLabel.setVisible(true);
+        }
     }
 
     private void refreshAutoClockOutNotice() {
@@ -586,7 +615,7 @@ public class TimeClock extends JFrame {
             autoClockOutNoticeLabel.setVisible(true);
         }
         if (autoClockOutReviewsButton != null) {
-            autoClockOutReviewsButton.setText("Auto Clock-Out Reviews (" + reviewCount + ")");
+            autoClockOutReviewsButton.setText("Time Clock Reviews (" + reviewCount + ")");
         }
     }
 
@@ -602,14 +631,16 @@ public class TimeClock extends JFrame {
                 return;
             }
             DefaultTableModel model = new DefaultTableModel(
-                    new Object[]{"Employee", "Store", "Work Date", "Clock In", "Lunch", "Clock Out", "Hours", "Rule"}, 0) {
+                    new Object[]{"Employee", "Store", "Work Date", "Clock In", "Lunch", "Break", "Clock Out", "Hours", "Rule"}, 0) {
                 @Override public boolean isCellEditable(int row, int column) { return false; }
             };
             for (PendingReview review : reviews) {
                 String lunch = review.lunchStart() == null ? "—"
                         : formatTime(review.lunchStart()) + " – " + formatTime(review.lunchEnd());
+                String breakTime = review.breakStart() == null ? "—"
+                        : formatTime(review.breakStart()) + " – " + formatTime(review.breakEnd());
                 model.addRow(new Object[]{review.employeeName(), review.locationName(), review.workDate(),
-                        formatTime(review.clockIn()), lunch, formatTime(review.clockOut()),
+                        formatTime(review.clockIn()), lunch, breakTime, formatTime(review.clockOut()),
                         formatHours(review.workedHours()), review.rule()});
             }
             JTable table = new JTable(model);
@@ -619,13 +650,13 @@ public class TimeClock extends JFrame {
             JScrollPane scroll = new JScrollPane(table);
             scroll.setPreferredSize(new Dimension(980, 320));
             Object[] options = {"Confirm", "Correct", "Close"};
-            int choice = JOptionPane.showOptionDialog(this, scroll, "Auto Clock-Out Reviews",
+            int choice = JOptionPane.showOptionDialog(this, scroll, "Time Clock Reviews",
                     JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
             int selected = table.getSelectedRow();
             if (selected < 0 || choice == 2 || choice == JOptionPane.CLOSED_OPTION) return;
             PendingReview review = reviews.get(table.convertRowIndexToModel(selected));
             if (choice == 0) {
-                TimeClockAutoCloseService.confirm(review.clockId(), "Automatic clock-out confirmed by manager.");
+                TimeClockAutoCloseService.confirm(review.clockId(), "Automatic time-clock adjustment confirmed by manager.");
             } else if (choice == 1) {
                 correctAutoClockOut(review);
             }
@@ -641,6 +672,8 @@ public class TimeClock extends JFrame {
         JTextField clockIn = new JTextField(review.clockIn().format(CORRECTION_FORMAT));
         JTextField lunchStart = new JTextField(review.lunchStart() == null ? "" : review.lunchStart().format(CORRECTION_FORMAT));
         JTextField lunchEnd = new JTextField(review.lunchEnd() == null ? "" : review.lunchEnd().format(CORRECTION_FORMAT));
+        JTextField breakStart = new JTextField(review.breakStart() == null ? "" : review.breakStart().format(CORRECTION_FORMAT));
+        JTextField breakEnd = new JTextField(review.breakEnd() == null ? "" : review.breakEnd().format(CORRECTION_FORMAT));
         JTextField clockOut = new JTextField(review.clockOut().format(CORRECTION_FORMAT));
         JTextArea reason = new JTextArea(3, 28);
         reason.setLineWrap(true);
@@ -649,9 +682,11 @@ public class TimeClock extends JFrame {
         form.add(new JLabel("Clock in (yyyy-MM-dd HH:mm)")); form.add(clockIn);
         form.add(new JLabel("Lunch start (optional)")); form.add(lunchStart);
         form.add(new JLabel("Lunch end (optional)")); form.add(lunchEnd);
+        form.add(new JLabel("Break start (optional)")); form.add(breakStart);
+        form.add(new JLabel("Break end (optional)")); form.add(breakEnd);
         form.add(new JLabel("Clock out (yyyy-MM-dd HH:mm)")); form.add(clockOut);
         form.add(new JLabel("Required reason")); form.add(new JScrollPane(reason));
-        if (JOptionPane.showConfirmDialog(this, form, "Correct Automatic Clock-Out",
+        if (JOptionPane.showConfirmDialog(this, form, "Correct Time-Clock Adjustment",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
         try {
             TimeClockAutoCloseService.correct(review.clockId(), review.locationZone(),
@@ -659,6 +694,8 @@ public class TimeClock extends JFrame {
                             LocalDateTime.parse(clockIn.getText().trim(), CORRECTION_FORMAT),
                             parseOptionalCorrectionTime(lunchStart.getText()),
                             parseOptionalCorrectionTime(lunchEnd.getText()),
+                            parseOptionalCorrectionTime(breakStart.getText()),
+                            parseOptionalCorrectionTime(breakEnd.getText()),
                             LocalDateTime.parse(clockOut.getText().trim(), CORRECTION_FORMAT),
                             reason.getText()));
         } catch (java.time.format.DateTimeParseException ex) {
@@ -687,10 +724,14 @@ public class TimeClock extends JFrame {
             currentClockIn = currentRecord.shiftClockIn();
             currentLunchStart = currentRecord.shiftLunchStart();
             currentLunchEnd = currentRecord.shiftLunchEnd();
+            currentBreakStart = currentRecord.shiftBreakStart();
+            currentBreakEnd = currentRecord.shiftBreakEnd();
 
             sessionClockInLabel.setText("Clock In: " + formatTime(currentClockIn));
             sessionLunchStartLabel.setText("Lunch Start: " + (currentLunchStart != null ? formatTime(currentLunchStart) : "--"));
             sessionLunchEndLabel.setText("Lunch End: " + (currentLunchEnd != null ? formatTime(currentLunchEnd) : "--"));
+            sessionBreakStartLabel.setText("Break Start: " + (currentBreakStart != null ? formatTime(currentBreakStart) : "--"));
+            sessionBreakEndLabel.setText("Break End: " + (currentBreakEnd != null ? formatTime(currentBreakEnd) : "--"));
             sessionClockOutLabel.setText("Clock Out: --");
 
             currentSessionPanel.setVisible(true);
@@ -766,6 +807,10 @@ public class TimeClock extends JFrame {
             LocalDateTime lunchEnd = currentLunchEnd != null ? currentLunchEnd : now;
             long lunchSeconds = java.time.Duration.between(currentLunchStart, lunchEnd).getSeconds();
             totalSeconds -= lunchSeconds;
+        }
+        if (currentBreakStart != null) {
+            LocalDateTime breakEnd = currentBreakEnd != null ? currentBreakEnd : now;
+            totalSeconds -= java.time.Duration.between(currentBreakStart, breakEnd).getSeconds();
         }
 
         if (totalSeconds < 0) {
@@ -1026,6 +1071,8 @@ public class TimeClock extends JFrame {
                     formatTime(row.clockIn()),
                     formatTime(row.lunchStart()),
                     formatTime(row.lunchEnd()),
+                    formatTime(row.breakStart()),
+                    formatTime(row.breakEnd()),
                     formatTime(row.clockOut()),
                     formatHours(row.dailyHours()),
                     formatPay(row),
@@ -1043,6 +1090,8 @@ public class TimeClock extends JFrame {
                     "",
                     "",
                     "",
+                    "",
+                    "",
                     formatHours(totalHours),
                     formatTotalPay(dayData.rows, totalPay),
                     "",
@@ -1055,7 +1104,8 @@ public class TimeClock extends JFrame {
     private void updateClockStatus(ClockStatus status) {
         statusLabel.setText("Status: " + statusText(status.state()));
         updateStatusLabelColors(status.state());
-        updateButtons(status.canClockIn(), status.canLunchStart(), status.canLunchEnd(), status.canClockOut());
+        updateButtons(status.canClockIn(), status.canLunchStart(), status.canLunchEnd(),
+                status.canBreakStart(), status.canBreakEnd(), status.canClockOut());
     }
 
     private String statusText(ClockState state) {
@@ -1063,6 +1113,7 @@ public class TimeClock extends JFrame {
             case NOT_CLOCKED_IN -> "Not clocked in";
             case CLOCKED_IN -> "Clocked in";
             case ON_LUNCH -> "On lunch";
+            case ON_BREAK -> "On 10-minute break";
             case CLOCKED_OUT -> "Clocked out today";
         };
     }
@@ -1071,6 +1122,7 @@ public class TimeClock extends JFrame {
         Color accent = switch (state) {
             case CLOCKED_IN -> DeckersPalette.LIME;
             case ON_LUNCH -> DeckersPalette.ORANGE;
+            case ON_BREAK -> DeckersPalette.PURPLE;
             case CLOCKED_OUT -> DeckersPalette.CORAL;
             default -> EMPLOYEE_ACCENT;
         };
@@ -1093,10 +1145,13 @@ public class TimeClock extends JFrame {
         statusLabel.setBackground(backgroundColor);
     }
 
-    private void updateButtons(boolean canClockIn, boolean canLunchStart, boolean canLunchEnd, boolean canClockOut) {
+    private void updateButtons(boolean canClockIn, boolean canLunchStart, boolean canLunchEnd,
+                               boolean canBreakStart, boolean canBreakEnd, boolean canClockOut) {
         setActionButtonState(clockInButton, clockInColor, canClockIn);
         setActionButtonState(lunchStartButton, lunchStartColor, canLunchStart);
         setActionButtonState(lunchEndButton, lunchEndColor, canLunchEnd);
+        setActionButtonState(breakStartButton, DeckersPalette.PURPLE, canBreakStart);
+        setActionButtonState(breakEndButton, DeckersPalette.YELLOW, canBreakEnd);
         setActionButtonState(clockOutButton, clockOutColor, canClockOut);
     }
 

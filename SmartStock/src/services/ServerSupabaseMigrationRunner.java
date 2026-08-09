@@ -111,6 +111,7 @@ public final class ServerSupabaseMigrationRunner {
             "database/migrations/20260806210000_editable_balance_sheet_revisions.sql",
             "database/migrations/20260806213000_index_balance_sheet_revision_foreign_keys.sql",
             "database/migrations/20260807143000_add_multistore_refund_queue.sql",
+            "database/migrations/20260808120000_add_employee_unpaid_break.sql",
             "database/migrations/20260723220000_first_admin_bootstrap.sql"
     );
 

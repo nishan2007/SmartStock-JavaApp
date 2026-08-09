@@ -91,7 +91,7 @@ public class AppMenuBar {
         JMenuItem returnSaleItem = new JMenuItem("Returns");
         JMenuItem balanceDrawItem = new JMenuItem("Balance Draw");
         JMenuItem balanceSheetItem = new JMenuItem("Balance Sheet");
-        JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Manager Dashboard");
+        JMenuItem ordersManagerDashboardItem = new JMenuItem("Orders Dashboard");
         JMenuItem reportsItem = new JMenuItem("Reports");
         JMenuItem enterInventoryItem = new JMenuItem("Receiving Inventory");
         JMenuItem receivingHistoryItem = new JMenuItem("Receiving History");
@@ -106,7 +106,7 @@ public class AppMenuBar {
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem sessionTimeClockItem = new JMenuItem("Time Clock");
         JMenuItem payrollDashboardItem = new JMenuItem("Payroll Dashboard");
-        JMenuItem weeklyScheduleItem = new JMenuItem("Weekly Schedule");
+        JMenuItem weeklyScheduleItem = new JMenuItem("Employee Schedule");
         JMenuItem rolesPermissionItem = new JMenuItem("Roles & Permission");
         JMenuItem deviceManagementItem = new JMenuItem("Device Management");
         JMenuItem machineManagementItem = new JMenuItem("Machines");
@@ -314,7 +314,7 @@ public class AppMenuBar {
         ordersManagerDashboardItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 if (!PermissionManager.hasPermission("ORDERS_MANAGER_DASHBOARD") && !PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")) {
-                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Orders Manager Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
+                    JOptionPane.showMessageDialog(parent, "You do not have permission to access Orders Dashboard.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(OrdersManagerDashboard.class)) {
@@ -561,7 +561,7 @@ public class AppMenuBar {
 
         weeklyScheduleItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", parent, "Weekly Schedule")) {
+                if (!PermissionManager.requirePermission("VIEW_EMPLOYEE_SCHEDULE", parent, "Employee Schedule")) {
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(WeeklySchedule.class)) {

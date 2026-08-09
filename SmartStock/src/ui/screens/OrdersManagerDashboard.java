@@ -54,7 +54,7 @@ public class OrdersManagerDashboard extends JFrame {
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public OrdersManagerDashboard() {
-        setTitle("Orders Manager Dashboard");
+        setTitle("Orders Dashboard");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(14, 14));
         setJMenuBar(AppMenuBar.create(this, "OrdersManagerDashboard"));
@@ -81,7 +81,7 @@ public class OrdersManagerDashboard extends JFrame {
         JPanel header = new JPanel(new BorderLayout(12, 8));
         header.setOpaque(false);
 
-        JLabel title = new JLabel("Orders Manager Dashboard");
+        JLabel title = new JLabel("Orders Dashboard");
         title.setFont(new Font("SansSerif", Font.BOLD, 28));
         title.setForeground(new Color(31, 41, 55));
 

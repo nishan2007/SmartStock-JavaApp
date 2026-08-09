@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS employee_time_clock (
     clock_in TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lunch_start TIMESTAMPTZ,
     lunch_end TIMESTAMPTZ,
+    break_start TIMESTAMPTZ,
+    break_end TIMESTAMPTZ,
     clock_out TIMESTAMPTZ,
     total_hours_worked NUMERIC(10, 2),
     total_earned NUMERIC(12, 2),
@@ -189,6 +191,9 @@ CREATE TABLE IF NOT EXISTS employee_time_clock (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT employee_time_clock_lunch_order CHECK (
         lunch_start IS NULL OR lunch_end IS NULL OR lunch_end >= lunch_start
+    ),
+    CONSTRAINT employee_time_clock_break_order CHECK (
+        break_start IS NULL OR break_end IS NULL OR break_end >= break_start
     ),
     CONSTRAINT employee_time_clock_out_order CHECK (
         clock_out IS NULL OR clock_out >= clock_in
@@ -203,6 +208,22 @@ ADD COLUMN IF NOT EXISTS total_earned NUMERIC(12, 2);
 
 ALTER TABLE employee_time_clock
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS break_start TIMESTAMPTZ;
+ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS break_end TIMESTAMPTZ;
+ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end_detected_at TIMESTAMPTZ;
+ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS auto_break_end_review_status TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_time_clock_break_order'
+                   AND conrelid = 'employee_time_clock'::regclass) THEN
+        ALTER TABLE employee_time_clock ADD CONSTRAINT employee_time_clock_break_order
+            CHECK (break_start IS NULL OR break_end IS NULL OR break_end >= break_start);
+    END IF;
+END;
+$$;
 
 ALTER TABLE employee_time_clock
 ADD COLUMN IF NOT EXISTS multiple_session_override_required BOOLEAN NOT NULL DEFAULT FALSE;
@@ -309,19 +330,31 @@ CREATE TABLE IF NOT EXISTS employee_time_clock_adjustments (
     before_clock_in TIMESTAMPTZ,
     before_lunch_start TIMESTAMPTZ,
     before_lunch_end TIMESTAMPTZ,
+    before_break_start TIMESTAMPTZ,
+    before_break_end TIMESTAMPTZ,
     before_clock_out TIMESTAMPTZ,
     before_hours NUMERIC(10,2),
     after_clock_in TIMESTAMPTZ,
     after_lunch_start TIMESTAMPTZ,
     after_lunch_end TIMESTAMPTZ,
+    after_break_start TIMESTAMPTZ,
+    after_break_end TIMESTAMPTZ,
     after_clock_out TIMESTAMPTZ,
     after_hours NUMERIC(10,2),
     reason TEXT NOT NULL,
     actor_user_id INTEGER REFERENCES users(user_id),
     actor_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT employee_time_clock_adjustments_action_chk CHECK (action_type IN ('AUTO_CLOSE', 'CONFIRM', 'CORRECT'))
+    CONSTRAINT employee_time_clock_adjustments_action_chk CHECK (action_type IN ('AUTO_CLOSE', 'BREAK_AUTO_END', 'CONFIRM', 'CORRECT'))
 );
+
+ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS before_break_start TIMESTAMPTZ;
+ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS before_break_end TIMESTAMPTZ;
+ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS after_break_start TIMESTAMPTZ;
+ALTER TABLE employee_time_clock_adjustments ADD COLUMN IF NOT EXISTS after_break_end TIMESTAMPTZ;
+ALTER TABLE employee_time_clock_adjustments DROP CONSTRAINT IF EXISTS employee_time_clock_adjustments_action_chk;
+ALTER TABLE employee_time_clock_adjustments ADD CONSTRAINT employee_time_clock_adjustments_action_chk
+    CHECK (action_type IN ('AUTO_CLOSE', 'BREAK_AUTO_END', 'CONFIRM', 'CORRECT'));
 
 CREATE INDEX IF NOT EXISTS employee_time_clock_adjustments_clock_idx
 ON employee_time_clock_adjustments(clock_id, created_at DESC);

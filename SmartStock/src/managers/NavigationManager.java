@@ -41,6 +41,7 @@ import ui.helpers.PerformanceDiagnostics;
 import ui.helpers.UiTaskRunner;
 
 import javax.swing.*;
+import java.awt.Point;
 import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -269,7 +270,7 @@ public final class NavigationManager {
             case CHANGE_BASKET -> new DeferredScreenFrame(
                     "Change Basket", "Preparing change basket...", ChangeBasket::new);
             case BALANCE_SHEET -> deferred("Balance Sheet", "Preparing balance sheet...", BalanceSheet::new);
-            case ORDERS_MANAGER_DASHBOARD -> deferred("Orders Manager Dashboard", "Preparing orders dashboard...", OrdersManagerDashboard::new);
+            case ORDERS_MANAGER_DASHBOARD -> deferred("Orders Dashboard", "Preparing orders dashboard...", OrdersManagerDashboard::new);
             case REPORTS -> deferred("Reports", "Preparing reports...", Reports::new);
             case RECEIVING_INVENTORY -> deferred("Receiving Inventory", "Preparing receiving...", EnterInventory::new);
             case RECEIVING_HISTORY -> deferred("Receiving History", "Preparing receiving history...", ReceivingHistory::new);
@@ -455,15 +456,24 @@ public final class NavigationManager {
             activeMainMenu = null;
         }
 
-        Login login = new Login();
-        login.setLocationRelativeTo(currentScreen);
-        login.setVisible(true);
-
+        Point loginLocation = currentScreen == null || !currentScreen.isShowing()
+                ? null : currentScreen.getLocationOnScreen();
         if (currentScreen != null) {
+            UiTaskRunner.cancelAll(currentScreen);
             currentScreen.dispose();
         }
-
-        transitionInProgress = false;
+        // Let the disposed screen and any card-reader workers finish their window-close
+        // callbacks before the new Login claims the PC/SC reader.
+        SwingUtilities.invokeLater(() -> {
+            try {
+                Login login = new Login();
+                if (loginLocation != null) login.setLocation(loginLocation);
+                login.toFront();
+                login.requestFocus();
+            } finally {
+                transitionInProgress = false;
+            }
+        });
     }
 
     /** Returns from the login prompt to the normal Welcome screen without clearing a saved session. */
