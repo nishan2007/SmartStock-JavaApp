@@ -30,12 +30,11 @@ class CrossStoreInventoryArchitectureTest {
 
     @Test
     void schemaExistsInEveryLocalProvisioningPath() throws Exception {
-        String base = source("database/base_schema_setup.sql");
+        String base = source("database/v1/local/001_schema.sql");
         String runtime = source("src/services/SyncSchemaInstaller.java");
-        String migration = source("database/migrations/20260807113000_add_cross_store_inventory_cache.sql");
 
-        assertTrue(base.contains("CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_cache"));
-        assertTrue(runtime.contains("CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_cache"));
-        assertTrue(migration.contains("CREATE TABLE IF NOT EXISTS sync_cross_store_inventory_cache"));
+        assertTrue(base.contains("CREATE TABLE public.sync_cross_store_inventory_cache"));
+        assertTrue(runtime.contains("SchemaContractService.requireLocalReady(connection)"));
+        assertFalse(runtime.contains("CREATE TABLE"));
     }
 }

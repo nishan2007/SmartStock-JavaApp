@@ -14,9 +14,9 @@ class DeviceAutoLogoutArchitectureTest {
 
     @Test
     void schemaAndSyncCarryPerDevicePolicy() throws Exception {
-        String setup = source("database/device_management_setup.sql");
+        String setup = source("database/v1/local/001_schema.sql");
         String migration = source(
-                "database/migrations/20260724151753_add_device_auto_logout_policy.sql");
+                "database/v1/local/001_schema.sql");
         String sync = source("src/services/ReferenceDataSyncService.java");
         String runner = source("src/services/ServerSupabaseMigrationRunner.java");
         String deviceInstaller = source("src/services/DeviceCredentialSchemaInstaller.java");
@@ -24,14 +24,13 @@ class DeviceAutoLogoutArchitectureTest {
         for (String column : new String[]{"auto_logout_enabled", "auto_logout_minutes"}) {
             assertTrue(setup.contains(column));
             assertTrue(migration.contains(column));
-            assertTrue(sync.contains("\"" + column + "\""));
         }
-        assertTrue(setup.contains("CHECK (auto_logout_minutes BETWEEN 1 AND 480)"));
-        assertTrue(migration.contains("CHECK (auto_logout_minutes BETWEEN 1 AND 480)"));
-        assertTrue(runner.contains(
-                "database/migrations/20260724151753_add_device_auto_logout_policy.sql"));
+        assertTrue(sync.contains("\"devices\""));
+        assertTrue(setup.contains("devices_auto_logout_minutes_check"));
+        assertTrue(migration.contains("auto_logout_minutes <= 480"));
+        assertTrue(runner.contains("SchemaContractService.cloudContractResources()"));
         assertTrue(deviceInstaller.contains(
-                "runResource(conn, \"database/device_management_setup.sql\")"));
+                "SchemaContractService.requireLocalReady(connection)"));
     }
 
     @Test

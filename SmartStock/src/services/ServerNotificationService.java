@@ -215,38 +215,7 @@ public final class ServerNotificationService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
-        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS notification_user_state (
-                        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                        notification_key TEXT NOT NULL,
-                        read_at TIMESTAMPTZ,
-                        snoozed_until TIMESTAMPTZ,
-                        dismissed_at TIMESTAMPTZ,
-                        dismissed_until TIMESTAMPTZ,
-                        last_seen_at TIMESTAMPTZ,
-                        last_seen_severity TEXT,
-                        last_seen_source TEXT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (user_id, notification_key)
-                    )
-                    """);
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS dismissed_until TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS last_seen_severity TEXT");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS last_seen_source TEXT");
-            stmt.executeUpdate("ALTER TABLE notification_user_state ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS notification_user_state_snoozed_idx ON notification_user_state(user_id, snoozed_until)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS notification_user_state_dismissed_idx ON notification_user_state(user_id, dismissed_until)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS notification_user_state_updated_idx ON notification_user_state(updated_at DESC)");
-        }
+        SchemaContractService.requireLocalReady(conn);
     }
 
     private static void collectInventory(Connection conn, List<AppNotification> notifications) throws SQLException {

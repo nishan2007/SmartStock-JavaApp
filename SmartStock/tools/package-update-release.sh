@@ -7,6 +7,16 @@ RELEASE_DIR="$TARGET_DIR/release"
 SMARTSTOCK_ENVIRONMENT="${SMARTSTOCK_ENVIRONMENT:-development}"
 SUPABASE_URL="${SUPABASE_URL:-}"
 SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:-}"
+DEVELOPMENT_SUPABASE_CONFIG="$ROOT_DIR/config/development-supabase.properties"
+if [[ ! -f "$DEVELOPMENT_SUPABASE_CONFIG" ]]; then
+  echo "Missing packaged development Supabase configuration: $DEVELOPMENT_SUPABASE_CONFIG" >&2
+  exit 1
+fi
+DEVELOPMENT_SUPABASE_REF="$(sed -n 's/^project\.ref=//p' "$DEVELOPMENT_SUPABASE_CONFIG" | head -n 1)"
+if [[ -z "$DEVELOPMENT_SUPABASE_REF" ]]; then
+  echo "Development Supabase configuration has no project.ref." >&2
+  exit 1
+fi
 
 case "$SMARTSTOCK_ENVIRONMENT" in
   development|test|production) ;;
@@ -20,7 +30,7 @@ if [[ "$SMARTSTOCK_ENVIRONMENT" == "production" ]]; then
     echo "Production packaging requires SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY." >&2
     exit 1
   fi
-  if [[ "$SUPABASE_URL" == *"wbffhygkttoaaodjcvuh"* ]]; then
+  if [[ "$SUPABASE_URL" == *"$DEVELOPMENT_SUPABASE_REF"* ]]; then
     echo "Refusing to package production against the development Supabase project." >&2
     exit 1
   fi

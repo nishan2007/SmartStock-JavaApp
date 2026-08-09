@@ -13,21 +13,21 @@ class MultistoreSalesReturnsArchitectureTest {
     }
 
     @Test void permissionsExistInBaseRuntimeAndMigrationSchemas() throws Exception {
-        for (String file : new String[]{"database/base_schema_setup.sql",
-                "database/migrations/20260807140000_add_multistore_sales_returns.sql",
-                "src/services/BaseSchemaInstaller.java"}) {
-            String source=read(file);
-            assertTrue(source.contains("VIEW_MULTI_STORE_STOCK"),file);
-            assertTrue(source.contains("VIEW_MULTI_STORE_SALES"),file);
-            assertTrue(source.contains("PROCESS_MULTI_STORE_RETURNS"),file);
+        String seed = read("database/v1/local/002_seed.sql");
+        for (String permission : new String[]{"VIEW_MULTI_STORE_STOCK",
+                "VIEW_MULTI_STORE_SALES", "PROCESS_MULTI_STORE_RETURNS"}) {
+            assertTrue(seed.contains(permission), permission);
         }
+        String installer = read("src/services/BaseSchemaInstaller.java");
+        assertTrue(installer.contains("SchemaContractService.requireLocalReady(connection)"));
     }
 
     @Test void cloudRefundFunctionsAreServiceRoleOnlyAndUseFixedSearchPath() throws Exception {
-        String sql=read("database/migrations/20260807143000_add_multistore_refund_queue.sql");
-        assertTrue(sql.contains("SECURITY DEFINER SET search_path TO ''"));
-        assertTrue(sql.contains("REVOKE ALL ON FUNCTION public.smartstock_reserve_cross_store_refund(jsonb) FROM PUBLIC,anon,authenticated"));
-        assertTrue(sql.contains("GRANT EXECUTE ON FUNCTION public.smartstock_reserve_cross_store_refund(jsonb) TO service_role"));
+        String sql=read("database/v1/cloud/001_schema.sql");
+        assertTrue(sql.contains("SECURITY DEFINER"));
+        assertTrue(sql.contains("SET search_path TO ''"));
+        assertTrue(sql.contains("REVOKE ALL ON FUNCTION public.smartstock_reserve_cross_store_refund(p_request jsonb) FROM PUBLIC"));
+        assertTrue(sql.contains("GRANT ALL ON FUNCTION public.smartstock_reserve_cross_store_refund(p_request jsonb) TO service_role"));
     }
 
     @Test void screensUseServerApiAndSyncRefreshesCaches() throws Exception {

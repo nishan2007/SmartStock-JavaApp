@@ -10,19 +10,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EmployeeNicknameArchitectureTest {
     @Test
     void optionalNicknameIsStoredAndTransportedWithoutChangingEmployeeIdentity() throws Exception {
-        String baseSchema = source("database/base_schema_setup.sql");
-        String localSyncSchema = source("database/local_network_sync_setup.sql");
-        String migration = source("database/migrations/20260723013000_add_employee_nickname.sql");
+        String baseSchema = source("database/v1/local/001_schema.sql");
+        String localSyncSchema = source("database/v1/local/001_schema.sql");
+        String migration = source("database/v1/local/001_schema.sql");
         String installer = source("src/services/BaseSchemaInstaller.java");
         String sync = source("src/services/ReferenceDataSyncService.java");
         String service = source("src/services/LanEmployeeAdminService.java");
         String screen = source("src/ui/screens/EmployeeManagement.java");
 
-        assertTrue(baseSchema.contains("ADD COLUMN IF NOT EXISTS nickname TEXT"));
-        assertTrue(localSyncSchema.contains("nickname TEXT"));
-        assertTrue(migration.contains("ADD COLUMN IF NOT EXISTS nickname TEXT"));
-        assertTrue(installer.contains("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT"));
-        assertTrue(sync.contains("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT"));
+        assertTrue(baseSchema.contains("nickname text"));
+        assertTrue(localSyncSchema.contains("CREATE TABLE public.users"));
+        assertTrue(migration.contains("nickname text"));
+        assertTrue(installer.contains("SchemaContractService.requireLocalReady(connection)"));
+        assertTrue(sync.contains("\"users\""));
 
         assertTrue(service.contains("COALESCE(u.nickname,'')"));
         assertTrue(service.contains("password_cache_invalidated_at,nickname)"));

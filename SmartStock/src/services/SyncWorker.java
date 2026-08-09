@@ -133,6 +133,12 @@ public final class SyncWorker {
                     throw new SQLException(
                             "Supabase Server Key and Store Location ID are required for cloud synchronization.");
                 }
+                try {
+                    CloudSyncManifest.fetch();
+                } catch (java.io.IOException ex) {
+                    throw new SQLException(
+                            "Cloud schema v1 could not be verified; synchronization is disabled.", ex);
+                }
                 CloudRowMirrorService.MirrorResult mirror =
                         CloudRowMirrorService.synchronize(local, config.locationId());
                 mirroredRows = mirror.uploaded();

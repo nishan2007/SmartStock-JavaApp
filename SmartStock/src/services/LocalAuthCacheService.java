@@ -25,57 +25,7 @@ public final class LocalAuthCacheService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
-        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS local_auth_cache (
-                        user_id INTEGER PRIMARY KEY,
-                        username TEXT NOT NULL,
-                        full_name TEXT,
-                        email TEXT,
-                        badge_id TEXT,
-                        role_name TEXT,
-                        location_id INTEGER,
-                        location_name TEXT,
-                        location_timezone TEXT,
-                        pin_salt TEXT,
-                        pin_hash TEXT,
-                        password_salt TEXT,
-                        password_hash TEXT,
-                        pin_cached_at TIMESTAMPTZ,
-                        employee_pin_salt TEXT,
-                        employee_pin_hash TEXT,
-                        employee_pin_cached_at TIMESTAMPTZ,
-                        password_cached_at TIMESTAMPTZ,
-                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                        cached_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """);
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ALTER COLUMN pin_salt DROP NOT NULL");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ALTER COLUMN pin_hash DROP NOT NULL");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS password_salt TEXT");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS password_hash TEXT");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS pin_cached_at TIMESTAMPTZ");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS employee_pin_cached_at TIMESTAMPTZ");
-            stmt.executeUpdate("""
-                    UPDATE local_auth_cache
-                    SET employee_pin_salt = COALESCE(employee_pin_salt, pin_salt),
-                        employee_pin_hash = COALESCE(employee_pin_hash, pin_hash),
-                        employee_pin_cached_at = COALESCE(employee_pin_cached_at, pin_cached_at, cached_at)
-                    WHERE employee_pin_hash IS NULL
-                      AND pin_hash IS NOT NULL
-                    """);
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS password_cached_at TIMESTAMPTZ");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS local_auth_cache_username_idx ON local_auth_cache(LOWER(username))");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS local_auth_cache_email_idx ON local_auth_cache(LOWER(email))");
-            stmt.executeUpdate("ALTER TABLE local_auth_cache ADD COLUMN IF NOT EXISTS badge_id TEXT");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS local_auth_cache_badge_idx ON local_auth_cache(LOWER(badge_id))");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS local_auth_cache_badge_normalized_idx ON local_auth_cache(UPPER(REGEXP_REPLACE(COALESCE(badge_id, ''), '[^a-zA-Z0-9]', '', 'g')))");
-        }
+        SchemaContractService.requireLocalReady(conn);
     }
 
     public static void savePasswordVerifier(Connection conn, CachedUser user, char[] password) throws SQLException {
@@ -184,13 +134,7 @@ public final class LocalAuthCacheService {
     }
 
     private static void saveGlobalEmployeePin(Connection conn, int userId, String salt, String hash) throws SQLException {
-        if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
-            try (Statement stmt = conn.createStatement()) {
-                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_salt TEXT");
-                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_hash TEXT");
-                stmt.executeUpdate("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_pin_updated_at TIMESTAMPTZ");
-            }
-        }
+        SchemaContractService.requireLocalReady(conn);
         String sql = """
                 UPDATE users
                 SET employee_pin_salt = ?,

@@ -23,11 +23,14 @@ public record SupabaseProjectConfig(
         String publishableKey,
         String projectRef
 ) {
-    public static final String DEVELOPMENT_PROJECT_REF = "wbffhygkttoaaodjcvuh";
-    public static final String DEVELOPMENT_URL =
-            "https://" + DEVELOPMENT_PROJECT_REF + ".supabase.co";
+    private static final String DEVELOPMENT_CONFIG_RESOURCE =
+            "config/development-supabase.properties";
+    private static final Properties DEVELOPMENT = loadDevelopmentConfig();
+    public static final String DEVELOPMENT_PROJECT_REF =
+            requiredDevelopmentProperty("project.ref");
+    public static final String DEVELOPMENT_URL = requiredDevelopmentProperty("url");
     public static final String DEVELOPMENT_PUBLISHABLE_KEY =
-            "sb_publishable_A_Z2rTrylkxY9JIRCM1pRQ_Rf56Lqja";
+            requiredDevelopmentProperty("publishable.key");
     private static final Path LEGACY_CONFIG_PATH = Path.of(System.getProperty("user.home"),
             ".smartstock", "supabase.properties");
 
@@ -156,6 +159,30 @@ public record SupabaseProjectConfig(
         } catch (IOException ignored) {
         }
         return properties;
+    }
+
+    private static Properties loadDevelopmentConfig() {
+        Properties properties = new Properties();
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) loader = SupabaseProjectConfig.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream(DEVELOPMENT_CONFIG_RESOURCE)) {
+            if (input == null) {
+                throw new IllegalStateException("Packaged development Supabase configuration was not found: "
+                        + DEVELOPMENT_CONFIG_RESOURCE);
+            }
+            properties.load(input);
+            return properties;
+        } catch (IOException ex) {
+            throw new IllegalStateException("Development Supabase configuration could not be read.", ex);
+        }
+    }
+
+    private static String requiredDevelopmentProperty(String key) {
+        String value = clean(DEVELOPMENT.getProperty(key));
+        if (value == null) {
+            throw new IllegalStateException("Development Supabase configuration is missing " + key + ".");
+        }
+        return value;
     }
 
     private static String firstNonBlank(String... values) {

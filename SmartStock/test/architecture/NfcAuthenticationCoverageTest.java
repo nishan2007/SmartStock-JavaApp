@@ -45,8 +45,8 @@ class NfcAuthenticationCoverageTest {
         String preferences = Files.readString(Path.of("src/ui/screens/CompanyCustomization.java"));
         String server = Files.readString(Path.of("src/services/LanApiServer.java"));
         String approvalPrompt = Files.readString(Path.of("src/ui/helpers/NfcBadgePromptController.java"));
-        String schema = Files.readString(Path.of("src/services/BadgeAccessSchemaInstaller.java"));
-        String lanSchema = Files.readString(Path.of("database/lan_api_security_setup.sql"));
+        String schema = Files.readString(Path.of("database/v1/local/001_schema.sql"));
+        String lanSchema = Files.readString(Path.of("database/v1/local/001_schema.sql"));
 
         assertTrue(preferences.contains("requireBadgePinLoginBox"));
         assertTrue(preferences.contains("Badge-only") || preferences.contains("possession of an active badge"));
@@ -58,7 +58,7 @@ class NfcAuthenticationCoverageTest {
                 "Manager badge prompts must load the same company PIN policy used by login");
         assertTrue(approvalPrompt.contains("No PIN is required"),
                 "Badge-only manager approval must not continue prompting for a PIN");
-        assertTrue(schema.contains("require_badge_pin_login BOOLEAN NOT NULL DEFAULT TRUE"));
+        assertTrue(schema.contains("require_badge_pin_login boolean DEFAULT true NOT NULL"));
         assertTrue(lanSchema.contains("'BADGE_ONLY'"),
                 "Existing LAN session constraints must accept badge-only sessions");
         assertTrue(lanSchema.contains("'BADGE_PIN_SETUP'"),

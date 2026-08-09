@@ -61,6 +61,15 @@ public final class ProductionReadinessService {
                                               CloudSyncManifest storeMirror, int locationId)
             throws SQLException {
         List<Check> checks = new ArrayList<>();
+        SchemaContractService.Readiness localSchema =
+                SchemaContractService.validateLocal(local);
+        checks.add(check("local-schema-v1", localSchema.ready(),
+                localSchema.message()));
+        checks.add(check("cloud-schema-v1",
+                cloudSchema != null && cloudSchema.schemaReady()
+                        && Integer.valueOf(SchemaContractService.BASELINE_VERSION)
+                        .equals(cloudSchema.schemaVersion()),
+                "Cloud schema v1 is unavailable or its fingerprint is invalid; local POS and LAN may continue offline but sync/recovery must remain disabled."));
         for (String table : REQUIRED_CLOUD_CONTROL_TABLES) {
             boolean cloudExists = cloudSchema != null && cloudSchema.hasTable(table);
             checks.add(check("cloud-control-" + table, cloudExists,

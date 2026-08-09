@@ -341,18 +341,7 @@ public final class ServerFirstAdministratorService {
     }
 
     private static void ensureSetupState(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS smartstock_first_admin_setup (
-                        setup_key TEXT PRIMARY KEY,
-                        email TEXT NOT NULL,
-                        auth_user_id UUID NOT NULL,
-                        production_user_id INTEGER,
-                        completed_at TIMESTAMPTZ,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """);
-        }
+        SchemaContractService.requireLocalReady(connection);
     }
 
     private static PendingAuth pendingAuth(Connection connection) throws SQLException {

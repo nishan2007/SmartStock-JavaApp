@@ -77,7 +77,15 @@ public final class CloudRowMirrorService {
             Map.entry("maintenance_tickets", "EXISTS (SELECT 1 FROM maintenance_machines p WHERE p.machine_id=t.machine_id AND p.location_id=?)"),
             Map.entry("receiving_batches", "(t.location_id=? OR EXISTS (SELECT 1 FROM store_transfers x WHERE x.receive_id=t.receive_id AND (x.from_location_id=? OR x.to_location_id=?)))"),
             Map.entry("store_transfers", "(t.from_location_id=? OR t.to_location_id=?)"),
-            Map.entry("store_transfer_items", "EXISTS (SELECT 1 FROM store_transfers p WHERE p.transfer_id=t.transfer_id AND (p.from_location_id=? OR p.to_location_id=?))")
+            Map.entry("store_transfer_items", "EXISTS (SELECT 1 FROM store_transfers p WHERE p.transfer_id=t.transfer_id AND (p.from_location_id=? OR p.to_location_id=?))"),
+            Map.entry("cross_store_refund_requests",
+                    "(t.source_location_id=? OR t.receiving_location_id=?)"),
+            Map.entry("cross_store_refund_lines",
+                    "EXISTS (SELECT 1 FROM cross_store_refund_requests p WHERE p.request_id=t.request_id AND (p.source_location_id=? OR p.receiving_location_id=?))"),
+            Map.entry("cross_store_refund_reconciliation",
+                    "(t.source_location_id=? OR t.receiving_location_id=?)"),
+            Map.entry("security_audit_events",
+                    "((t.device_id IS NOT NULL AND EXISTS (SELECT 1 FROM devices d WHERE d.device_id=t.device_id AND d.last_store_id=?)) OR (t.device_id IS NULL AND EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id=t.actor_user_id AND ul.location_id=?)))")
     );
 
     private CloudRowMirrorService() {

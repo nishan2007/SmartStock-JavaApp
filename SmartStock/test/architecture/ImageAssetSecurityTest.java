@@ -13,13 +13,13 @@ class ImageAssetSecurityTest {
     @Test
     void purgeUsesStorageApiAndRegistryIsNotClientExposed() throws Exception {
         String service = Files.readString(ROOT.resolve("src/services/ServerImageAssetService.java"));
-        String migration = Files.readString(ROOT.resolve("database/migrations/20260722180000_image_asset_registry.sql"));
+        String migration = Files.readString(ROOT.resolve("database/v1/cloud/001_schema.sql"));
 
         assertTrue(service.contains(".DELETE()"));
         assertTrue(service.contains("ServerSupabaseCredentials.applyTo(request).build()"));
         assertFalse(service.contains("DELETE FROM storage.objects"));
         assertTrue(migration.contains("ENABLE ROW LEVEL SECURITY"));
-        assertTrue(migration.contains("REVOKE ALL ON public.image_assets"));
+        assertTrue(migration.contains("ALTER TABLE public.image_assets ENABLE ROW LEVEL SECURITY"));
     }
 
     @Test

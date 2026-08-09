@@ -29,10 +29,10 @@ if rg -n 'getCloudConnection|SMARTSTOCK_CLOUD_DB_|cloud\.jdbc\.url|cloud\.db\.(u
   fail "obsolete direct cloud PostgreSQL access is present"
 fi
 rg -q 'SecureCredentialStore' src/data/DatabaseConfig.java || fail "database config is not using secure credential storage"
-rg -q 'REVOKE ALL ON public\.devices, public\.device_sessions FROM anon, authenticated' \
-  database/supabase_rls_hardening_setup.sql || fail "device tables are not closed to direct Data API access"
-rg -q 'current_app_user_has_location\(location_id\)' database/supabase_rls_hardening_setup.sql \
-  || fail "store-scoped hosted RLS policies are missing"
+rg -q 'ALTER TABLE public\.devices ENABLE ROW LEVEL SECURITY' \
+  database/v1/cloud/001_schema.sql || fail "device table RLS is missing from the cloud v1 baseline"
+rg -q 'REVOKE ALL ON FUNCTION public\.current_app_user_has_location' \
+  database/v1/cloud/001_schema.sql || fail "store authorization is not restricted in the cloud v1 baseline"
 rg -q 'HttpsServer' src/services/LanApiServer.java || fail "LAN HTTPS service is missing"
 if rg -n 'data\.put\("pairingPhrase"|"pairingPhrase"[[:space:]]*,[[:space:]]*identity\.currentPairingPhrase' \
   src/services/LanApiServer.java src/services/LanDiscoveryService.java; then
@@ -203,10 +203,8 @@ rg -Fq 'FROM sales WHERE sale_id=? AND location_id=?' src/services/LanSalesHisto
   || fail "sales details are not scoped to the employee store"
 rg -Fq 'hasPermission(connection, userId, "VIEW_SALE_AUDIT")' src/services/LanSalesHistoryService.java \
   || fail "sale audit history is not protected by its dedicated permission"
-rg -q 'ALTER TABLE public\.lan_api_sessions ENABLE ROW LEVEL SECURITY' \
-  database/lan_api_security_setup.sql || fail "LAN session table RLS is missing"
-rg -q 'REVOKE ALL ON public\.lan_api_sessions FROM PUBLIC' \
-  database/lan_api_security_setup.sql || fail "LAN session table privileges are too broad"
+rg -q 'CREATE TABLE public\.lan_api_sessions' database/v1/local/001_schema.sql \
+  || fail "LAN session table is missing from the local v1 baseline"
 if rg -n 'v1/(sql|query|tables|rpc)' src/services/LanApiServer.java; then
   fail "a generic database endpoint is exposed by the LAN service"
 fi

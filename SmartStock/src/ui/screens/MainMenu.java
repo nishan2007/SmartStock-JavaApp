@@ -93,6 +93,7 @@ public class MainMenu extends JFrame {
     private JLabel companyLogoLabel;
     private boolean customCompanyLogoApplied;
     private Timer notificationRefreshTimer;
+    private boolean navigationInProgress;
 
     public MainMenu() {
         setTitle("SmartStock - Main Menu");
@@ -1224,47 +1225,47 @@ public class MainMenu extends JFrame {
         companyCustomizationButton.setEnabled(canCompanyCustomization);
         workstationPreferencesButton.setEnabled(canWorkstationPreferences);
 
+        if (navigationInProgress) {
+            for (JButton button : menuButtons()) {
+                button.setEnabled(false);
+            }
+        }
+
         refreshMenuButtonThemes();
     }
 
-    private void refreshMenuButtonThemes() {
-        JButton[] buttons = {
-                makeSaleButton,
-                returnSaleButton,
-                balanceDrawButton,
-                changeBasketButton,
-                balanceSheetButton,
-                ordersManagerDashboardButton,
-                reportsButton,
-                enterInventoryButton,
-                receivingHistoryButton,
-                storeTransferButton,
-                customOrderItemsButton,
-                departmentListButton,
-                vendorListButton,
-                viewSalesButton,
-                customerAccountsButton,
-                customerTransactionHistoryButton,
-                invoicesButton,
-                customOrdersButton,
-                ordersButton,
-                viewInventoryButton,
-                priceTagPrintingButton,
-                addItemButton,
-                editItemsButton,
-                timeClockButton,
-                payrollDashboardButton,
-                weeklyScheduleButton,
-                employeeManagementButton,
-                rolesPermissionsButton,
-                deviceManagementButton,
-                machineManagementButton,
-                partsManagementButton,
-                maintenanceManagementButton,
-                companyCustomizationButton,
-                workstationPreferencesButton
+    /** Gives the first accepted tile click immediate feedback and prevents duplicate navigation. */
+    public void setNavigationInProgress(boolean inProgress) {
+        navigationInProgress = inProgress;
+        setCursor(Cursor.getPredefinedCursor(inProgress ? Cursor.WAIT_CURSOR : Cursor.DEFAULT_CURSOR));
+        if (inProgress) {
+            for (JButton button : menuButtons()) {
+                button.setEnabled(false);
+            }
+            refreshMenuButtonThemes();
+        } else {
+            applyPermissions();
+        }
+    }
+
+    private JButton[] menuButtons() {
+        return new JButton[] {
+                makeSaleButton, returnSaleButton, balanceDrawButton, changeBasketButton,
+                balanceSheetButton, ordersManagerDashboardButton, reportsButton,
+                enterInventoryButton, receivingHistoryButton, storeTransferButton,
+                customOrderItemsButton, departmentListButton, vendorListButton,
+                viewSalesButton, customerAccountsButton, customerTransactionHistoryButton,
+                invoicesButton, customOrdersButton, ordersButton, viewInventoryButton,
+                priceTagPrintingButton, addItemButton, editItemsButton, timeClockButton,
+                payrollDashboardButton, weeklyScheduleButton, employeeManagementButton,
+                rolesPermissionsButton, deviceManagementButton, machineManagementButton,
+                partsManagementButton, maintenanceManagementButton,
+                companyCustomizationButton, workstationPreferencesButton
         };
-        for (JButton button : buttons) {
+    }
+
+    private void refreshMenuButtonThemes() {
+        for (JButton button : menuButtons()) {
             updateMenuButtonText(button);
             button.repaint();
         }
@@ -1811,6 +1812,8 @@ public class MainMenu extends JFrame {
         JLabel titleLabel = new JLabel(title);
         titleLabel.setName("menuButtonTitle");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 17));
+        titleLabel.setHorizontalAlignment(SwingConstants.LEFT);
+        titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JTextArea descriptionLabel = new JTextArea(description, 4, 1);
@@ -1823,16 +1826,22 @@ public class MainMenu extends JFrame {
         descriptionLabel.setOpaque(false);
         descriptionLabel.setBorder(null);
         descriptionLabel.setMargin(new Insets(0, 0, 0, 0));
+        descriptionLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        descriptionLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         descriptionLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel textPanel = new JPanel();
         textPanel.setName("menuButtonTextPanel");
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+        textPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
         textPanel.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         textPanel.setOpaque(false);
         textPanel.add(titleLabel);
         textPanel.add(Box.createVerticalStrut(8));
         textPanel.add(descriptionLabel);
+
+        forwardTileClicks(iconLabel, button);
+        forwardTileClicks(textPanel, button);
 
         button.add(iconLabel, BorderLayout.WEST);
         button.add(textPanel, BorderLayout.CENTER);
@@ -1843,6 +1852,44 @@ public class MainMenu extends JFrame {
         }
         button.revalidate();
         button.repaint();
+    }
+
+    private void forwardTileClicks(Component child, JButton button) {
+        if (child instanceof Container container) {
+            for (Component nestedChild : container.getComponents()) {
+                forwardTileClicks(nestedChild, button);
+            }
+        }
+        child.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        child.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent event) {
+                if (button.isEnabled()) button.getModel().setRollover(true);
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent event) {
+                button.getModel().setRollover(false);
+            }
+
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                if (button.isEnabled() && SwingUtilities.isLeftMouseButton(event)) {
+                    button.getModel().setArmed(true);
+                    button.getModel().setPressed(true);
+                }
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent event) {
+                boolean activate = button.isEnabled()
+                        && SwingUtilities.isLeftMouseButton(event)
+                        && button.contains(SwingUtilities.convertPoint(child, event.getPoint(), button));
+                button.getModel().setArmed(false);
+                button.getModel().setPressed(false);
+                if (activate) button.doClick(0);
+            }
+        });
     }
 
     private boolean hasCompanyPreferencesPermission() {

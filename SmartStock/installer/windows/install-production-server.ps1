@@ -9,7 +9,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$developmentProject = "wbffhygkttoaaodjcvuh"
+$developmentConfig = Join-Path $AppDir "config\development-supabase.properties"
+if (-not (Test-Path $developmentConfig)) {
+    throw "Packaged development Supabase configuration is missing: $developmentConfig"
+}
+$developmentProjectLine = Get-Content $developmentConfig |
+    Where-Object { $_ -match '^project\.ref=' } |
+    Select-Object -First 1
+if ($null -eq $developmentProjectLine) {
+    throw "Packaged development Supabase configuration has no project.ref."
+}
+$developmentProject = ($developmentProjectLine -split '=', 2)[1].Trim()
 
 if (-not ([Security.Principal.WindowsPrincipal]
         [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(

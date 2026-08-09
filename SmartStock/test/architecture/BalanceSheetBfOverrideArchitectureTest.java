@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BalanceSheetBfOverrideArchitectureTest {
     @Test
     void balanceBfOverrideIsPeriodScopedSyncedAndAdminEnforced() throws Exception {
-        String setup = source("database/balance_sheet_expenses_setup.sql");
-        String migration = source("database/migrations/20260723234500_add_balance_sheet_bf_overrides.sql");
+        String setup = source("database/v1/local/001_schema.sql");
+        String migration = source("database/v1/local/001_schema.sql");
         String server = source("src/services/ServerBalanceSheetService.java");
         String api = source("src/services/LanApiServer.java");
         String client = source("src/services/BalanceSheetService.java");

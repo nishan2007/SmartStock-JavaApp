@@ -29,57 +29,7 @@ public final class CustomerAccountLedgerService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
-        if (!isServerMode()) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            if (tableExists(conn, "customer_account_transactions")) {
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_id TEXT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS location_id INTEGER");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS sales_order_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_method TEXT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_name TEXT");
-                stmt.executeUpdate("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS cash_drawer_session_id BIGINT");
-                ensureUpdatedAtTableSchema(stmt, "customer_account_transactions");
-                stmt.executeUpdate("""
-                        UPDATE customer_account_transactions
-                        SET payment_id = 'PAY-' || LPAD(transaction_id::text, 6, '0')
-                        WHERE COALESCE(transaction_type, '') = 'PAYMENT'
-                          AND COALESCE(payment_id, '') = ''
-                        """);
-                stmt.executeUpdate("""
-                        UPDATE customer_account_transactions
-                        SET payment_id = NULL
-                        WHERE COALESCE(transaction_type, '') <> 'PAYMENT'
-                          AND payment_id IS NOT NULL
-                          AND TRIM(payment_id) = ''
-                        """);
-                stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_account_transactions_payment_id ON customer_account_transactions(payment_id) WHERE payment_id IS NOT NULL");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_customer_created_idx ON customer_account_transactions(customer_id, created_at DESC)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_location_created_idx ON customer_account_transactions(location_id, created_at DESC)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_transactions_sales_order_idx ON customer_account_transactions(sales_order_id)");
-                stmt.executeUpdate("DROP INDEX IF EXISTS customer_account_transactions_payment_id_idx");
-                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_account_transactions_location_created");
-                backfillTransactionLocations(stmt);
-            }
-            if (tableExists(conn, "customer_account_payment_allocations")) {
-                stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS custom_order_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS invoice_id BIGINT");
-                stmt.executeUpdate("ALTER TABLE customer_account_payment_allocations ADD COLUMN IF NOT EXISTS sales_order_id BIGINT");
-                ensureUpdatedAtTableSchema(stmt, "customer_account_payment_allocations");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_payment_idx ON customer_account_payment_allocations(payment_transaction_id)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sale_idx ON customer_account_payment_allocations(sale_id)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_custom_order_idx ON customer_account_payment_allocations(custom_order_id)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_invoice_idx ON customer_account_payment_allocations(invoice_id)");
-                stmt.executeUpdate("CREATE INDEX IF NOT EXISTS customer_account_payment_allocations_sales_order_idx ON customer_account_payment_allocations(sales_order_id)");
-                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_payment");
-                stmt.executeUpdate("DROP INDEX IF EXISTS idx_customer_payment_allocations_sale");
-            }
-        }
+        SchemaContractService.requireLocalReady(conn);
     }
 
     public static void repairAllBalances(Connection conn) throws SQLException {
@@ -165,31 +115,6 @@ public final class CustomerAccountLedgerService {
             }
         }
         return BigDecimal.ZERO;
-    }
-
-    private static void ensureUpdatedAtTableSchema(Statement stmt, String table) throws SQLException {
-        stmt.executeUpdate("ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
-        stmt.executeUpdate("""
-                CREATE OR REPLACE FUNCTION set_%s_updated_at()
-                RETURNS TRIGGER AS $$
-                BEGIN
-                    IF TG_OP = 'INSERT' THEN
-                        NEW.updated_at = COALESCE(NEW.updated_at, CURRENT_TIMESTAMP);
-                    ELSIF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
-                        NEW.updated_at = CURRENT_TIMESTAMP;
-                    END IF;
-                    RETURN NEW;
-                END;
-                $$ LANGUAGE plpgsql
-                """.formatted(table));
-        stmt.executeUpdate("DROP TRIGGER IF EXISTS " + table + "_set_updated_at ON " + table);
-        stmt.executeUpdate("""
-                CREATE OR REPLACE TRIGGER %s_set_updated_at
-                BEFORE INSERT OR UPDATE ON %s
-                FOR EACH ROW
-                EXECUTE FUNCTION set_%s_updated_at()
-                """.formatted(table, table, table));
-        stmt.executeUpdate("CREATE INDEX IF NOT EXISTS " + table + "_updated_at_idx ON " + table + "(updated_at DESC)");
     }
 
     private static void backfillTransactionLocations(Statement stmt) throws SQLException {

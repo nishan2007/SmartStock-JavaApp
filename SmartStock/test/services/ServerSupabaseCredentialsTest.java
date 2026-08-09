@@ -25,19 +25,29 @@ class ServerSupabaseCredentialsTest {
 
     @Test
     void acceptsOnlyConfiguredProjectServiceRoleJwt() {
-        assertDoesNotThrow(() -> ServerSupabaseCredentials.validate(
-                "sb_" + "secret_0123456789012345678901_01234567"));
-        assertDoesNotThrow(() -> ServerSupabaseCredentials.validate(jwt("service_role",
-                SupabaseProjectConfig.DEVELOPMENT_PROJECT_REF)));
-        assertThrows(IllegalArgumentException.class,
-                () -> ServerSupabaseCredentials.validate(jwt("anon",
-                        SupabaseProjectConfig.DEVELOPMENT_PROJECT_REF)));
-        assertThrows(IllegalArgumentException.class,
-                () -> ServerSupabaseCredentials.validate(jwt("service_role", "another-project")));
-        assertThrows(IllegalArgumentException.class,
-                () -> ServerSupabaseCredentials.validate("sb_publishable_not-a-server-key"));
-        assertThrows(IllegalArgumentException.class,
-                () -> ServerSupabaseCredentials.validate("sb_secret_short"));
+        String oldUrl = System.getProperty("SUPABASE_URL");
+        String oldKey = System.getProperty("SUPABASE_PUBLISHABLE_KEY");
+        try {
+            System.setProperty("SUPABASE_URL", SupabaseProjectConfig.DEVELOPMENT_URL);
+            System.setProperty("SUPABASE_PUBLISHABLE_KEY",
+                    SupabaseProjectConfig.DEVELOPMENT_PUBLISHABLE_KEY);
+            assertDoesNotThrow(() -> ServerSupabaseCredentials.validate(
+                    "sb_" + "secret_0123456789012345678901_01234567"));
+            assertDoesNotThrow(() -> ServerSupabaseCredentials.validate(jwt("service_role",
+                    SupabaseProjectConfig.DEVELOPMENT_PROJECT_REF)));
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerSupabaseCredentials.validate(jwt("anon",
+                            SupabaseProjectConfig.DEVELOPMENT_PROJECT_REF)));
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerSupabaseCredentials.validate(jwt("service_role", "another-project")));
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerSupabaseCredentials.validate("sb_publishable_not-a-server-key"));
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerSupabaseCredentials.validate("sb_secret_short"));
+        } finally {
+            restoreProperty("SUPABASE_URL", oldUrl);
+            restoreProperty("SUPABASE_PUBLISHABLE_KEY", oldKey);
+        }
     }
 
     private static String jwt(String role, String ref) {
@@ -48,5 +58,10 @@ class ServerSupabaseCredentialsTest {
     private static String part(String value) {
         return Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) System.clearProperty(name);
+        else System.setProperty(name, value);
     }
 }

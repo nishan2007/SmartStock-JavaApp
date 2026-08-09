@@ -1,5 +1,7 @@
 package managers;
 
+import services.SchemaContractService;
+
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.ServerBalanceSheetService;
@@ -1198,69 +1200,11 @@ public final class ServerTimeClockManager {
     }
 
     private static void ensurePayrollPaymentsSchema(Connection conn) throws SQLException {
-        EmployeePayrollSettingsService.ensureSchema(conn);
-        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(location_id)");
-            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_number INTEGER NOT NULL DEFAULT 1");
-            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'CASH'");
-            stmt.executeUpdate("ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS payment_reference TEXT");
-            stmt.executeUpdate("DROP INDEX IF EXISTS payroll_payments_employee_period_idx");
-            stmt.executeUpdate("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS payroll_payments_employee_period_payment_idx
-                    ON payroll_payments(user_id, pay_period_start, pay_period_end, payment_number)
-                    """);
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS payroll_payments_location_paid_idx ON payroll_payments(location_id, paid_at DESC)");
-            stmt.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS employee_payroll_bonuses (
-                        employee_payroll_bonus_id BIGSERIAL PRIMARY KEY,
-                        sync_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
-                        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                        location_id INTEGER REFERENCES locations(location_id),
-                        employee_name TEXT,
-                        pay_period_start DATE NOT NULL,
-                        pay_period_end DATE NOT NULL,
-                        amount NUMERIC(12, 2) NOT NULL,
-                        reason TEXT,
-                        created_by_user_id INTEGER REFERENCES users(user_id),
-                        created_by_name TEXT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        CONSTRAINT employee_payroll_bonuses_amount_chk CHECK (amount > 0),
-                        CONSTRAINT employee_payroll_bonuses_sync_uuid_key UNIQUE (sync_uuid)
-                    )
-                    """);
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_period_idx ON employee_payroll_bonuses(pay_period_start, pay_period_end, user_id)");
-            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS employee_payroll_bonuses_location_period_idx ON employee_payroll_bonuses(location_id, pay_period_start, pay_period_end)");
-        }
-        SupabaseSecurityHardening.protectInternalTable(conn, "employee_payroll_bonuses");
+        SchemaContractService.requireLocalReady(conn);
     }
 
     private static void ensureTimeClockOverrideSchema(Connection conn) throws SQLException {
-        if (DatabaseConfig.load().mode() != DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_required BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_reason TEXT");
-            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_by_user_id INTEGER REFERENCES users(user_id)");
-            stmt.executeUpdate("ALTER TABLE employee_time_clock ADD COLUMN IF NOT EXISTS multiple_session_override_by_name TEXT");
-            stmt.executeUpdate("INSERT INTO permissions (permission_key, permission_name) SELECT 'TIME_CLOCK_OVERRIDE', 'Time Clock Override' WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE UPPER(permission_key) = 'TIME_CLOCK_OVERRIDE')");
-            stmt.executeUpdate("""
-                    INSERT INTO role_permissions (role_id, permission_id)
-                    SELECT r.role_id, p.permission_id
-                    FROM roles r
-                    JOIN permissions p ON UPPER(p.permission_key) = 'TIME_CLOCK_OVERRIDE'
-                    WHERE UPPER(r.role_name) IN ('ADMIN', 'MANAGER')
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM role_permissions rp
-                          WHERE rp.role_id = r.role_id
-                            AND rp.permission_id = p.permission_id
-                      )
-                    """);
-        }
+        SchemaContractService.requireLocalReady(conn);
     }
 
     private static BigDecimal defaultZero(BigDecimal value) {

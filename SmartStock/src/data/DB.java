@@ -1,15 +1,6 @@
 package data;
 
-import services.SyncSchemaInstaller;
-import services.BaseSchemaInstaller;
-import services.QuotationInvoiceSchemaInstaller;
-import services.AppUpdateSchemaInstaller;
-import services.EmailSchemaInstaller;
-import services.EmployeePayrollSettingsService;
-import services.TimeClockAutoCloseService;
-import services.BadgeAccessSchemaInstaller;
-import services.DeviceCredentialSchemaInstaller;
-import services.LanApiSchemaInstaller;
+import services.SchemaContractService;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -101,16 +92,11 @@ public class DB {
             if (ENSURED_SCHEMA_KEYS.contains(key)) {
                 return;
             }
-            BaseSchemaInstaller.ensureSchema(conn);
-            DeviceCredentialSchemaInstaller.ensureSchema(conn);
-            LanApiSchemaInstaller.ensureSchema(conn);
-            BadgeAccessSchemaInstaller.ensureSchema(conn);
-            EmployeePayrollSettingsService.ensureSchema(conn);
-            TimeClockAutoCloseService.ensureSchema(conn);
-            SyncSchemaInstaller.ensureSchema(conn);
-            QuotationInvoiceSchemaInstaller.ensureSchema(conn);
-            AppUpdateSchemaInstaller.ensureSchema(conn);
-            EmailSchemaInstaller.ensureSchema(conn);
+            SchemaContractService.Readiness readiness =
+                    SchemaContractService.validateLocal(conn);
+            if (!readiness.ready()) {
+                throw new SQLException(readiness.message(), "55000");
+            }
             ENSURED_SCHEMA_KEYS.add(key);
         }
     }

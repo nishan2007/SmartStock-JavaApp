@@ -43,6 +43,10 @@ class CloudRowMirrorServiceTest {
                 .contains("FROM device_sessions"));
         assertTrue(CloudRowMirrorService.scopePredicate("receiving_batches", true)
                 .contains("FROM store_transfers"));
+        String auditScope = CloudRowMirrorService.scopePredicate(
+                "security_audit_events", false);
+        assertTrue(auditScope.contains("t.device_id IS NOT NULL"));
+        assertTrue(auditScope.contains("t.device_id IS NULL"));
         assertTrue(CloudRowMirrorService.scopePredicate("products", false).equals("TRUE"));
         assertThrows(java.sql.SQLException.class,
                 () -> CloudRowMirrorService.scopePredicate("unclassified_table", false));

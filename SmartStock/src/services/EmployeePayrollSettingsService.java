@@ -70,78 +70,7 @@ public final class EmployeePayrollSettingsService {
     }
 
     public static void ensureSchema(Connection conn) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS employee_payroll_settings (
-                        setting_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                        period_type TEXT NOT NULL DEFAULT 'SEMI_MONTHLY',
-                        work_hour_limit NUMERIC(8,2) NOT NULL DEFAULT 80.00,
-                        effective_from DATE NOT NULL,
-                        created_by_user_id INTEGER REFERENCES users(user_id),
-                        created_by_name TEXT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        CONSTRAINT employee_payroll_settings_period_type_chk
-                            CHECK (period_type IN ('SEMI_MONTHLY', 'WEEKLY', 'FOUR_MONTH_BLOCKS')),
-                        CONSTRAINT employee_payroll_settings_hour_limit_chk CHECK (work_hour_limit > 0),
-                        CONSTRAINT employee_payroll_settings_user_effective_key UNIQUE (user_id, effective_from)
-                    )
-                    """);
-            stmt.executeUpdate("ALTER TABLE employee_payroll_settings DROP CONSTRAINT IF EXISTS employee_payroll_settings_period_type_chk");
-            stmt.executeUpdate("""
-                    ALTER TABLE employee_payroll_settings
-                    ADD CONSTRAINT employee_payroll_settings_period_type_chk
-                    CHECK (period_type IN ('SEMI_MONTHLY', 'WEEKLY', 'FOUR_MONTH_BLOCKS'))
-                    """);
-            stmt.executeUpdate("""
-                    CREATE INDEX IF NOT EXISTS employee_payroll_settings_user_effective_idx
-                    ON employee_payroll_settings(user_id, effective_from DESC)
-                    """);
-            stmt.executeUpdate("""
-                    CREATE OR REPLACE FUNCTION set_employee_payroll_settings_updated_at()
-                    RETURNS TRIGGER AS $$
-                    BEGIN
-                        IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
-                            NEW.updated_at = CURRENT_TIMESTAMP;
-                        END IF;
-                        RETURN NEW;
-                    END;
-                    $$ LANGUAGE plpgsql
-                    """);
-            stmt.executeUpdate("DROP TRIGGER IF EXISTS employee_payroll_settings_set_updated_at ON employee_payroll_settings");
-            stmt.executeUpdate("""
-                    CREATE TRIGGER employee_payroll_settings_set_updated_at
-                    BEFORE UPDATE ON employee_payroll_settings
-                    FOR EACH ROW EXECUTE FUNCTION set_employee_payroll_settings_updated_at()
-                    """);
-            stmt.executeUpdate("""
-                    INSERT INTO employee_payroll_settings (
-                        setting_id, user_id, period_type, work_hour_limit, effective_from,
-                        created_by_name
-                    )
-                    SELECT (
-                        SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 1, 8) || '-' ||
-                        SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 9, 4) || '-' ||
-                        SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 13, 4) || '-' ||
-                        SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 17, 4) || '-' ||
-                        SUBSTR(md5('smartstock-employee-payroll-default:' || u.user_id), 21, 12)
-                    )::uuid,
-                    u.user_id, 'SEMI_MONTHLY', 80.00, DATE '1900-01-01', 'System default'
-                    FROM users u
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM employee_payroll_settings existing
-                        WHERE existing.user_id = u.user_id
-                    )
-                    """);
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS pay_period_type TEXT NOT NULL DEFAULT 'SEMI_MONTHLY'");
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS work_hour_limit NUMERIC(8,2) NOT NULL DEFAULT 80.00");
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS regular_hours NUMERIC(10,2) NOT NULL DEFAULT 0");
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS overtime_hours NUMERIC(10,2) NOT NULL DEFAULT 0");
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS regular_pay NUMERIC(12,2) NOT NULL DEFAULT 0");
-            stmt.executeUpdate("ALTER TABLE IF EXISTS payroll_payments ADD COLUMN IF NOT EXISTS overtime_pay NUMERIC(12,2) NOT NULL DEFAULT 0");
-        }
-        SupabaseSecurityHardening.protectInternalTable(conn, "employee_payroll_settings");
+        SchemaContractService.requireLocalReady(conn);
     }
 
     public static PayrollSetting settingFor(Connection conn, int userId, LocalDate date,

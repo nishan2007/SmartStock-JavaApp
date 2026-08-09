@@ -27,16 +27,10 @@ done
 initdb -D "$TEST_CLUSTER" --auth=trust --no-locale >/dev/null
 pg_ctl -D "$TEST_CLUSTER" -o "-p $TEST_PORT -c listen_addresses=127.0.0.1" -w start >/dev/null
 createdb -h 127.0.0.1 -p "$TEST_PORT" smartstock_registry_test
-psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
-  -f "$PROJECT_DIR/test/sql/store_server_registry_bootstrap.sql" >/dev/null
-psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
-  -f "$PROJECT_DIR/database/migrations/20260806180000_store_server_registry.sql" >/dev/null
-psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
-  -f "$PROJECT_DIR/database/migrations/20260806181000_store_server_registry_indexes.sql" >/dev/null
-psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
-  -f "$PROJECT_DIR/database/migrations/20260806180000_store_server_registry.sql" >/dev/null
-psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
-  -f "$PROJECT_DIR/database/migrations/20260806181000_store_server_registry_indexes.sql" >/dev/null
+for script in 001_schema.sql 002_seed.sql 003_metadata.sql; do
+  psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
+    -v ON_ERROR_STOP=1 -f "$PROJECT_DIR/database/v1/local/$script" >/dev/null
+done
 psql -h 127.0.0.1 -p "$TEST_PORT" -d smartstock_registry_test \
   -f "$PROJECT_DIR/test/sql/store_server_registry_integration.sql"
 

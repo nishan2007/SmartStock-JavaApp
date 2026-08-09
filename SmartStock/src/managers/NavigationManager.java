@@ -96,11 +96,14 @@ public final class NavigationManager {
     private static void openScreen(JFrame parent, ScreenType screenType) {
         if (transitionInProgress || screenType == null) return;
         transitionInProgress = true;
+        MainMenu sourceMenu = parent instanceof MainMenu mainMenu ? mainMenu : null;
+        if (sourceMenu != null) sourceMenu.setNavigationInProgress(true);
         long started = System.nanoTime();
         try {
             JFrame screen = createScreen(screenType);
             if (screen == null) {
                 transitionInProgress = false;
+                if (sourceMenu != null) sourceMenu.setNavigationInProgress(false);
                 return;
             }
             if (parent instanceof MainMenu mainMenu) {
@@ -111,6 +114,7 @@ public final class NavigationManager {
             PerformanceDiagnostics.record("navigation", screenType.name(), started, true, -1);
         } catch (RuntimeException | Error ex) {
             transitionInProgress = false;
+            if (sourceMenu != null) sourceMenu.setNavigationInProgress(false);
             PerformanceDiagnostics.record("navigation", screenType.name(), started, false, -1);
             throw ex;
         }
@@ -358,7 +362,7 @@ public final class NavigationManager {
 
     private static void showExistingMainMenu(JFrame relativeTo) {
         if (activeMainMenu != null) {
-            if (activeMainMenu instanceof MainMenu mainMenu) mainMenu.applyPermissions();
+            if (activeMainMenu instanceof MainMenu mainMenu) mainMenu.setNavigationInProgress(false);
             WindowHelper.showPosWindow(activeMainMenu, relativeTo);
             activeMainMenu.toFront();
             activeMainMenu.requestFocus();

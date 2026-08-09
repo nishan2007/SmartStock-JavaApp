@@ -551,6 +551,19 @@ public final class LanApiServer implements AutoCloseable {
         data.put("service", "SmartStock LAN Service");
         data.put("status", "ok");
         data.put("apiVersion", "v1");
+        try (Connection connection = DB.getConnection()) {
+            SchemaContractService.Readiness local =
+                    SchemaContractService.validateLocal(connection);
+            data.put("localSchemaVersion", local.version());
+            data.put("localSchemaReady", local.ready());
+        } catch (Exception ex) {
+            data.put("localSchemaVersion", null);
+            data.put("localSchemaReady", false);
+        }
+        CloudSyncManifest.SchemaReadiness cloud =
+                CloudSyncManifest.latestSchemaReadiness();
+        data.put("cloudSchemaVersion", cloud.version());
+        data.put("cloudSchemaReady", cloud.ready());
         data.put("certificateFingerprint", tlsIdentity.fingerprint());
         List<String> pairingProofs = tlsIdentity.pairingProofs();
         data.put("pairingProof", pairingProofs.get(0));

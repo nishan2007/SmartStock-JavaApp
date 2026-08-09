@@ -44,6 +44,29 @@ class ResponsiveLoadingArchitectureTest {
     }
 
     @Test
+    void mainMenuNavigationProvidesImmediateFeedbackAndRestoresTiles() throws Exception {
+        String navigation = Files.readString(SOURCE_ROOT.resolve("managers/NavigationManager.java"));
+        String mainMenu = Files.readString(SOURCE_ROOT.resolve("ui/screens/MainMenu.java"));
+        int openScreen = navigation.indexOf("private static void openScreen");
+        int createScreen = navigation.indexOf("createScreen(screenType)", openScreen);
+        int busyFeedback = navigation.indexOf("sourceMenu.setNavigationInProgress(true)", openScreen);
+
+        assertTrue(busyFeedback > openScreen && busyFeedback < createScreen,
+                "The first accepted tile click must show feedback before screen creation");
+        assertTrue(navigation.contains("sourceMenu.setNavigationInProgress(false)"),
+                "Failed navigation must restore the menu tiles");
+        assertTrue(navigation.contains("mainMenu.setNavigationInProgress(false)"),
+                "Returning to the main menu must restore permission-based tile states");
+        assertTrue(mainMenu.contains("Cursor.WAIT_CURSOR"));
+        assertTrue(mainMenu.contains("for (JButton button : menuButtons())"));
+        assertTrue(mainMenu.contains("forwardTileClicks(textPanel, button)"),
+                "Every nested text component must forward its mouse clicks to the containing tile");
+        assertTrue(mainMenu.contains("if (activate) button.doClick(0)"));
+        assertTrue(mainMenu.contains("titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT)"));
+        assertTrue(mainMenu.contains("descriptionLabel.setAlignmentX(Component.LEFT_ALIGNMENT)"));
+    }
+
+    @Test
     void screensDoNotShowThemselvesFromConstructors() throws Exception {
         try (var files = Files.walk(SOURCE_ROOT.resolve("ui"))) {
             assertTrue(files.filter(path -> path.toString().endsWith(".java"))
@@ -74,12 +97,12 @@ class ResponsiveLoadingArchitectureTest {
         assertTrue(client.contains("saveEmployeeSession(String session, boolean persistent)"));
         assertTrue(client.contains("else SecureCredentialStore.delete(API_SESSION_SECRET)"));
         assertTrue(client.contains("resetTransport(false, false)"));
-        String base = Files.readString(Path.of("database/base_schema_setup.sql"));
+        String base = Files.readString(Path.of("database/v1/local/001_schema.sql"));
         String runtime = Files.readString(SOURCE_ROOT.resolve("services/BaseSchemaInstaller.java"));
         assertTrue(base.contains("sale_items_sale_idx"));
         assertTrue(base.contains("sale_items_product_sale_idx"));
-        assertTrue(runtime.contains("sale_items_sale_idx"));
-        assertTrue(runtime.contains("sale_items_product_sale_idx"));
+        assertTrue(runtime.contains("SchemaContractService.requireLocalReady(connection)"));
+        assertFalse(runtime.contains("CREATE INDEX"));
     }
 
     @Test

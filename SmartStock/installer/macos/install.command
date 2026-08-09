@@ -239,65 +239,31 @@ SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'db_name', :'db_user
 
 SQL
 
-  psql "postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
-    -v ON_ERROR_STOP=1 \
-    -f "${APP_DIR}/database/base_schema_setup.sql"
-
-  psql "postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
-    -v ON_ERROR_STOP=1 \
-    -f "${APP_DIR}/database/local_network_sync_setup.sql"
-
-  apply_feature_schema_scripts
-
-}
-
-apply_feature_schema_scripts() {
-  log "Applying SmartStock feature schema scripts"
-  local scripts=(
-    permission_descriptions_setup.sql
-    permission_descriptions_and_sections_backfill.sql
-    location_management_setup.sql
-    store_timezone_setup.sql
-    department_setup.sql
-    item_details_setup.sql
-    vendor_setup.sql
-    held_cart_setup.sql
-    product_type_setup.sql
-    product_size_setup.sql
-    product_sku_setup.sql
-    customer_type_setup.sql
-    device_management_setup.sql
-    lan_api_security_setup.sql
-    hardware_setup_permission.sql
-    company_customization_setup.sql
-    company_customization_permission.sql
-    company_preferences_permission.sql
-    custom_orders_setup.sql
-    custom_order_sku_setup.sql
-    custom_order_controls_setup.sql
-    custom_order_safety_controls_setup.sql
-    custom_order_line_discount_setup.sql
-    payment_mmg_setup.sql
-    returns_setup.sql
-    sale_discount_setup.sql
-    sale_override_controls_setup.sql
-    sales_transaction_source_setup.sql
-    normal_sales_audit_setup.sql
-    cash_drawer_management_setup.sql
-    balance_sheet_expenses_setup.sql
-    time_clock_setup.sql
-    store_transfer_setup.sql
-    end_of_day_setup.sql
-    maintenance_management_setup.sql
-    inventory_sensitive_permissions.sql
-  )
-  for script in "${scripts[@]}"; do
-    if [[ -f "${APP_DIR}/database/${script}" ]]; then
-      psql "postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
-        -v ON_ERROR_STOP=1 \
-        -f "${APP_DIR}/database/${script}"
-    fi
-  done
+  local database_url="postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}"
+  local schema_state
+  schema_state="$(psql "$database_url" -Atc "
+    SELECT CASE
+      WHEN to_regclass('public.smartstock_schema_metadata') IS NOT NULL THEN 'v1'
+      WHEN EXISTS (
+        SELECT 1 FROM pg_tables
+        WHERE schemaname='public' AND tablename <> 'smartstock_schema_metadata'
+      ) THEN 'legacy'
+      ELSE 'empty'
+    END")"
+  if [[ "$schema_state" == "legacy" ]]; then
+    die "The existing local database is not the SmartStock v1 baseline. Use the side-by-side repair workflow; this installer will not modify it in place."
+  fi
+  if [[ "$schema_state" == "empty" ]]; then
+    log "Installing the canonical SmartStock local v1 baseline"
+    for script in 001_schema.sql 002_seed.sql 003_metadata.sql; do
+      [[ -f "${APP_DIR}/database/v1/local/${script}" ]] \
+        || die "Required packaged SQL is missing: database/v1/local/${script}"
+      psql "$database_url" -v ON_ERROR_STOP=1 \
+        -f "${APP_DIR}/database/v1/local/${script}"
+    done
+  else
+    log "Existing SmartStock v1 schema found; application startup will validate its fingerprint"
+  fi
 }
 
 restrict_postgres_to_server() {

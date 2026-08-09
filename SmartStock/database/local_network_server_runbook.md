@@ -46,7 +46,9 @@ SMARTSTOCK_CONFIRM_RESET=YES SmartStock/installer/macos/install.command server -
 If you need to apply the sync tables manually, run:
 
 ```bash
-psql postgresql://smartstock_server@localhost:5432/smartstock -f SmartStock/database/local_network_sync_setup.sql
+for script in SmartStock/database/v1/local/001_schema.sql SmartStock/database/v1/local/002_seed.sql SmartStock/database/v1/local/003_metadata.sql; do
+  psql postgresql://smartstock_server@localhost:5432/smartstock -v ON_ERROR_STOP=1 -f "$script"
+done
 ```
 
 For diagnostics, the resulting server configuration should be:

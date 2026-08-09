@@ -14,50 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class ServerProvisioningService {
-    private static final List<String> LOCAL_WORKFLOW_SCHEMAS = List.of(
-            "database/permission_descriptions_setup.sql",
-            "database/permission_descriptions_and_sections_backfill.sql",
-            "database/employee_schedule_setup.sql",
-            "database/location_management_setup.sql",
-            "database/store_timezone_setup.sql",
-            "database/department_setup.sql",
-            "database/item_details_setup.sql",
-            "database/vendor_setup.sql",
-            "database/held_cart_setup.sql",
-            "database/product_type_setup.sql",
-            "database/product_size_setup.sql",
-            "database/product_sku_setup.sql",
-            "database/customer_type_setup.sql",
-            "database/device_management_setup.sql",
-            "database/hardware_setup_permission.sql",
-            "database/company_customization_setup.sql",
-            "database/company_customization_permission.sql",
-            "database/company_preferences_permission.sql",
-            "database/returns_setup.sql",
-            "database/sale_discount_setup.sql",
-            "database/normal_sales_audit_setup.sql",
-            "database/sale_override_controls_setup.sql",
-            "database/sales_transaction_source_setup.sql",
-            "database/custom_orders_setup.sql",
-            "database/cash_drawer_management_setup.sql",
-            "database/balance_sheet_expenses_setup.sql",
-            "database/time_clock_setup.sql",
-            "database/migrations/20260808120000_add_employee_unpaid_break.sql",
-            "database/migrations/20260809153000_remove_local_wifi_sessions.sql",
-            "database/store_transfer_setup.sql",
-            "database/end_of_day_setup.sql",
-            "database/maintenance_management_setup.sql",
-            "database/inventory_sensitive_permissions.sql",
-            "database/custom_order_sku_setup.sql",
-            "database/custom_order_controls_setup.sql",
-            "database/custom_order_line_discount_setup.sql",
-            "database/custom_order_safety_controls_setup.sql",
-            "database/quotations_invoices_setup.sql",
-            "database/notification_permissions_setup.sql",
-            "database/workflow_sync_identity_setup.sql",
-            "database/app_updates_setup.sql"
-    );
-
     public static void testLocalConnection() throws Exception { try (java.sql.Connection ignored=data.DB.getConnection()) { } }
     public static void testCloudConnection() throws Exception {
         if (!ServerSupabaseCredentials.isConfigured()) {
@@ -91,17 +47,20 @@ public final class ServerProvisioningService {
             throw new SQLException("The local PostgreSQL URL must use 127.0.0.1, localhost, or ::1. Registers use the HTTPS service instead of PostgreSQL.");
         }
         List<String> steps = new ArrayList<>();
-        createDatabaseIfMissing(localParts, config.dbUser(), config.dbPassword(), steps);
+        boolean created = createDatabaseIfMissing(
+                localParts, config.dbUser(), config.dbPassword(), steps);
         try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
-            BaseSchemaInstaller.ensureSchema(local);
-            ServerImageAssetService.ensureSchema(local);
-            int customOrderStatements = installLocalWorkflowSchemas(local);
-            SyncSchemaInstaller.ensureSchema(local);
-            SyncSchemaInstaller.ensureSecurityHardening(local);
-            LocalAuthCacheService.ensureSchema(local);
+            if (created) {
+                SchemaContractService.installLocalBaseline(local);
+                steps.add("Installed the canonical local PostgreSQL v1 baseline.");
+            }
+            SchemaContractService.Readiness readiness =
+                    SchemaContractService.validateLocal(local);
+            if (!readiness.ready()) {
+                throw new SQLException(readiness.message());
+            }
             disableLegacyRegisterRoles(local, steps);
-            steps.add("Installed local base schema, custom order workflow schema, and sync/employee credential tables ("
-                    + customOrderStatements + " custom-order statements).");
+            steps.add("Validated local schema version " + readiness.version() + ".");
         }
 
         if (ServerSupabaseCredentials.isConfigured()) {
@@ -122,8 +81,7 @@ public final class ServerProvisioningService {
                 }
             }
         } else {
-            throw new IllegalStateException(
-                    "Save the Supabase Server Key before initializing this server.");
+            steps.add("Cloud sync and recovery are disabled until the server-only Supabase credential is installed; local POS and LAN operation remain available offline.");
         }
 
         config.save();
@@ -136,34 +94,22 @@ public final class ServerProvisioningService {
         return new ProvisionResult(String.join("\n", steps));
     }
 
-    private static int installLocalWorkflowSchemas(Connection local) throws Exception {
-        return SqlScriptRunner.runScripts(local, LOCAL_WORKFLOW_SCHEMAS);
-    }
-
     static List<String> localWorkflowSchemaResources() {
-        return LOCAL_WORKFLOW_SCHEMAS;
+        return SchemaContractService.localBaselineResources();
     }
 
-    private static void installWorkflowSyncIdentitySchema(Connection cloud) throws Exception {
-        SqlScriptRunner.runScripts(cloud, List.of(
-                "database/workflow_sync_identity_setup.sql",
-                "database/supabase_rpc_security_setup.sql",
-                "database/supabase_rls_hardening_setup.sql",
-                "database/migrations/20260723143000_api_only_sync_exchange.sql"
-        ));
-    }
-
-    private static void createDatabaseIfMissing(JdbcParts localParts, String user, String password, List<String> steps) throws SQLException {
+    private static boolean createDatabaseIfMissing(JdbcParts localParts, String user, String password, List<String> steps) throws SQLException {
         String adminUrl = localParts.withDatabase("postgres");
         try (Connection admin = DriverManager.getConnection(adminUrl, user, password)) {
             admin.setAutoCommit(true);
             if (databaseExists(admin, localParts.database())) {
                 steps.add("Local database already exists: " + localParts.database());
-                return;
+                return false;
             }
             try (Statement stmt = admin.createStatement()) {
                 stmt.executeUpdate("CREATE DATABASE " + quoteIdentifier(localParts.database()));
                 steps.add("Created local database: " + localParts.database());
+                return true;
             }
         }
     }

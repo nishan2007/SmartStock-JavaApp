@@ -1,5 +1,7 @@
 package managers;
 
+import services.SchemaContractService;
+
 import data.DB;
 import services.ServerRequestIdentity;
 import services.StorageObjectNameBuilder;
@@ -364,16 +366,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static void ensurePriceTagTemplateSchema(Connection conn) throws SQLException {
-        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) return;
-        try (Statement stmt = conn.createStatement()) {
-            ensureReceiptSettingsSchema(conn);
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_company BOOLEAN NOT NULL DEFAULT TRUE");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_sku BOOLEAN NOT NULL DEFAULT TRUE");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_width_inches NUMERIC(5, 2) NOT NULL DEFAULT 2.25");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_height_inches NUMERIC(5, 2) NOT NULL DEFAULT 1.25");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS price_tag_templates TEXT NOT NULL DEFAULT ''");
-        }
+        SchemaContractService.requireLocalReady(conn);
     }
 
     private static PriceTagTemplateSettings legacyPriceTagTemplate(boolean company, boolean sku, boolean barcode, double width, double height) { return new PriceTagTemplateSettings("Standard", company, true, true, sku, barcode, true, true, width, height, ""); }
@@ -614,30 +607,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static void ensureReceiptSettingsSchema(Connection conn) throws SQLException {
-        if (data.DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) {
-            return;
-        }
-        try (Statement stmt = conn.createStatement()) {
-            ensureCompanyInfoSchema(stmt);
-            ensureLocationIdentitySchema(stmt);
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS change_basket_target_amount NUMERIC(12, 2) NOT NULL DEFAULT 60000");
-            stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS always_print_sale_receipt BOOLEAN NOT NULL DEFAULT FALSE");
-            ensureAccountPaymentReceiptSchema(stmt);
-        }
-    }
-
-    private static void ensureAccountPaymentReceiptSchema(Statement stmt) throws SQLException {
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_title TEXT NOT NULL DEFAULT 'CUSTOMER ACCOUNT PAYMENT'");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_user BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_customer BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_account_number BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_method BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_reference BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_device BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_drawer BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_allocations BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_balance BOOLEAN NOT NULL DEFAULT TRUE");
-        stmt.executeUpdate("ALTER TABLE company_customization ADD COLUMN IF NOT EXISTS account_payment_receipt_show_barcode BOOLEAN NOT NULL DEFAULT TRUE");
+        SchemaContractService.requireLocalReady(conn);
     }
 
     public static java.math.BigDecimal loadChangeBasketTargetAmount() {
@@ -692,115 +662,6 @@ public class ServerCompanyCustomizationRepository {
         if (Objects.equals(cachedLocationId, locationId)) {
             cachedReceiptSettings = null;
         }
-    }
-
-    private static void ensureCompanyInfoSchema(Statement stmt) throws SQLException {
-        stmt.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS company_info (
-                    company_info_id INTEGER PRIMARY KEY DEFAULT 1,
-                    company_name TEXT NOT NULL DEFAULT 'SmartStock',
-                    company_motto_line1 TEXT NOT NULL DEFAULT '',
-                    company_motto_line2 TEXT NOT NULL DEFAULT '',
-                    company_logo_url TEXT NOT NULL DEFAULT '',
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    CONSTRAINT company_info_singleton_chk CHECK (company_info_id = 1)
-                )
-                """);
-        stmt.executeUpdate("""
-                DO $$
-                BEGIN
-                    IF to_regclass('public.company_customization') IS NOT NULL THEN
-                        IF EXISTS (
-                            SELECT 1
-                            FROM information_schema.columns
-                            WHERE table_schema = 'public'
-                              AND table_name = 'company_customization'
-                              AND column_name = 'company_name'
-                        ) THEN
-                            EXECUTE $sql$
-                                INSERT INTO company_info (
-                                    company_info_id,
-                                    company_name,
-                                    company_motto_line1,
-                                    company_motto_line2,
-                                    company_logo_url,
-                                    updated_at
-                                )
-                                SELECT 1,
-                                       COALESCE(NULLIF(company_name, ''), 'SmartStock'),
-                                       COALESCE(company_motto_line1, ''),
-                                       COALESCE(company_motto_line2, ''),
-                                       COALESCE(receipt_logo_url, ''),
-                                       NOW()
-                                FROM company_customization
-                                ORDER BY location_id
-                                LIMIT 1
-                                ON CONFLICT (company_info_id) DO UPDATE SET
-                                    company_name = COALESCE(NULLIF(company_info.company_name, ''), EXCLUDED.company_name),
-                                    company_motto_line1 = COALESCE(NULLIF(company_info.company_motto_line1, ''), EXCLUDED.company_motto_line1),
-                                    company_motto_line2 = COALESCE(NULLIF(company_info.company_motto_line2, ''), EXCLUDED.company_motto_line2),
-                                    company_logo_url = COALESCE(NULLIF(company_info.company_logo_url, ''), EXCLUDED.company_logo_url),
-                                    updated_at = NOW()
-                            $sql$;
-                        END IF;
-                    END IF;
-                END $$;
-                """);
-        stmt.executeUpdate("""
-                INSERT INTO company_info (company_info_id, company_name)
-                VALUES (1, 'SmartStock')
-                ON CONFLICT (company_info_id) DO NOTHING
-                """);
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_name");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line1");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_motto_line2");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS receipt_logo_url");
-    }
-
-    private static void ensureLocationIdentitySchema(Statement stmt) throws SQLException {
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line1 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line2 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_address_line3 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line1 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_phone_line2 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line1 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("ALTER TABLE locations ADD COLUMN IF NOT EXISTS company_email_line2 TEXT NOT NULL DEFAULT ''");
-        stmt.executeUpdate("""
-                DO $$
-                BEGIN
-                    IF to_regclass('public.company_customization') IS NOT NULL
-                       AND EXISTS (
-                           SELECT 1
-                           FROM information_schema.columns
-                           WHERE table_schema = 'public'
-                             AND table_name = 'company_customization'
-                             AND column_name = 'company_address_line1'
-                       ) THEN
-                        EXECUTE $sql$
-                            UPDATE locations l
-                            SET company_address_line1 = COALESCE(NULLIF(l.company_address_line1, ''), cc.company_address_line1, ''),
-                                company_address_line2 = COALESCE(NULLIF(l.company_address_line2, ''), cc.company_address_line2, ''),
-                                company_address_line3 = COALESCE(NULLIF(l.company_address_line3, ''), cc.company_address_line3, ''),
-                                company_phone_line1 = COALESCE(NULLIF(l.company_phone_line1, ''), cc.company_phone_line1, ''),
-                                company_phone_line2 = COALESCE(NULLIF(l.company_phone_line2, ''), cc.company_phone_line2, ''),
-                                company_email_line1 = COALESCE(NULLIF(l.company_email_line1, ''), cc.company_email_line1, ''),
-                                company_email_line2 = COALESCE(NULLIF(l.company_email_line2, ''), cc.company_email_line2, '')
-                            FROM company_customization cc
-                            WHERE cc.location_id = l.location_id
-                              AND (l.company_address_line1 = '' OR l.company_address_line2 = '' OR l.company_address_line3 = ''
-                                   OR l.company_phone_line1 = '' OR l.company_phone_line2 = ''
-                                   OR l.company_email_line1 = '' OR l.company_email_line2 = '')
-                        $sql$;
-                    END IF;
-                END $$;
-                """);
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line1");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line2");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_address_line3");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line1");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_phone_line2");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line1");
-        stmt.executeUpdate("ALTER TABLE company_customization DROP COLUMN IF EXISTS company_email_line2");
     }
 
     private static CustomOrderSettings loadCustomOrderSettingsFromDb(int locationId) throws SQLException {

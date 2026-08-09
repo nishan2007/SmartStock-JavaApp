@@ -23,8 +23,8 @@ class CleanDatabaseProvisioningIntegrationTest {
                 "Set the isolated PostgreSQL integration-test properties to run this test.");
 
         try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password)) {
-            runCompleteSetup(connection);
-            runCompleteSetup(connection);
+            SchemaContractService.installLocalBaseline(connection);
+            assertTrue(SchemaContractService.validateLocal(connection).ready());
             if (Boolean.getBoolean("smartstock.test.cloudStoreRestore")) {
                 verifyConfiguredCloudStoreRestore(connection);
             }
@@ -111,20 +111,4 @@ class CleanDatabaseProvisioningIntegrationTest {
         }
     }
 
-    private static void runCompleteSetup(Connection connection) throws Exception {
-        BaseSchemaInstaller.ensureSchema(connection);
-        ServerImageAssetService.ensureSchema(connection);
-        SqlScriptRunner.runScripts(connection,
-                ServerProvisioningService.localWorkflowSchemaResources());
-        DeviceCredentialSchemaInstaller.ensureSchema(connection);
-        LanApiSchemaInstaller.ensureSchema(connection);
-        BadgeAccessSchemaInstaller.ensureSchema(connection);
-        EmployeePayrollSettingsService.ensureSchema(connection);
-        TimeClockAutoCloseService.ensureSchema(connection);
-        SyncSchemaInstaller.ensureSchema(connection);
-        SyncSchemaInstaller.ensureSecurityHardening(connection);
-        QuotationInvoiceSchemaInstaller.ensureSchema(connection);
-        AppUpdateSchemaInstaller.ensureSchema(connection);
-        EmailSchemaInstaller.ensureSchema(connection);
-    }
 }

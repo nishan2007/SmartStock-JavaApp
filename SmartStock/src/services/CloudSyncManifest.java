@@ -15,15 +15,45 @@ import java.util.Set;
 /** Read-only schema/count evidence returned by the server-only Supabase RPC. */
 public record CloudSyncManifest(Map<String, TableInfo> tables,
                                 String snapshotGenerationId,
-                                Instant completedAt) {
+                                Instant completedAt,
+                                Integer schemaVersion,
+                                boolean schemaReady) {
+    private static volatile SchemaReadiness latestSchemaReadiness =
+            new SchemaReadiness(false, null, "Cloud schema has not been checked.");
+
+    public CloudSyncManifest(Map<String, TableInfo> tables, String snapshotGenerationId,
+                             Instant completedAt) {
+        this(tables, snapshotGenerationId, completedAt, null, false);
+    }
+
     public static CloudSyncManifest fetch() throws IOException {
-        return fetchRpc("smartstock_sync_manifest", new JsonObject());
+        CloudSyncManifest manifest;
+        try {
+            manifest = fetchRpc("smartstock_sync_manifest", new JsonObject());
+        } catch (IOException ex) {
+            latestSchemaReadiness = new SchemaReadiness(false, null,
+                    "Cloud schema could not be verified; sync and recovery are disabled.");
+            throw ex;
+        }
+        latestSchemaReadiness = new SchemaReadiness(manifest.schemaReady(),
+                manifest.schemaVersion(), manifest.schemaReady()
+                ? "Cloud schema v1 is ready."
+                : "Cloud schema is unavailable or does not match v1; sync and recovery are disabled.");
+        if (!manifest.schemaReady() || manifest.schemaVersion() == null
+                || manifest.schemaVersion() != SchemaContractService.BASELINE_VERSION) {
+            throw new IOException(latestSchemaReadiness.message());
+        }
+        return manifest;
     }
 
     public static CloudSyncManifest fetchStoreSnapshot(int locationId) throws IOException {
         JsonObject body = new JsonObject();
         body.addProperty("p_location_id", locationId);
         CloudSyncManifest manifest = fetchRpc("smartstock_store_snapshot_manifest", body);
+        if (!manifest.schemaReady() || manifest.schemaVersion() == null
+                || manifest.schemaVersion() != SchemaContractService.BASELINE_VERSION) {
+            throw new IOException("Cloud schema v1 is not ready; recovery is disabled.");
+        }
         if (!manifest.tables().isEmpty() && !manifest.hasVerifiedSnapshot()) {
             throw new IOException("Supabase did not return a completed recovery generation.");
         }
@@ -73,7 +103,13 @@ public record CloudSyncManifest(Map<String, TableInfo> tables,
             Instant completedAt = root.has("completed_at")
                     && !root.get("completed_at").isJsonNull()
                     ? Instant.parse(root.get("completed_at").getAsString()) : null;
-            return new CloudSyncManifest(Map.copyOf(tables), generationId, completedAt);
+            Integer schemaVersion = root.has("schema_version")
+                    && !root.get("schema_version").isJsonNull()
+                    ? root.get("schema_version").getAsInt() : null;
+            boolean schemaReady = root.has("schema_ready")
+                    && root.get("schema_ready").getAsBoolean();
+            return new CloudSyncManifest(Map.copyOf(tables), generationId, completedAt,
+                    schemaVersion, schemaReady);
         } catch (RuntimeException ex) {
             throw new IOException("Supabase returned an invalid schema manifest.", ex);
         }
@@ -96,6 +132,13 @@ public record CloudSyncManifest(Map<String, TableInfo> tables,
         return snapshotGenerationId != null && completedAt != null;
     }
 
+    public static SchemaReadiness latestSchemaReadiness() {
+        return latestSchemaReadiness;
+    }
+
     public record TableInfo(long rowCount, Set<String> columns) {
+    }
+
+    public record SchemaReadiness(boolean ready, Integer version, String message) {
     }
 }

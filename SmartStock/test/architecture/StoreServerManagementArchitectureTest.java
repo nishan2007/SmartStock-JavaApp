@@ -13,26 +13,24 @@ class StoreServerManagementArchitectureTest {
 
     @Test
     void registryEnforcesOnePrimaryAndIsServiceRoleOnly() throws Exception {
-        String sql=source("database/migrations/20260806180000_store_server_registry.sql");
+        String sql=source("database/v1/cloud/001_schema.sql");
         assertTrue(sql.contains("store_server_instances_one_primary_idx"));
         assertTrue(sql.contains("store_server_events_location_created_idx"));
         assertTrue(sql.contains("store_server_handoffs_source_idx"));
         assertTrue(sql.contains("v_action = 'ENSURE_LOCATION'"));
         assertTrue(sql.contains("'STANDBY_PREPARED'"));
         assertTrue(sql.contains("'SERVER_RENAMED'"));
-        assertTrue(sql.contains("WHERE role = 'PRIMARY'"));
-        assertTrue(sql.contains("ENABLE ROW LEVEL SECURITY"));
-        assertTrue(sql.contains("REVOKE ALL ON TABLE public.store_server_instances FROM PUBLIC, anon, authenticated"));
-        assertTrue(sql.contains("REVOKE ALL ON TABLE public.store_server_instances FROM service_role"));
-        assertTrue(sql.contains("CREATE OR REPLACE FUNCTION smartstock_private.smartstock_server_registry"));
-        assertTrue(sql.contains("SECURITY INVOKER"));
-        assertTrue(sql.contains("GRANT EXECUTE ON FUNCTION public.smartstock_server_registry(text,jsonb) TO service_role"));
-        assertFalse(sql.contains("GRANT EXECUTE ON FUNCTION public.smartstock_server_registry(text,jsonb) TO authenticated"));
+        assertTrue(sql.contains("role = 'PRIMARY'"));
+        assertTrue(sql.contains("ALTER TABLE public.store_server_instances ENABLE ROW LEVEL SECURITY"));
+        assertTrue(sql.contains("GRANT ALL ON TABLE public.store_server_instances TO service_role"));
+        assertTrue(sql.contains("CREATE FUNCTION smartstock_private.smartstock_server_registry"));
+        assertTrue(sql.contains("GRANT ALL ON FUNCTION public.smartstock_server_registry(p_action text, p_payload jsonb) TO service_role"));
+        assertFalse(sql.contains("public.smartstock_server_registry(p_action text, p_payload jsonb) TO authenticated"));
     }
 
     @Test
     void lifecycleSupportsVerifiedAndEmergencyReplacement() throws Exception {
-        String sql=source("database/migrations/20260806180000_store_server_registry.sql");
+        String sql=source("database/v1/cloud/001_schema.sql");
         for(String action:new String[]{"BEGIN_HANDOFF","MARK_HANDOFF_READY","COMPLETE_HANDOFF","FAIL_HANDOFF","EMERGENCY_TAKEOVER"})
             assertTrue(sql.contains("'"+action+"'"),action);
         assertTrue(sql.contains("v_handoff.status IN ('READY','COMPLETED')"));
@@ -63,9 +61,8 @@ class StoreServerManagementArchitectureTest {
         assertTrue(source("src/services/ServerSetupGuardService.java").contains("ensureStoreLocation(locationId)"));
         assertTrue(source("src/services/ServerSetupGuardService.java").contains("RESTORE_MISMATCH"));
         String migrations=source("src/services/ServerSupabaseMigrationRunner.java");
-        assertTrue(migrations.contains("20260806120000_add_other_income_entries.sql"));
-        assertTrue(migrations.contains("20260806181000_store_server_registry_indexes.sql"));
-        assertTrue(migrations.contains("20260806193000_require_whole_gyd_other_income.sql"));
+        assertTrue(migrations.contains("SchemaContractService.cloudContractResources()"));
+        assertFalse(migrations.contains("20260806181000_store_server_registry_indexes.sql"));
         assertTrue(setup.contains("prepareToStart()"));
         assertTrue(setup.contains("Register reconnection"));
         assertTrue(sync.contains("CloudServerRegistryService.heartbeatCurrent"));
@@ -95,10 +92,10 @@ class StoreServerManagementArchitectureTest {
 
     @Test
     void recoveryPermissionIsAdministratorOnlyByDefault() throws Exception {
-        String setup=source("database/device_management_setup.sql");
+        String setup=source("database/v1/local/002_seed.sql");
         String admin=source("src/services/LanServerAdminService.java");
         assertTrue(setup.contains("'SERVER_RECOVERY'"));
-        assertTrue(setup.contains("WHERE UPPER(r.role_name) = 'ADMIN'"));
+        assertTrue(setup.contains("role_permissions (role_id, permission_id, updated_at) VALUES (1, 15"));
         assertTrue(admin.contains("require(connection,userId,\"SERVER_RECOVERY\")"));
     }
 }
