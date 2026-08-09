@@ -7,10 +7,12 @@ representations are accepted (for example, `text` versus unconstrained
 `varchar`, `CURRENT_TIMESTAMP` versus `now()`, and identity columns versus
 sequence-backed integer columns).
 
-The immutable v1 definitions live under `database/v1/local` and
-`database/v1/cloud`. Forward fixes belong in `database/migrations/v1_after/`
-as new ordered migrations and must update the applicable schema contract and
-fingerprint validation so local PostgreSQL and Supabase remain compatible.
+The canonical v1 definitions live under `database/v1/local` and
+`database/v1/cloud` so fresh installs provision the current baseline directly.
+Forward fixes also belong in `database/migrations/v1_after/` as ordered,
+idempotent migrations. A deliberate baseline rollover must include an exact
+catalog-verified transition for existing installations and update the schema
+contract and fingerprint validation so local PostgreSQL and Supabase converge.
 
 ## Intentional environment boundaries
 

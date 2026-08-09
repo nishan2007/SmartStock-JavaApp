@@ -51,7 +51,7 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(5, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(6, ServerSupabaseMigrationRunner.migrationResources().size());
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }
@@ -65,5 +65,8 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(4));
+        assertEquals(
+                "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(5));
     }
 }

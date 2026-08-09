@@ -1,5 +1,9 @@
 package ui.screens;
 
+import Receipt.ReceiptItem;
+import Receipt.ReturnReceiptData;
+import Receipt.ReturnReceiptPrinter;
+import managers.HardwareSettingsManager;
 import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
@@ -515,7 +519,22 @@ public class ReturnSale extends JFrame {
         int saleId = loadedSale.saleId();
         submitButton.setEnabled(false);
         loadingState.loading(false, java.time.Instant.now());
-        UiTaskRunner.submit(this,"return-sale.refund",()->LanApiClient.refund(request,refundKey),result->{
+        UiTaskRunner.submit(this,"return-sale.refund",()->{
+            LanApiClient.RefundResult result=LanApiClient.refund(request,refundKey);
+            String printError=null;
+            try {
+                List<ReceiptItem> receiptItems=new ArrayList<>();
+                for(ReturnLine line:lines){int row=line.row();BigDecimal unit=line.unitPrice();receiptItems.add(new ReceiptItem(
+                        String.valueOf(itemModel.getValueAt(row,3)),String.valueOf(itemModel.getValueAt(row,2)),line.quantity(),
+                        unit,unit,BigDecimal.ZERO,unit.multiply(BigDecimal.valueOf(line.quantity()))));}
+                ReturnReceiptData receipt=new ReturnReceiptData(result.returnId(),result.returnReceiptNumber(),result.saleId(),loadedSale.receiptNumber(),
+                        Instant.now(),SessionManager.getCurrentUserDisplayName(),result.refundMethod(),
+                        result.refundAmount(),reason,receiptItems);
+                ReturnReceiptPrinter.printToPosPrinter(receipt,HardwareSettingsManager.getDefaultReceiptPrinter());
+            } catch(Exception ex) { printError=ex.getMessage(); }
+            return new ReturnCompletion(result,printError);
+        },completion->{
+            LanApiClient.RefundResult result=completion.result();
             pendingRefundKey = null;
             pendingRefundFingerprint = null;
             pendingCrossStoreRequestId = null;
@@ -523,11 +542,15 @@ public class ReturnSale extends JFrame {
             loadingState.ready(java.time.Instant.now());
             JOptionPane.showMessageDialog(this,
                     "Return processed successfully.\nReturn ID: " + result.returnId()
+                            + "\nReturn receipt: " + result.returnReceiptNumber()
                             + "\nRefund amount: " + CURRENCY.format(result.refundAmount())
-                            +(result.status()==null?"":"\nStatus: "+result.status()));
+                            +(result.status()==null?"":"\nStatus: "+result.status())
+                            +(completion.printError()==null?"\nReturn receipt printed.":"\nReturn completed, but the receipt could not print: "+completion.printError()));
             loadSaleById(saleId,loadedSale==null?null:loadedSale.sourceLocationId());
         },failure->{submitButton.setEnabled(true);loadingState.actionFailed("Return",failure.getMessage(),this::submitReturn);});
     }
+
+    private record ReturnCompletion(LanApiClient.RefundResult result,String printError) { }
 
     private boolean ensureApprovalFor(List<ReturnLine> lines, BigDecimal total) {
         if (!overrideRequired(total)) {

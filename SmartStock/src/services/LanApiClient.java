@@ -1384,7 +1384,7 @@ public final class LanApiClient {
                                BigDecimal unitPrice, BigDecimal catalogPrice,
                                int quantity, BigDecimal discountPercent,
                                String productType, Integer categoryId) { }
-    public record SalesHistoryRow(String transactionType, int saleId, Long returnId, String receiptNumber,
+    public record SalesHistoryRow(String transactionType, int saleId, Long returnId, String receiptNumber,String returnReceiptNumber,
                                   long createdAtEpochMillis, String cashierName, String storeName, int itemCount,
                                   String paymentMethod, String paymentStatus, BigDecimal amountPaid,
                                   BigDecimal returnedAmount, BigDecimal discountAmount,
@@ -1401,7 +1401,7 @@ public final class LanApiClient {
     public record SaleHistoryItem(int productId, String productName, int quantity, int returnedQuantity,
                                   BigDecimal originalUnitPrice, BigDecimal discountPercent,
                                   BigDecimal discountAmount, BigDecimal unitPrice, BigDecimal lineTotal) { }
-    public record SaleHistoryReturn(long returnId, long createdAtEpochMillis, String userName,
+    public record SaleHistoryReturn(long returnId,String returnReceiptNumber,long createdAtEpochMillis, String userName,
                                     String refundMethod, BigDecimal refundAmount, String reason) { }
     public record SaleHistoryReturnItem(long returnId, int productId, String productName, int quantity,
                                         BigDecimal unitPrice, BigDecimal lineTotal) { }
@@ -1592,7 +1592,7 @@ public final class LanApiClient {
     public record RefundLine(int saleItemId,int quantity,String disposition,Integer destinationLocationId,String dispositionReason) {
         public RefundLine(int saleItemId,int quantity){this(saleItemId,quantity,null,null,null);}
     }
-    public record RefundResult(long returnId, int saleId, BigDecimal refundAmount,
+    public record RefundResult(long returnId, String returnReceiptNumber, int saleId, BigDecimal refundAmount,
                                String refundMethod, boolean approvalRequired,
                                String approvedByName,String requestId,Integer sourceLocationId,String status) { }
     private record ReceiptPayload(int saleId,String receiptNumber,long saleTimeEpochMillis,String storeName,

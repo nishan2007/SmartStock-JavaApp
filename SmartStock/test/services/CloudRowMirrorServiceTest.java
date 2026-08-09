@@ -3,12 +3,22 @@ package services;
 import org.junit.jupiter.api.Test;
 
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CloudRowMirrorServiceTest {
+    @Test
+    void reusesIncrementalStateOnlyForTheExactCloudGeneration() {
+        UUID generation = UUID.randomUUID();
+        assertTrue(CloudRowMirrorService.sameBaseline(generation, generation.toString()));
+        assertFalse(CloudRowMirrorService.sameBaseline(generation, UUID.randomUUID().toString()));
+        assertFalse(CloudRowMirrorService.sameBaseline(generation, null));
+        assertFalse(CloudRowMirrorService.sameBaseline(null, generation.toString()));
+    }
+
     @Test
     void excludesOnlyDerivedDeviceActivityFromDurableMirror() {
         assertTrue(CloudRowMirrorService.excludedOperationalColumn("devices", "last_seen"));

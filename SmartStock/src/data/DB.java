@@ -92,11 +92,7 @@ public class DB {
             if (ENSURED_SCHEMA_KEYS.contains(key)) {
                 return;
             }
-            SchemaContractService.Readiness readiness =
-                    SchemaContractService.validateLocal(conn);
-            if (!readiness.ready()) {
-                throw new SQLException(readiness.message(), "55000");
-            }
+            SchemaContractService.requireLocalReady(conn);
             ENSURED_SCHEMA_KEYS.add(key);
         }
     }

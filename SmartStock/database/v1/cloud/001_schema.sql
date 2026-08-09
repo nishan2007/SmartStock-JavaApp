@@ -846,6 +846,8 @@ BEGIN
   v_id=(p_request->>'request_id')::uuid; v_source=(p_request->>'source_location_id')::integer;
   v_receiving=(p_request->>'receiving_location_id')::integer; v_sale=(p_request->>'source_sale_id')::integer;
   IF v_source<=0 OR v_receiving<=0 OR v_source=v_receiving OR v_sale<=0
+     OR COALESCE(p_request->>'return_receipt_number','')='' OR COALESCE(p_request->>'receipt_device_id','')=''
+     OR (p_request->>'receipt_sequence')::integer<=0
      OR pg_catalog.jsonb_typeof(p_request->'lines')<>'array'
      OR pg_catalog.jsonb_array_length(p_request->'lines') NOT BETWEEN 1 AND 200 THEN
     RAISE EXCEPTION 'Invalid cross-store refund request.' USING ERRCODE='22023';
@@ -870,9 +872,10 @@ BEGIN
     END IF;
   END LOOP;
   INSERT INTO public.smartstock_cross_store_refund_requests(request_id,source_location_id,receiving_location_id,
-    source_sale_id,refund_method,refund_amount,reason,actor)
+    source_sale_id,refund_method,refund_amount,reason,actor,return_receipt_number,receipt_device_id,receipt_sequence)
   VALUES(v_id,v_source,v_receiving,v_sale,p_request->>'refund_method',(p_request->>'refund_amount')::numeric,
-    p_request->>'reason',COALESCE(p_request->'actor','{}'::jsonb)) RETURNING request_sequence INTO v_sequence;
+    p_request->>'reason',COALESCE(p_request->'actor','{}'::jsonb),p_request->>'return_receipt_number',
+    p_request->>'receipt_device_id',(p_request->>'receipt_sequence')::integer) RETURNING request_sequence INTO v_sequence;
   FOR v_line IN SELECT value FROM pg_catalog.jsonb_array_elements(p_request->'lines') LOOP
     INSERT INTO public.smartstock_cross_store_refund_lines(request_id,source_sale_item_id,product_id,quantity,unit_price,
       disposition,destination_location_id,disposition_reason)
@@ -2313,6 +2316,9 @@ CREATE TABLE public.smartstock_cross_store_refund_requests (
     refund_amount numeric(14,2) NOT NULL,
     reason text NOT NULL,
     actor jsonb DEFAULT '{}'::jsonb NOT NULL,
+    return_receipt_number text,
+    receipt_device_id text,
+    receipt_sequence integer,
     status text DEFAULT 'PAID_PENDING_SOURCE'::text NOT NULL,
     source_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -3240,6 +3246,13 @@ CREATE INDEX smartstock_cross_store_refund_destination_idx ON public.smartstock_
 --
 
 CREATE INDEX smartstock_cross_store_refund_source_idx ON public.smartstock_cross_store_refund_requests USING btree (source_location_id, status, request_sequence);
+
+
+--
+-- Name: smartstock_cross_store_refund_receipt_number_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX smartstock_cross_store_refund_receipt_number_uidx ON public.smartstock_cross_store_refund_requests USING btree (return_receipt_number) WHERE (COALESCE(return_receipt_number, ''::text) <> ''::text);
 
 
 --

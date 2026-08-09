@@ -100,8 +100,9 @@ public final class CloudRowMirrorService {
         int deleted = 0;
         int activeRows = 0;
         JsonObject tableCounts = new JsonObject();
+        boolean reusableBaseline = hasReusableCloudBaseline(local, locationId);
         GenerationUpload generation = new GenerationUpload(locationId, UUID.randomUUID(),
-                hasVerifiedCompletion(local, locationId));
+                reusableBaseline);
         try {
             for (String table : ReferenceDataSyncService.cloudMirrorTablesForApi()) {
                 if (!tableExists(local, table)) continue;
@@ -269,17 +270,30 @@ public final class CloudRowMirrorService {
         else target.addProperty(name, value.toInstant().toString());
     }
 
-    private static boolean hasVerifiedCompletion(Connection local, int locationId)
+    private static boolean hasReusableCloudBaseline(Connection local, int locationId)
             throws SQLException {
+        UUID localGeneration = null;
         try (PreparedStatement ps = local.prepareStatement("""
-                SELECT generation_id IS NOT NULL
+                SELECT generation_id
                 FROM sync_row_mirror_completion WHERE location_id=?
                 """)) {
             ps.setInt(1, locationId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
+                if (rs.next()) localGeneration = rs.getObject(1, UUID.class);
             }
         }
+        if (localGeneration == null) return false;
+        try {
+            CloudSyncManifest cloud = CloudSyncManifest.fetchStoreSnapshot(locationId);
+            return sameBaseline(localGeneration, cloud.snapshotGenerationId());
+        } catch (IOException ex) {
+            throw new SQLException("Supabase mirror baseline verification failed.", ex);
+        }
+    }
+
+    static boolean sameBaseline(UUID localGeneration, String cloudGeneration) {
+        return localGeneration != null && cloudGeneration != null
+                && localGeneration.toString().equals(cloudGeneration);
     }
 
     private static TableResult mirrorTable(Connection local, int locationId, String table,
@@ -287,7 +301,9 @@ public final class CloudRowMirrorService {
             throws SQLException {
         List<String> primaryKeys = primaryKeys(local, table);
         if (primaryKeys.isEmpty()) return new TableResult(0, 0, 0, 0, false);
-        Map<String, String> existing = existingHashes(local, locationId, table);
+        Map<String, String> existing = generation.cloneCurrent
+                ? existingHashes(local, locationId, table)
+                : new HashMap<>();
         List<MirrorRow> pending = new ArrayList<>();
         int unchanged = 0;
         int activeRows = 0;
@@ -493,11 +509,13 @@ public final class CloudRowMirrorService {
                                                        String table) throws SQLException {
         Map<String, String> result = new HashMap<>();
         try (PreparedStatement completion = local.prepareStatement("""
-                SELECT generation_id FROM sync_row_mirror_completion WHERE location_id=?
+                SELECT generation_id IS NOT NULL AND pg_catalog.jsonb_exists(table_counts, ?)
+                FROM sync_row_mirror_completion WHERE location_id=?
                 """)) {
-            completion.setInt(1, locationId);
+            completion.setString(1, table);
+            completion.setInt(2, locationId);
             try (ResultSet rs = completion.executeQuery()) {
-                if (!rs.next() || rs.getObject(1) == null) return result;
+                if (!rs.next() || !rs.getBoolean(1)) return result;
             }
         }
         try (PreparedStatement ps = local.prepareStatement("""

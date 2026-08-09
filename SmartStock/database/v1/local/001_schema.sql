@@ -2228,6 +2228,9 @@ CREATE TABLE public.cross_store_refund_requests (
     device_id uuid,
     cash_drawer_id bigint,
     cash_drawer_session_id bigint,
+    return_receipt_number text,
+    receipt_device_id text,
+    receipt_sequence integer,
     last_error text,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -5426,6 +5429,9 @@ CREATE TABLE public.sale_returns (
     cash_drawer_id bigint,
     cash_drawer_name text,
     cash_drawer_session_id bigint,
+    return_receipt_number text,
+    receipt_device_id text,
+    receipt_sequence integer,
     sync_uuid uuid DEFAULT gen_random_uuid() NOT NULL
 );
 
@@ -5830,6 +5836,7 @@ CREATE TABLE public.sync_cross_store_returns_cache (
     refund_method text,
     refund_amount numeric(14,2) DEFAULT 0 NOT NULL,
     reason text,
+    return_receipt_number text,
     source_created_at timestamp with time zone
 );
 
@@ -10169,6 +10176,20 @@ CREATE UNIQUE INDEX sale_return_items_sync_uuid_key ON public.sale_return_items 
 --
 
 CREATE UNIQUE INDEX sale_returns_cross_store_request_uidx ON public.sale_returns USING btree (cross_store_request_id) WHERE (cross_store_request_id IS NOT NULL);
+
+
+--
+-- Name: sale_returns_receipt_number_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sale_returns_receipt_number_uidx ON public.sale_returns USING btree (return_receipt_number) WHERE (COALESCE(return_receipt_number, ''::text) <> ''::text);
+
+
+--
+-- Name: cross_store_refund_requests_receipt_number_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX cross_store_refund_requests_receipt_number_uidx ON public.cross_store_refund_requests USING btree (return_receipt_number) WHERE (COALESCE(return_receipt_number, ''::text) <> ''::text);
 
 
 --

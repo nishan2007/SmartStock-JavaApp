@@ -17,6 +17,7 @@ class SchemaContractValidationIntegrationTest {
         assumeTrue(!jdbcUrl.isBlank() && !user.isBlank());
 
         try (var connection = DriverManager.getConnection(jdbcUrl, user, password)) {
+            SchemaContractService.requireLocalReady(connection);
             var readiness = SchemaContractService.validateLocal(connection);
             assertTrue(readiness.ready(), readiness.message());
             assertEquals(SchemaContractService.BASELINE_VERSION, readiness.version());

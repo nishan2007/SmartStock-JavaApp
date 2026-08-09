@@ -2,6 +2,7 @@ package services;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import managers.ServerReceiptNumberManager;
 import models.CashDrawerContext;
 
 import java.math.BigDecimal;
@@ -201,8 +202,11 @@ final class LanRefundService {
         }
 
         String deviceName = loadDeviceName(connection, deviceId);
+        ServerReceiptNumberManager.ReturnNumber returnNumber =
+                ServerReceiptNumberManager.nextReturn(connection, locationId, deviceId);
         long returnId = insertReturn(connection, sale, locationId, userId, userName,
-                refundMethod, total, request.reason().trim(), deviceId, deviceName, drawer, approval);
+                refundMethod, total, request.reason().trim(), deviceId, deviceName, drawer, approval,
+                returnNumber);
         insertReturnAudit(connection, sale, returnId, null, null, userId, userName, deviceId,
                 deviceName, "RETURN_CREATED", "RETURN", total, null,
                 request.reason().trim(), "refund_method=" + refundMethod);
@@ -237,12 +241,13 @@ final class LanRefundService {
                             + "; balance_after=" + balance.after().toPlainString());
         }
         insertOutbox(connection, sale, returnId, locationId, userId, deviceId,
-                refundMethod, total, drawer.sessionId());
+                refundMethod, total, drawer.sessionId(), returnNumber);
         insertImmutableAudit(connection, deviceId, userId, returnId, sale,
                 locationId, total, approval);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("returnId", returnId);
+        result.put("returnReceiptNumber", returnNumber.returnReceiptNumber());
         result.put("saleId", sale.saleId());
         result.put("refundAmount", total);
         result.put("refundMethod", refundMethod);
@@ -367,12 +372,13 @@ final class LanRefundService {
     private static long insertReturn(Connection c, Sale sale, int locationId, int userId,
                                      String userName, String method, BigDecimal total, String reason,
                                      UUID deviceId, String deviceName, CashDrawerContext drawer,
-                                     Approval approval) throws SQLException {
+                                     Approval approval, ServerReceiptNumberManager.ReturnNumber returnNumber) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO sale_returns (sale_id,location_id,user_id,user_name,refund_method,
                   refund_amount,reason,device_id,device_name,cash_drawer_id,cash_drawer_name,
-                  cash_drawer_session_id,override_reason,override_by_user_id,override_by_name)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  cash_drawer_session_id,override_reason,override_by_user_id,override_by_name,
+                  return_receipt_number,receipt_device_id,receipt_sequence)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, sale.saleId());
             ps.setInt(2, locationId);
@@ -389,6 +395,9 @@ final class LanRefundService {
             ps.setString(13, approval == null ? null : approval.reason());
             setInteger(ps, 14, approval == null ? null : approval.approverUserId());
             ps.setString(15, approval == null ? null : approval.approverName());
+            ps.setString(16, returnNumber.returnReceiptNumber());
+            ps.setString(17, returnNumber.deviceId());
+            ps.setInt(18, returnNumber.sequence());
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) {
@@ -560,7 +569,9 @@ final class LanRefundService {
 
     private static void insertOutbox(Connection c, Sale sale, long returnId, int locationId,
                                      int userId, UUID deviceId, String method, BigDecimal total,
-                                     Long drawerSessionId) throws SQLException {
+                                     Long drawerSessionId,
+                                     ServerReceiptNumberManager.ReturnNumber returnNumber)
+            throws SQLException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("return_id", returnId);
         payload.put("sale_id", sale.saleId());
@@ -570,6 +581,9 @@ final class LanRefundService {
         payload.put("refund_method", method);
         payload.put("refund_amount", total);
         payload.put("cash_drawer_session_id", drawerSessionId == null ? "" : drawerSessionId);
+        payload.put("return_receipt_number", returnNumber.returnReceiptNumber());
+        payload.put("receipt_device_id", returnNumber.deviceId());
+        payload.put("receipt_sequence", returnNumber.sequence());
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO sync_outbox (event_type,location_id,device_id,user_id,payload,
                   origin_location_id,origin_device_id)

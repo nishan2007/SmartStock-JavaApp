@@ -46,16 +46,16 @@ final class LanSalesHistoryService {
                     .append("COALESCE(s.user_name,u.full_name,u.username,'') ILIKE ? OR COALESCE(l.name,'') ILIKE ? OR ")
                     .append("COALESCE(s.payment_method,'') ILIKE ? OR COALESCE(s.payment_status,'PAID') ILIKE ?) ");
             for (int i = 0; i < 6; i++) salesArgs.add(like);
-            returnsWhere.append("AND (CAST(sr.return_id AS TEXT) ILIKE ? OR CAST(sr.sale_id AS TEXT) ILIKE ? OR ")
+            returnsWhere.append("AND (CAST(sr.return_id AS TEXT) ILIKE ? OR CAST(sr.sale_id AS TEXT) ILIKE ? OR COALESCE(sr.return_receipt_number,'') ILIKE ? OR ")
                     .append("COALESCE(s.receipt_number,'') ILIKE ? OR COALESCE(sr.user_name,u.full_name,u.username,'') ILIKE ? OR ")
                     .append("COALESCE(l.name,'') ILIKE ? OR COALESCE(sr.refund_method,'') ILIKE ? OR 'RETURN' ILIKE ?) ");
-            for (int i = 0; i < 7; i++) returnArgs.add(like);
+            for (int i = 0; i < 8; i++) returnArgs.add(like);
         }
         appendDate(salesWhere, salesArgs, "s.created_at", from, to);
         appendDate(returnsWhere, returnArgs, "sr.created_at", from, to);
         String sql = """
                 SELECT * FROM (
-                  SELECT 'SALE' transaction_type,s.sale_id,NULL::BIGINT return_id,COALESCE(s.receipt_number,'') receipt_number,
+                  SELECT 'SALE' transaction_type,s.sale_id,NULL::BIGINT return_id,COALESCE(s.receipt_number,'') receipt_number,''::TEXT return_receipt_number,
                     s.created_at sort_created_at,COALESCE(s.user_name,u.full_name,u.username,'Unknown') cashier_name,
                     COALESCE(l.name,'Unknown') store_name,COUNT(si.sale_item_id) item_count,
                     COALESCE(s.payment_method,'') payment_method,COALESCE(s.payment_status,'PAID') payment_status,
@@ -67,7 +67,7 @@ final class LanSalesHistoryService {
                   GROUP BY s.sale_id,s.receipt_number,s.created_at,cashier_name,store_name,s.payment_method,s.payment_status,
                     s.amount_paid,s.returned_amount,s.discount_amount,s.total_amount
                   UNION ALL
-                  SELECT 'RETURN',sr.sale_id,sr.return_id,COALESCE(s.receipt_number,''),sr.created_at,
+                  SELECT 'RETURN',sr.sale_id,sr.return_id,COALESCE(s.receipt_number,''),COALESCE(sr.return_receipt_number,''),sr.created_at,
                     COALESCE(sr.user_name,u.full_name,u.username,'Unknown'),COALESCE(l.name,'Unknown'),
                     COALESCE(SUM(sri.quantity),0),COALESCE(sr.refund_method,''),'RETURN',-COALESCE(sr.refund_amount,0),
                     COALESCE(sr.refund_amount,0),0::NUMERIC,-COALESCE(sr.refund_amount,0),-COALESCE(sr.refund_amount,0)
@@ -87,6 +87,7 @@ final class LanSalesHistoryService {
                     row.put("transactionType", rs.getString("transaction_type"));
                     row.put("saleId", rs.getInt("sale_id")); row.put("returnId", rs.getObject("return_id"));
                     row.put("receiptNumber", rs.getString("receipt_number"));
+                    row.put("returnReceiptNumber", rs.getString("return_receipt_number"));
                     row.put("createdAtEpochMillis", rs.getTimestamp("sort_created_at").getTime());
                     row.put("cashierName", rs.getString("cashier_name")); row.put("storeName", rs.getString("store_name"));
                     row.put("itemCount", rs.getInt("item_count")); row.put("paymentMethod", rs.getString("payment_method"));
@@ -154,14 +155,14 @@ final class LanSalesHistoryService {
     private static List<Map<String, Object>> queryReturns(Connection c, int saleId) throws SQLException {
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("""
-                SELECT return_id,created_at,COALESCE(user_name,''),COALESCE(refund_method,''),
+                SELECT return_id,COALESCE(return_receipt_number,''),created_at,COALESCE(user_name,''),COALESCE(refund_method,''),
                        COALESCE(refund_amount,0),COALESCE(reason,'')
                 FROM sale_returns WHERE sale_id=? ORDER BY created_at DESC,return_id DESC
                 """)) {
             ps.setInt(1, saleId); try (ResultSet rs = ps.executeQuery()) { while (rs.next()) rows.add(map(
-                    "returnId", rs.getLong(1), "createdAtEpochMillis", rs.getTimestamp(2).getTime(),
-                    "userName", rs.getString(3), "refundMethod", rs.getString(4),
-                    "refundAmount", rs.getBigDecimal(5), "reason", rs.getString(6)));
+                    "returnId", rs.getLong(1), "returnReceiptNumber", rs.getString(2), "createdAtEpochMillis", rs.getTimestamp(3).getTime(),
+                    "userName", rs.getString(4), "refundMethod", rs.getString(5),
+                    "refundAmount", rs.getBigDecimal(6), "reason", rs.getString(7)));
             }
         }
         return rows;

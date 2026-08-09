@@ -19,6 +19,10 @@ public final class SchemaContractService {
     public static final int BASELINE_VERSION = 1;
     private static final String RESOURCE_FINGERPRINT_TOKEN =
             "__SMARTSTOCK_RESOURCE_FINGERPRINT__";
+    private static final String PRE_RETURN_RECEIPT_LOCAL_FINGERPRINT =
+            "61fab3e60b61c1dfc6aea5b8087c81e946b64ba415bdb1cc08d642677131be9f";
+    private static final String INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT =
+            "46b3ac2ec24b641a81394def39ac5ecb9bc7707a4eb748df67ef9e285d1cbc27";
     private static final List<String> LOCAL_BASELINE = List.of(
             "database/v1/local/001_schema.sql",
             "database/v1/local/002_seed.sql",
@@ -31,7 +35,8 @@ public final class SchemaContractService {
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
-            "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql"
+            "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
+            "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -47,6 +52,10 @@ public final class SchemaContractService {
         return CLOUD_BASELINE;
     }
 
+    public static List<String> localContractResources() {
+        return LOCAL_BASELINE;
+    }
+
     public static List<String> cloudPostV1MigrationResources() {
         return CLOUD_POST_V1;
     }
@@ -58,20 +67,110 @@ public final class SchemaContractService {
     }
 
     public static void installLocalBaseline(Connection connection) throws Exception {
-        installBaseline(connection, LOCAL_BASELINE, "LOCAL", List.of("public"));
+        installBaseline(connection, localContractResources(), "LOCAL", List.of("public"));
     }
 
     public static Readiness validateLocal(Connection connection) throws SQLException {
-        return validate(connection, "LOCAL", LOCAL_BASELINE, List.of("public"), false);
+        return validate(connection, "LOCAL", localContractResources(), List.of("public"), false);
     }
 
     /** Blocks database-dependent work unless this database matches the packaged v1 baseline. */
     public static void requireLocalReady(Connection connection) throws SQLException {
         String key = connection.getMetaData().getURL() + "|" + connection.getMetaData().getUserName();
         if (VALIDATED_LOCAL_DATABASES.contains(key)) return;
+        upgradePreReturnReceiptBaseline(connection);
+        normalizeInterimReturnReceiptFingerprint(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    /** Accepts the released 1.0.45 catalog while normalizing its SQL resource bytes. */
+    private static void normalizeInterimReturnReceiptFingerprint(Connection connection)
+            throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")) return;
+        String storedResource;
+        String storedCatalog;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256
+                FROM public.smartstock_schema_metadata
+                WHERE schema_scope='LOCAL' AND baseline_version=?
+                """)) {
+            ps.setInt(1, BASELINE_VERSION);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return;
+                storedResource = rs.getString(1);
+                storedCatalog = rs.getString(2);
+            }
+        }
+        if (!INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT.equals(storedResource)) return;
+        String actualCatalog = catalogFingerprint(connection, List.of("public"), false);
+        if (!actualCatalog.equals(storedCatalog)) {
+            throw new SQLException("The interim return-receipt schema has drifted; fingerprint normalization is blocked.", "55000");
+        }
+        String currentResource;
+        try { currentResource = resourceFingerprint(LOCAL_BASELINE); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        try (PreparedStatement update = connection.prepareStatement("""
+                UPDATE public.smartstock_schema_metadata
+                SET resource_fingerprint_sha256=?
+                WHERE schema_scope='LOCAL' AND baseline_version=?
+                  AND resource_fingerprint_sha256=?
+                """)) {
+            update.setString(1, currentResource);
+            update.setInt(2, BASELINE_VERSION);
+            update.setString(3, INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT);
+            if (update.executeUpdate() != 1) {
+                throw new SQLException("The interim return-receipt fingerprint changed during normalization.");
+            }
+        }
+    }
+
+    /** One-time, exact-contract upgrade from the accepted pre-return-receipt v1 baseline. */
+    private static void upgradePreReturnReceiptBaseline(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")) return;
+        int version;
+        String storedResource;
+        String storedCatalog;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT baseline_version,resource_fingerprint_sha256,catalog_fingerprint_sha256
+                FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL'
+                """); ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) return;
+            version = rs.getInt(1); storedResource = rs.getString(2); storedCatalog = rs.getString(3);
+        }
+        if (version != BASELINE_VERSION || !PRE_RETURN_RECEIPT_LOCAL_FINGERPRINT.equals(storedResource)) return;
+        String actualBefore = catalogFingerprint(connection, List.of("public"), false);
+        if (!actualBefore.equals(storedCatalog)) {
+            throw new SQLException("The previous local schema has drifted; automatic return-receipt upgrade is blocked.", "55000");
+        }
+        String newResource;
+        try { newResource = resourceFingerprint(LOCAL_BASELINE); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE public.sale_returns ADD COLUMN return_receipt_number text, ADD COLUMN receipt_device_id text, ADD COLUMN receipt_sequence integer");
+            statement.execute("CREATE UNIQUE INDEX sale_returns_receipt_number_uidx ON public.sale_returns(return_receipt_number) WHERE COALESCE(return_receipt_number,'')<>''");
+            statement.execute("ALTER TABLE public.cross_store_refund_requests ADD COLUMN return_receipt_number text, ADD COLUMN receipt_device_id text, ADD COLUMN receipt_sequence integer");
+            statement.execute("CREATE UNIQUE INDEX cross_store_refund_requests_receipt_number_uidx ON public.cross_store_refund_requests(return_receipt_number) WHERE COALESCE(return_receipt_number,'')<>''");
+            statement.execute("ALTER TABLE public.sync_cross_store_returns_cache ADD COLUMN return_receipt_number text");
+            String newCatalog = catalogFingerprint(connection, List.of("public"), false);
+            try (PreparedStatement update = connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=?
+                    """)) {
+                update.setString(1, newResource); update.setString(2, newCatalog); update.setInt(3, BASELINE_VERSION);
+                if (update.executeUpdate() != 1) throw new SQLException("Local schema contract could not be upgraded.");
+            }
+            connection.commit();
+        } catch (SQLException ex) {
+            connection.rollback();
+            throw ex;
+        } finally {
+            connection.setAutoCommit(autoCommit);
+        }
     }
 
     public static Readiness validateCloud(Connection connection) throws SQLException {

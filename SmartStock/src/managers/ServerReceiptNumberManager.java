@@ -32,6 +32,14 @@ public class ServerReceiptNumberManager {
         return new ReceiveNumber(formatReceiveId(storeCode, deviceCode, sequence), deviceCode, sequence);
     }
 
+    /** Allocates a permanent return receipt number in the owning refund transaction. */
+    public static ReturnNumber nextReturn(Connection conn, int locationId, UUID deviceId) throws SQLException {
+        String storeCode = resolveStoreCode(conn, locationId);
+        String deviceCode = resolveDeviceCode(conn, deviceId, false);
+        int sequence = nextStoreReceiptSequence(conn, locationId);
+        return new ReturnNumber(formatReturnNumber(storeCode, deviceCode, sequence), deviceCode, sequence);
+    }
+
     /** Server-service variant scoped to the authenticated register and store. */
     public static DeviceReceiptSettings getDeviceReceiptSettings(Connection conn, int locationId,
                                                                   UUID deviceId) throws SQLException {
@@ -74,7 +82,7 @@ public class ServerReceiptNumberManager {
                     WHERE location_id = ?
                 ),
                 max_sale_sequence AS (
-                    SELECT GREATEST(
+                    SELECT GREATEST(GREATEST(
                                COALESCE(MAX(receipt_sequence), 0),
                                COALESCE(MAX(
                                    CASE
@@ -83,7 +91,7 @@ public class ServerReceiptNumberManager {
                                        ELSE NULL
                                    END
                                ), 0)
-                           ) AS max_sequence
+                           ), COALESCE((SELECT MAX(receipt_sequence) FROM sale_returns WHERE location_id=?),0)) AS max_sequence
                     FROM sales
                     WHERE location_id = ?
                 )
@@ -93,6 +101,7 @@ public class ServerReceiptNumberManager {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
             ps.setInt(2, locationId);
+            ps.setInt(3, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
                     throw new SQLException("Missing company_customization row for location_id=" + locationId);
@@ -112,7 +121,7 @@ public class ServerReceiptNumberManager {
                     FOR UPDATE
                 ),
                 max_sale_sequence AS (
-                    SELECT GREATEST(
+                    SELECT GREATEST(GREATEST(
                                COALESCE(MAX(receipt_sequence), 0),
                                COALESCE(MAX(
                                    CASE
@@ -121,7 +130,7 @@ public class ServerReceiptNumberManager {
                                        ELSE NULL
                                    END
                                ), 0)
-                           ) AS max_sequence
+                           ), COALESCE((SELECT MAX(receipt_sequence) FROM sale_returns WHERE location_id=?),0)) AS max_sequence
                     FROM sales
                     WHERE location_id = ?
                 ),
@@ -139,6 +148,7 @@ public class ServerReceiptNumberManager {
             ps.setInt(1, locationId);
             ps.setInt(2, locationId);
             ps.setInt(3, locationId);
+            ps.setInt(4, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return rs.getInt("sequence");
@@ -152,7 +162,7 @@ public class ServerReceiptNumberManager {
         SchemaContractService.requireLocalReady(conn);
         String insertSql = """
                 WITH max_sale_sequence AS (
-                    SELECT GREATEST(
+                    SELECT GREATEST(GREATEST(
                                COALESCE(MAX(receipt_sequence), 0),
                                COALESCE(MAX(
                                    CASE
@@ -161,7 +171,7 @@ public class ServerReceiptNumberManager {
                                        ELSE NULL
                                    END
                                ), 0)
-                           ) AS max_sequence
+                           ), COALESCE((SELECT MAX(receipt_sequence) FROM sale_returns WHERE location_id=?),0)) AS max_sequence
                     FROM sales
                     WHERE location_id = ?
                 )
@@ -172,6 +182,7 @@ public class ServerReceiptNumberManager {
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             ps.setInt(1, locationId);
             ps.setInt(2, locationId);
+            ps.setInt(3, locationId);
             ps.executeUpdate();
         }
     }
@@ -225,6 +236,10 @@ public class ServerReceiptNumberManager {
         return storeCode + "-" + deviceId + "-" + String.format("%0" + RECEIPT_SEQUENCE_PADDING + "d", sequence);
     }
 
+    static String formatReturnNumber(String storeCode, String deviceId, int sequence) {
+        return "RET-" + formatReceiptNumber(storeCode, deviceId, sequence);
+    }
+
     private static String requireCode(String value, String sourceField) throws SQLException {
         String sanitized = sanitizeCode(value);
         if (sanitized.isBlank()) {
@@ -247,6 +262,9 @@ public class ServerReceiptNumberManager {
     }
 
     public record ReceiveNumber(String receiveId, String deviceId, int sequence) {
+    }
+
+    public record ReturnNumber(String returnReceiptNumber, String deviceId, int sequence) {
     }
 
     public record DeviceReceiptSettings(

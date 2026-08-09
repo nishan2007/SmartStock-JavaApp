@@ -232,7 +232,7 @@ public class ViewSales extends JFrame {
                 boolean returnRow = "RETURN".equalsIgnoreCase(row.transactionType());
                 salesTableModel.addRow(new Object[]{
                         row.saleId(),
-                        returnRow ? row.receiptNumber() + " / Return #" + row.returnId() : row.receiptNumber(),
+                        returnRow ? row.receiptNumber() + " / " + (row.returnReceiptNumber()==null||row.returnReceiptNumber().isBlank()?"Return #"+row.returnId():row.returnReceiptNumber()) : row.receiptNumber(),
                         formatEpoch(row.createdAtEpochMillis()),
                         row.cashierName(),
                         row.storeName(),
@@ -307,7 +307,7 @@ public class ViewSales extends JFrame {
                 "Product ID", "Item Name", "Qty", "Returned", "Original Unit",
                 "Item Disc %", "Item Discount", "Final Unit", "Line Total");
         DefaultTableModel returnsModel = readOnlyModel(
-                "Return ID", "Date / Time", "Employee", "Method", "Amount", "Reason");
+                "Return ID", "Return Receipt", "Date / Time", "Employee", "Method", "Amount", "Reason");
         DefaultTableModel returnItemsModel = readOnlyModel(
                 "Return ID", "Product ID", "Item Name", "Qty", "Unit Price", "Line Total");
         DefaultTableModel overrideAuditModel = readOnlyModel(
@@ -331,7 +331,7 @@ public class ViewSales extends JFrame {
             for (LanApiClient.SaleHistoryReturn item : details.returns()) {
                 returnedTotal = returnedTotal.add(zero(item.refundAmount()));
                 returnsModel.addRow(new Object[]{
-                        item.returnId(), formatEpoch(item.createdAtEpochMillis()), item.userName(),
+                        item.returnId(), item.returnReceiptNumber(), formatEpoch(item.createdAtEpochMillis()), item.userName(),
                         item.refundMethod(), currencyFormat.format(zero(item.refundAmount())), item.reason()
                 });
             }
