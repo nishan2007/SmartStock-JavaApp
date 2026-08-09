@@ -328,7 +328,22 @@ public final class PostgresRuntimeService {
                     $env:PGPASSWORD = $env:SMARTSTOCK_RUNTIME_DB_PASSWORD
                     $Port = %d
                     $User = $env:SMARTSTOCK_RUNTIME_DB_USER
-                    $HbaFile = (& psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show hba_file').Trim()
+                    $Psql = (Get-Command psql -ErrorAction SilentlyContinue).Source
+                    if (-not $Psql) {
+                      $Psql = Get-ChildItem (Join-Path $env:ProgramFiles 'PostgreSQL') `
+                        -Filter psql.exe -Recurse -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Directory.Name -eq 'bin' } |
+                        Sort-Object FullName -Descending | Select-Object -First 1 `
+                        -ExpandProperty FullName
+                    }
+                    if (-not $Psql) { throw 'PostgreSQL psql.exe was not found.' }
+                    $CurrentListen = (& $Psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show listen_addresses').Trim()
+                    if ($LASTEXITCODE -ne 0) { throw 'Could not verify PostgreSQL listen_addresses.' }
+                    if ($CurrentListen -eq 'localhost') {
+                      Write-Output 'PostgreSQL is already bound to localhost; registers use HTTPS port 8443.'
+                      exit 0
+                    }
+                    $HbaFile = (& $Psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show hba_file').Trim()
                     if ($LASTEXITCODE -ne 0 -or -not $HbaFile) { throw 'Could not locate pg_hba.conf.' }
                     $Stamp = Get-Date -Format 'yyyyMMddHHmmss'
                     Copy-Item -LiteralPath $HbaFile -Destination ($HbaFile + '.smartstock-service-only-backup-' + $Stamp)
@@ -340,13 +355,13 @@ public final class PostgresRuntimeService {
                       } else { $_ }
                     }
                     Set-Content -LiteralPath $HbaFile -Value $Lines -Encoding ASCII
-                    & psql -h 127.0.0.1 -p $Port -U $User -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
+                    & $Psql -h 127.0.0.1 -p $Port -U $User -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
                     if ($LASTEXITCODE -ne 0) { throw 'Could not bind PostgreSQL to localhost.' }
                     $Services = Get-Service 'postgresql*' -ErrorAction SilentlyContinue
                     if (-not $Services) { throw 'PostgreSQL Windows service was not found.' }
                     $Services | Restart-Service -Force
                     Start-Sleep -Seconds 2
-                    $Listen = (& psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show listen_addresses').Trim()
+                    $Listen = (& $Psql -h 127.0.0.1 -p $Port -U $User -d postgres -Atc 'show listen_addresses').Trim()
                     if ($Listen -ne 'localhost') { throw "PostgreSQL is still listening on: $Listen" }
                     Write-Output 'PostgreSQL is bound to localhost; registers use HTTPS port 8443.'
                     """.formatted(config.serverPort() <= 0 ? 5432 : config.serverPort());
@@ -447,6 +462,10 @@ public final class PostgresRuntimeService {
 
     /** Replaces the installed service payload and restarts it after an explicit maintenance request. */
     public static CommandResult refreshSyncServiceInstallation() throws Exception {
+        if (isWindows()) {
+            return installWindowsServer(SupabaseProjectConfig.load(),
+                    EnvironmentProfile.active(), SupabaseProjectConfig.loadLanSubnet());
+        }
         return installSyncService();
     }
 
@@ -938,9 +957,28 @@ public final class PostgresRuntimeService {
                 )
                 Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
                   -Confirm:$false -ErrorAction SilentlyContinue
-                schtasks /Create /TN SmartStockServerService /TR "`"$Cmd`"" /SC ONSTART /F
-                schtasks /Run /TN SmartStockServerService
-                schtasks /Query /TN SmartStockServerService /FO LIST
+                Unregister-ScheduledTask -TaskName SmartStockServerService `
+                  -Confirm:$false -ErrorAction SilentlyContinue
+                $BundledJava = Join-Path $AppDir 'runtime\\bin\\java.exe'
+                if (Test-Path -LiteralPath $BundledJava -PathType Leaf) {
+                  $Java = $BundledJava
+                } else {
+                  $Java = (Get-Command java -ErrorAction Stop).Source
+                }
+                $TaskAction = New-ScheduledTaskAction -Execute $Java `
+                  -Argument ('-jar "' + $JarName + '" --sync-service') `
+                  -WorkingDirectory $ServiceAppDir
+                $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                $TaskPrincipal = New-ScheduledTaskPrincipal `
+                  -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+                  -LogonType Interactive -RunLevel Limited
+                Register-ScheduledTask -TaskName SmartStockServerService `
+                  -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `
+                  -Description 'SmartStock HTTPS LAN and synchronization service' `
+                  -Force -ErrorAction Stop | Out-Null
+                Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
+                Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop |
+                  Format-List TaskName,State
                 """.formatted(powerShellSingleQuoted(appDir.toString()));
         return runPowerShell(script, Duration.ofMinutes(2));
     }

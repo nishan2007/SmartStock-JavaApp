@@ -164,6 +164,15 @@ class PostgresRuntimeServiceTest {
         assertTrue(source.contains("Files.mismatch(currentJar, serviceJar)"));
         assertTrue(source.contains("StandardCopyOption.REPLACE_EXISTING"));
         assertTrue(source.contains("!isSyncServiceRunning(status.output())"));
+        assertFalse(source.contains("schtasks /Create"));
+        assertTrue(source.contains("$BundledJava = Join-Path $AppDir 'runtime\\\\bin\\\\java.exe'"));
+        assertTrue(source.contains("New-ScheduledTaskAction -Execute $Java"));
+        assertTrue(source.contains("public static CommandResult refreshSyncServiceInstallation()"));
+        assertTrue(source.contains("return installWindowsServer(SupabaseProjectConfig.load(),"));
+        assertTrue(source.contains("$Psql = (Get-Command psql -ErrorAction SilentlyContinue).Source"));
+        assertTrue(source.contains("Join-Path $env:ProgramFiles 'PostgreSQL'"));
+        assertTrue(source.contains("Where-Object { $_.Directory.Name -eq 'bin' }"));
+        assertTrue(source.contains("if ($CurrentListen -eq 'localhost')"));
     }
 
     @Test

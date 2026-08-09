@@ -7,9 +7,10 @@ representations are accepted (for example, `text` versus unconstrained
 `varchar`, `CURRENT_TIMESTAMP` versus `now()`, and identity columns versus
 sequence-backed integer columns).
 
-Forward fixes belong in `database/migrations/`. Fresh-install definitions and
-runtime repair code must be updated in the same change so a new local database,
-an upgraded local database, and Supabase converge on the same contract.
+The immutable v1 definitions live under `database/v1/local` and
+`database/v1/cloud`. Forward fixes belong in `database/migrations/v1_after/`
+as new ordered migrations and must update the applicable schema contract and
+fingerprint validation so local PostgreSQL and Supabase remain compatible.
 
 ## Intentional environment boundaries
 

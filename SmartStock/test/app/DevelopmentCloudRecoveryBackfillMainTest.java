@@ -18,4 +18,3 @@ class DevelopmentCloudRecoveryBackfillMainTest {
         assertTrue(source.contains("hasVerifiedSnapshot"));
     }
 }
-

@@ -4612,4 +4612,3 @@ GRANT ALL ON TABLE smartstock_private.store_user_credentials TO service_role;
 --
 -- PostgreSQL database dump complete
 --
-

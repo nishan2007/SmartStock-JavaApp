@@ -309,5 +309,3 @@ SELECT pg_catalog.setval('public.roles_role_id_seq', 3, true);
 --
 -- PostgreSQL database dump complete
 --
-
-
