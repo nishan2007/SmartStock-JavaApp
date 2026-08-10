@@ -534,7 +534,9 @@ public final class SmartStockUpdater {
             return;
         }
         runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
+        terminateWindowsApplicationProcessTree();
         terminateWindowsServerProcessTree();
+        terminateWindowsJavaSyncProcesses(props);
     }
 
     private static void startSyncService(Properties props) {
@@ -606,12 +608,80 @@ public final class SmartStockUpdater {
         return List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe");
     }
 
+    static List<String> windowsApplicationTerminationCommand() {
+        return List.of("taskkill", "/F", "/T", "/IM", "SmartStock.exe");
+    }
+
+    private static void terminateWindowsApplicationProcessTree() {
+        if (!isWindows()) return;
+        try {
+            runCommand(windowsApplicationTerminationCommand());
+            Thread.sleep(750);
+        } catch (Exception ignored) {
+        }
+    }
+
     private static void terminateWindowsServerProcessTree() {
         if (!isWindows()) return;
         try {
             runCommand(windowsServerTerminationCommand());
             Thread.sleep(750);
         } catch (Exception ignored) {
+        }
+    }
+
+    private static void terminateWindowsJavaSyncProcesses(Properties props) {
+        if (!isWindows()) return;
+        String javaBinValue = props.getProperty("java.bin", "").trim();
+        if (javaBinValue.isEmpty()) return;
+        Path javaBin = Path.of(javaBinValue);
+        List<ProcessHandle> matches = ProcessHandle.allProcesses()
+                .filter(process -> process.pid() != ProcessHandle.current().pid())
+                .filter(process -> isWindowsSyncServiceProcess(
+                        process.info().command().orElse(null),
+                        process.info().arguments().orElse(null), javaBin))
+                .toList();
+        matches.forEach(ProcessHandle::destroy);
+        waitForProcessExit(matches, 2_000);
+        matches.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+        waitForProcessExit(matches, 10_000);
+        if (matches.stream().anyMatch(ProcessHandle::isAlive)) {
+            throw new IllegalStateException("The SmartStock background service did not stop for the update.");
+        }
+    }
+
+    static boolean isWindowsSyncServiceProcess(String command, String[] arguments, Path javaBin) {
+        if (command == null || arguments == null || javaBin == null) return false;
+        String executable = windowsPath(command);
+        String configuredJava = windowsPath(javaBin.toString());
+        int executableSeparator = executable.lastIndexOf('/');
+        int configuredSeparator = configuredJava.lastIndexOf('/');
+        if (executableSeparator < 0 || configuredSeparator < 0
+                || !executable.substring(0, executableSeparator)
+                .equals(configuredJava.substring(0, configuredSeparator))) {
+            return false;
+        }
+        String executableName = executable.substring(executableSeparator + 1);
+        if (!"java.exe".equals(executableName) && !"javaw.exe".equals(executableName)) return false;
+        for (String argument : arguments) {
+            if ("--sync-service".equals(argument)) return true;
+        }
+        return false;
+    }
+
+    private static String windowsPath(String value) {
+        return value.replace('\\', '/').toLowerCase(Locale.ROOT);
+    }
+
+    private static void waitForProcessExit(List<ProcessHandle> processes, long timeoutMillis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (processes.stream().anyMatch(ProcessHandle::isAlive) && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 

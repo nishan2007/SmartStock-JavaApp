@@ -104,6 +104,23 @@ class SmartStockUpdaterTest {
     void terminatesTheCompleteWindowsServerProcessTree() {
         assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe"),
                 SmartStockUpdater.windowsServerTerminationCommand());
+        assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStock.exe"),
+                SmartStockUpdater.windowsApplicationTerminationCommand());
+    }
+
+    @Test
+    void identifiesOnlyTheSmartStockRuntimeSyncProcess() {
+        Path java = Path.of("C:\\Program Files\\SmartStock\\runtime\\bin\\java.exe");
+
+        assertTrue(SmartStockUpdater.isWindowsSyncServiceProcess(
+                "C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe",
+                new String[]{"-jar", "inventory-management-1.0.46.jar", "--sync-service"}, java));
+        assertFalse(SmartStockUpdater.isWindowsSyncServiceProcess(
+                "C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe",
+                new String[]{"-jar", "inventory-management-1.0.46.jar"}, java));
+        assertFalse(SmartStockUpdater.isWindowsSyncServiceProcess(
+                "C:\\Other Java\\bin\\javaw.exe",
+                new String[]{"-jar", "inventory-management-1.0.46.jar", "--sync-service"}, java));
     }
 
     @Test
