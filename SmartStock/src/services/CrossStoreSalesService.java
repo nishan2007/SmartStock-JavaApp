@@ -10,7 +10,10 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -54,11 +57,42 @@ final class CrossStoreSalesService {
         try(PreparedStatement ps=c.prepareStatement(sql.toString())){bind(ps,args);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
             Map<String,Object> row=new LinkedHashMap<>();row.put("transactionType","SALE");row.put("sourceLocationId",rs.getInt(1));
             row.put("saleId",rs.getInt(2));row.put("returnId",null);row.put("receiptNumber",rs.getString(3));
+            row.put("returnReceiptNumber","");
             row.put("createdAtEpochMillis",epoch(rs.getTimestamp(4)));row.put("cashierName",rs.getString(5));row.put("storeName",rs.getString(6));
             row.put("itemCount",rs.getInt(7));row.put("paymentMethod",rs.getString(8));row.put("paymentStatus",rs.getString(9));
             row.put("amountPaid",rs.getBigDecimal(10));row.put("returnedAmount",rs.getBigDecimal(11));row.put("discountAmount",rs.getBigDecimal(12));
             row.put("totalAmount",rs.getBigDecimal(13));row.put("netAmount",rs.getBigDecimal(14));row.put("cacheRefreshedAtEpochMillis",epoch(rs.getTimestamp(15)));
             row.put("cacheStatus",rs.getString(16));rows.add(row);
+        }}}
+        StringBuilder returnsSql=new StringBuilder("""
+          SELECT r.source_location_id,r.sale_id,r.return_id,c.receipt_number,r.return_receipt_number,
+            r.source_created_at,r.user_name,c.store_name,
+            (SELECT COALESCE(SUM(i.quantity),0) FROM sync_cross_store_return_items_cache i
+              WHERE i.source_location_id=r.source_location_id AND i.return_id=r.return_id),
+            r.refund_method,r.refund_amount,c.cache_refreshed_at,c.cache_status
+          FROM sync_cross_store_returns_cache r
+          JOIN sync_cross_store_sales_cache c ON c.source_location_id=r.source_location_id AND c.sale_id=r.sale_id
+          WHERE r.source_location_id<>?
+          """);
+        List<Object> returnArgs=new ArrayList<>();returnArgs.add(currentLocationId);
+        if(requestedLocationId!=null){returnsSql.append(" AND r.source_location_id=?");returnArgs.add(requestedLocationId);}
+        if(!term.isBlank()){
+            returnsSql.append(" AND (CAST(r.return_id AS TEXT) ILIKE ? OR CAST(r.sale_id AS TEXT) ILIKE ? OR COALESCE(r.return_receipt_number,'') ILIKE ? OR COALESCE(c.receipt_number,'') ILIKE ? OR COALESCE(r.user_name,'') ILIKE ? OR c.store_name ILIKE ?)");
+            for(int i=0;i<6;i++)returnArgs.add("%"+term+"%");
+        }
+        if(from!=null){returnsSql.append(" AND r.source_created_at>=?");returnArgs.add(Timestamp.from(from));}
+        if(to!=null){returnsSql.append(" AND r.source_created_at<?");returnArgs.add(Timestamp.from(to));}
+        returnsSql.append(" ORDER BY r.source_created_at DESC LIMIT 1000");
+        try(PreparedStatement ps=c.prepareStatement(returnsSql.toString())){bind(ps,returnArgs);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+            BigDecimal refund=rs.getBigDecimal(11)==null?BigDecimal.ZERO:rs.getBigDecimal(11);
+            Map<String,Object> row=new LinkedHashMap<>();row.put("transactionType","RETURN");row.put("sourceLocationId",rs.getInt(1));
+            row.put("saleId",rs.getInt(2));row.put("returnId",rs.getLong(3));row.put("receiptNumber",rs.getString(4));
+            row.put("returnReceiptNumber",rs.getString(5));row.put("createdAtEpochMillis",epoch(rs.getTimestamp(6)));
+            row.put("cashierName",rs.getString(7));row.put("storeName",rs.getString(8));row.put("itemCount",rs.getInt(9));
+            row.put("paymentMethod",rs.getString(10));row.put("paymentStatus","RETURN");row.put("amountPaid",refund.negate());
+            row.put("returnedAmount",refund);row.put("discountAmount",BigDecimal.ZERO);row.put("totalAmount",refund.negate());
+            row.put("netAmount",refund.negate());row.put("cacheRefreshedAtEpochMillis",epoch(rs.getTimestamp(12)));
+            row.put("cacheStatus",rs.getString(13));rows.add(row);
         }}}
         return new HistoryResult(stores(c,currentLocationId),List.copyOf(rows));
     }
@@ -145,7 +179,14 @@ final class CrossStoreSalesService {
     private static Map<Integer,JsonObject> map(List<JsonObject> rows,String key){Map<Integer,JsonObject> out=new HashMap<>();for(JsonObject row:rows)out.put(integer(row,key),row);return out;}
     private static int integer(JsonObject x,String k){return x.has(k)&&!x.get(k).isJsonNull()?x.get(k).getAsInt():0;}private static long longValue(JsonObject x,String k){return x.has(k)&&!x.get(k).isJsonNull()?x.get(k).getAsLong():0;}
     private static String text(JsonObject x,String k){return x.has(k)&&!x.get(k).isJsonNull()?x.get(k).getAsString():null;}private static BigDecimal decimal(JsonObject x,String k){try{return new BigDecimal(text(x,k));}catch(Exception ex){return BigDecimal.ZERO;}}
-    private static Timestamp time(String x){try{return x==null?null:Timestamp.from(Instant.parse(x));}catch(Exception ex){return null;}}private static long epoch(Timestamp x){return x==null?0:x.getTime();}
+    static Timestamp time(String x){
+        if(x==null||x.isBlank())return null;
+        String value=x.trim();
+        try{return Timestamp.from(Instant.parse(value));}catch(Exception ignored){}
+        try{return Timestamp.from(OffsetDateTime.parse(value.replace(' ','T')).toInstant());}catch(Exception ignored){}
+        try{return Timestamp.from(LocalDateTime.parse(value.replace(' ','T')).toInstant(ZoneOffset.UTC));}catch(Exception ignored){}
+        try{return Timestamp.valueOf(value);}catch(Exception ignored){return null;}
+    }private static long epoch(Timestamp x){return x==null?0:x.getTime();}
     private static void setInteger(PreparedStatement ps,int n,JsonObject x,String k)throws SQLException{if(!x.has(k)||x.get(k).isJsonNull())ps.setNull(n,java.sql.Types.INTEGER);else ps.setInt(n,x.get(k).getAsInt());}
     private static void bind(PreparedStatement ps,List<Object> a)throws SQLException{for(int i=0;i<a.size();i++)ps.setObject(i+1,a.get(i));}private static String clean(String s,int max)throws RuleViolation{String v=s==null?"":s.trim();if(v.length()>max)throw rule(400,"VALIDATION_ERROR","Search text is too long.");return v;}
     private static ZoneId zone(Connection c,int id)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT timezone FROM locations WHERE location_id=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())try{return ZoneId.of(rs.getString(1));}catch(Exception ignored){}}}return ZoneId.systemDefault();}

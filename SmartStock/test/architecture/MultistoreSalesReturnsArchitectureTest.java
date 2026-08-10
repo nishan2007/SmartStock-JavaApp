@@ -39,4 +39,12 @@ class MultistoreSalesReturnsArchitectureTest {
         assertTrue(sync.contains("CrossStoreSalesService.refreshAll"));
         assertTrue(sync.contains("CrossStoreRefundService.synchronize"));
     }
+
+    @Test void crossStoreHistoryIncludesReturnReceiptAndTimestampRows() throws Exception {
+        String history=read("src/services/CrossStoreSalesService.java");
+        assertTrue(history.contains("FROM sync_cross_store_returns_cache r"));
+        assertTrue(history.contains("row.put(\"transactionType\",\"RETURN\")"));
+        assertTrue(history.contains("row.put(\"returnReceiptNumber\",rs.getString(5))"));
+        assertTrue(history.contains("row.put(\"createdAtEpochMillis\",epoch(rs.getTimestamp(6)))"));
+    }
 }
