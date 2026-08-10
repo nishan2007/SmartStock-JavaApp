@@ -175,7 +175,7 @@ public class CustomerAccountDetails extends JFrame {
         panel.setBorder(BorderFactory.createTitledBorder("Transaction History"));
 
         transactionModel = new DefaultTableModel(
-                new Object[]{"Event ID", "Date", "Store", "User", "Device", "Drawer", "Type", "Document", "Document #", "Method", "Reference", "Amount", "Payment Status", "Document Status", "Total", "Source", "Note"},
+                new Object[]{"Record", "Date", "Store", "User", "Device", "Drawer", "Activity", "Document", "Document #", "Method", "Reference", "Amount", "Payment Status", "Document Status", "Total", "Data Source", "Note"},
                 0
         ) {
             @Override
@@ -249,10 +249,10 @@ public class CustomerAccountDetails extends JFrame {
         transactionModel.setRowCount(0);
             LanApiClient.CustomerTransactionResult result = snapshot.transactions();
             for(LanApiClient.CustomerTransactionRecord row:result.transactions())transactionModel.addRow(new Object[]{
-                    row.eventId(),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),row.userName(),row.deviceName(),
+                    formatRecord(row),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),row.userName(),row.deviceName(),
                     row.cashDrawerName(),formatType(row.transactionType()),formatType(row.documentType()),row.documentNumber(),
                     row.paymentMethod(),row.paymentReference(),currencyFormat.format(defaultZero(row.amount())),formatStatus(row.paymentStatus()),
-                    formatStatus(row.documentStatus()),currencyFormat.format(defaultZero(row.chargeTotal())),row.remote()?"Other store":"This store",row.note()});
+                    formatStatus(row.documentStatus()),currencyFormat.format(defaultZero(row.chargeTotal())),row.remote()?"Synced snapshot":"Live store data",row.note()});
             transactionSummaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
                     +"    Payments: "+currencyFormat.format(result.totalPayments()));
     }
@@ -340,6 +340,13 @@ public class CustomerAccountDetails extends JFrame {
             case "PAYMENT" -> "Payment";
             default -> type.replace('_', ' ');
         };
+    }
+
+    private String formatRecord(LanApiClient.CustomerTransactionRecord row){
+        String event=row.eventId()==null?"":row.eventId();int last=event.lastIndexOf(':');String id=last>=0?event.substring(last+1):event;
+        String kind=event.contains("LEDGER:")?"Account entry":event.contains("CUSTOM_ORDER:")?"Custom order":
+                event.contains("QUOTATION:")?"Quotation":event.contains("INVOICE:")?"Invoice":event.contains("SALE:")?"Sale":"Record";
+        return id.isBlank()?kind:kind+" #"+id;
     }
 
     private String formatStatus(String status) {

@@ -42,9 +42,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     int locationId = documentLocationId(rs);
                     ServerCompanyCustomizationRepository.ReceiptSettings settings =
                             ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    String addressLine4 = ServerCompanyCustomizationRepository.loadDocumentAddressLine4ForLocation(locationId);
                     ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
                             ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
-                    return buildQuotationHtml(conn, quotationId, rs, settings, printSettings);
+                    return buildQuotationHtml(conn, quotationId, rs, settings, addressLine4, printSettings);
                 }
             }
         }
@@ -68,9 +69,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     int locationId = documentLocationId(rs);
                     ServerCompanyCustomizationRepository.ReceiptSettings settings =
                             ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    String addressLine4 = ServerCompanyCustomizationRepository.loadDocumentAddressLine4ForLocation(locationId);
                     ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
                             ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
-                    return buildInvoiceHtml(conn, invoiceId, rs, settings, printSettings);
+                    return buildInvoiceHtml(conn, invoiceId, rs, settings, addressLine4, printSettings);
                 }
             }
         }
@@ -94,9 +96,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     int locationId = documentLocationId(rs);
                     ServerCompanyCustomizationRepository.ReceiptSettings settings =
                             ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    String addressLine4 = ServerCompanyCustomizationRepository.loadDocumentAddressLine4ForLocation(locationId);
                     ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
                             ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
-                    return buildDeliveryHtml(conn, deliveryEventId, rs, settings, printSettings);
+                    return buildDeliveryHtml(conn, deliveryEventId, rs, settings, addressLine4, printSettings);
                 }
             }
         }
@@ -105,7 +108,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     public static String buildSampleQuotation(ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
                                           ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) {
         List<DocumentLine> lines = sampleLines(false);
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.quotationTitle(), "Q-MAIN-POS1-000123", "06/07/2026",
+        return renderPagedDocument(receiptSettings, "", printSettings, printSettings.quotationTitle(), "Q-MAIN-POS1-000123", "06/07/2026",
                 new String[][]{{"Quotation #", "Q-MAIN-POS1-000123"}, {"Status", "ISSUED"}, {"Issue Date", "06/07/2026"}, {"Valid Until", "07/07/2026"}},
                 "Apex Property Group", "555-0198", "purchasing@apex.example", "Apex Property Group",
                 lines, false, printSettings.quotationValidityNote(), null, "GRAND TOTAL", money("729.00"), false, false, null);
@@ -114,7 +117,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     public static String buildSampleInvoice(ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
                                           ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) {
         List<DocumentLine> lines = sampleLines(false);
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.invoiceTitle(), "INV-MAIN-POS1-000088", "06/07/2026",
+        return renderPagedDocument(receiptSettings, "", printSettings, printSettings.invoiceTitle(), "INV-MAIN-POS1-000088", "06/07/2026",
                 new String[][]{{"Invoice #", "INV-MAIN-POS1-000088"}, {"Quotation #", "Q-MAIN-POS1-000123"}, {"Status", "PARTIALLY_DELIVERED"}, {"Invoice Date", "06/07/2026"}},
                 "Apex Property Group", "555-0198", "purchasing@apex.example", "Apex Property Group",
                 lines, false, null, invoiceBalanceNote(money("250.00"), money("479.00"), "PARTIAL"),
@@ -131,7 +134,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 money("42.00"),
                 money("521.14")
         ));
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.deliveryTitle(), "DEL-MAIN-POS1-000041", "06/07/2026 10:30 AM",
+        return renderPagedDocument(receiptSettings, "", printSettings, printSettings.deliveryTitle(), "DEL-MAIN-POS1-000041", "06/07/2026 10:30 AM",
                 new String[][]{{"Delivery #", "DEL-MAIN-POS1-000041"}, {"Invoice #", "INV-MAIN-POS1-000088"}, {"Method", "LOCAL_DELIVERY"}, {"Delivered At", "06/07/2026 10:30 AM"}},
                 "Apex Property Group", "555-0198", "Jordan Lee", "Apex Property Group",
                 lines, true, null, null, "REMAINING BALANCE", money("479.00"), true, true, "Jordan Lee");
@@ -139,9 +142,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static String buildQuotationHtml(Connection conn, long quotationId, ResultSet header,
                                          ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
+                                         String addressLine4,
                                          ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) throws SQLException {
         List<DocumentLine> lines = quotationLines(conn, quotationId);
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.quotationTitle(), header.getString("quotation_number"), date(header, "issue_date"),
+        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.quotationTitle(), header.getString("quotation_number"), date(header, "issue_date"),
                 new String[][]{{"Quotation #", header.getString("quotation_number")}, {"Status", header.getString("status")}, {"Issue Date", date(header, "issue_date")}, {"Valid Until", date(header, "valid_until")}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("customer_email"), header.getString("customer_name"),
                 lines, false, printSettings.quotationValidityNote(), null, "GRAND TOTAL", header.getBigDecimal("total_amount"), false, false, null);
@@ -149,9 +153,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static String buildInvoiceHtml(Connection conn, long invoiceId, ResultSet header,
                                          ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
+                                         String addressLine4,
                                          ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) throws SQLException {
         List<DocumentLine> lines = invoiceLines(conn, invoiceId);
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.invoiceTitle(), header.getString("invoice_number"), date(header, "invoice_date"),
+        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.invoiceTitle(), header.getString("invoice_number"), date(header, "invoice_date"),
                 new String[][]{{"Invoice #", header.getString("invoice_number")}, {"Quotation #", header.getString("quotation_number")}, {"Status", header.getString("status")}, {"Invoice Date", date(header, "invoice_date")}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("customer_email"), header.getString("customer_name"),
                 lines, false, null, invoiceBalanceNote(header.getBigDecimal("amount_paid"), header.getBigDecimal("balance_due"), header.getString("payment_status")),
@@ -160,9 +165,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static String buildDeliveryHtml(Connection conn, long deliveryEventId, ResultSet header,
                                             ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
+                                            String addressLine4,
                                             ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) throws SQLException {
         List<DocumentLine> lines = deliveryLines(conn, deliveryEventId);
-        return renderPagedDocument(receiptSettings, printSettings, printSettings.deliveryTitle(), header.getString("delivery_number"), clean(header.getString("created_at")),
+        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.deliveryTitle(), header.getString("delivery_number"), clean(header.getString("created_at")),
                 new String[][]{{"Delivery #", header.getString("delivery_number")}, {"Invoice #", header.getString("invoice_number")}, {"Method", header.getString("delivery_method")}, {"Delivered At", clean(header.getString("created_at"))}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("receiver_name"), header.getString("customer_name"),
                 lines, true, null, null, "REMAINING BALANCE", header.getBigDecimal("balance_due"), true, true, header.getString("receiver_name"));
@@ -190,6 +196,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static String renderPagedDocument(ServerCompanyCustomizationRepository.ReceiptSettings receiptSettings,
+                                              String addressLine4,
                                               ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings,
                                               String documentTitle, String documentNumber, String documentDate,
                                               String[][] docFields, String customerName, String customerPhone,
@@ -207,7 +214,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             List<DocumentLine> pageLines = from >= to ? List.of() : lines.subList(from, to);
             boolean lastPage = pageIndex == pageCount - 1;
             appendPageStart(html);
-            appendHtmlHeader(html, receiptSettings, documentTitle, documentNumber, documentDate, (pageIndex + 1) + " of " + pageCount);
+            appendHtmlHeader(html, receiptSettings, addressLine4, documentTitle, documentNumber, documentDate, (pageIndex + 1) + " of " + pageCount);
             appendDocumentCustomerInfo(html, docFields, customerName, customerPhone, customerEmailOrReceiver);
             appendDocumentGrid(html, billTo, pageLines, includeDelivery, rowsPerPage, lastPage,
                     validityNote, balanceNote, totalLabel, total, printSettings,
@@ -333,6 +340,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static void appendHtmlHeader(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings,
+                                         String addressLine4,
                                          String documentTitle, String documentNumber, String date, String page) {
         html.append("<table class='top'><tr><td style='width:70%'>");
         if (settings.showLogo() && !settings.logoPath().isBlank()) {
@@ -347,7 +355,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .append("<div class='docmeta'>Page:&nbsp;&nbsp;").append(esc(page)).append("</div>")
                 .append("</td></tr></table>");
         appendMotto(html, settings);
-        appendContactBlock(html, settings);
+        appendContactBlock(html, settings, addressLine4);
     }
 
     private static void appendMotto(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings) {
@@ -377,10 +385,12 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return "<div class='doctype-line'>" + esc(title) + "</div>";
     }
 
-    private static void appendContactBlock(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings) {
+    private static void appendContactBlock(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings,
+                                           String addressLine4) {
         String address1 = clean(settings.addressLine1());
         String address2 = clean(settings.addressLine2());
         String address3 = clean(settings.addressLine3());
+        String address4 = clean(addressLine4);
         String phone1 = clean(settings.phoneLine1());
         String phone2 = clean(settings.phoneLine2());
         String email1 = clean(settings.emailLine1());
@@ -388,8 +398,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         html.append("<table class='contact'>")
                 .append("<tr><td>").append(esc(address1)).append("</td><td>").append(esc(phone1)).append("</td><td>").append(esc(email1)).append("</td></tr>")
                 .append("<tr><td>").append(esc(address2)).append("</td><td>").append(esc(phone2)).append("</td><td>").append(esc(email2)).append("</td></tr>")
-                .append("<tr><td>").append(esc(address3)).append("</td><td></td><td></td></tr>")
-                .append("</table>");
+                .append("<tr><td>").append(esc(address3)).append("</td><td></td><td></td></tr>");
+        if (!address4.isBlank()) {
+            html.append("<tr><td>").append(esc(address4)).append("</td><td></td><td></td></tr>");
+        }
+        html.append("</table>");
     }
 
     private static void appendBillTo(StringBuilder html, String customerName) {
@@ -400,14 +413,14 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static void appendDocumentCustomerInfo(StringBuilder html, String[][] docFields,
                                                    String customerName, String customerPhone, String customerEmailOrReceiver) {
-        html.append("<table class='info'><tr><td style='width:50%'>");
+        html.append("<table class='info'><tr><td width='50%' valign='top' align='left' style='width:50%'>");
         for (String[] field : docFields) {
             if (!clean(field[1]).isBlank()) {
                 html.append("<div><span class='info-label'>").append(esc(field[0])).append(":</span> ")
                         .append(esc(field[1])).append("</div>");
             }
         }
-        html.append("</td><td style='width:50%; border-left:2px solid #111'>")
+        html.append("</td><td width='50%' valign='top' align='left' style='width:50%; border-left:2px solid #111'>")
                 .append("<div><span class='info-label'>Customer:</span> ").append(esc(customerName)).append("</div>");
         if (!clean(customerPhone).isBlank()) {
             html.append("<div><span class='info-label'>Phone:</span> ").append(esc(customerPhone)).append("</div>");

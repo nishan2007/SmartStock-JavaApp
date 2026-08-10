@@ -2591,7 +2591,7 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult customerAccountTransactions(RequestContext context)throws Exception{
         requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);int id=requiredInt(context.body(),"customerId");
-        try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanCustomerAccountService.transactions(c,id,session.userId()));}
+        try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanCustomerAccountService.transactions(c,id,session.userId(),session.locationId()));}
             catch(LanCustomerAccountService.RuleViolation ex){throw apiException(ex);}}
     }
     private ApiResult customerAccountPayments(RequestContext context)throws Exception{

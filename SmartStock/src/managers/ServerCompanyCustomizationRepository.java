@@ -93,6 +93,21 @@ public class ServerCompanyCustomizationRepository {
         return settings;
     }
 
+    /** Returns the optional fourth document-address line (Location Management's Address Line 3). */
+    public static String loadDocumentAddressLine4ForLocation(int locationId) throws SQLException {
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT COALESCE(company_address_line3, '')
+                     FROM locations
+                     WHERE location_id = ?
+                     """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Objects.requireNonNullElse(rs.getString(1), "").trim() : "";
+            }
+        }
+    }
+
     public static ReceiptSettings getPreviewOverrideSettings() {
         return previewOverrideSettings;
     }
@@ -403,9 +418,9 @@ public class ServerCompanyCustomizationRepository {
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT ci.company_name,
-                       COALESCE(l.company_address_line1, '') AS company_address_line1,
-                       COALESCE(l.company_address_line2, '') AS company_address_line2,
-                       COALESCE(l.company_address_line3, '') AS company_address_line3,
+                       COALESCE(l.address, '') AS company_address_line1,
+                       COALESCE(l.company_address_line1, '') AS company_address_line2,
+                       COALESCE(l.company_address_line2, '') AS company_address_line3,
                        COALESCE(l.company_phone_line1, '') AS company_phone_line1,
                        COALESCE(l.company_phone_line2, '') AS company_phone_line2,
                        COALESCE(l.company_email_line1, '') AS company_email_line1,

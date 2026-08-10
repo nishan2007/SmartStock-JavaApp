@@ -15,7 +15,9 @@ class CustomerHistoryCompletenessArchitectureTest {
         for(String table:new String[]{"customer_account_transactions","sales","custom_orders","quotations","invoices"})
             assertTrue(service.contains("FROM "+table),"Customer history must include "+table);
         assertTrue(service.contains("CrossStoreCustomerHistoryService.rows"));
-        assertTrue(service.contains("rs.getBigDecimal(25)"),"The 25-column history projection must read its balance delta from column 25");
+        assertTrue(service.contains("historyIdentity"),"Customer history must deduplicate live and synchronized copies");
+        String remote=read("src/services/CrossStoreCustomerHistoryService.java");
+        assertTrue(remote.contains("source_location_id<>?"),"The current store must not be returned from its own remote cache");
         String sync=read("src/services/SyncWorker.java");
         assertTrue(sync.contains("CrossStoreCustomerHistoryService.refreshAll"));
     }
