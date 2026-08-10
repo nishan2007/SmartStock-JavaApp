@@ -292,6 +292,8 @@ final class LanSalesService {
 
     private static void chargeCustomerAccount(Connection c, int customerId, BigDecimal amount, int userId,
                                               String userName, UUID deviceId, int locationId) throws SQLException {
+        CustomerAccountLedgerService.requireCurrentMultiStoreBalance(c,locationId);
+        CustomerAccountLedgerService.repairCustomerBalance(c,customerId);
         try (PreparedStatement lock = c.prepareStatement("SELECT credit_limit,current_balance FROM customer_accounts WHERE customer_id=? AND is_active=TRUE FOR UPDATE")) {
             lock.setInt(1, customerId);
             try (ResultSet rs = lock.executeQuery()) {

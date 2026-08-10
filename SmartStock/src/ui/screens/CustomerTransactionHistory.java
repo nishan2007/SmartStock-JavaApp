@@ -80,7 +80,7 @@ public class CustomerTransactionHistory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         transactionModel = new DefaultTableModel(
-                new Object[]{"Transaction ID", "Payment ID", "Date", "User", "Device", "Drawer", "Type", "Method", "Reference", "Sale ID", "Custom Order ID", "Amount", "Sale Status", "Sale Total", "Note"},
+                new Object[]{"Event ID", "Date", "Store", "User", "Device", "Drawer", "Type", "Document", "Document #", "Method", "Reference", "Amount", "Payment Status", "Document Status", "Total", "Source", "Note"},
                 0
         ) {
             @Override
@@ -107,7 +107,9 @@ public class CustomerTransactionHistory extends JFrame {
         transactionTable.getColumnModel().getColumn(11).setPreferredWidth(110);
         transactionTable.getColumnModel().getColumn(12).setPreferredWidth(100);
         transactionTable.getColumnModel().getColumn(13).setPreferredWidth(110);
-        transactionTable.getColumnModel().getColumn(14).setPreferredWidth(240);
+        transactionTable.getColumnModel().getColumn(14).setPreferredWidth(110);
+        transactionTable.getColumnModel().getColumn(15).setPreferredWidth(80);
+        transactionTable.getColumnModel().getColumn(16).setPreferredWidth(240);
 
         return new JScrollPane(transactionTable);
     }
@@ -124,11 +126,11 @@ public class CustomerTransactionHistory extends JFrame {
         CachedUiLoader.load(this,"customer-transactions:"+customerId,LanApiClient.CustomerTransactionResult.class,SessionDataCache.SCREEN_TTL,loadingState,()->LanApiClient.loadCustomerTransactions(customerId),result->{transactionModel.setRowCount(0);
             for(LanApiClient.CustomerTransactionRecord row:result.transactions()){
                     transactionModel.addRow(new Object[]{
-                            row.transactionId(),row.paymentId(),formatTimestamp(row.createdAtEpochMillis()),row.userName(),
-                            row.deviceName(),row.cashDrawerName(),formatType(row.transactionType()),row.paymentMethod(),
-                            row.paymentReference(),row.saleId()==null?"":row.saleId(),row.customOrderId()==null?"":row.customOrderId(),
-                            currencyFormat.format(defaultZero(row.amount())),formatStatus(row.paymentStatus()),
-                            currencyFormat.format(defaultZero(row.chargeTotal())),row.note()
+                            row.eventId(),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),row.userName(),
+                            row.deviceName(),row.cashDrawerName(),formatType(row.transactionType()),formatType(row.documentType()),
+                            row.documentNumber(),row.paymentMethod(),row.paymentReference(),currencyFormat.format(defaultZero(row.amount())),
+                            formatStatus(row.paymentStatus()),formatStatus(row.documentStatus()),currencyFormat.format(defaultZero(row.chargeTotal())),
+                            row.remote()?"Other store":"This store",row.note()
                     });
             }
             summaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())

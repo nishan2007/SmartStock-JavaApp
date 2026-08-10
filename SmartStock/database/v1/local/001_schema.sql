@@ -5886,6 +5886,46 @@ CREATE TABLE public.sync_cross_store_sales_cache (
     cache_status text DEFAULT 'CURRENT'::text NOT NULL
 );
 
+-- Read-only materialization of customer-facing documents and ledger events from
+-- verified snapshots belonging to other stores. Source identifiers are only
+-- unique within their source store, hence the composite key.
+CREATE TABLE public.sync_cross_store_customer_history_cache (
+    source_location_id integer NOT NULL,
+    event_key text NOT NULL,
+    customer_id integer NOT NULL,
+    event_type text NOT NULL,
+    source_id bigint,
+    document_number text,
+    source_created_at timestamp with time zone,
+    store_name text NOT NULL,
+    user_name text,
+    device_name text,
+    cash_drawer_name text,
+    payment_method text,
+    payment_reference text,
+    amount numeric(12,2) DEFAULT 0 NOT NULL,
+    payment_status text,
+    document_status text,
+    document_total numeric(12,2) DEFAULT 0 NOT NULL,
+    note text,
+    cache_refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    cache_status text DEFAULT 'CURRENT'::text NOT NULL,
+    PRIMARY KEY (source_location_id, event_key)
+);
+
+CREATE INDEX sync_cross_store_customer_history_customer_idx
+    ON public.sync_cross_store_customer_history_cache
+    (customer_id, source_created_at DESC);
+
+CREATE TABLE public.sync_cross_store_customer_history_status (
+    source_location_id integer NOT NULL PRIMARY KEY,
+    store_name text NOT NULL,
+    row_count integer DEFAULT 0 NOT NULL,
+    status text NOT NULL,
+    last_error text,
+    refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 
 --
 -- Name: sync_cross_store_sales_status; Type: TABLE; Schema: public; Owner: -

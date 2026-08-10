@@ -425,6 +425,17 @@ public final class LanApiClient {
         return products == null ? List.of() : List.of(products);
     }
 
+    public static CatalogIdentifierLookup lookupCatalogIdentifier(String identifier) throws Exception {
+        JsonObject request = new JsonObject();
+        request.addProperty("identifier", identifier == null ? "" : identifier);
+        return GSON.fromJson(post("/v1/catalog/identifier", request, true, true), CatalogIdentifierLookup.class);
+    }
+
+    public static String generateCatalogBarcode() throws Exception {
+        return post("/v1/catalog/barcodes/generate", new JsonObject(), true, true)
+                .get("barcode").getAsString();
+    }
+
     public static List<CustomerAccount> loadCustomerAccounts() throws Exception {
         JsonObject data = post("/v1/customers/accounts", new JsonObject(), true, true);
         CustomerAccount[] accounts = GSON.fromJson(data.getAsJsonArray("accounts"), CustomerAccount[].class);
@@ -1356,6 +1367,12 @@ public final class LanApiClient {
     public record CatalogProduct(int productId, String name, String size, String description, String sku,
                                  BigDecimal price, String productType, Integer categoryId,
                                  int quantityOnHand, String searchableText) { }
+    public record CatalogIdentifierLookup(String status, String normalizedIdentifier,
+                                          List<CatalogProduct> products) {
+        public CatalogIdentifierLookup {
+            products = products == null ? List.of() : List.copyOf(products);
+        }
+    }
     public record CustomerAccount(int customerId, String accountNumber, String customerName,
                                   BigDecimal creditLimit, BigDecimal currentBalance,
                                   BigDecimal availableCredit, boolean business,
@@ -1501,10 +1518,12 @@ public final class LanApiClient {
     public record CustomerAccountAdjustmentResult(long transactionId,String paymentId,BigDecimal balanceAfter) { }
     public record CustomerTransactionResult(List<CustomerTransactionRecord> transactions,int count,
                                             BigDecimal totalCharges,BigDecimal totalPayments) { }
-    public record CustomerTransactionRecord(long transactionId,String paymentId,long createdAtEpochMillis,String userName,
-                                            String deviceName,String cashDrawerName,String transactionType,String paymentMethod,
-                                            String paymentReference,Integer saleId,Long customOrderId,BigDecimal amount,
-                                            String note,String paymentStatus,BigDecimal chargeTotal) { }
+    public record CustomerTransactionRecord(String eventId,Long transactionId,String paymentId,long createdAtEpochMillis,
+                                            Integer locationId,String storeName,String userName,String deviceName,String cashDrawerName,
+                                            String transactionType,String documentType,Long documentId,String documentNumber,
+                                            String paymentMethod,String paymentReference,Integer saleId,Long customOrderId,Long invoiceId,
+                                            Long quotationId,BigDecimal amount,String note,String paymentStatus,String documentStatus,
+                                            BigDecimal chargeTotal,boolean remote) { }
     public record CustomerPaymentResult(List<CustomerPaymentRecord> payments,int paymentCount,int rowCount,
                                         BigDecimal totalPayments,BigDecimal totalApplied) { }
     public record CustomerPaymentRecord(String paymentId,long transactionId,long paymentDateEpochMillis,String userName,

@@ -244,6 +244,9 @@ final class LanProductAdminService {
         Integer storageShelfId = clean(request.storageShelfName(), 300).isBlank() ? null
                 : ItemDetailsService.resolveShelfLocation(connection, locationId, request.storageShelfName());
         Set<String> barcodes = normalizedBarcodes(request.additionalBarcodes(), sku, barcode);
+        Set<String> allBarcodes = new LinkedHashSet<>(barcodes);
+        allBarcodes.add(barcode);
+        CatalogBarcodeService.requireAvailable(connection, allBarcodes, request.productId(), null, null);
         return new ValidatedProduct(name, clean(request.size(), 200), sku, barcode,
                 clean(request.description(), 4000), cost, price, type, request.categoryId(), request.vendorId(),
                 clean(request.imageUrl(), 4000), itemTypeId, brandId, shelfId, storageShelfId, barcodes,

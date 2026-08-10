@@ -643,6 +643,9 @@ public final class ServerCustomOrderDataService {
     }
 
     private static void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal chargeAmount) throws SQLException {
+        Integer locationId=ServerRequestIdentity.locationId();
+        if(locationId==null)throw new SQLException("A store location is required to verify multi-store customer credit.");
+        CustomerAccountLedgerService.requireCurrentMultiStoreBalance(conn,locationId);
         CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
         String lockSql = """
                 SELECT current_balance, credit_limit, is_active

@@ -24,6 +24,8 @@ public final class SchemaContractService {
             "09e4ddc87f31f8add4d7550b7058cc087c086b6872aec3853233b6e4dfb47584");
     private static final String INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT =
             "46b3ac2ec24b641a81394def39ac5ecb9bc7707a4eb748df67ef9e285d1cbc27";
+    private static final String PRE_CUSTOMER_HISTORY_CACHE_LOCAL_FINGERPRINT =
+            "d42e78efda7385ce1b2a1b31770ff8c9b20bc08bc8d9ca9e37dfecfdd1a006b8";
     private static final List<String> LOCAL_BASELINE = List.of(
             "database/v1/local/001_schema.sql",
             "database/v1/local/002_seed.sql",
@@ -81,6 +83,7 @@ public final class SchemaContractService {
         if (VALIDATED_LOCAL_DATABASES.contains(key)) return;
         upgradePreReturnReceiptBaseline(connection);
         normalizeInterimReturnReceiptFingerprint(connection);
+        upgradeCustomerHistoryCacheBaseline(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
@@ -109,22 +112,40 @@ public final class SchemaContractService {
         if (!actualCatalog.equals(storedCatalog)) {
             throw new SQLException("The interim return-receipt schema has drifted; fingerprint normalization is blocked.", "55000");
         }
-        String currentResource;
-        try { currentResource = resourceFingerprint(LOCAL_BASELINE); }
-        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
         try (PreparedStatement update = connection.prepareStatement("""
                 UPDATE public.smartstock_schema_metadata
                 SET resource_fingerprint_sha256=?
                 WHERE schema_scope='LOCAL' AND baseline_version=?
                   AND resource_fingerprint_sha256=?
                 """)) {
-            update.setString(1, currentResource);
+            update.setString(1, PRE_CUSTOMER_HISTORY_CACHE_LOCAL_FINGERPRINT);
             update.setInt(2, BASELINE_VERSION);
             update.setString(3, INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT);
             if (update.executeUpdate() != 1) {
                 throw new SQLException("The interim return-receipt fingerprint changed during normalization.");
             }
         }
+    }
+
+    /** Exact-contract upgrade adding the read-only cross-store customer history cache. */
+    private static void upgradeCustomerHistoryCacheBaseline(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!PRE_CUSTOMER_HISTORY_CACHE_LOCAL_FINGERPRINT.equals(stored))return;
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The previous local schema has drifted; automatic customer-history cache upgrade is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(LOCAL_BASELINE);}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try(Statement s=connection.createStatement()){
+            s.execute("CREATE TABLE public.sync_cross_store_customer_history_cache (source_location_id integer NOT NULL,event_key text NOT NULL,customer_id integer NOT NULL,event_type text NOT NULL,source_id bigint,document_number text,source_created_at timestamp with time zone,store_name text NOT NULL,user_name text,device_name text,cash_drawer_name text,payment_method text,payment_reference text,amount numeric(12,2) DEFAULT 0 NOT NULL,payment_status text,document_status text,document_total numeric(12,2) DEFAULT 0 NOT NULL,note text,cache_refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,cache_status text DEFAULT 'CURRENT' NOT NULL,PRIMARY KEY(source_location_id,event_key))");
+            s.execute("CREATE INDEX sync_cross_store_customer_history_customer_idx ON public.sync_cross_store_customer_history_cache(customer_id,source_created_at DESC)");
+            s.execute("CREATE TABLE public.sync_cross_store_customer_history_status (source_location_id integer NOT NULL PRIMARY KEY,store_name text NOT NULL,row_count integer DEFAULT 0 NOT NULL,status text NOT NULL,last_error text,refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL)");
+            s.execute("UPDATE customer_account_transactions t SET location_id=s.location_id FROM sales s WHERE t.sale_id=s.sale_id AND t.location_id IS NULL");
+            s.execute("UPDATE customer_account_transactions t SET location_id=o.location_id FROM custom_orders o WHERE t.custom_order_id=o.custom_order_id AND t.location_id IS NULL");
+            s.execute("UPDATE customer_account_transactions t SET location_id=i.location_id FROM invoices i WHERE t.invoice_id=i.invoice_id AND t.location_id IS NULL");
+            String nextCatalog=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                update.setString(1,resource);update.setString(2,nextCatalog);update.setInt(3,BASELINE_VERSION);if(update.executeUpdate()!=1)throw new SQLException("Local customer-history cache contract could not be upgraded.");}
+            connection.commit();
+        }catch(SQLException ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(auto);}
     }
 
     /** One-time, exact-contract upgrade from the accepted pre-return-receipt v1 baseline. */
@@ -156,6 +177,12 @@ public final class SchemaContractService {
             statement.execute("ALTER TABLE public.cross_store_refund_requests ADD COLUMN return_receipt_number text, ADD COLUMN receipt_device_id text, ADD COLUMN receipt_sequence integer");
             statement.execute("CREATE UNIQUE INDEX cross_store_refund_requests_receipt_number_uidx ON public.cross_store_refund_requests(return_receipt_number) WHERE COALESCE(return_receipt_number,'')<>''");
             statement.execute("ALTER TABLE public.sync_cross_store_returns_cache ADD COLUMN return_receipt_number text");
+            statement.execute("CREATE TABLE public.sync_cross_store_customer_history_cache (source_location_id integer NOT NULL,event_key text NOT NULL,customer_id integer NOT NULL,event_type text NOT NULL,source_id bigint,document_number text,source_created_at timestamp with time zone,store_name text NOT NULL,user_name text,device_name text,cash_drawer_name text,payment_method text,payment_reference text,amount numeric(12,2) DEFAULT 0 NOT NULL,payment_status text,document_status text,document_total numeric(12,2) DEFAULT 0 NOT NULL,note text,cache_refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,cache_status text DEFAULT 'CURRENT' NOT NULL,PRIMARY KEY(source_location_id,event_key))");
+            statement.execute("CREATE INDEX sync_cross_store_customer_history_customer_idx ON public.sync_cross_store_customer_history_cache(customer_id,source_created_at DESC)");
+            statement.execute("CREATE TABLE public.sync_cross_store_customer_history_status (source_location_id integer NOT NULL PRIMARY KEY,store_name text NOT NULL,row_count integer DEFAULT 0 NOT NULL,status text NOT NULL,last_error text,refreshed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL)");
+            statement.execute("UPDATE customer_account_transactions t SET location_id=s.location_id FROM sales s WHERE t.sale_id=s.sale_id AND t.location_id IS NULL");
+            statement.execute("UPDATE customer_account_transactions t SET location_id=o.location_id FROM custom_orders o WHERE t.custom_order_id=o.custom_order_id AND t.location_id IS NULL");
+            statement.execute("UPDATE customer_account_transactions t SET location_id=i.location_id FROM invoices i WHERE t.invoice_id=i.invoice_id AND t.location_id IS NULL");
             String newCatalog = catalogFingerprint(connection, List.of("public"), false);
             try (PreparedStatement update = connection.prepareStatement("""
                     UPDATE public.smartstock_schema_metadata

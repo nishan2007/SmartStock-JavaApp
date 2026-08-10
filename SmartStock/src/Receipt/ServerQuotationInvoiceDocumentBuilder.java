@@ -26,13 +26,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     public static String buildQuotation(long quotationId) throws SQLException {
         try (Connection conn = DB.getConnection()) {
-            ServerCompanyCustomizationRepository.ReceiptSettings settings = ServerCompanyCustomizationRepository.loadReceiptSettings();
-            ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings = ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings();
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT quotation_number, customer_name, customer_phone, customer_email,
                            status, issue_date, valid_until, quotation_notes,
                            subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount,
-                           location_name, created_by_name
+                           location_id, location_name, created_by_name
                     FROM quotations
                     WHERE quotation_id = ?
                     """)) {
@@ -41,6 +39,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     if (!rs.next()) {
                         throw new SQLException("Quotation not found.");
                     }
+                    int locationId = documentLocationId(rs);
+                    ServerCompanyCustomizationRepository.ReceiptSettings settings =
+                            ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
+                            ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
                     return buildQuotationHtml(conn, quotationId, rs, settings, printSettings);
                 }
             }
@@ -49,12 +52,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     public static String buildInvoice(long invoiceId) throws SQLException {
         try (Connection conn = DB.getConnection()) {
-            ServerCompanyCustomizationRepository.ReceiptSettings settings = ServerCompanyCustomizationRepository.loadReceiptSettings();
-            ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings = ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings();
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT invoice_number, quotation_number, customer_name, customer_phone, customer_email,
                            status, invoice_date, invoice_notes, subtotal_amount, discount_amount, vat_amount,
-                           total_amount, amount_paid, balance_due, payment_status, vat_rate_percent, vat_mode, location_name, created_by_name
+                           total_amount, amount_paid, balance_due, payment_status, vat_rate_percent, vat_mode,
+                           location_id, location_name, created_by_name
                     FROM invoices
                     WHERE invoice_id = ?
                     """)) {
@@ -63,6 +65,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     if (!rs.next()) {
                         throw new SQLException("Sales invoice not found.");
                     }
+                    int locationId = documentLocationId(rs);
+                    ServerCompanyCustomizationRepository.ReceiptSettings settings =
+                            ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
+                            ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
                     return buildInvoiceHtml(conn, invoiceId, rs, settings, printSettings);
                 }
             }
@@ -71,12 +78,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     public static String buildDelivery(long deliveryEventId) throws SQLException {
         try (Connection conn = DB.getConnection()) {
-            ServerCompanyCustomizationRepository.ReceiptSettings settings = ServerCompanyCustomizationRepository.loadReceiptSettings();
-            ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings = ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings();
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT de.invoice_id, de.delivery_number, de.delivery_method, de.receiver_name,
                            de.delivery_notes, de.remaining_balance, de.delivered_by_name, de.created_at,
-                           so.invoice_number, so.customer_name, so.customer_phone, so.balance_due
+                           so.invoice_number, so.customer_name, so.customer_phone, so.balance_due, so.location_id
                     FROM invoice_delivery_events de
                     JOIN invoices so ON so.invoice_id = de.invoice_id
                     WHERE de.invoice_delivery_event_id = ?
@@ -86,6 +91,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     if (!rs.next()) {
                         throw new SQLException("Delivery bill not found.");
                     }
+                    int locationId = documentLocationId(rs);
+                    ServerCompanyCustomizationRepository.ReceiptSettings settings =
+                            ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId);
+                    ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings =
+                            ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId);
                     return buildDeliveryHtml(conn, deliveryEventId, rs, settings, printSettings);
                 }
             }
@@ -278,7 +288,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .document-bottom { margin-top: auto; padding-top: 10px; }
                 table { border-collapse: collapse; border-spacing: 0; width: 100%; }
                 .joined { margin-top: -2px; }
-                td, th { border: 2px solid #111; padding: 4px 5px; font-size: 11px; line-height: 1.15; }
+                td, th { border: 0; padding: 4px 5px; font-size: 11px; line-height: 1.15; }
                 th { background: #d7d7d7; font-weight: bold; text-align: center; }
                 .top td { border: 0; }
                 .logo { font-size: 34px; color: #f05a00; font-weight: bold; font-style: italic; text-align: center; min-height: 76px; }
@@ -289,7 +299,10 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .doctype-line { white-space: nowrap; }
                 .docmeta { font-size: 13px; font-weight: bold; text-align: right; }
                 .contact td { border: 0; font-weight: bold; font-size: 11px; padding: 1px 4px; }
-                .info td { font-size: 11px; border: 2px solid #111; vertical-align: top; }
+                .info, .document-grid { border: 2px solid #111; }
+                .info td { font-size: 11px; vertical-align: top; }
+                .grid-left { border-left: 2px solid #111; }
+                .grid-top { border-top: 2px solid #111; }
                 .info-label { font-weight: bold; color: #333; display: inline-block; min-width: 72px; }
                 .document-grid { margin-top: 0; table-layout: fixed; }
                 .bill-label { width: 15%; background: #d7d7d7; font-weight: bold; }
@@ -367,13 +380,13 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static void appendContactBlock(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings) {
-        String address1 = fallback(settings.addressLine1(), "Lot 1 & 2 #81 Skeldon,");
-        String address2 = fallback(settings.addressLine2(), "Corriverton,");
-        String address3 = fallback(settings.addressLine3(), "Berbice, Guyana");
-        String phone1 = fallback(settings.phoneLine1(), "(592) 643-2323     (592) 339-3200");
-        String phone2 = fallback(settings.phoneLine2(), "(592) 638-4002     (592) 622-5093");
-        String email1 = fallback(settings.emailLine1(), "deckershcn@yahoo.com");
-        String email2 = fallback(settings.emailLine2(), "deckershcn@gmail.com");
+        String address1 = clean(settings.addressLine1());
+        String address2 = clean(settings.addressLine2());
+        String address3 = clean(settings.addressLine3());
+        String phone1 = clean(settings.phoneLine1());
+        String phone2 = clean(settings.phoneLine2());
+        String email1 = clean(settings.emailLine1());
+        String email2 = clean(settings.emailLine2());
         html.append("<table class='contact'>")
                 .append("<tr><td>").append(esc(address1)).append("</td><td>").append(esc(phone1)).append("</td><td>").append(esc(email1)).append("</td></tr>")
                 .append("<tr><td>").append(esc(address2)).append("</td><td>").append(esc(phone2)).append("</td><td>").append(esc(email2)).append("</td></tr>")
@@ -396,7 +409,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                         .append(esc(field[1])).append("</div>");
             }
         }
-        html.append("</td><td style='width:50%'>")
+        html.append("</td><td class='grid-left' style='width:50%'>")
                 .append("<div><span class='info-label'>Customer:</span> ").append(esc(customerName)).append("</div>");
         if (!clean(customerPhone).isBlank()) {
             html.append("<div><span class='info-label'>Phone:</span> ").append(esc(customerPhone)).append("</div>");
@@ -445,42 +458,44 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                            int nextPage) {
         int columns = includeDelivery ? 6 : 4;
         html.append("<table class='document-grid' cellspacing='0' cellpadding='0' border='0'>")
-                .append("<tr><td class='bill-label'>Bill To:</td><td class='bill-name' colspan='")
+                .append("<tr><td class='bill-label'>Bill To:</td><td class='bill-name grid-left' colspan='")
                 .append(columns - 1)
                 .append("'>")
                 .append(esc(billTo))
                 .append("</td></tr>");
-        html.append("<tr><th style='width:12%'>Quantity</th>");
+        html.append("<tr><th class='grid-top' style='width:12%'>Quantity</th>");
         if (includeDelivery) {
-            html.append("<th style='width:12%'>Delivered</th><th style='width:12%'>Remaining</th>");
+            html.append("<th class='grid-top grid-left' style='width:12%'>Delivered</th><th class='grid-top grid-left' style='width:12%'>Remaining</th>");
         }
-        html.append("<th>Description</th><th style='width:16%'>Unit Price</th><th style='width:16%'>Amount</th></tr>");
+        html.append("<th class='grid-top grid-left'>Description</th><th class='grid-top grid-left' style='width:16%'>Unit Price</th><th class='grid-top grid-left' style='width:16%'>Amount</th></tr>");
         int rows = 0;
         for (DocumentLine line : lines) {
             rows++;
-            html.append("<tr class='line-row'><td class='center'>").append(line.quantity()).append("</td>");
+            html.append("<tr class='line-row'><td class='center grid-top'>").append(line.quantity()).append("</td>");
             if (includeDelivery) {
-                html.append("<td class='center'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
-                        .append("<td class='center'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
+                html.append("<td class='center grid-top grid-left'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
+                        .append("<td class='center grid-top grid-left'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description'>").append(esc(line.description())).append("</td>")
-                    .append("<td class='num'>").append(esc(money(line.unitPrice()))).append("</td>")
-                    .append("<td class='num'>").append(esc(money(line.amount()))).append("</td></tr>");
+            html.append("<td class='description grid-top grid-left'>").append(esc(line.description())).append("</td>")
+                    .append("<td class='num grid-top grid-left'>").append(esc(money(line.unitPrice()))).append("</td>")
+                    .append("<td class='num grid-top grid-left'>").append(esc(money(line.amount()))).append("</td></tr>");
         }
         for (int i = 0; i < Math.max(rowsPerPage - rows, 0); i++) {
             html.append("<tr class='blank'>");
             for (int c = 0; c < columns; c++) {
-                html.append("<td>&nbsp;</td>");
+                html.append("<td class='grid-top");
+                if (c > 0) html.append(" grid-left");
+                html.append("'>&nbsp;</td>");
             }
             html.append("</tr>");
         }
         if (lastPage) {
-            appendGridNoteRow(html, columns, validityNote);
             appendGridNoteRow(html, columns, balanceNote);
             if (!settings.footerNote().isBlank()) {
                 appendGridNoteRow(html, columns, settings.footerNote());
             }
             appendGridSignatureRows(html, columns, totalLabel, total, settings.showSignatures(), showDeliveredBy, receiverLabel, receiverName);
+            appendGridNoteRow(html, columns, validityNote);
         } else {
             appendGridNoteRow(html, columns, "Continued on page " + nextPage);
         }
@@ -489,7 +504,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static void appendGridNoteRow(StringBuilder html, int columns, String note) {
         if (!clean(note).isBlank()) {
-            html.append("<tr><td class='grid-note' colspan='").append(columns).append("'>")
+            html.append("<tr><td class='grid-note grid-top' colspan='").append(columns).append("'>")
                     .append(esc(note))
                     .append("</td></tr>");
         }
@@ -501,21 +516,21 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         int blankSpan = Math.max(1, columns - 3);
         html.append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label'>")
+            html.append("<td class='signature-label grid-top'>")
                     .append(showDeliveredBy ? "Delivered By:" : "Received By:")
-                    .append("</td><td colspan='").append(blankSpan).append("'></td>");
+                    .append("</td><td class='grid-top grid-left' colspan='").append(blankSpan).append("'></td>");
         } else {
-            html.append("<td colspan='").append(blankSpan + 1).append("'></td>");
+            html.append("<td class='grid-top' colspan='").append(blankSpan + 1).append("'></td>");
         }
-        html.append("<td class='total-label' rowspan='2'>").append(esc(totalLabel)).append("</td>")
-                .append("<td class='total-amount' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
+        html.append("<td class='total-label grid-top grid-left' rowspan='2'>").append(esc(totalLabel)).append("</td>")
+                .append("<td class='total-amount grid-top grid-left' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
                 .append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label'>").append(receiverLabel ? "Received By:" : "Approved By:")
-                    .append("</td><td colspan='").append(blankSpan).append("'>")
+            html.append("<td class='signature-label grid-top'>").append(receiverLabel ? "Received By:" : "Approved By:")
+                    .append("</td><td class='grid-top grid-left' colspan='").append(blankSpan).append("'>")
                     .append(esc(clean(receiverName))).append("</td>");
         } else {
-            html.append("<td colspan='").append(blankSpan + 1).append("'></td>");
+            html.append("<td class='grid-top' colspan='").append(blankSpan + 1).append("'></td>");
         }
         html.append("</tr>");
     }
@@ -524,6 +539,14 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return "Paid: " + money(paid)
                 + "    Balance Due: " + money(balance)
                 + "    Status: " + clean(status);
+    }
+
+    private static int documentLocationId(ResultSet header) throws SQLException {
+        Integer locationId = header.getObject("location_id", Integer.class);
+        if (locationId == null || locationId <= 0) {
+            throw new SQLException("The document is not assigned to a valid store location.");
+        }
+        return locationId;
     }
 
     private static void appendBottomNote(StringBuilder html, String note) {
@@ -580,11 +603,6 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             return path;
         }
         return new java.io.File(path).toURI().toString();
-    }
-
-    private static String fallback(String value, String fallback) {
-        String clean = clean(value);
-        return clean.isBlank() ? fallback : clean;
     }
 
     private static String esc(String value) {

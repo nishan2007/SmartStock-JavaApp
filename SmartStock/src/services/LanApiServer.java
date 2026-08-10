@@ -166,6 +166,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/session/permissions", exchange -> handle(exchange, this::permissions));
         server.createContext("/v1/approvals", exchange -> handle(exchange, this::approve));
         server.createContext("/v1/catalog/search", exchange -> handle(exchange, this::searchCatalog));
+        server.createContext("/v1/catalog/identifier", exchange -> handle(exchange, this::catalogIdentifier));
+        server.createContext("/v1/catalog/barcodes/generate", exchange -> handle(exchange, this::generateCatalogBarcode));
         server.createContext("/v1/customers/accounts", exchange -> handle(exchange, this::customerAccounts));
         server.createContext("/v1/cash-drawers/current", exchange -> handle(exchange, this::currentCashDrawer));
         server.createContext("/v1/sales/settings", exchange -> handle(exchange, this::salesSettings));
@@ -1256,6 +1258,109 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
+    private ApiResult catalogIdentifier(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        String rawIdentifier = required(context.body(), "identifier", 300);
+        String normalized = BarcodeNormalizer.normalize(rawIdentifier);
+        if (normalized.isBlank()) {
+            throw new ApiException(400, "VALIDATION_ERROR", "An item barcode or SKU is required.", false);
+        }
+
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "MAKE_SALE", "VIEW_INVENTORY",
+                    "RECEIVING_INVENTORY", "EDIT_ITEM");
+            List<Map<String, Object>> rows = exactBarcodeProducts(
+                    connection, session.locationId(), BarcodeNormalizer.lookupCandidates(rawIdentifier));
+            if (rows.isEmpty()) {
+                rows = exactSkuProducts(connection, session.locationId(), normalized);
+            }
+            String status = rows.isEmpty() ? "NOT_FOUND" : rows.size() == 1 ? "MATCH" : "AMBIGUOUS";
+            return ApiResult.ok(Map.of(
+                    "status", status,
+                    "normalizedIdentifier", normalized,
+                    "products", rows));
+        }
+    }
+
+    private ApiResult generateCatalogBarcode(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection connection = DB.getConnection()) {
+            requireAnyPermission(connection, session.userId(), "NEW_ITEM", "EDIT_ITEM",
+                    "MANAGE_CUSTOM_ORDER_ITEMS", "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDERS");
+            try {
+                return ApiResult.ok(Map.of("barcode", CatalogBarcodeService.generateAvailable(connection)));
+            } catch (SQLException ex) {
+                throw new ApiException(409, "BARCODE_GENERATION_FAILED", ex.getMessage(), false);
+            }
+        }
+    }
+
+    private List<Map<String, Object>> exactBarcodeProducts(Connection connection, int locationId,
+                                                            List<String> candidates) throws SQLException {
+        if (candidates.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
+        String matchExpression = "UPPER(REGEXP_REPLACE(COALESCE(p.barcode,''), '[\\s-]+', '', 'g')) IN (" + placeholders + ")"
+                + " OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id=p.product_id"
+                + " AND UPPER(REGEXP_REPLACE(COALESCE(pb.barcode,''), '[\\s-]+', '', 'g')) IN (" + placeholders + "))";
+        try (PreparedStatement ps = connection.prepareStatement(exactCatalogSql(locationId, matchExpression))) {
+            int index = 1;
+            ps.setInt(index++, locationId);
+            for (String candidate : candidates) ps.setString(index++, candidate);
+            for (String candidate : candidates) ps.setString(index++, candidate);
+            return readCatalogRows(ps);
+        }
+    }
+
+    private List<Map<String, Object>> exactSkuProducts(Connection connection, int locationId,
+                                                        String normalizedIdentifier) throws SQLException {
+        String matchExpression = "UPPER(REGEXP_REPLACE(COALESCE(p.sku,''), '[\\s-]+', '', 'g')) = ?";
+        try (PreparedStatement ps = connection.prepareStatement(exactCatalogSql(locationId, matchExpression))) {
+            ps.setInt(1, locationId);
+            ps.setString(2, normalizedIdentifier);
+            return readCatalogRows(ps);
+        }
+    }
+
+    private String exactCatalogSql(int locationId, String matchExpression) {
+        return """
+                SELECT p.product_id, p.name, COALESCE(p.size, '') AS size,
+                       COALESCE(p.description, '') AS description, COALESCE(p.sku, '') AS sku,
+                       p.price, COALESCE(p.product_type, 'INVENTORY') AS product_type,
+                       p.category_id, COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand,
+                       %s AS searchable_text
+                FROM products p
+                LEFT JOIN inventory i ON i.product_id = p.product_id AND i.location_id = ?
+                WHERE %s
+                ORDER BY p.product_id
+                LIMIT 3
+                """.formatted(ProductSearchHelper.searchableTextExpression("p", locationId), matchExpression);
+    }
+
+    private List<Map<String, Object>> readCatalogRows(PreparedStatement ps) throws SQLException {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("productId", rs.getInt("product_id"));
+                row.put("name", rs.getString("name"));
+                row.put("size", rs.getString("size"));
+                row.put("description", rs.getString("description"));
+                row.put("sku", rs.getString("sku"));
+                row.put("price", rs.getBigDecimal("price"));
+                row.put("productType", rs.getString("product_type"));
+                row.put("categoryId", rs.getObject("category_id"));
+                row.put("quantityOnHand", rs.getInt("quantity_on_hand"));
+                row.put("searchableText", rs.getString("searchable_text"));
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
     private ApiResult customerAccounts(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
         DevicePrincipal device = authenticateDevice(context.exchange());
@@ -2158,7 +2263,7 @@ public final class LanApiServer implements AutoCloseable {
         });
     }
     private ApiResult customCatalogAdminState(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");return ApiResult.ok(Map.of("state",LanCustomOrderCatalogAdminService.load(c)));}}
-    private ApiResult customCatalogAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom catalog change."),op="custom-orders.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}long id=LanCustomOrderCatalogAdminService.mutate(c,action,x.body());Map<String,Object>result=Map.of("recordId",id);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
+    private ApiResult customCatalogAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom catalog change."),op="custom-orders.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}long id=LanCustomOrderCatalogAdminService.mutate(c,action,x.body());Map<String,Object>result=Map.of("recordId",id);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(CatalogBarcodeService.ConflictException e){c.rollback();throw new ApiException(409,"BARCODE_EXISTS",e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private ApiResult customOrderWorkflowRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){String action=required(x.body(),"action",40);requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_LOOKUP","CUSTOM_ORDER_OVERRIDES");Map<String,Object>r=new LinkedHashMap<>();switch(action){case"ALL"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,"",500));case"MINE"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),s.userId(),"",500));case"LOOKUP"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,optional(x.body(),"search",500),100));case"RETURNS"->r.put("lines",LanCustomOrderWorkflowService.returnLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DELIVERIES"->r.put("lines",LanCustomOrderWorkflowService.deliveryLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"PRODUCTION"->r.put("lines",LanCustomOrderWorkflowService.productionLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DETAILS"->r.put("details",LanCustomOrderWorkflowService.details(c,requiredLong(x.body(),"orderId"),s.locationId()));default->throw new ApiException(400,"VALIDATION_ERROR","The custom order lookup is invalid.",false);}return ApiResult.ok(r);}}
     private ApiResult customOrderWorkflowMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom order change."),op="custom-orders.workflow."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());String deviceName=loadDeviceDisplayName(c,d.deviceId());long orderId=requiredLong(x.body(),"orderId");switch(action){case"PAYMENT"->{requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_PAYMENTS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.payment(c,orderId,x.body().get("amount").getAsBigDecimal(),required(x.body(),"method",30),optional(x.body(),"reference",500),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"PRODUCTION"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.production(c,orderId,ids==null?List.of():List.of(ids),required(x.body(),"status",40),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_LINES"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.deliver(c,orderId,ids==null?List.of():List.of(ids),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_ORDER"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.markOrderDelivered(c,orderId,s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"LINE_RETURN"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.ReturnRequest[]requests=GSON.fromJson(x.body().get("returns"),LanCustomOrderWorkflowService.ReturnRequest[].class);BigDecimal total=BigDecimal.ZERO;if(requests!=null)for(var r:requests)if(r.amount()!=null)total=total.add(r.amount());BigDecimal limit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(custom_order_refund_approval_limit,0) FROM company_customization WHERE location_id=?")){ps.setInt(1,s.locationId());try(ResultSet rs=ps.executeQuery()){if(rs.next())limit=rs.getBigDecimal(1);}}if(limit!=null&&limit.signum()>0&&total.compareTo(limit)>0&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_REFUND_APPROVAL","CUSTOM_ORDER_OVERRIDES")){String reason=required(x.body(),"approvalReason",2000);consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval",reason);}LanCustomOrderWorkflowService.lineReturn(c,orderId,requests==null?List.of():List.of(requests),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}default->throw new ApiException(400,"VALIDATION_ERROR","The custom order change is invalid.",false);}Map<String,Object>result=Map.of("updated",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
 
@@ -2632,6 +2737,7 @@ public final class LanApiServer implements AutoCloseable {
                 completeIdempotency(connection, device.deviceId(), key, result);
                 connection.commit(); return ApiResult.ok(result);
             } catch (LanProductAdminService.RuleViolation ex) { connection.rollback(); throw apiException(ex); }
+            catch (CatalogBarcodeService.ConflictException ex) { connection.rollback(); throw new ApiException(409,"BARCODE_EXISTS",ex.getMessage(),false); }
             catch (Exception ex) { connection.rollback(); throw ex; }
             finally { connection.setAutoCommit(true); }
         }

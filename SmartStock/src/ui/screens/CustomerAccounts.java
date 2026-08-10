@@ -81,7 +81,7 @@ public class CustomerAccounts extends JFrame {
         searchPanel.add(searchField, BorderLayout.CENTER);
 
         customerModel = new DefaultTableModel(
-                new Object[]{"ID", "Account #", "Name", "Customer Type ID", "Customer Type", "Phone", "Email", "Credit Limit", "Balance", "Available", "Account Type", "Active", "Notes"},
+                new Object[]{"ID", "Account #", "Name", "Customer Type ID", "Customer Type", "Phone", "Email", "Credit Limit", "Balance (All Stores)", "Available Credit", "Account Type", "Active", "Notes"},
                 0
         ) {
             @Override
@@ -168,7 +168,7 @@ public class CustomerAccounts extends JFrame {
         addField(formPanel, gbc, 3, "Phone:", phoneField);
         addField(formPanel, gbc, 4, "Email:", emailField);
         addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
-        addField(formPanel, gbc, 6, "Current Balance:", balanceField);
+        addField(formPanel, gbc, 6, "Balance (All Stores):", balanceField);
 
         gbc.gridx = 0;
         gbc.gridy = 7;

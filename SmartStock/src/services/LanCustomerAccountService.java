@@ -85,6 +85,7 @@ final class LanCustomerAccountService {
 
     static Map<String,Object> adjust(Connection c,JsonObject body,UUID deviceId,int userId,String userName,int locationId)throws Exception{
         require(c,userId,"CUSTOMER_ACCOUNTS");CustomerAccountLedgerService.ensureSchema(c);
+        CustomerAccountLedgerService.requireCurrentMultiStoreBalance(c,locationId);
         Adjustment r;
         try{r=GSON.fromJson(body,Adjustment.class);}catch(Exception ex){throw rule(400,"VALIDATION_ERROR","Account adjustment details are invalid.");}
         if(r==null||r.customerId()<=0)throw rule(400,"VALIDATION_ERROR","Select a customer account.");
@@ -219,26 +220,62 @@ final class LanCustomerAccountService {
         require(c,userId,"CUSTOMER_ACCOUNTS");CustomerAccountLedgerService.ensureSchema(c);
         List<Map<String,Object>>rows=new ArrayList<>();BigDecimal charges=BigDecimal.ZERO,payments=BigDecimal.ZERO;
         String sql="""
-                SELECT t.transaction_id,COALESCE(t.payment_id,''),t.created_at,COALESCE(t.user_name,''),
-                  COALESCE(t.device_name,t.device_id,''),COALESCE(t.cash_drawer_name,''),COALESCE(t.transaction_type,''),
-                  COALESCE(t.payment_method,''),COALESCE(t.payment_reference,''),t.sale_id,t.custom_order_id,
-                  %s AS balance_delta,
-                  CASE WHEN t.custom_order_id IS NOT NULL AND COALESCE(t.transaction_type,'') IN ('CUSTOM_ORDER_PAID','CUSTOM_ORDER_CREDIT')
-                    THEN COALESCE(co.amount_paid,0) ELSE COALESCE(t.amount,0) END,
-                  COALESCE(t.note,''),COALESCE(s.payment_status,co.payment_status,''),COALESCE(s.total_amount,co.total_amount,0)
-                FROM customer_account_transactions t LEFT JOIN sales s ON t.sale_id=s.sale_id
-                LEFT JOIN custom_orders co ON t.custom_order_id=co.custom_order_id WHERE t.customer_id=?
-                ORDER BY t.created_at DESC,t.transaction_id DESC
+                SELECT * FROM (
+                  SELECT 'LEDGER:'||t.transaction_id AS event_id,t.transaction_id,COALESCE(t.payment_id,''),t.created_at,t.location_id,
+                    COALESCE(l.name,''),COALESCE(t.user_name,''),COALESCE(t.device_name,t.device_id,''),COALESCE(t.cash_drawer_name,''),
+                    COALESCE(t.transaction_type,''),CASE WHEN t.invoice_id IS NOT NULL THEN 'INVOICE' WHEN t.custom_order_id IS NOT NULL THEN 'CUSTOM_ORDER'
+                      WHEN t.sale_id IS NOT NULL THEN 'SALE' WHEN t.sales_order_id IS NOT NULL THEN 'SALES_ORDER' ELSE 'ACCOUNT' END,
+                    COALESCE(t.invoice_id,t.custom_order_id,t.sales_order_id,t.sale_id::bigint),
+                    COALESCE(i.invoice_number,co.order_number,s.receipt_number,t.payment_id,''),COALESCE(t.payment_method,''),COALESCE(t.payment_reference,''),
+                    t.sale_id,t.custom_order_id,t.invoice_id,NULL::bigint,COALESCE(t.amount,0),COALESCE(t.note,''),
+                    COALESCE(s.payment_status,co.payment_status,i.payment_status,''),COALESCE(i.status,co.status,s.status,''),
+                    COALESCE(s.total_amount,co.total_amount,i.total_amount,ABS(t.amount)),%s AS balance_delta
+                  FROM customer_account_transactions t LEFT JOIN locations l ON l.location_id=t.location_id
+                  LEFT JOIN sales s ON s.sale_id=t.sale_id LEFT JOIN custom_orders co ON co.custom_order_id=t.custom_order_id
+                  LEFT JOIN invoices i ON i.invoice_id=t.invoice_id WHERE t.customer_id=?
+                  UNION ALL
+                  SELECT 'SALE:'||s.sale_id,NULL::bigint,'',s.created_at,s.location_id,COALESCE(l.name,''),COALESCE(s.user_name,''),
+                    COALESCE(s.device_id,''),COALESCE(s.cash_drawer_name,''),'SALE','SALE',s.sale_id::bigint,COALESCE(s.receipt_number,''),
+                    COALESCE(s.payment_method,''),COALESCE(s.payment_reference,''),s.sale_id,NULL::bigint,NULL::bigint,NULL::bigint,
+                    COALESCE(s.total_amount,0),'',COALESCE(s.payment_status,''),COALESCE(s.status,''),COALESCE(s.total_amount,0),COALESCE(s.total_amount,0)
+                  FROM sales s LEFT JOIN locations l ON l.location_id=s.location_id WHERE s.customer_id=?
+                  UNION ALL
+                  SELECT 'CUSTOM_ORDER:'||o.custom_order_id,NULL::bigint,'',o.created_at,o.location_id,COALESCE(o.location_name,l.name,''),COALESCE(o.taken_by_name,''),
+                    COALESCE(o.device_name,o.device_id,''),COALESCE(o.cash_drawer_name,''),'CUSTOM_ORDER','CUSTOM_ORDER',o.custom_order_id,COALESCE(o.order_number,''),
+                    COALESCE(o.payment_method,''),COALESCE(o.payment_reference,''),NULL::integer,o.custom_order_id,NULL::bigint,NULL::bigint,
+                    COALESCE(o.total_amount,0),COALESCE(o.order_notes,''),COALESCE(o.payment_status,''),COALESCE(o.status,''),COALESCE(o.total_amount,0),COALESCE(o.total_amount,0)
+                  FROM custom_orders o LEFT JOIN locations l ON l.location_id=o.location_id WHERE o.customer_id=?
+                  UNION ALL
+                  SELECT 'QUOTATION:'||q.quotation_id,NULL::bigint,'',q.created_at,q.location_id,COALESCE(q.location_name,l.name,''),COALESCE(q.created_by_name,''),
+                    COALESCE(q.device_name,q.device_id,''),'','QUOTATION','QUOTATION',q.quotation_id,COALESCE(q.quotation_number,''),'','',NULL::integer,NULL::bigint,NULL::bigint,q.quotation_id,
+                    COALESCE(q.total_amount,0),COALESCE(q.quotation_notes,''),'',COALESCE(q.status,''),COALESCE(q.total_amount,0),0
+                  FROM quotations q LEFT JOIN locations l ON l.location_id=q.location_id WHERE q.customer_id=?
+                  UNION ALL
+                  SELECT 'INVOICE:'||i.invoice_id,NULL::bigint,'',i.created_at,i.location_id,COALESCE(i.location_name,l.name,''),COALESCE(i.created_by_name,''),
+                    COALESCE(i.device_name,i.device_id,''),COALESCE(i.cash_drawer_name,''),'INVOICE','INVOICE',i.invoice_id,COALESCE(i.invoice_number,''),
+                    COALESCE(i.payment_method,''),COALESCE(i.payment_reference,''),NULL::integer,NULL::bigint,i.invoice_id,NULL::bigint,
+                    COALESCE(i.total_amount,0),COALESCE(i.invoice_notes,''),COALESCE(i.payment_status,''),COALESCE(i.status,''),COALESCE(i.total_amount,0),COALESCE(i.balance_due,0)
+                  FROM invoices i LEFT JOIN locations l ON l.location_id=i.location_id WHERE i.customer_id=?
+                ) history ORDER BY created_at DESC,event_id DESC
                 """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
-        try(PreparedStatement ps=c.prepareStatement(sql)){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
-            BigDecimal delta=money(rs.getBigDecimal(12));if(delta.signum()>=0)charges=charges.add(delta);else payments=payments.add(delta.abs());
-            rows.add(map("transactionId",rs.getLong(1),"paymentId",rs.getString(2),"createdAtEpochMillis",epoch(rs.getTimestamp(3)),
-                    "userName",rs.getString(4),"deviceName",rs.getString(5),"cashDrawerName",rs.getString(6),
-                    "transactionType",rs.getString(7),"paymentMethod",rs.getString(8),"paymentReference",rs.getString(9),
-                    "saleId",nullableInt(rs,10),"customOrderId",nullableLong(rs,11),"amount",money(rs.getBigDecimal(13)),
-                    "note",rs.getString(14),"paymentStatus",rs.getString(15),"chargeTotal",money(rs.getBigDecimal(16))));}}}
+        try(PreparedStatement ps=c.prepareStatement(sql)){for(int n=1;n<=5;n++)ps.setInt(n,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+            BigDecimal delta=money(rs.getBigDecimal(26));if(rs.getString(1).startsWith("LEDGER:")){if(delta.signum()>=0)charges=charges.add(delta);else payments=payments.add(delta.abs());}
+            rows.add(historyMap(rs,false));}}}
+        for(Map<String,Object> remote:CrossStoreCustomerHistoryService.rows(c,customerId)){rows.add(remote);BigDecimal amount=money((BigDecimal)remote.get("amount"));
+            String type=String.valueOf(remote.get("transactionType"));
+            if(List.of("PAYMENT","RETURN","CUSTOM_ORDER_REFUND").contains(type))payments=payments.add(amount.abs());
+            else if(List.of("SALE_CREDIT","CUSTOM_ORDER_CREDIT","INVOICE_CREDIT","MANUAL_CHARGE").contains(type))charges=charges.add(amount.abs());}
+        rows.sort((a,b)->Long.compare(((Number)b.get("createdAtEpochMillis")).longValue(),((Number)a.get("createdAtEpochMillis")).longValue()));
         return map("transactions",rows,"count",rows.size(),"totalCharges",charges,"totalPayments",payments);
     }
+
+    private static Map<String,Object> historyMap(ResultSet rs,boolean remote)throws SQLException{return map(
+            "eventId",rs.getString(1),"transactionId",nullableLong(rs,2),"paymentId",rs.getString(3),"createdAtEpochMillis",epoch(rs.getTimestamp(4)),
+            "locationId",nullableInt(rs,5),"storeName",rs.getString(6),"userName",rs.getString(7),"deviceName",rs.getString(8),"cashDrawerName",rs.getString(9),
+            "transactionType",rs.getString(10),"documentType",rs.getString(11),"documentId",nullableLong(rs,12),"documentNumber",rs.getString(13),
+            "paymentMethod",rs.getString(14),"paymentReference",rs.getString(15),"saleId",nullableInt(rs,16),"customOrderId",nullableLong(rs,17),
+            "invoiceId",nullableLong(rs,18),"quotationId",nullableLong(rs,19),"amount",money(rs.getBigDecimal(20)),"note",rs.getString(21),
+            "paymentStatus",rs.getString(22),"documentStatus",rs.getString(23),"chargeTotal",money(rs.getBigDecimal(24)),"remote",remote);}
 
     static Map<String,Object> payments(Connection c,int customerId,int userId)throws Exception{
         require(c,userId,"CUSTOMER_ACCOUNTS");CustomerAccountLedgerService.ensureSchema(c);

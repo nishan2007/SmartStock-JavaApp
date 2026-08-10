@@ -84,6 +84,15 @@ public class ServerCompanyCustomizationRepository {
         return localSettings;
     }
 
+    /** Loads authoritative branding and contact details for a specific store location. */
+    public static ReceiptSettings loadReceiptSettingsForLocation(int locationId) throws SQLException {
+        ReceiptSettings settings = loadReceiptSettingsFromDb(locationId);
+        if (settings == null) {
+            throw new SQLException("Receipt settings were not found for store location " + locationId + ".");
+        }
+        return settings;
+    }
+
     public static ReceiptSettings getPreviewOverrideSettings() {
         return previewOverrideSettings;
     }
@@ -233,6 +242,14 @@ public class ServerCompanyCustomizationRepository {
         cachedQuotationInvoicePrintLocationId = locationId;
         cachedQuotationInvoicePrintSettings = localSettings;
         return localSettings;
+    }
+
+    /** Loads quotation/invoice layout settings for the store that owns the document. */
+    public static QuotationInvoicePrintSettings loadQuotationInvoicePrintSettingsForLocation(int locationId) throws SQLException {
+        QuotationInvoicePrintSettings settings = loadQuotationInvoicePrintSettingsFromDb(locationId);
+        return settings == null
+                ? new QuotationInvoicePrintSettings(null, null, null, null, null, true)
+                : settings;
     }
 
     public static void saveQuotationInvoicePrintSettings(QuotationInvoicePrintSettings settings) throws IOException, SQLException {

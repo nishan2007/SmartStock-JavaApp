@@ -110,6 +110,8 @@ public class MakeASale extends JFrame {
     private long latestSearchRequestId = 0L;
     private volatile java.util.List<Object[]> productSearchCache = java.util.Collections.emptyList();
     private long productSearchGeneration;
+    private long identifierLookupGeneration;
+    private String searchResultsQuery = "";
     private boolean resettingProductSearch;
     private int cachedProductLocationId = -1;
     private boolean suppressDiscountFieldEvents = false;
@@ -470,7 +472,7 @@ public class MakeASale extends JFrame {
        });
        searchField.addActionListener(new ActionListener() {
            public void actionPerformed(ActionEvent e) {
-               addSelectedSearchResultToCart();
+               handleProductSearchEnter();
            }
        });
        searchField.getDocument().addDocumentListener(new DocumentListener() {
@@ -1383,7 +1385,7 @@ public class MakeASale extends JFrame {
                         }
                         return;
                     }
-                    showSearchResultsPopup(rows);
+                    showSearchResultsPopup(rows, searchText);
             },failure->{if(showMessages)JOptionPane.showMessageDialog(MakeASale.this,"Database error: "+failure.getMessage());});
     }
 
@@ -1457,7 +1459,7 @@ public class MakeASale extends JFrame {
     }
 
 
-    private void showSearchResultsPopup(java.util.List<Object[]> rows) {
+    private void showSearchResultsPopup(java.util.List<Object[]> rows, String searchText) {
         if (searchPopup == null) {
             searchPopup = new JPopupMenu();
             searchPopup.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
@@ -1506,6 +1508,7 @@ public class MakeASale extends JFrame {
         for (Object[] row : rows) {
             model.addRow(row);
         }
+        searchResultsQuery = searchText == null ? "" : searchText.trim();
 
         if (searchResultsTable.getRowCount() > 0) {
             searchResultsTable.setRowSelectionInterval(0, 0);
@@ -1529,6 +1532,48 @@ public class MakeASale extends JFrame {
         }
 
         searchPopup.show(searchField, 0, searchField.getHeight());
+    }
+
+    private void handleProductSearchEnter() {
+        String identifier = searchField.getText().trim();
+        if (identifier.isEmpty()) {
+            return;
+        }
+        if (searchDebounceTimer != null) {
+            searchDebounceTimer.stop();
+        }
+        productSearchGeneration++;
+        final long lookupGeneration = ++identifierLookupGeneration;
+        UiTaskRunner.submit(this, "make-sale.identifier-lookup",
+                () -> LanApiClient.lookupCatalogIdentifier(identifier),
+                lookup -> {
+                    if (lookupGeneration != identifierLookupGeneration
+                            || !identifier.equals(searchField.getText().trim())) {
+                        return;
+                    }
+                    if ("MATCH".equals(lookup.status()) && lookup.products().size() == 1) {
+                        addCatalogProductToCart(lookup.products().get(0), 1);
+                        resetProductSearchAfterAdd();
+                    } else if ("AMBIGUOUS".equals(lookup.status())) {
+                        closeSearchPopup();
+                        JOptionPane.showMessageDialog(this,
+                                "This barcode matches more than one item. Review the item barcodes before continuing.");
+                    } else if (identifier.equals(searchResultsQuery)
+                            && searchPopup != null && searchPopup.isVisible()
+                            && searchResultsTable != null && searchResultsTable.getSelectedRow() >= 0) {
+                        addSelectedSearchResultToCart();
+                    } else {
+                        searchProducts(false);
+                    }
+                },
+                failure -> JOptionPane.showMessageDialog(this,
+                        "Unable to look up item barcode: " + failure.getMessage()));
+    }
+
+    private void addCatalogProductToCart(LanApiClient.CatalogProduct product, int quantity) {
+        addToCart(product.productId(), displayNameWithSize(product.name(), product.size()),
+                product.description(), product.sku(), product.price().doubleValue(), quantity,
+                normalizeProductType(product.productType()), product.categoryId());
     }
 
     private void addSelectedSearchResultToCart() {
@@ -1569,6 +1614,7 @@ public class MakeASale extends JFrame {
 
     private void resetProductSearchAfterAdd() {
         productSearchGeneration++;
+        identifierLookupGeneration++;
         if (searchDebounceTimer != null) {
             searchDebounceTimer.stop();
         }
@@ -1582,6 +1628,7 @@ public class MakeASale extends JFrame {
         if (searchResultsTable != null) {
             ((DefaultTableModel) searchResultsTable.getModel()).setRowCount(0);
         }
+        searchResultsQuery = "";
         SwingUtilities.invokeLater(searchField::requestFocusInWindow);
     }
 
@@ -1589,6 +1636,7 @@ public class MakeASale extends JFrame {
         if (searchPopup != null) {
             searchPopup.setVisible(false);
         }
+        searchResultsQuery = "";
     }
 
     private String displayNameWithSize(String name, String size) {

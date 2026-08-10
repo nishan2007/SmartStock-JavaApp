@@ -18,4 +18,15 @@ class MakeASaleItemSearchResetTest {
         assertTrue(source.contains("searchDebounceTimer.stop();"));
         assertTrue(source.contains("SwingUtilities.invokeLater(searchField::requestFocusInWindow);"));
     }
+
+    @Test void enterUsesExactLookupBeforeAcceptingCurrentDropdownSelection() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
+
+        assertTrue(source.contains("handleProductSearchEnter();"));
+        assertTrue(source.contains("LanApiClient.lookupCatalogIdentifier(identifier)"));
+        assertTrue(source.contains("identifier.equals(searchResultsQuery)"));
+        assertTrue(source.contains("\"MATCH\".equals(lookup.status())"));
+        assertTrue(source.contains("addCatalogProductToCart(lookup.products().get(0), 1);"));
+        assertTrue(source.contains("\"AMBIGUOUS\".equals(lookup.status())"));
+    }
 }

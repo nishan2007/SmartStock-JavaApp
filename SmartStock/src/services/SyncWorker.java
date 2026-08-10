@@ -149,6 +149,9 @@ public final class SyncWorker {
                 CrossStoreSalesService.RefreshResult crossStoreSales =
                         CrossStoreSalesService.refreshAll(local, config.locationId());
                 ignored.heartbeat();
+                CrossStoreCustomerHistoryService.RefreshResult customerHistory =
+                        CrossStoreCustomerHistoryService.refreshAll(local, config.locationId());
+                ignored.heartbeat();
                 CrossStoreRefundService.QueueResult crossStoreRefunds =
                         CrossStoreRefundService.synchronize(local,config.locationId());
                 ignored.heartbeat();

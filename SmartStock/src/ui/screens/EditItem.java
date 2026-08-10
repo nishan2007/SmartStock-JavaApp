@@ -16,6 +16,7 @@ import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.SessionDataCache;
 import ui.helpers.ProductImageHelper;
+import ui.helpers.BarcodeGenerationHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -214,7 +215,7 @@ public class EditItem extends JFrame {
     private JPanel createItemDetailsSection() {
         JPanel fields = createFieldGrid();
         addField(fields, 0, 0, "Item name", nameField, "Shown in sales and inventory search.", true, 1);
-        addField(fields, 1, 0, "Primary barcode", barcodeField, "Scan or enter the main barcode.", true, 1);
+        addField(fields, 1, 0, "Primary barcode", BarcodeGenerationHelper.field(this, barcodeField), "Scan, enter, or generate the main barcode.", true, 1);
         addField(fields, 0, 1, "Size", sizeField, "Optional, such as Small, 10 mm, or 5 lb.", false, 1);
         addField(fields, 1, 1, "SKU", skuField, "The product's permanent stock identifier.", true, 1);
         addField(fields, 0, 2, "Description", createTextAreaScroll(descriptionArea, 76),
@@ -248,8 +249,9 @@ public class EditItem extends JFrame {
         JPanel fields = createFieldGrid();
         imageSelector.setPreferredSize(new Dimension(380, 112));
         imageSelector.setMinimumSize(new Dimension(300, 112));
-        addField(fields, 0, 0, "Additional barcodes", createTextAreaScroll(barcodesArea, 112),
-                "Optional. Enter one per line, or separate them with commas.", false, 1);
+        JScrollPane barcodeScroll = createTextAreaScroll(barcodesArea, 112);
+        addField(fields, 0, 0, "Additional barcodes", BarcodeGenerationHelper.area(this, barcodesArea, barcodeScroll),
+                "Optional. Enter one per line, or generate another barcode.", false, 1);
         addField(fields, 1, 0, "Product image", imageSelector, "A clear product image is required.", true, 1);
         return createSectionCard("4", "Barcodes and image", "Maintain the required product image and any additional barcodes.", DeckersPalette.PURPLE, fields);
     }

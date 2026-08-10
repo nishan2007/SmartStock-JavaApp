@@ -39,10 +39,13 @@ public final class CustomerAccountLedgerService {
         }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
-                    WITH ledger AS (
-                        SELECT customer_id, COALESCE(SUM(%s), 0) AS balance
-                        FROM customer_account_transactions
-                        GROUP BY customer_id
+                    WITH ledger_events AS (
+                        SELECT customer_id,%s AS balance_delta FROM customer_account_transactions
+                        UNION ALL
+                        SELECT customer_id,%s AS balance_delta FROM sync_cross_store_customer_history_cache
+                        WHERE event_key LIKE 'LEDGER:%%'
+                    ), ledger AS (
+                        SELECT customer_id,COALESCE(SUM(balance_delta),0) AS balance FROM ledger_events GROUP BY customer_id
                     )
                     UPDATE customer_accounts ca
                     SET current_balance = GREATEST(COALESCE(ledger.balance, 0), 0),
@@ -50,15 +53,17 @@ public final class CustomerAccountLedgerService {
                     FROM ledger
                     WHERE ca.customer_id = ledger.customer_id
                       AND ca.current_balance IS DISTINCT FROM GREATEST(COALESCE(ledger.balance, 0), 0)
-                    """.formatted(BALANCE_DELTA_CASE));
+                    """.formatted(BALANCE_DELTA_CASE,remoteBalanceDeltaSql()));
             stmt.executeUpdate("""
                     UPDATE customer_accounts ca
                     SET current_balance = 0,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE NOT EXISTS (
                         SELECT 1
-                        FROM customer_account_transactions t
-                        WHERE t.customer_id = ca.customer_id
+                        FROM customer_account_transactions t WHERE t.customer_id = ca.customer_id
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM sync_cross_store_customer_history_cache r
+                        WHERE r.customer_id=ca.customer_id AND r.event_key LIKE 'LEDGER:%%'
                     )
                       AND ca.current_balance IS DISTINCT FROM 0
                     """);
@@ -99,14 +104,24 @@ public final class CustomerAccountLedgerService {
                 .replace("amount", tableAlias + ".amount");
     }
 
+    public static void requireCurrentMultiStoreBalance(Connection conn,int currentLocationId)throws SQLException{
+        ensureSchema(conn);
+        if(!CrossStoreCustomerHistoryService.allStoresCurrent(conn,currentLocationId))
+            throw new SQLException("Customer credit is temporarily unavailable because one or more store balances have not completed a current synchronization.","55000");
+    }
+
     private static BigDecimal calculateCustomerBalance(Connection conn, int customerId) throws SQLException {
         String sql = """
-                SELECT GREATEST(COALESCE(SUM(%s), 0), 0) AS balance
-                FROM customer_account_transactions
-                WHERE customer_id = ?
-                """.formatted(BALANCE_DELTA_CASE);
+                SELECT GREATEST(COALESCE(SUM(balance_delta),0),0) AS balance FROM (
+                  SELECT %s AS balance_delta FROM customer_account_transactions WHERE customer_id=?
+                  UNION ALL
+                  SELECT %s AS balance_delta FROM sync_cross_store_customer_history_cache
+                  WHERE customer_id=? AND event_key LIKE 'LEDGER:%%'
+                ) all_store_ledger
+                """.formatted(BALANCE_DELTA_CASE,remoteBalanceDeltaSql());
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, customerId);
+            ps.setInt(2, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     BigDecimal balance = rs.getBigDecimal("balance");
@@ -116,6 +131,16 @@ public final class CustomerAccountLedgerService {
         }
         return BigDecimal.ZERO;
     }
+
+    static String remoteBalanceDeltaSql(){return """
+            CASE
+              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
+              WHEN COALESCE(event_type,'') IN ('PAYMENT','RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
+              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID') THEN 0
+              WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)
+              ELSE COALESCE(amount,0)
+            END
+            """;}
 
     private static void backfillTransactionLocations(Statement stmt) throws SQLException {
         Connection conn = stmt.getConnection();
