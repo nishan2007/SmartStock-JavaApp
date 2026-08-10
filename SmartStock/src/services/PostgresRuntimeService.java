@@ -238,14 +238,56 @@ public final class PostgresRuntimeService {
         if (isWindows()) {
             return runPowerShell("$ErrorActionPreference='Stop'; $services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; if(-not $services){throw 'PostgreSQL Windows service was not found.'}; $services | Start-Service; $services | Format-Table Name,Status -AutoSize", Duration.ofMinutes(2));
         }
-        return runShell("""
+        DatabaseConfig config = DatabaseConfig.load();
+        int port = config.serverPort() <= 0 ? 5432 : config.serverPort();
+        return runShell(macStartPostgresScript(port), Duration.ofMinutes(2));
+    }
+
+    static String macStartPostgresScript(int port) {
+        return """
                 set -e
-                formula="$(brew services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1)"
-                if [ -z "$formula" ]; then formula="postgresql"; fi
-                brew services start "$formula" || brew services restart "$formula" || true
-                psql --version
-                brew services list | grep -E 'postgresql|Name' || true
-                """, Duration.ofMinutes(2));
+                find_executable() {
+                  command -v "$1" 2>/dev/null && return 0
+                  shift
+                  for candidate in "$@"; do
+                    if [ -x "$candidate" ]; then printf '%%s\n' "$candidate"; return 0; fi
+                  done
+                  return 1
+                }
+                pg_isready_bin="$(find_executable pg_isready /opt/homebrew/bin/pg_isready /usr/local/bin/pg_isready || true)"
+                psql_bin="$(find_executable psql /opt/homebrew/bin/psql /usr/local/bin/psql || true)"
+                if [ -n "$pg_isready_bin" ] && "$pg_isready_bin" -h 127.0.0.1 -p %d -q; then
+                  [ -z "$psql_bin" ] || "$psql_bin" --version
+                  echo 'PostgreSQL is already accepting connections.'
+                  exit 0
+                fi
+
+                service_plist="$(find "$HOME/Library/LaunchAgents" -maxdepth 1 -name 'homebrew.mxcl.postgresql*.plist' -print 2>/dev/null | sort -Vr | head -n 1)"
+                if [ -n "$service_plist" ]; then
+                  service_label="$(basename "$service_plist" .plist)"
+                  launchctl kickstart "gui/$(id -u)/$service_label" >/dev/null 2>&1 || true
+                else
+                  brew_bin="$(find_executable brew /opt/homebrew/bin/brew /usr/local/bin/brew || true)"
+                  if [ -z "$brew_bin" ]; then
+                    echo 'Homebrew was not found and no PostgreSQL LaunchAgent is installed.' >&2
+                    exit 1
+                  fi
+                  formula="$("$brew_bin" services list 2>/dev/null | awk '/^postgresql(@[0-9]+)?[[:space:]]/ {print $1}' | sort -Vr | head -n 1)"
+                  if [ -z "$formula" ]; then formula="postgresql"; fi
+                  "$brew_bin" services start "$formula" || "$brew_bin" services restart "$formula" || true
+                fi
+
+                for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                  if [ -n "$pg_isready_bin" ] && "$pg_isready_bin" -h 127.0.0.1 -p %d -q; then
+                    [ -z "$psql_bin" ] || "$psql_bin" --version
+                    echo 'PostgreSQL is accepting connections.'
+                    exit 0
+                  fi
+                  sleep 1
+                done
+                echo 'PostgreSQL did not become ready on port %d.' >&2
+                exit 1
+                """.formatted(port, port, port);
     }
 
     public static CommandResult stopPostgres() throws Exception {

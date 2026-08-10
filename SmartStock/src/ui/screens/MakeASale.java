@@ -109,6 +109,8 @@ public class MakeASale extends JFrame {
     private SwingWorker<java.util.List<Object[]>, Void> productCacheWorker;
     private long latestSearchRequestId = 0L;
     private volatile java.util.List<Object[]> productSearchCache = java.util.Collections.emptyList();
+    private long productSearchGeneration;
+    private boolean resettingProductSearch;
     private int cachedProductLocationId = -1;
     private boolean suppressDiscountFieldEvents = false;
     private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
@@ -473,6 +475,9 @@ public class MakeASale extends JFrame {
        });
        searchField.getDocument().addDocumentListener(new DocumentListener() {
            private void restartSearchDebounce() {
+               if (resettingProductSearch) {
+                   return;
+               }
                if (searchDebounceTimer == null) {
                    searchDebounceTimer = new javax.swing.Timer(300, e -> searchProducts(false));
                    searchDebounceTimer.setRepeats(false);
@@ -483,17 +488,17 @@ public class MakeASale extends JFrame {
 
            @Override
            public void insertUpdate(DocumentEvent e) {
-               SwingUtilities.invokeLater(this::restartSearchDebounce);
+               if (!resettingProductSearch) SwingUtilities.invokeLater(this::restartSearchDebounce);
            }
 
            @Override
            public void removeUpdate(DocumentEvent e) {
-               SwingUtilities.invokeLater(this::restartSearchDebounce);
+               if (!resettingProductSearch) SwingUtilities.invokeLater(this::restartSearchDebounce);
            }
 
            @Override
            public void changedUpdate(DocumentEvent e) {
-               SwingUtilities.invokeLater(this::restartSearchDebounce);
+               if (!resettingProductSearch) SwingUtilities.invokeLater(this::restartSearchDebounce);
            }
        });
        searchField.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -1346,6 +1351,7 @@ public class MakeASale extends JFrame {
 
     private void searchProducts(boolean showMessages) {
         final String searchText = searchField.getText().trim();
+        final long searchGeneration = ++productSearchGeneration;
 
         if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
@@ -1365,6 +1371,10 @@ public class MakeASale extends JFrame {
                 }
                 return rows;
             },rows->{
+                    if (searchGeneration != productSearchGeneration
+                            || !searchText.equals(searchField.getText().trim())) {
+                        return;
+                    }
                     if (rows.isEmpty()) {
                         closeSearchPopup();
                         if (showMessages) {
@@ -1554,9 +1564,25 @@ public class MakeASale extends JFrame {
         }
 
         addToCart(productId, displayNameWithSize(name, size), description, sku, price, qty, productType, departmentId);
+        resetProductSearchAfterAdd();
+    }
+
+    private void resetProductSearchAfterAdd() {
+        productSearchGeneration++;
+        if (searchDebounceTimer != null) {
+            searchDebounceTimer.stop();
+        }
+        resettingProductSearch = true;
+        try {
+            searchField.setText("");
+        } finally {
+            resettingProductSearch = false;
+        }
         closeSearchPopup();
-        searchField.requestFocusInWindow();
-        searchField.selectAll();
+        if (searchResultsTable != null) {
+            ((DefaultTableModel) searchResultsTable.getModel()).setRowCount(0);
+        }
+        SwingUtilities.invokeLater(searchField::requestFocusInWindow);
     }
 
     private void closeSearchPopup() {

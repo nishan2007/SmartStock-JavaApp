@@ -505,6 +505,8 @@ public class Quotations extends JFrame {
         private JButton createButton;
         private JButton cancelButton;
         private boolean updatingCustomerResults;
+        private long customerSearchGeneration;
+        private QuotationInvoiceViewService.CustomerOption rememberedCustomer;
         boolean created;
 
         QuotationEditor(JFrame owner) {
@@ -768,6 +770,10 @@ public class Quotations extends JFrame {
         }
 
         private void installCustomerSearch() {
+            customerBox.addItemListener(e->{
+                if(!updatingCustomerResults&&e.getStateChange()==java.awt.event.ItemEvent.SELECTED
+                        &&e.getItem() instanceof QuotationInvoiceViewService.CustomerOption customer)rememberedCustomer=customer;
+            });
             Component editor = customerBox.getEditor().getEditorComponent();
             if (editor instanceof JTextComponent textComponent) {
                 styleReadableControl(textComponent);
@@ -807,7 +813,10 @@ public class Quotations extends JFrame {
 
         private void refreshCustomerResults(String searchText) {
             String query=searchText==null?"":searchText;
+            long generation=++customerSearchGeneration;
             UiTaskRunner.submit(this,"quotation.customers",()->QuotationInvoiceViewService.searchCustomers(query),customers->{
+                if(generation!=customerSearchGeneration||!query.equals(editorText(customerBox)))return;
+                QuotationInvoiceViewService.CustomerOption previous=rememberedCustomer;
                 updatingCustomerResults = true;
                 customerBox.removeAllItems();
                 for (QuotationInvoiceViewService.CustomerOption customer : customers) {
@@ -815,21 +824,22 @@ public class Quotations extends JFrame {
                 }
                 customerBox.getEditor().setItem(query);
                 updatingCustomerResults = false;
-                selectExactCustomerMatch(query, customers);
+                QuotationInvoiceViewService.CustomerOption preserved=customerById(customers,previous);
+                if(preserved!=null&&exactCustomerMatch(preserved,query))rememberCustomer(preserved);
+                else selectExactCustomerMatch(query, customers);
                 showCustomerPopupIfUseful();
             },ex->{updatingCustomerResults=false;});
         }
 
         private QuotationInvoiceViewService.CustomerOption selectedCustomer() {
-            Object selected = customerBox.getSelectedItem();
-            if (selected instanceof QuotationInvoiceViewService.CustomerOption customer) {
-                return customer;
-            }
-            return selectBestCustomerMatch(editorText(customerBox));
+            QuotationInvoiceViewService.CustomerOption selected=resolveCustomerSelection(customerBox.getSelectedItem(),
+                    editorText(customerBox),currentCustomers(),rememberedCustomer);
+            if(selected!=null)rememberCustomer(selected);
+            return selected;
         }
 
         private QuotationInvoiceViewService.CustomerOption selectBestCustomerMatch(String searchText) {
-            List<QuotationInvoiceViewService.CustomerOption> current=new ArrayList<>();for(int i=0;i<customerBox.getItemCount();i++)current.add(customerBox.getItemAt(i));return selectBestCustomerMatch(searchText,current,true);
+            return selectBestCustomerMatch(searchText,currentCustomers(),true);
         }
 
         private void selectExactCustomerMatch(String searchText, List<QuotationInvoiceViewService.CustomerOption> customers) {
@@ -854,14 +864,29 @@ public class Quotations extends JFrame {
                 match = customers.get(0);
             }
             if (match != null) {
-                updatingCustomerResults = true;
-                customerBox.setSelectedItem(match);
-                updatingCustomerResults = false;
+                rememberCustomer(match);
             }
             return match;
         }
 
-        private boolean exactCustomerMatch(QuotationInvoiceViewService.CustomerOption customer, String searchText) {
+        private void rememberCustomer(QuotationInvoiceViewService.CustomerOption customer){
+            rememberedCustomer=customer;updatingCustomerResults=true;customerBox.setSelectedItem(customer);updatingCustomerResults=false;
+        }
+
+        private List<QuotationInvoiceViewService.CustomerOption> currentCustomers(){List<QuotationInvoiceViewService.CustomerOption> current=new ArrayList<>();for(int i=0;i<customerBox.getItemCount();i++)current.add(customerBox.getItemAt(i));return current;}
+
+        private static QuotationInvoiceViewService.CustomerOption customerById(List<QuotationInvoiceViewService.CustomerOption> customers,QuotationInvoiceViewService.CustomerOption target){if(target==null)return null;for(var customer:customers)if(customer.customerId()==target.customerId())return customer;return null;}
+
+        static QuotationInvoiceViewService.CustomerOption resolveCustomerSelection(Object selected,String editorText,List<QuotationInvoiceViewService.CustomerOption> customers,QuotationInvoiceViewService.CustomerOption remembered){
+            if(selected instanceof QuotationInvoiceViewService.CustomerOption customer)return customer;
+            if(remembered!=null&&exactCustomerMatch(remembered,editorText))return remembered;
+            String search=editorText==null?"":editorText.trim();if(search.isBlank())return null;
+            for(var customer:customers)if(exactCustomerMatch(customer,search))return customer;
+            return customers.size()==1?customers.get(0):null;
+        }
+
+        private static boolean exactCustomerMatch(QuotationInvoiceViewService.CustomerOption customer, String searchText) {
+            if(customer==null||searchText==null)return false;
             return searchText.equalsIgnoreCase(customer.name())
                     || searchText.equalsIgnoreCase(customer.accountNumber())
                     || searchText.equalsIgnoreCase(customer.toString());

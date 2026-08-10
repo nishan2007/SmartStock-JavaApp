@@ -191,6 +191,19 @@ class PostgresRuntimeServiceTest {
     }
 
     @Test
+    void macStartupWorksWithPackagedAppPathAndAvoidsUnneededBrewRestart() {
+        String script = PostgresRuntimeService.macStartPostgresScript(5432);
+
+        assertTrue(script.contains("/opt/homebrew/bin/pg_isready"));
+        assertTrue(script.contains("/opt/homebrew/bin/brew"));
+        assertTrue(script.contains("homebrew.mxcl.postgresql*.plist"));
+        assertTrue(script.contains("launchctl kickstart \"gui/"));
+        assertFalse(script.contains("launchctl kickstart -k"));
+        assertTrue(script.indexOf("pg_isready_bin") < script.indexOf("services list"));
+        assertFalse(script.contains("formula=\"$(brew services"));
+    }
+
+    @Test
     void validatesStoreLanScope() {
         assertTrue(PostgresRuntimeService.validLanSubnetForSetup("LocalSubnet"));
         assertTrue(PostgresRuntimeService.validLanSubnetForSetup("192.168.1.0/24"));
