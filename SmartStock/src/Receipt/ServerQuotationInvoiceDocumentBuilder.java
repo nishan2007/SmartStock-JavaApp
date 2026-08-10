@@ -301,8 +301,6 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .contact td { border: 0; font-weight: bold; font-size: 11px; padding: 1px 4px; }
                 .info, .document-grid { border: 2px solid #111; }
                 .info td { font-size: 11px; vertical-align: top; }
-                .grid-left { border-left: 2px solid #111; }
-                .grid-top { border-top: 2px solid #111; }
                 .info-label { font-weight: bold; color: #333; display: inline-block; min-width: 72px; }
                 .document-grid { margin-top: 0; table-layout: fixed; }
                 .bill-label { width: 15%; background: #d7d7d7; font-weight: bold; }
@@ -409,7 +407,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                         .append(esc(field[1])).append("</div>");
             }
         }
-        html.append("</td><td class='grid-left' style='width:50%'>")
+        html.append("</td><td style='width:50%; border-left:2px solid #111'>")
                 .append("<div><span class='info-label'>Customer:</span> ").append(esc(customerName)).append("</div>");
         if (!clean(customerPhone).isBlank()) {
             html.append("<div><span class='info-label'>Phone:</span> ").append(esc(customerPhone)).append("</div>");
@@ -458,33 +456,33 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                            int nextPage) {
         int columns = includeDelivery ? 6 : 4;
         html.append("<table class='document-grid' cellspacing='0' cellpadding='0' border='0'>")
-                .append("<tr><td class='bill-label'>Bill To:</td><td class='bill-name grid-left' colspan='")
+                .append("<tr><td class='bill-label'>Bill To:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
                 .append(columns - 1)
                 .append("'>")
                 .append(esc(billTo))
                 .append("</td></tr>");
-        html.append("<tr><th class='grid-top' style='width:12%'>Quantity</th>");
+        html.append("<tr><th style='width:12%; border-top:2px solid #111'>Quantity</th>");
         if (includeDelivery) {
-            html.append("<th class='grid-top grid-left' style='width:12%'>Delivered</th><th class='grid-top grid-left' style='width:12%'>Remaining</th>");
+            html.append("<th style='width:12%; border-top:2px solid #111; border-left:2px solid #111'>Delivered</th><th style='width:12%; border-top:2px solid #111; border-left:2px solid #111'>Remaining</th>");
         }
-        html.append("<th class='grid-top grid-left'>Description</th><th class='grid-top grid-left' style='width:16%'>Unit Price</th><th class='grid-top grid-left' style='width:16%'>Amount</th></tr>");
+        html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>Description</th><th style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Unit Price</th><th style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Amount</th></tr>");
         int rows = 0;
         for (DocumentLine line : lines) {
             rows++;
-            html.append("<tr class='line-row'><td class='center grid-top'>").append(line.quantity()).append("</td>");
+            html.append("<tr class='line-row'><td class='center' style='border-top:2px solid #111'>").append(line.quantity()).append("</td>");
             if (includeDelivery) {
-                html.append("<td class='center grid-top grid-left'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
-                        .append("<td class='center grid-top grid-left'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
+                html.append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
+                        .append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description grid-top grid-left'>").append(esc(line.description())).append("</td>")
-                    .append("<td class='num grid-top grid-left'>").append(esc(money(line.unitPrice()))).append("</td>")
-                    .append("<td class='num grid-top grid-left'>").append(esc(money(line.amount()))).append("</td></tr>");
+            html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(line.description())).append("</td>")
+                    .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.unitPrice()))).append("</td>")
+                    .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.amount()))).append("</td></tr>");
         }
         for (int i = 0; i < Math.max(rowsPerPage - rows, 0); i++) {
             html.append("<tr class='blank'>");
             for (int c = 0; c < columns; c++) {
-                html.append("<td class='grid-top");
-                if (c > 0) html.append(" grid-left");
+                html.append("<td style='border-top:2px solid #111");
+                if (c > 0) html.append("; border-left:2px solid #111");
                 html.append("'>&nbsp;</td>");
             }
             html.append("</tr>");
@@ -504,7 +502,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static void appendGridNoteRow(StringBuilder html, int columns, String note) {
         if (!clean(note).isBlank()) {
-            html.append("<tr><td class='grid-note grid-top' colspan='").append(columns).append("'>")
+            html.append("<tr><td class='grid-note' style='border-top:2px solid #111' colspan='").append(columns).append("'>")
                     .append(esc(note))
                     .append("</td></tr>");
         }
@@ -516,21 +514,21 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         int blankSpan = Math.max(1, columns - 3);
         html.append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label grid-top'>")
+            html.append("<td class='signature-label' style='border-top:2px solid #111'>")
                     .append(showDeliveredBy ? "Delivered By:" : "Received By:")
-                    .append("</td><td class='grid-top grid-left' colspan='").append(blankSpan).append("'></td>");
+                    .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'></td>");
         } else {
-            html.append("<td class='grid-top' colspan='").append(blankSpan + 1).append("'></td>");
+            html.append("<td style='border-top:2px solid #111' colspan='").append(blankSpan + 1).append("'></td>");
         }
-        html.append("<td class='total-label grid-top grid-left' rowspan='2'>").append(esc(totalLabel)).append("</td>")
-                .append("<td class='total-amount grid-top grid-left' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
+        html.append("<td class='total-label' style='border-top:2px solid #111; border-left:2px solid #111' rowspan='2'>").append(esc(totalLabel)).append("</td>")
+                .append("<td class='total-amount' style='border-top:2px solid #111; border-left:2px solid #111' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
                 .append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label grid-top'>").append(receiverLabel ? "Received By:" : "Approved By:")
-                    .append("</td><td class='grid-top grid-left' colspan='").append(blankSpan).append("'>")
+            html.append("<td class='signature-label' style='border-top:2px solid #111'>").append(receiverLabel ? "Received By:" : "Approved By:")
+                    .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'>")
                     .append(esc(clean(receiverName))).append("</td>");
         } else {
-            html.append("<td class='grid-top' colspan='").append(blankSpan + 1).append("'></td>");
+            html.append("<td style='border-top:2px solid #111' colspan='").append(blankSpan + 1).append("'></td>");
         }
         html.append("</tr>");
     }

@@ -15,6 +15,7 @@ class CustomerHistoryCompletenessArchitectureTest {
         for(String table:new String[]{"customer_account_transactions","sales","custom_orders","quotations","invoices"})
             assertTrue(service.contains("FROM "+table),"Customer history must include "+table);
         assertTrue(service.contains("CrossStoreCustomerHistoryService.rows"));
+        assertTrue(service.contains("rs.getBigDecimal(25)"),"The 25-column history projection must read its balance delta from column 25");
         String sync=read("src/services/SyncWorker.java");
         assertTrue(sync.contains("CrossStoreCustomerHistoryService.refreshAll"));
     }

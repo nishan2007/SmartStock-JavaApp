@@ -259,7 +259,7 @@ final class LanCustomerAccountService {
                 ) history ORDER BY created_at DESC,event_id DESC
                 """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
         try(PreparedStatement ps=c.prepareStatement(sql)){for(int n=1;n<=5;n++)ps.setInt(n,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
-            BigDecimal delta=money(rs.getBigDecimal(26));if(rs.getString(1).startsWith("LEDGER:")){if(delta.signum()>=0)charges=charges.add(delta);else payments=payments.add(delta.abs());}
+            BigDecimal delta=money(rs.getBigDecimal(25));if(rs.getString(1).startsWith("LEDGER:")){if(delta.signum()>=0)charges=charges.add(delta);else payments=payments.add(delta.abs());}
             rows.add(historyMap(rs,false));}}}
         for(Map<String,Object> remote:CrossStoreCustomerHistoryService.rows(c,customerId)){rows.add(remote);BigDecimal amount=money((BigDecimal)remote.get("amount"));
             String type=String.valueOf(remote.get("transactionType"));

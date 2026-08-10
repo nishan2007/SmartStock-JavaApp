@@ -211,9 +211,15 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         Paper paper = new Paper();
         double width = 8.5 * 72.0;
         double height = 11.0 * 72.0;
-        double margin = 0.25 * 72.0;
+        double leftMargin = 0.75 * 72.0;
+        double otherMargin = 0.25 * 72.0;
         paper.setSize(width, height);
-        paper.setImageableArea(margin, margin, width - (margin * 2), height - (margin * 2));
+        paper.setImageableArea(
+                leftMargin,
+                otherMargin,
+                width - leftMargin - otherMargin,
+                height - (otherMargin * 2)
+        );
         pageFormat.setPaper(paper);
         pageFormat.setOrientation(PageFormat.PORTRAIT);
         return pageFormat;
