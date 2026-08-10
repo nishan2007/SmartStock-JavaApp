@@ -19,8 +19,9 @@ public final class SchemaContractService {
     public static final int BASELINE_VERSION = 1;
     private static final String RESOURCE_FINGERPRINT_TOKEN =
             "__SMARTSTOCK_RESOURCE_FINGERPRINT__";
-    private static final String PRE_RETURN_RECEIPT_LOCAL_FINGERPRINT =
-            "61fab3e60b61c1dfc6aea5b8087c81e946b64ba415bdb1cc08d642677131be9f";
+    private static final Set<String> PRE_RETURN_RECEIPT_LOCAL_FINGERPRINTS = Set.of(
+            "61fab3e60b61c1dfc6aea5b8087c81e946b64ba415bdb1cc08d642677131be9f",
+            "09e4ddc87f31f8add4d7550b7058cc087c086b6872aec3853233b6e4dfb47584");
     private static final String INTERIM_RETURN_RECEIPT_LOCAL_FINGERPRINT =
             "46b3ac2ec24b641a81394def39ac5ecb9bc7707a4eb748df67ef9e285d1cbc27";
     private static final List<String> LOCAL_BASELINE = List.of(
@@ -139,7 +140,7 @@ public final class SchemaContractService {
             if (!rs.next()) return;
             version = rs.getInt(1); storedResource = rs.getString(2); storedCatalog = rs.getString(3);
         }
-        if (version != BASELINE_VERSION || !PRE_RETURN_RECEIPT_LOCAL_FINGERPRINT.equals(storedResource)) return;
+        if (version != BASELINE_VERSION || !isPreReturnReceiptFingerprint(storedResource)) return;
         String actualBefore = catalogFingerprint(connection, List.of("public"), false);
         if (!actualBefore.equals(storedCatalog)) {
             throw new SQLException("The previous local schema has drifted; automatic return-receipt upgrade is blocked.", "55000");
@@ -171,6 +172,10 @@ public final class SchemaContractService {
         } finally {
             connection.setAutoCommit(autoCommit);
         }
+    }
+
+    static boolean isPreReturnReceiptFingerprint(String fingerprint) {
+        return PRE_RETURN_RECEIPT_LOCAL_FINGERPRINTS.contains(fingerprint);
     }
 
     public static Readiness validateCloud(Connection connection) throws SQLException {
