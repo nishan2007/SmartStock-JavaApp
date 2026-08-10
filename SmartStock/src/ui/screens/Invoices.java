@@ -212,7 +212,9 @@ public class Invoices extends JFrame {
                 return;
             }
             String selectedMethod=(String)method.getSelectedItem(),paymentReference=reference.getText();
-            QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,paymentAmount,selectedMethod,paymentReference));
+            Quotations.CreditOverride creditOverride = Quotations.creditOverride(this, financials, paymentAmount);
+            if (creditOverride == null) return;
+            QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,paymentAmount,selectedMethod,paymentReference,creditOverride.approvalToken(),creditOverride.reason()));
             if(receiptRef==null)return;
             openPaymentReceipt(receiptRef);
             refreshAll();
@@ -330,7 +332,9 @@ public class Invoices extends JFrame {
             boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
-                    QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,payment.amount(),payment.method(),payment.reference()));
+                    Quotations.CreditOverride creditOverride = Quotations.creditOverride(this, financials, payment.amount());
+                    if (creditOverride == null) return;
+                    QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,"Recording invoice payment...",()->QuotationInvoiceService.recordPayment(invoiceId,payment.amount(),payment.method(),payment.reference(),creditOverride.approvalToken(),creditOverride.reason()));
                     if(receiptRef==null)return;
                     paymentRecorded = true;
                     openPaymentReceipt(receiptRef);
@@ -341,9 +345,11 @@ public class Invoices extends JFrame {
             QuotationInvoiceViewService.InvoiceFinancials updated = ResponsiveTask.await(this,"Refreshing invoice balance...",()->QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
             if(updated==null)return;
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+                Quotations.CreditOverride creditOverride = Quotations.creditOverride(this, updated, BigDecimal.ZERO);
+                if (creditOverride == null) return;
                 ResponsiveTask.await(this, "Charging remaining balance to account...", () -> {
                     QuotationInvoiceService.chargeInvoiceToAccount(invoiceId,
-                            "Remaining balance from accepted quotation.");
+                            "Remaining balance from accepted quotation.",creditOverride.approvalToken(),creditOverride.reason());
                     return Boolean.TRUE;
                 });
             }

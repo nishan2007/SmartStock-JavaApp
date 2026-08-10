@@ -136,12 +136,17 @@ public final class ServerQuotationInvoiceService {
     }
 
     public static PaymentReceiptRef recordPayment(long invoiceId, BigDecimal amount, String method, String reference) throws SQLException {
+        return recordPayment(invoiceId, amount, method, reference, false, null);
+    }
+
+    public static PaymentReceiptRef recordPayment(long invoiceId, BigDecimal amount, String method, String reference,
+                                                  boolean creditLimitOverride, String creditOverrideReason) throws SQLException {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new SQLException("Payment amount must be greater than zero.");
         }
         String safeMethod = normalizePaymentMethod(method);
         if ("ACCOUNT".equals(safeMethod)) {
-            chargeInvoiceToAccount(invoiceId, "Placed on customer account.");
+            chargeInvoiceToAccount(invoiceId, "Placed on customer account.", creditLimitOverride, creditOverrideReason);
             return null;
         }
         try (Connection conn = DB.getConnection()) {
@@ -157,19 +162,29 @@ public final class ServerQuotationInvoiceService {
                     throw new SQLException("This invoice has no remaining balance to pay.");
                 }
                 boolean accountCharged = hasAccountCharge(conn, invoiceId);
+                BigDecimal applied = amount.min(invoice.balanceDue());
+                boolean accountChargedByThisPayment = false;
                 if (!accountCharged) {
-                    updateCustomerBalance(conn, invoice.customerId(), invoice.balanceDue(),invoice.locationId());
+                    BigDecimal remainingAfterPayment = invoice.balanceDue().subtract(applied);
+                    boolean exceeded = updateCustomerBalance(conn, invoice.customerId(), remainingAfterPayment,
+                            invoice.locationId(), creditLimitOverride);
                     long chargeTransactionId = insertAccountCharge(conn, invoice, "Placed on customer account before direct invoice payment.");
                     insertAccountAllocation(conn, chargeTransactionId, invoice, invoice.balanceDue());
                     markInvoicePaymentMethod(conn, invoiceId, "ACCOUNT", null);
                     accountCharged = true;
+                    accountChargedByThisPayment = true;
+                    if (exceeded) {
+                        QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "CREDIT_LIMIT_OVERRIDE",
+                                "balance_due", null, remainingAfterPayment, creditOverrideReason);
+                    }
                 }
-                BigDecimal applied = amount.min(invoice.balanceDue());
                 CashDrawerContext drawer = cashDrawerForPayment(conn, safeMethod);
                 insertPayment(conn, invoice, applied, safeMethod, reference, drawer);
                 updateInvoicePaymentTotals(conn, invoiceId, applied, safeMethod, reference);
                 if (accountCharged) {
-                    reduceCustomerBalance(conn, invoice.customerId(), applied);
+                    if (!accountChargedByThisPayment) {
+                        reduceCustomerBalance(conn, invoice.customerId(), applied);
+                    }
                     long paymentTransactionId = insertCustomerPaymentTransaction(conn, invoice, applied.negate(), safeMethod, reference, drawer);
                     insertAccountAllocation(conn, paymentTransactionId, invoice, applied);
                     PaymentReceiptRef paymentReceipt = new PaymentReceiptRef(invoice.customerId(), paymentTransactionId);
@@ -190,6 +205,11 @@ public final class ServerQuotationInvoiceService {
     }
 
     public static void chargeInvoiceToAccount(long invoiceId, String reason) throws SQLException {
+        chargeInvoiceToAccount(invoiceId, reason, false, null);
+    }
+
+    public static void chargeInvoiceToAccount(long invoiceId, String reason,
+                                              boolean creditLimitOverride, String creditOverrideReason) throws SQLException {
         try (Connection conn = DB.getConnection()) {
             conn.setAutoCommit(false);
             try {
@@ -202,11 +222,16 @@ public final class ServerQuotationInvoiceService {
                 if (invoice.balanceDue().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new SQLException("This invoice has no remaining balance to place on account.");
                 }
-                updateCustomerBalance(conn, invoice.customerId(), invoice.balanceDue(),invoice.locationId());
+                boolean exceeded = updateCustomerBalance(conn, invoice.customerId(), invoice.balanceDue(),
+                        invoice.locationId(), creditLimitOverride);
                 long transactionId = insertAccountCharge(conn, invoice, reason);
                 insertAccountAllocation(conn, transactionId, invoice, invoice.balanceDue());
                 markInvoicePaymentMethod(conn, invoiceId, "ACCOUNT", null);
                 QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "ACCOUNT_CHARGE_CREATED", "balance_due", null, invoice.balanceDue(), reason);
+                if (exceeded) {
+                    QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "CREDIT_LIMIT_OVERRIDE",
+                            "balance_due", null, invoice.balanceDue(), creditOverrideReason);
+                }
                 SyncOutboxService.recordEvent(conn, "INVOICE_ACCOUNT_CHARGE_CREATED", Map.of("invoice_id", invoiceId, "amount", invoice.balanceDue()));
                 conn.commit();
             } catch (SQLException ex) {
@@ -296,22 +321,25 @@ public final class ServerQuotationInvoiceService {
         SyncOutboxService.recordEvent(conn,"QUOTATION_ACCEPTED",Map.of("quotation_id",quotationId,"invoice_id",invoiceId,"invoice_number",number));return new InvoiceResult(invoiceId,number);
     }
 
-    public static PaymentReceiptRef recordPayment(Connection conn,long invoiceId,BigDecimal amount,String method,String reference)throws SQLException{
+    public static PaymentReceiptRef recordPayment(Connection conn,long invoiceId,BigDecimal amount,String method,String reference)throws SQLException{return recordPayment(conn,invoiceId,amount,method,reference,false,null);}
+    public static PaymentReceiptRef recordPayment(Connection conn,long invoiceId,BigDecimal amount,String method,String reference,boolean creditLimitOverride,String creditOverrideReason)throws SQLException{
         if(amount==null||amount.signum()<=0)throw new SQLException("Payment amount must be greater than zero.");String safeMethod=normalizePaymentMethod(method);
-        if("ACCOUNT".equals(safeMethod)){chargeInvoiceToAccount(conn,invoiceId,"Placed on customer account.");return null;}
+        if("ACCOUNT".equals(safeMethod)){chargeInvoiceToAccount(conn,invoiceId,"Placed on customer account.",creditLimitOverride,creditOverrideReason);return null;}
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);InvoiceHeader invoice=lockInvoice(conn,invoiceId);
         if("CANCELLED".equals(invoice.status()))throw new SQLException("Cancelled invoices cannot be paid.");if(invoice.balanceDue().signum()<=0)throw new SQLException("This invoice has no remaining balance to pay.");
-        boolean accountCharged=hasAccountCharge(conn,invoiceId);if(!accountCharged){updateCustomerBalance(conn,invoice.customerId(),invoice.balanceDue(),invoice.locationId());long charge=insertAccountCharge(conn,invoice,"Placed on customer account before direct invoice payment.");insertAccountAllocation(conn,charge,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);accountCharged=true;}
-        BigDecimal applied=amount.min(invoice.balanceDue());CashDrawerContext drawer=cashDrawerForPayment(conn,safeMethod);insertPayment(conn,invoice,applied,safeMethod,reference,drawer);updateInvoicePaymentTotals(conn,invoiceId,applied,safeMethod,reference);
-        if(accountCharged){reduceCustomerBalance(conn,invoice.customerId(),applied);long payment=insertCustomerPaymentTransaction(conn,invoice,applied.negate(),safeMethod,reference,drawer);insertAccountAllocation(conn,payment,invoice,applied);
+        boolean accountCharged=hasAccountCharge(conn,invoiceId);BigDecimal applied=amount.min(invoice.balanceDue());boolean accountChargedByThisPayment=false;
+        if(!accountCharged){BigDecimal remainingAfterPayment=invoice.balanceDue().subtract(applied);boolean exceeded=updateCustomerBalance(conn,invoice.customerId(),remainingAfterPayment,invoice.locationId(),creditLimitOverride);long charge=insertAccountCharge(conn,invoice,"Placed on customer account before direct invoice payment.");insertAccountAllocation(conn,charge,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);accountCharged=true;accountChargedByThisPayment=true;if(exceeded)QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"CREDIT_LIMIT_OVERRIDE","balance_due",null,remainingAfterPayment,creditOverrideReason);}
+        CashDrawerContext drawer=cashDrawerForPayment(conn,safeMethod);insertPayment(conn,invoice,applied,safeMethod,reference,drawer);updateInvoicePaymentTotals(conn,invoiceId,applied,safeMethod,reference);
+        if(accountCharged){if(!accountChargedByThisPayment)reduceCustomerBalance(conn,invoice.customerId(),applied);long payment=insertCustomerPaymentTransaction(conn,invoice,applied.negate(),safeMethod,reference,drawer);insertAccountAllocation(conn,payment,invoice,applied);
             QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"PAYMENT_CREATED","amount_paid",invoice.amountPaid(),invoice.amountPaid().add(applied),safeMethod);SyncOutboxService.recordEvent(conn,"INVOICE_PAYMENT_CREATED",Map.of("invoice_id",invoiceId,"payment_amount",applied));return new PaymentReceiptRef(invoice.customerId(),payment);}return null;
     }
 
-    public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason)throws SQLException{
+    public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason)throws SQLException{chargeInvoiceToAccount(conn,invoiceId,reason,false,null);}
+    public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason,boolean creditLimitOverride,String creditOverrideReason)throws SQLException{
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);InvoiceHeader invoice=lockInvoice(conn,invoiceId);
         if(hasAccountCharge(conn,invoiceId))throw new SQLException("This invoice is already on the customer account.");if(invoice.balanceDue().signum()<=0)throw new SQLException("This invoice has no remaining balance to place on account.");
-        updateCustomerBalance(conn,invoice.customerId(),invoice.balanceDue(),invoice.locationId());long transaction=insertAccountCharge(conn,invoice,reason);insertAccountAllocation(conn,transaction,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);
-        QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"ACCOUNT_CHARGE_CREATED","balance_due",null,invoice.balanceDue(),reason);SyncOutboxService.recordEvent(conn,"INVOICE_ACCOUNT_CHARGE_CREATED",Map.of("invoice_id",invoiceId,"amount",invoice.balanceDue()));
+        boolean exceeded=updateCustomerBalance(conn,invoice.customerId(),invoice.balanceDue(),invoice.locationId(),creditLimitOverride);long transaction=insertAccountCharge(conn,invoice,reason);insertAccountAllocation(conn,transaction,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);
+        QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"ACCOUNT_CHARGE_CREATED","balance_due",null,invoice.balanceDue(),reason);if(exceeded)QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"CREDIT_LIMIT_OVERRIDE","balance_due",null,invoice.balanceDue(),creditOverrideReason);SyncOutboxService.recordEvent(conn,"INVOICE_ACCOUNT_CHARGE_CREATED",Map.of("invoice_id",invoiceId,"amount",invoice.balanceDue()));
     }
 
     public static DeliveryResult postDelivery(Connection conn,long invoiceId,String deliveryMethod,String receiverName,
@@ -1003,19 +1031,20 @@ public final class ServerQuotationInvoiceService {
         }
     }
 
-    private static void updateCustomerBalance(Connection conn,int customerId,BigDecimal delta,Integer locationId)throws SQLException{
+    private static boolean updateCustomerBalance(Connection conn,int customerId,BigDecimal delta,Integer locationId,boolean creditLimitOverride)throws SQLException{
         int location=locationId==null?requireLocationId():locationId;
         if(money(delta).signum()>0)CustomerAccountLedgerService.requireCurrentMultiStoreBalance(conn,location);
         CustomerAccountLedgerService.repairCustomerBalance(conn,customerId);
         try(PreparedStatement ps=conn.prepareStatement("SELECT current_balance,credit_limit,is_active FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
             ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account was not found.");
                 if(!rs.getBoolean(3))throw new SQLException("Customer account is inactive.");BigDecimal next=money(rs.getBigDecimal(1)).add(money(delta)).max(BigDecimal.ZERO);
-                if(delta.signum()>0&&next.compareTo(money(rs.getBigDecimal(2)))>0)throw new SQLException("Customer account credit limit would be exceeded. Available credit: $"+money(rs.getBigDecimal(2)).subtract(money(rs.getBigDecimal(1))).max(BigDecimal.ZERO));
-                try(PreparedStatement update=conn.prepareStatement("UPDATE customer_accounts SET current_balance=?,updated_at=CURRENT_TIMESTAMP WHERE customer_id=?")){update.setBigDecimal(1,next);update.setInt(2,customerId);update.executeUpdate();}}}
+                boolean exceeded=delta.signum()>0&&next.compareTo(money(rs.getBigDecimal(2)))>0;
+                if(exceeded&&!creditLimitOverride)throw new SQLException("Customer account credit limit would be exceeded. Available credit: $"+money(rs.getBigDecimal(2)).subtract(money(rs.getBigDecimal(1))).max(BigDecimal.ZERO));
+                try(PreparedStatement update=conn.prepareStatement("UPDATE customer_accounts SET current_balance=?,updated_at=CURRENT_TIMESTAMP WHERE customer_id=?")){update.setBigDecimal(1,next);update.setInt(2,customerId);update.executeUpdate();return exceeded;}}}
     }
 
     private static void reduceCustomerBalance(Connection conn, int customerId, BigDecimal amount) throws SQLException {
-        updateCustomerBalance(conn,customerId,money(amount).negate(),null);
+        updateCustomerBalance(conn,customerId,money(amount).negate(),null,false);
     }
 
     private static CashDrawerContext cashDrawerForPayment(Connection conn, String method) throws SQLException {

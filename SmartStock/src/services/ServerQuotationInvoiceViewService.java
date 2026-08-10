@@ -337,9 +337,13 @@ public final class ServerQuotationInvoiceViewService {
         try (Connection conn = DB.getConnection()) {
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
-                    SELECT invoice_id, invoice_number, total_amount, amount_paid, balance_due
-                    FROM invoices
-                    WHERE invoice_id = ?
+                    SELECT i.invoice_id, i.invoice_number, i.total_amount, i.amount_paid, i.balance_due,
+                           COALESCE(ca.current_balance, 0) AS customer_balance,
+                           COALESCE(ca.credit_limit, 0) AS credit_limit,
+                           GREATEST(COALESCE(ca.credit_limit, 0) - COALESCE(ca.current_balance, 0), 0) AS available_credit
+                    FROM invoices i
+                    LEFT JOIN customer_accounts ca ON ca.customer_id = i.customer_id
+                    WHERE i.invoice_id = ?
                     """)) {
                 ps.setLong(1, invoiceId);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -351,7 +355,10 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getString("invoice_number"),
                             rs.getBigDecimal("total_amount"),
                             rs.getBigDecimal("amount_paid"),
-                            rs.getBigDecimal("balance_due")
+                            rs.getBigDecimal("balance_due"),
+                            rs.getBigDecimal("customer_balance"),
+                            rs.getBigDecimal("credit_limit"),
+                            rs.getBigDecimal("available_credit")
                     );
                 }
             }
@@ -382,7 +389,8 @@ public final class ServerQuotationInvoiceViewService {
     }
 
     public record InvoiceFinancials(long invoiceId, String invoiceNumber, BigDecimal totalAmount,
-                                  BigDecimal amountPaid, BigDecimal balanceDue) {
+                                  BigDecimal amountPaid, BigDecimal balanceDue, BigDecimal customerBalance,
+                                  BigDecimal creditLimit, BigDecimal availableCredit) {
     }
 
     public record AuditEntry(String createdAt, String document, String actionType, String fieldName,

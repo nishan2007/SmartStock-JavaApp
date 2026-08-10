@@ -173,7 +173,7 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox slipShowSignaturesBox = new JCheckBox("Signature lines");
     private final JTextField quotationPrintTitleField = new JTextField("QUOTE / NOT FINAL SALE");
     private final JTextField quotationValidityNoteField = new JTextField("This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
-    private final JTextField invoicePrintTitleField = new JTextField("SALES ORDER CONFIRMATION");
+    private final JTextField invoicePrintTitleField = new JTextField("INVOICE");
     private final JTextField salesDeliveryPrintTitleField = new JTextField("DELIVERY BILL");
     private final JTextField quotationInvoiceFooterNoteField = new JTextField();
     private final JCheckBox quotationInvoiceShowSignaturesBox = new JCheckBox("Received/approved signature lines");

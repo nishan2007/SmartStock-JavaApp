@@ -57,7 +57,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                     SELECT invoice_number, quotation_number, customer_name, customer_phone, customer_email,
                            status, invoice_date, invoice_notes, subtotal_amount, discount_amount, vat_amount,
                            total_amount, amount_paid, balance_due, payment_status, vat_rate_percent, vat_mode,
-                           location_id, location_name, created_by_name
+                           payment_method, payment_reference, location_id, location_name, created_by_name
                     FROM invoices
                     WHERE invoice_id = ?
                     """)) {
@@ -120,7 +120,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return renderPagedDocument(receiptSettings, "", printSettings, printSettings.invoiceTitle(), "INV-MAIN-POS1-000088", "06/07/2026",
                 new String[][]{{"Invoice #", "INV-MAIN-POS1-000088"}, {"Quotation #", "Q-MAIN-POS1-000123"}, {"Status", "PARTIALLY_DELIVERED"}, {"Invoice Date", "06/07/2026"}},
                 "Apex Property Group", "555-0198", "purchasing@apex.example", "Apex Property Group",
-                lines, false, null, invoiceBalanceNote(money("250.00"), money("479.00"), "PARTIAL"),
+                lines, false, null, invoiceBalanceNote(money("729.00"), BigDecimal.ZERO, "PAID", "CARD", "CARD-4721"),
                 "GRAND TOTAL", money("729.00"), false, false, null);
     }
 
@@ -134,8 +134,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 money("42.00"),
                 money("521.14")
         ));
-        return renderPagedDocument(receiptSettings, "", printSettings, printSettings.deliveryTitle(), "DEL-MAIN-POS1-000041", "06/07/2026 10:30 AM",
-                new String[][]{{"Delivery #", "DEL-MAIN-POS1-000041"}, {"Invoice #", "INV-MAIN-POS1-000088"}, {"Method", "LOCAL_DELIVERY"}, {"Delivered At", "06/07/2026 10:30 AM"}},
+        return renderPagedDocument(receiptSettings, "", printSettings, printSettings.deliveryTitle(), "DEL-MAIN-POS1-000041", "06/07/2026",
+                new String[][]{{"Delivery #", "DEL-MAIN-POS1-000041"}, {"Invoice #", "INV-MAIN-POS1-000088"}, {"Method", "LOCAL_DELIVERY"}, {"Delivered At", "06/07/2026"}},
                 "Apex Property Group", "555-0198", "Jordan Lee", "Apex Property Group",
                 lines, true, null, null, "REMAINING BALANCE", money("479.00"), true, true, "Jordan Lee");
     }
@@ -159,7 +159,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.invoiceTitle(), header.getString("invoice_number"), date(header, "invoice_date"),
                 new String[][]{{"Invoice #", header.getString("invoice_number")}, {"Quotation #", header.getString("quotation_number")}, {"Status", header.getString("status")}, {"Invoice Date", date(header, "invoice_date")}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("customer_email"), header.getString("customer_name"),
-                lines, false, null, invoiceBalanceNote(header.getBigDecimal("amount_paid"), header.getBigDecimal("balance_due"), header.getString("payment_status")),
+                lines, false, null, invoiceBalanceNote(header.getBigDecimal("amount_paid"), header.getBigDecimal("balance_due"),
+                        header.getString("payment_status"), header.getString("payment_method"), header.getString("payment_reference")),
                 "GRAND TOTAL", header.getBigDecimal("total_amount"), false, false, null);
     }
 
@@ -168,8 +169,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                             String addressLine4,
                                             ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) throws SQLException {
         List<DocumentLine> lines = deliveryLines(conn, deliveryEventId);
-        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.deliveryTitle(), header.getString("delivery_number"), clean(header.getString("created_at")),
-                new String[][]{{"Delivery #", header.getString("delivery_number")}, {"Invoice #", header.getString("invoice_number")}, {"Method", header.getString("delivery_method")}, {"Delivered At", clean(header.getString("created_at"))}},
+        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.deliveryTitle(), header.getString("delivery_number"), date(header, "created_at"),
+                new String[][]{{"Delivery #", header.getString("delivery_number")}, {"Invoice #", header.getString("invoice_number")}, {"Method", header.getString("delivery_method")}, {"Delivered At", date(header, "created_at")}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("receiver_name"), header.getString("customer_name"),
                 lines, true, null, null, "REMAINING BALANCE", header.getBigDecimal("balance_due"), true, true, header.getString("receiver_name"));
     }
@@ -432,11 +433,17 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static void appendLineTable(StringBuilder html, List<DocumentLine> lines, boolean includeDelivery, int rowsPerPage) {
-        html.append("<table class='joined'><tr><th style='width:12%'>Quantity</th>");
+        int quantityWidth = includeDelivery ? 10 : 12;
+        int unitPriceWidth = includeDelivery ? 8 : 16;
+        html.append("<table class='joined'><tr><th width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%'>QTY</th>");
         if (includeDelivery) {
-            html.append("<th style='width:12%'>Delivered</th><th style='width:12%'>Remaining</th>");
+            html.append("<th width='10%' style='width:10%'>DLVD</th><th width='10%' style='width:10%'>Due</th>");
         }
-        html.append("<th>Description</th><th style='width:16%'>Unit Price</th><th style='width:16%'>Amount</th></tr>");
+        html.append("<th>Description</th>");
+        if (!includeDelivery) {
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px'>U/Price</th><th width='16%' style='width:16%'>Amount</th>");
+        }
+        html.append("</tr>");
         int rows = 0;
         for (DocumentLine line : lines) {
             rows++;
@@ -445,12 +452,15 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 html.append("<td class='center'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
                         .append("<td class='center'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description'>").append(esc(line.description())).append("</td>")
-                    .append("<td class='num'>").append(esc(money(line.unitPrice()))).append("</td>")
-                    .append("<td class='num'>").append(esc(money(line.amount()))).append("</td></tr>");
+            html.append("<td class='description'>").append(esc(line.description())).append("</td>");
+            if (!includeDelivery) {
+                html.append("<td class='num'>").append(esc(money(line.unitPrice()))).append("</td>")
+                        .append("<td class='num'>").append(esc(money(line.amount()))).append("</td>");
+            }
+            html.append("</tr>");
         }
         int blankRows = Math.max(rowsPerPage - rows, 0);
-        int columns = includeDelivery ? 6 : 4;
+        int columns = 4;
         for (int i = 0; i < blankRows; i++) {
             html.append("<tr class='blank'>");
             for (int c = 0; c < columns; c++) {
@@ -467,18 +477,24 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                            ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings settings,
                                            boolean showDeliveredBy, boolean receiverLabel, String receiverName,
                                            int nextPage) {
-        int columns = includeDelivery ? 6 : 4;
+        int columns = 4;
+        int quantityWidth = includeDelivery ? 10 : 12;
+        int unitPriceWidth = includeDelivery ? 8 : 16;
         html.append("<table class='document-grid' cellspacing='0' cellpadding='0' border='0'>")
-                .append("<tr><td class='bill-label'>Bill To:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
+                .append("<tr><td class='bill-label' width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; font-size:").append(includeDelivery ? 9 : 11).append("px'>Bill To:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
                 .append(columns - 1)
                 .append("'>")
                 .append(esc(billTo))
                 .append("</td></tr>");
-        html.append("<tr><th style='width:12%; border-top:2px solid #111'>Quantity</th>");
+        html.append("<tr><th width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; border-top:2px solid #111'>QTY</th>");
         if (includeDelivery) {
-            html.append("<th style='width:12%; border-top:2px solid #111; border-left:2px solid #111'>Delivered</th><th style='width:12%; border-top:2px solid #111; border-left:2px solid #111'>Remaining</th>");
+            html.append("<th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>DLVD</th><th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>Due</th>");
         }
-        html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>Description</th><th style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Unit Price</th><th style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Amount</th></tr>");
+        html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>Description</th>");
+        if (!includeDelivery) {
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>U/Price</th><th width='16%' style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Amount</th>");
+        }
+        html.append("</tr>");
         int rows = 0;
         for (DocumentLine line : lines) {
             rows++;
@@ -487,9 +503,12 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 html.append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
                         .append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(line.description())).append("</td>")
-                    .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.unitPrice()))).append("</td>")
-                    .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.amount()))).append("</td></tr>");
+            html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(line.description())).append("</td>");
+            if (!includeDelivery) {
+                html.append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.unitPrice()))).append("</td>")
+                        .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.amount()))).append("</td>");
+            }
+            html.append("</tr>");
         }
         for (int i = 0; i < Math.max(rowsPerPage - rows, 0); i++) {
             html.append("<tr class='blank'>");
@@ -501,11 +520,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             html.append("</tr>");
         }
         if (lastPage) {
-            appendGridNoteRow(html, columns, balanceNote);
             if (!settings.footerNote().isBlank()) {
                 appendGridNoteRow(html, columns, settings.footerNote());
             }
             appendGridSignatureRows(html, columns, totalLabel, total, settings.showSignatures(), showDeliveredBy, receiverLabel, receiverName);
+            appendGridNoteRow(html, columns, balanceNote);
             appendGridNoteRow(html, columns, validityNote);
         } else {
             appendGridNoteRow(html, columns, "Continued on page " + nextPage);
@@ -524,20 +543,33 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     private static void appendGridSignatureRows(StringBuilder html, int columns, String totalLabel, BigDecimal total,
                                                 boolean showSignatures, boolean showDeliveredBy,
                                                 boolean receiverLabel, String receiverName) {
-        int blankSpan = Math.max(1, columns - 3);
+        if (showDeliveredBy) {
+            html.append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>DLVD By:</td>")
+                    .append("<td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(columns - 1).append("'></td></tr>")
+                    .append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>RCVD By:</td>")
+                    .append("<td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(columns - 1).append("'>")
+                    .append(esc(clean(receiverName))).append("</td></tr>");
+            return;
+        }
+        int totalLabelSpan = 1;
+        int blankSpan = Math.max(1, columns - totalLabelSpan - 2);
+        String signatureWidth = columns >= 6 ? " width='8%' style='width:8%; border-top:2px solid #111'" : " style='border-top:2px solid #111'";
+        String totalLabelStyle = columns >= 6
+                ? "border-top:2px solid #111; border-left:2px solid #111; font-size:8px"
+                : "border-top:2px solid #111; border-left:2px solid #111";
         html.append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label' style='border-top:2px solid #111'>")
-                    .append(showDeliveredBy ? "Delivered By:" : "Received By:")
+            html.append("<td class='signature-label'").append(signatureWidth).append(">")
+                    .append(showDeliveredBy ? "DLVD By:" : "Received By:")
                     .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'></td>");
         } else {
             html.append("<td style='border-top:2px solid #111' colspan='").append(blankSpan + 1).append("'></td>");
         }
-        html.append("<td class='total-label' style='border-top:2px solid #111; border-left:2px solid #111' rowspan='2'>").append(esc(totalLabel)).append("</td>")
+        html.append("<td class='total-label' style='").append(totalLabelStyle).append("' colspan='").append(totalLabelSpan).append("' rowspan='2'>").append(esc(totalLabel)).append("</td>")
                 .append("<td class='total-amount' style='border-top:2px solid #111; border-left:2px solid #111' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
                 .append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label' style='border-top:2px solid #111'>").append(receiverLabel ? "Received By:" : "Approved By:")
+            html.append("<td class='signature-label'").append(signatureWidth).append(">").append(receiverLabel ? "RCVD By:" : "Approved By:")
                     .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'>")
                     .append(esc(clean(receiverName))).append("</td>");
         } else {
@@ -546,10 +578,22 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         html.append("</tr>");
     }
 
-    private static String invoiceBalanceNote(BigDecimal paid, BigDecimal balance, String status) {
-        return "Paid: " + money(paid)
-                + "    Balance Due: " + money(balance)
-                + "    Status: " + clean(status);
+    private static String invoiceBalanceNote(BigDecimal paid, BigDecimal balance, String status,
+                                             String paymentMethod, String paymentReference) {
+        StringBuilder note = new StringBuilder("Paid: ").append(money(paid));
+        if ((balance == null ? BigDecimal.ZERO : balance).signum() > 0) {
+            note.append("    Balance Due: ").append(money(balance));
+        }
+        if (!clean(status).isBlank()) {
+            note.append("    Status: ").append(clean(status));
+        }
+        if (!clean(paymentMethod).isBlank()) {
+            note.append("    Payment Method: ").append(clean(paymentMethod));
+        }
+        if (!clean(paymentReference).isBlank()) {
+            note.append("    Reference: ").append(clean(paymentReference));
+        }
+        return note.toString();
     }
 
     private static int documentLocationId(ResultSet header) throws SQLException {

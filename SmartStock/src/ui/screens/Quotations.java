@@ -27,6 +27,7 @@ import java.util.List;
 
 public class Quotations extends JFrame {
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
+    private static final String CREDIT_LIMIT_OVERRIDE_PERMISSION = "SET_CREDIT_LIMIT";
     private static final int LINE_COL_PRODUCT_ID = 0;
     private static final int LINE_COL_ITEM = 1;
     private static final int LINE_COL_SKU = 2;
@@ -204,9 +205,12 @@ public class Quotations extends JFrame {
             boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
+                    CreditOverride creditOverride = creditOverride(this, financials, payment.amount());
+                    if (creditOverride == null) return;
                     QuotationInvoiceService.PaymentReceiptRef receiptRef = ResponsiveTask.await(this,
                             "Recording invoice payment...", () -> QuotationInvoiceService.recordPayment(
-                                    invoiceId, payment.amount(), payment.method(), payment.reference()));
+                                    invoiceId, payment.amount(), payment.method(), payment.reference(),
+                                    creditOverride.approvalToken(), creditOverride.reason()));
                     if (receiptRef == null) return;
                     paymentRecorded = true;
                     openPaymentReceipt(receiptRef);
@@ -218,9 +222,12 @@ public class Quotations extends JFrame {
                     "Refreshing invoice balance...", () -> QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
             if (updated == null) return;
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+                CreditOverride creditOverride = creditOverride(this, updated, BigDecimal.ZERO);
+                if (creditOverride == null) return;
                 ResponsiveTask.await(this, "Charging remaining balance to account...", () -> {
                     QuotationInvoiceService.chargeInvoiceToAccount(invoiceId,
-                            "Remaining balance from accepted quotation.");
+                            "Remaining balance from accepted quotation.",
+                            creditOverride.approvalToken(), creditOverride.reason());
                     return Boolean.TRUE;
                 });
             }
@@ -228,6 +235,27 @@ public class Quotations extends JFrame {
             showError("Failed to place remaining balance on customer account", ex);
         }
     }
+
+    static CreditOverride creditOverride(Component parent,
+                                         QuotationInvoiceViewService.InvoiceFinancials financials,
+                                         BigDecimal paymentAmount) {
+        BigDecimal applied = paymentAmount == null ? BigDecimal.ZERO
+                : paymentAmount.max(BigDecimal.ZERO).min(financials.balanceDue());
+        BigDecimal remaining = financials.balanceDue().subtract(applied).max(BigDecimal.ZERO);
+        BigDecimal available = financials.availableCredit() == null ? BigDecimal.ZERO : financials.availableCredit();
+        if (remaining.compareTo(available) <= 0 || PermissionManager.hasPermission(CREDIT_LIMIT_OVERRIDE_PERMISSION)) {
+            return new CreditOverride(null, null);
+        }
+        ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+                parent,
+                CREDIT_LIMIT_OVERRIDE_PERMISSION,
+                "Customer Credit Limit Override",
+                "Reason for allowing " + remaining + " on account when available credit is " + available + ":"
+        );
+        return approval == null ? null : new CreditOverride(approval.lanApprovalToken(), approval.reason());
+    }
+
+    record CreditOverride(String approvalToken, String reason) { }
 
     private Long promptForAcceptedQuotationDelivery(long invoiceId) throws Exception {
         List<QuotationInvoiceViewService.DeliverableLine> lines = ResponsiveTask.await(this,

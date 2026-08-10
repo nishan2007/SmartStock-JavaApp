@@ -2098,7 +2098,7 @@ CREATE TABLE public.company_customization (
     quotation_default_valid_days integer DEFAULT 30 NOT NULL,
     quotation_print_title text DEFAULT 'QUOTE / NOT FINAL SALE'::text NOT NULL,
     quotation_print_validity_note text DEFAULT 'This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.'::text NOT NULL,
-    invoice_print_title text DEFAULT 'SALES ORDER CONFIRMATION'::text NOT NULL,
+    invoice_print_title text DEFAULT 'INVOICE'::text NOT NULL,
     invoice_delivery_print_title text DEFAULT 'DELIVERY BILL'::text NOT NULL,
     quotation_invoice_print_footer_note text DEFAULT ''::text CONSTRAINT company_customization_quotation_invoice_print_footer_n_not_null NOT NULL,
     quotation_invoice_print_show_signatures boolean DEFAULT true CONSTRAINT company_customization_quotation_invoice_print_show_sig_not_null NOT NULL,

@@ -36,7 +36,7 @@ public final class QuotationInvoiceViewService {
     public record QuotationEditLine(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName){}
     public record InvoiceSummary(long invoiceId,String invoiceNumber,String customerName,String status,String paymentStatus,BigDecimal balanceDue,String quotationNumber){}
     public record DeliverySummary(long deliveryEventId,String deliveryNumber,String invoiceNumber,String customerName,String deliveryMethod,BigDecimal balanceDue,String createdAt){}
-    public record InvoiceFinancials(long invoiceId,String invoiceNumber,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal balanceDue){}
+    public record InvoiceFinancials(long invoiceId,String invoiceNumber,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal balanceDue,BigDecimal customerBalance,BigDecimal creditLimit,BigDecimal availableCredit){}
     public record AuditEntry(String createdAt,String document,String actionType,String fieldName,String oldValue,String newValue,String userName,String reason){}
     public record CustomerOption(int customerId,String accountNumber,String name,boolean business){@Override public String toString(){return(business?"[Business] ":"")+name+(accountNumber==null||accountNumber.isBlank()?"":" ("+accountNumber+")");}}
     public record ProductOption(Integer productId,String name,String sku,String barcode,String description,BigDecimal price){@Override public String toString(){if(productId==null)return name;String code=sku==null||sku.isBlank()?barcode:sku;return name+(code==null||code.isBlank()?"":" ("+code+")");}}

@@ -66,4 +66,19 @@ final class ManagerApprovalCoverageTest {
                 "\"CHANGE_SALE_ITEM_PRICE\",\"Quotation Price Override\""));
         assertTrue(server.contains("existingQuotationPriceApproval("));
     }
+
+    @Test
+    void invoiceCreditOverridesCoverAcceptanceAndLaterPayments() throws Exception {
+        String server = Files.readString(SOURCE.resolve("services/LanApiServer.java"));
+        String service = Files.readString(SOURCE.resolve("services/ServerQuotationInvoiceService.java"));
+        String quotations = Files.readString(SOURCE.resolve("ui/screens/Quotations.java"));
+        String invoices = Files.readString(SOURCE.resolve("ui/screens/Invoices.java"));
+
+        assertTrue(server.contains("\"SET_CREDIT_LIMIT\",\"Customer Credit Limit Override\""));
+        assertTrue(service.contains("remainingAfterPayment"));
+        assertTrue(service.contains("CREDIT_LIMIT_OVERRIDE"));
+        assertTrue(quotations.contains("creditOverride(this, financials, payment.amount())"));
+        assertTrue(invoices.contains("Quotations.creditOverride(this, financials, paymentAmount)"));
+        assertTrue(invoices.contains("Quotations.creditOverride(this, financials, payment.amount())"));
+    }
 }

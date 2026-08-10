@@ -932,7 +932,7 @@ public class ServerCompanyCustomizationRepository {
         String sql = """
                 SELECT COALESCE(quotation_print_title, 'QUOTE / NOT FINAL SALE') AS quotation_title,
                        COALESCE(quotation_print_validity_note, 'This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.') AS quotation_validity_note,
-                       COALESCE(invoice_print_title, 'SALES ORDER CONFIRMATION') AS invoice_title,
+                       COALESCE(invoice_print_title, 'INVOICE') AS invoice_title,
                        COALESCE(invoice_delivery_print_title, 'DELIVERY BILL') AS delivery_title,
                        COALESCE(quotation_invoice_print_footer_note, '') AS footer_note,
                        COALESCE(quotation_invoice_print_show_signatures, TRUE) AS show_signatures
@@ -1248,7 +1248,7 @@ public class ServerCompanyCustomizationRepository {
         return new QuotationInvoicePrintSettings(
                 properties.getProperty("quotation_invoice.quotation_title", "QUOTE / NOT FINAL SALE"),
                 properties.getProperty("quotation_invoice.quotation_validity_note", "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled."),
-                properties.getProperty("quotation_invoice.invoice_title", "SALES ORDER CONFIRMATION"),
+                properties.getProperty("quotation_invoice.invoice_title", "INVOICE"),
                 properties.getProperty("quotation_invoice.delivery_title", "DELIVERY BILL"),
                 properties.getProperty("quotation_invoice.footer_note", ""),
                 Boolean.parseBoolean(properties.getProperty("quotation_invoice.show_signatures", "true"))
@@ -2120,7 +2120,8 @@ public class ServerCompanyCustomizationRepository {
         public QuotationInvoicePrintSettings {
             quotationTitle = clean(quotationTitle, "QUOTE / NOT FINAL SALE");
             quotationValidityNote = clean(quotationValidityNote, "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
-            invoiceTitle = clean(invoiceTitle, "SALES ORDER CONFIRMATION");
+            invoiceTitle = clean(invoiceTitle, "INVOICE");
+            if (invoiceTitle.equalsIgnoreCase("SALES ORDER CONFIRMATION")) invoiceTitle = "INVOICE";
             deliveryTitle = clean(deliveryTitle, "DELIVERY BILL");
             footerNote = Objects.requireNonNullElse(footerNote, "").trim();
         }
