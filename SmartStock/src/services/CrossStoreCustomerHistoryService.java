@@ -72,14 +72,14 @@ final class CrossStoreCustomerHistoryService {
         }
     }
 
-    static List<Map<String,Object>> rows(Connection c,int customerId)throws SQLException{
+    static List<Map<String,Object>> rows(Connection c,int customerId,int currentLocationId)throws SQLException{
         List<Map<String,Object>> out=new ArrayList<>();try(PreparedStatement ps=c.prepareStatement("""
             SELECT source_location_id,event_key,event_type,source_id,document_number,source_created_at,store_name,user_name,device_name,
               cash_drawer_name,payment_method,payment_reference,amount,payment_status,document_status,document_total,note
-            FROM sync_cross_store_customer_history_cache WHERE customer_id=? ORDER BY source_created_at DESC,event_key
-            """)){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+            FROM sync_cross_store_customer_history_cache WHERE customer_id=? AND source_location_id<>? ORDER BY source_created_at DESC,event_key
+            """)){ps.setInt(1,customerId);ps.setInt(2,currentLocationId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
                 Map<String,Object> m=new LinkedHashMap<>();m.put("locationId",rs.getInt(1));m.put("eventId","REMOTE:"+rs.getInt(1)+":"+rs.getString(2));m.put("transactionType",rs.getString(3));
-                m.put("transactionId",null);m.put("paymentId","");m.put("documentType",rs.getString(3));m.put("documentId",rs.getObject(4));m.put("documentNumber",rs.getString(5));m.put("createdAtEpochMillis",epoch(rs.getTimestamp(6)));
+                m.put("transactionId",null);m.put("paymentId","");String eventType=rs.getString(3);m.put("documentType",List.of("SALE","CUSTOM_ORDER","QUOTATION","INVOICE").contains(eventType)?eventType:"ACCOUNT");m.put("documentId",rs.getObject(4));m.put("documentNumber",rs.getString(5));m.put("createdAtEpochMillis",epoch(rs.getTimestamp(6)));
                 m.put("storeName",rs.getString(7));m.put("userName",rs.getString(8));m.put("deviceName",rs.getString(9));m.put("cashDrawerName",rs.getString(10));
                 m.put("paymentMethod",rs.getString(11));m.put("paymentReference",rs.getString(12));m.put("amount",rs.getBigDecimal(13));m.put("paymentStatus",rs.getString(14));
                 m.put("documentStatus",rs.getString(15));m.put("chargeTotal",rs.getBigDecimal(16));m.put("note",rs.getString(17));m.put("remote",true);out.add(m);

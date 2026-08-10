@@ -216,9 +216,9 @@ final class LanCustomerAccountService {
     private static boolean requiresReference(String method){return "CARD".equals(method)||"CHEQUE".equals(method)||"MMG".equals(method);}
     private static void append(StringBuilder b,String s){if(!b.isEmpty())b.append("; ");b.append(s);}
 
-    static Map<String,Object> transactions(Connection c,int customerId,int userId)throws Exception{
+    static Map<String,Object> transactions(Connection c,int customerId,int userId,int currentLocationId)throws Exception{
         require(c,userId,"CUSTOMER_ACCOUNTS");CustomerAccountLedgerService.ensureSchema(c);
-        List<Map<String,Object>>rows=new ArrayList<>();BigDecimal charges=BigDecimal.ZERO,payments=BigDecimal.ZERO;
+        List<Map<String,Object>>rows=new ArrayList<>();
         String sql="""
                 SELECT * FROM (
                   SELECT 'LEDGER:'||t.transaction_id AS event_id,t.transaction_id,COALESCE(t.payment_id,''),t.created_at,t.location_id,
@@ -259,15 +259,19 @@ final class LanCustomerAccountService {
                 ) history ORDER BY created_at DESC,event_id DESC
                 """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
         try(PreparedStatement ps=c.prepareStatement(sql)){for(int n=1;n<=5;n++)ps.setInt(n,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
-            BigDecimal delta=money(rs.getBigDecimal(25));if(rs.getString(1).startsWith("LEDGER:")){if(delta.signum()>=0)charges=charges.add(delta);else payments=payments.add(delta.abs());}
             rows.add(historyMap(rs,false));}}}
-        for(Map<String,Object> remote:CrossStoreCustomerHistoryService.rows(c,customerId)){rows.add(remote);BigDecimal amount=money((BigDecimal)remote.get("amount"));
-            String type=String.valueOf(remote.get("transactionType"));
+        rows.addAll(CrossStoreCustomerHistoryService.rows(c,customerId,currentLocationId));
+        Map<String,Map<String,Object>>unique=new LinkedHashMap<>();for(Map<String,Object> row:rows)unique.putIfAbsent(historyIdentity(row),row);
+        rows=new ArrayList<>(unique.values());rows.sort((a,b)->Long.compare(((Number)b.get("createdAtEpochMillis")).longValue(),((Number)a.get("createdAtEpochMillis")).longValue()));
+        BigDecimal charges=BigDecimal.ZERO,payments=BigDecimal.ZERO;for(Map<String,Object> row:rows){String type=String.valueOf(row.get("transactionType"));BigDecimal amount=money((BigDecimal)row.get("amount"));
             if(List.of("PAYMENT","RETURN","CUSTOM_ORDER_REFUND").contains(type))payments=payments.add(amount.abs());
             else if(List.of("SALE_CREDIT","CUSTOM_ORDER_CREDIT","INVOICE_CREDIT","MANUAL_CHARGE").contains(type))charges=charges.add(amount.abs());}
-        rows.sort((a,b)->Long.compare(((Number)b.get("createdAtEpochMillis")).longValue(),((Number)a.get("createdAtEpochMillis")).longValue()));
-        return map("transactions",rows,"count",rows.size(),"totalCharges",charges,"totalPayments",payments);
+        return map("transactions",List.copyOf(rows),"count",rows.size(),"totalCharges",charges,"totalPayments",payments);
     }
+
+    private static String historyIdentity(Map<String,Object> row){String event=String.valueOf(row.get("eventId"));int marker=event.indexOf(':',7);
+        if(event.startsWith("REMOTE:")&&marker>0)event=event.substring(marker+1);Object location=row.get("locationId");
+        return String.valueOf(location)+"|"+event;}
 
     private static Map<String,Object> historyMap(ResultSet rs,boolean remote)throws SQLException{return map(
             "eventId",rs.getString(1),"transactionId",nullableLong(rs,2),"paymentId",rs.getString(3),"createdAtEpochMillis",epoch(rs.getTimestamp(4)),
