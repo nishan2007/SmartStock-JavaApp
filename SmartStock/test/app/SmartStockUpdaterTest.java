@@ -124,6 +124,23 @@ class SmartStockUpdaterTest {
     }
 
     @Test
+    void rewritesWindowsSyncTaskBeforeRestartingIt() {
+        List<String> command = SmartStockUpdater.windowsSyncTaskUpdateCommand(
+                "SmartStockServerService",
+                Path.of("C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe"),
+                Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app"),
+                "inventory-management-1.0.52.jar");
+
+        assertEquals(List.of("powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command"), command.subList(0, 6));
+        String script = command.get(6);
+        assertTrue(script.contains("New-ScheduledTaskAction"));
+        assertTrue(script.contains("inventory-management-1.0.52.jar"));
+        assertTrue(script.contains("C:\\Users\\test\\.smartstock\\sync-service\\app"));
+        assertTrue(script.contains("Set-ScheduledTask -TaskName 'SmartStockServerService'"));
+    }
+
+    @Test
     void relaunchesThroughNativeWindowsLauncherWhenAvailable(@TempDir Path tempDir) throws Exception {
         Path launcher = tempDir.resolve("SmartStock.exe");
         Files.writeString(launcher, "launcher");

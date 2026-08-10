@@ -67,7 +67,7 @@ public final class SmartStockUpdater {
                 replaceMacAppBundle(currentBundle, newBundle);
                 Path newAppDir = findJarDirectoryInMacApp(currentBundle);
                 if (newAppDir != null) {
-                    updateSyncServiceCopy(newAppDir, props.getProperty("sync.service.app.dir"));
+                    updateSyncServiceCopy(newAppDir, props);
                 }
             } catch (Exception ex) {
                 restoreMacAppBundle(currentBundle, backupDir);
@@ -87,9 +87,14 @@ public final class SmartStockUpdater {
             try {
                 replaceApp(appDir, payloadDir);
                 updateNativeLauncherConfigs(appDir, newJar.getFileName().toString());
-                updateSyncServiceCopy(appDir, props.getProperty("sync.service.app.dir"));
+                updateSyncServiceCopy(appDir, props);
             } catch (Exception ex) {
                 restoreBackup(appDir, backupDir);
+                try {
+                    updateSyncServiceCopy(appDir, props);
+                } catch (Exception restoreServiceError) {
+                    ex.addSuppressed(restoreServiceError);
+                }
                 throw ex;
             } finally {
                 startSyncService(props);
@@ -334,7 +339,8 @@ public final class SmartStockUpdater {
         }
     }
 
-    private static void updateSyncServiceCopy(Path appDir, String syncServiceAppDirValue) throws IOException {
+    private static void updateSyncServiceCopy(Path appDir, Properties props) throws IOException {
+        String syncServiceAppDirValue = props.getProperty("sync.service.app.dir");
         if (syncServiceAppDirValue == null || syncServiceAppDirValue.isBlank()) {
             return;
         }
@@ -362,7 +368,38 @@ public final class SmartStockUpdater {
         Path serviceJar = findReleaseJar(syncServiceAppDir);
         if (serviceJar != null) {
             updateSyncServiceLauncher(syncServiceAppDir, serviceJar.getFileName().toString());
+            updateWindowsSyncServiceTask(props, syncServiceAppDir, serviceJar.getFileName().toString());
         }
+    }
+
+    private static void updateWindowsSyncServiceTask(
+            Properties props, Path syncServiceAppDir, String jarName) throws IOException {
+        if (!isWindows()) return;
+        String taskName = props.getProperty("sync.service.task.name", "").trim();
+        String javaBinValue = props.getProperty("java.bin", "").trim();
+        if (taskName.isEmpty() || javaBinValue.isEmpty()) return;
+        Path javaBin = Path.of(javaBinValue);
+        Path javaw = javaBin.resolveSibling("javaw.exe");
+        Path serviceJava = Files.isRegularFile(javaw) ? javaw : javaBin;
+        runRequiredCommand(windowsSyncTaskUpdateCommand(
+                taskName, serviceJava, syncServiceAppDir, jarName),
+                "Could not update the SmartStock background service task");
+    }
+
+    static List<String> windowsSyncTaskUpdateCommand(
+            String taskName, Path javaBin, Path syncServiceAppDir, String jarName) {
+        String script = "$action=New-ScheduledTaskAction -Execute '"
+                + powerShellQuote(javaBin.toString()) + "' -Argument '-jar \""
+                + powerShellQuote(jarName) + "\" --sync-service' -WorkingDirectory '"
+                + powerShellQuote(syncServiceAppDir.toString())
+                + "'; Set-ScheduledTask -TaskName '" + powerShellQuote(taskName)
+                + "' -Action $action -ErrorAction Stop | Out-Null";
+        return List.of("powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", script);
+    }
+
+    private static String powerShellQuote(String value) {
+        return value.replace("'", "''");
     }
 
     private static void updateSyncServiceLauncher(Path syncServiceAppDir, String jarName) throws IOException {
