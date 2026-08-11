@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.0.59</version>
+  <version>1.0.60</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
