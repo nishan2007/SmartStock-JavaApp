@@ -27,7 +27,8 @@ class ApiOnlyCloudSyncBoundaryTest {
         assertFalse(cloud.contains("wifi_sessions"));
         assertFalse(cloud.contains("smartstock_legacy"));
         assertFalse(cloud.contains("LEGACY_CANDIDATE"));
-        assertEquals(30, Pattern.compile("CREATE TABLE public\\.")
+        assertFalse(cloud.contains("CREATE TABLE public.custom_order_item_variant_barcodes"));
+        assertEquals(29, Pattern.compile("CREATE TABLE public\\.")
                 .matcher(cloud).results().count());
     }
 

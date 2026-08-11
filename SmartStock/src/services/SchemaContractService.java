@@ -47,9 +47,7 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
             "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
-            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
-            "database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql",
-            "database/migrations/v1_after/20260811220100_secure_custom_variant_barcodes.sql"
+            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
