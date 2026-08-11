@@ -98,7 +98,10 @@ public final class ProductSearchHelper {
                     %1$s,
                     COALESCE(%2$s.variant_name, ''),
                     COALESCE(%2$s.sku, ''),
-                    COALESCE(%2$s.barcode, '')
+                    COALESCE(%2$s.barcode, ''),
+                    COALESCE((SELECT STRING_AGG(coivb.barcode, ' ')
+                              FROM custom_order_item_variant_barcodes coivb
+                              WHERE coivb.custom_variant_id = %2$s.custom_variant_id), '')
                 ))
                 """.formatted(customItemSearchableTextExpression(coi), coiv).trim();
         return String.join(" AND ", java.util.Collections.nCopies(tokens.size(), expression + " ILIKE ?"));

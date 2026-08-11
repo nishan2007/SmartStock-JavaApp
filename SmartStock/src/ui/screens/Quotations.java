@@ -4,6 +4,7 @@ import managers.PermissionManager;
 import services.ManagerApprovalService;
 import services.QuotationInvoiceService;
 import services.QuotationInvoiceViewService;
+import services.CustomOrderDataService;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
@@ -20,6 +21,7 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -41,6 +43,7 @@ public class Quotations extends JFrame {
     private static final int LINE_COL_OVERRIDE_BY_USER_ID = 10;
     private static final int LINE_COL_OVERRIDE_BY_NAME = 11;
     private static final int LINE_COL_OVERRIDE_TOKEN = 12;
+    private static final int LINE_COL_CUSTOM = 13;
     private static final Color INPUT_BACKGROUND = new Color(248, 250, 252);
     private static final Color INPUT_FOREGROUND = new Color(17, 24, 39);
     private static final Color INPUT_SELECTION = new Color(37, 99, 235);
@@ -440,7 +443,7 @@ public class Quotations extends JFrame {
     }
 
     private static void hideInternalLineColumns(JTable table) {
-        for (int modelIndex = LINE_COL_ORIGINAL_UNIT; modelIndex <= LINE_COL_OVERRIDE_TOKEN; modelIndex++) {
+        for (int modelIndex = LINE_COL_ORIGINAL_UNIT; modelIndex <= LINE_COL_CUSTOM; modelIndex++) {
             int viewIndex = table.convertColumnIndexToView(modelIndex);
             if (viewIndex >= 0) {
                 table.removeColumn(table.getColumnModel().getColumn(viewIndex));
@@ -521,10 +524,11 @@ public class Quotations extends JFrame {
     static class QuotationEditor extends JDialog {
         private final JComboBox<QuotationInvoiceViewService.CustomerOption> customerBox = new JComboBox<>();
         private final JTextField validUntilField = new JTextField(LocalDate.now().plusDays(30).toString());
+        private final JTextField productionDueDateField = new JTextField();
         private final JTextArea notesArea = new JTextArea(3, 40);
         private final DefaultTableModel lineModel = new DefaultTableModel(new String[]{
                 "Product ID", "Item", "SKU", "Qty", "Unit", "Disc %", "Delivery", "Notes",
-                "Original Unit", "Override Reason", "Override By User ID", "Override By", "Override Token"
+                "Original Unit", "Override Reason", "Override By User ID", "Override By", "Override Token", "Custom Configuration"
         }, 0);
         private final JLabel statusLabel = new JLabel(" ");
         private final JTextField catalogSearchField = new JTextField();
@@ -566,7 +570,8 @@ public class Quotations extends JFrame {
             if (editData != null) {
                 loadExistingQuotation(editData);
             }
-            main.add(formPanel(new String[]{"Customer", "Valid Until", "Notes"}, new JComponent[]{customerBox, validUntilField, new JScrollPane(notesArea)}), BorderLayout.NORTH);
+            productionDueDateField.setToolTipText("Optional; use YYYY-MM-DD.");
+            main.add(formPanel(new String[]{"Customer", "Valid Until", "Production Due Date", "Notes"}, new JComponent[]{customerBox, validUntilField, productionDueDateField, new JScrollPane(notesArea)}), BorderLayout.NORTH);
             JTable lineTable = new JTable(lineModel);
             styleTable(lineTable);
             hideInternalLineColumns(lineTable);
@@ -580,16 +585,19 @@ public class Quotations extends JFrame {
             southPanel.add(statusLabel, BorderLayout.WEST);
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
             JButton addLine = new JButton("Add Line");
+            JButton addCustomLine = new JButton("Add Custom Item");
             JButton editLine = new JButton("Edit Line");
             JButton removeLine = new JButton("Remove Line");
             createButton = new JButton(editData == null ? "Create Quotation" : "Save Draft");
             cancelButton = new JButton("Cancel");
             buttons.add(addLine);
+            buttons.add(addCustomLine);
             buttons.add(editLine);
             buttons.add(removeLine);
             buttons.add(createButton);
             buttons.add(cancelButton);
             styleSecondaryButton(addLine);
+            styleSecondaryButton(addCustomLine);
             styleSecondaryButton(editLine);
             styleSecondaryButton(removeLine);
             stylePrimaryButton(createButton);
@@ -597,6 +605,7 @@ public class Quotations extends JFrame {
             southPanel.add(buttons, BorderLayout.EAST);
             main.add(southPanel, BorderLayout.SOUTH);
             addLine.addActionListener(e -> addLine());
+            addCustomLine.addActionListener(e -> addCustomLine());
             editLine.addActionListener(e -> editSelectedLine(lineTable));
             removeLine.addActionListener(e -> {
                 int row = lineTable.getSelectedRow();
@@ -668,7 +677,7 @@ public class Quotations extends JFrame {
             }
             lineModel.addRow(new Object[]{
                     product.productId(), product.name(), product.sku(), 1, product.price(), BigDecimal.ZERO,
-                    "PICKUP", "", product.price(), null, null, null, null
+                    "PICKUP", "", product.price(), null, null, null, null, null
             });
             finishQuickAdd(product.name());
         }
@@ -699,9 +708,17 @@ public class Quotations extends JFrame {
                         editor.line.priceOverrideReason(),
                         editor.line.priceOverrideByUserId(),
                         editor.line.priceOverrideByName(),
-                        editor.line.priceOverrideApprovalToken()
+                        editor.line.priceOverrideApprovalToken(),editor.line.custom()
                 });
             }
+        }
+
+        private void addCustomLine(){
+            CustomQuotationLineEditor editor=new CustomQuotationLineEditor(this);
+            editor.setVisible(true);
+            if(editor.line==null)return;
+            LineInput line=editor.line;
+            lineModel.addRow(new Object[]{null,line.itemName(),line.sku(),line.quantity(),line.unitPrice(),line.discountPercent(),line.deliveryMethod(),line.notes(),line.originalUnitPrice(),line.priceOverrideReason(),line.priceOverrideByUserId(),line.priceOverrideByName(),line.priceOverrideApprovalToken(),line.custom()});
         }
 
         private void editSelectedLine(JTable lineTable) {
@@ -712,6 +729,7 @@ public class Quotations extends JFrame {
             }
             int modelRow = lineTable.convertRowIndexToModel(row);
             LineInput existing = lineInputFromRow(modelRow);
+            if(existing.custom()!=null){CustomQuotationLineEditor customEditor=new CustomQuotationLineEditor(this,existing);customEditor.setVisible(true);if(customEditor.line!=null){LineInput changed=customEditor.line;Object[]values={null,changed.itemName(),changed.sku(),changed.quantity(),changed.unitPrice(),changed.discountPercent(),changed.deliveryMethod(),changed.notes(),changed.originalUnitPrice(),changed.priceOverrideReason(),changed.priceOverrideByUserId(),changed.priceOverrideByName(),changed.priceOverrideApprovalToken(),changed.custom()};for(int column=0;column<values.length;column++)lineModel.setValueAt(values[column],modelRow,column);}return;}
             LineEditor editor = new LineEditor(this, existing);
             editor.setVisible(true);
             if (editor.line != null) {
@@ -729,6 +747,7 @@ public class Quotations extends JFrame {
                 lineModel.setValueAt(editor.line.priceOverrideByUserId(), modelRow, 10);
                 lineModel.setValueAt(editor.line.priceOverrideByName(), modelRow, 11);
                 lineModel.setValueAt(editor.line.priceOverrideApprovalToken(), modelRow, 12);
+                lineModel.setValueAt(editor.line.custom(), modelRow, 13);
             }
         }
 
@@ -755,13 +774,15 @@ public class Quotations extends JFrame {
                     blankToNull(String.valueOf(lineModel.getValueAt(row, 9))),
                     nullableInteger(lineModel.getValueAt(row, 10)),
                     blankToNull(String.valueOf(lineModel.getValueAt(row, 11))),
-                    blankToNull(String.valueOf(lineModel.getValueAt(row, 12)))
+                    blankToNull(String.valueOf(lineModel.getValueAt(row, 12))),
+                    (QuotationInvoiceService.CustomLineInput)lineModel.getValueAt(row,13)
             );
         }
 
         private void loadExistingQuotation(QuotationInvoiceViewService.QuotationEditData quotation) {
             selectCustomer(quotation.customerId());
             validUntilField.setText(quotation.validUntil() == null ? LocalDate.now().plusDays(30).toString() : quotation.validUntil().toLocalDate().toString());
+            productionDueDateField.setText(quotation.productionDueDate()==null?"":quotation.productionDueDate().toLocalDate().toString());
             notesArea.setText(quotation.notes() == null ? "" : quotation.notes());
             for (QuotationInvoiceViewService.QuotationEditLine line : quotation.lines()) {
                 lineModel.addRow(new Object[]{
@@ -777,7 +798,7 @@ public class Quotations extends JFrame {
                         line.priceOverrideReason(),
                         line.priceOverrideByUserId(),
                         line.priceOverrideByName(),
-                        null
+                        null,line.custom()
                 });
             }
         }
@@ -817,25 +838,29 @@ public class Quotations extends JFrame {
                         blankToNull(String.valueOf(lineModel.getValueAt(i, 9))),
                         nullableInteger(lineModel.getValueAt(i, 10)),
                         blankToNull(String.valueOf(lineModel.getValueAt(i, 11))),
-                        blankToNull(String.valueOf(lineModel.getValueAt(i, 12)))
+                        blankToNull(String.valueOf(lineModel.getValueAt(i, 12))),
+                        (QuotationInvoiceService.CustomLineInput)lineModel.getValueAt(i,13)
                 ));
             }
             LocalDate validUntil;
+            LocalDate productionDueDate=null;
             try {
                 validUntil = LocalDate.parse(validUntilField.getText().trim());
+                if(!productionDueDateField.getText().trim().isBlank())productionDueDate=LocalDate.parse(productionDueDateField.getText().trim());
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Valid Until must be a date like 2026-07-11.", "Quotation", JOptionPane.ERROR_MESSAGE);
                 return;
             }
             String notes = notesArea.getText();
+            LocalDate dueDate=productionDueDate;
             setCreatingQuotation(true);
             statusLabel.setForeground(new Color(248, 113, 113));
             statusLabel.setText(editQuotationId == null ? "Creating quotation..." : "Saving draft...");
             Thread createThread = new Thread(() -> {
                 try {
                     QuotationInvoiceService.QuotationResult result = editQuotationId == null
-                            ? QuotationInvoiceService.createQuotation(customer.customerId(), validUntil, notes, lines)
-                            : QuotationInvoiceService.updateDraftQuotation(editQuotationId, customer.customerId(), validUntil, notes, lines);
+                            ? QuotationInvoiceService.createQuotation(customer.customerId(), validUntil, dueDate, notes, lines)
+                            : QuotationInvoiceService.updateDraftQuotation(editQuotationId, customer.customerId(), validUntil, dueDate, notes, lines);
                     SwingUtilities.invokeLater(() -> {
                         created = true;
                         setCreatingQuotation(false);
@@ -1158,10 +1183,11 @@ public class Quotations extends JFrame {
                     overrideByName = null;
                     overrideApprovalToken = null;
                 }
+                QuotationInvoiceService.CustomLineInput existingCustom=line==null?null:line.custom();
                 line = new LineInput(product, itemName, skuField.getText(), Integer.parseInt(qtyField.getText().trim()),
                         enteredPrice, originalUnitPrice, parseMoney(discountField.getText()),
                         String.valueOf(deliveryBox.getSelectedItem()), notesField.getText(),
-                        overrideReason, overrideByUserId, overrideByName, overrideApprovalToken);
+                        overrideReason, overrideByUserId, overrideByName, overrideApprovalToken,existingCustom);
                 dispose();
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, ex.getMessage(), "Line", JOptionPane.ERROR_MESSAGE);
@@ -1330,11 +1356,35 @@ public class Quotations extends JFrame {
         }
     }
 
+    private static class CustomQuotationLineEditor extends JDialog{
+        private final JComboBox<CustomOrderDataService.CustomItemOption>itemBox=new JComboBox<>();
+        private final JComboBox<CustomOrderDataService.VariantOption>variantBox=new JComboBox<>();
+        private final JTextField qty=new JTextField("1"),price=new JTextField("0"),width=new JTextField(),length=new JTextField(),discount=new JTextField("0"),design=new JTextField(),instructions=new JTextField();
+        private final JComboBox<String>delivery=new JComboBox<>(new String[]{"PICKUP","LOCAL_DELIVERY","SHIP","INSTALLATION"});
+        private final DefaultTableModel addons=new DefaultTableModel(new String[]{"Material ID","Material","Preset ID","Size","Mode","Description","Lines","Charge"},0);
+        private LineInput line;
+        CustomQuotationLineEditor(JDialog owner){this(owner,null);}
+        CustomQuotationLineEditor(JDialog owner,LineInput existing){super(owner,existing==null?"Add Custom Item to Quotation":"Edit Quotation Custom Item",true);setSize(760,650);setLocationRelativeTo(owner);setLayout(new BorderLayout(8,8));
+            JPanel form=formPanel(new String[]{"Custom Item","Variant","Quantity","Rate / Unit Price","Width","Length","Discount %","Delivery","Design / Placement","Instructions"},new JComponent[]{itemBox,variantBox,qty,price,width,length,discount,delivery,design,instructions});
+            JTable addonTable=new JTable(addons);hideAddonIds(addonTable);JPanel center=new JPanel(new BorderLayout(8,8));center.setBorder(new EmptyBorder(12,12,12,12));center.add(form,BorderLayout.NORTH);center.add(new JScrollPane(addonTable),BorderLayout.CENTER);
+            JButton addAddon=new JButton("Add Print Add-on"),remove=new JButton("Remove Add-on"),save=new JButton("Add Custom Item"),cancel=new JButton("Cancel");JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));buttons.add(addAddon);buttons.add(remove);buttons.add(save);buttons.add(cancel);center.add(buttons,BorderLayout.SOUTH);add(center);
+            styleSecondaryButton(addAddon);styleSecondaryButton(remove);stylePrimaryButton(save);styleSecondaryButton(cancel);
+            itemBox.addActionListener(e->loadVariantsAndPrice());addAddon.addActionListener(e->addAddon());remove.addActionListener(e->{int r=addonTable.getSelectedRow();if(r>=0)addons.removeRow(addonTable.convertRowIndexToModel(r));});save.addActionListener(e->save());cancel.addActionListener(e->dispose());
+            try{for(var item:ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems))itemBox.addItem(item);if(existing!=null)loadExisting(existing);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
+        }
+        private void loadExisting(LineInput existing){var c=existing.custom();for(int i=0;i<itemBox.getItemCount();i++)if(java.util.Objects.equals(itemBox.getItemAt(i).customItemId(),c.customItemId())){itemBox.setSelectedIndex(i);break;}loadVariantsAndPrice();for(int i=0;i<variantBox.getItemCount();i++)if(java.util.Objects.equals(variantBox.getItemAt(i).variantId(),c.customVariantId())){variantBox.setSelectedIndex(i);break;}qty.setText(String.valueOf(existing.quantity()));price.setText(c.areaPrice()==null?existing.unitPrice().toPlainString():c.areaPrice().toPlainString());width.setText(c.widthValue()==null?"":c.widthValue().toPlainString());length.setText(c.lengthValue()==null?"":c.lengthValue().toPlainString());discount.setText(existing.discountPercent().toPlainString());delivery.setSelectedItem(existing.deliveryMethod());design.setText(c.customizationDetails());instructions.setText(c.orderInstructions());if(c.printAddons()!=null)for(var a:c.printAddons())addons.addRow(new Object[]{a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()});}
+        private void loadVariantsAndPrice(){CustomOrderDataService.CustomItemOption item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();variantBox.removeAllItems();if(item==null)return;BigDecimal p="AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice();if(p!=null)price.setText(p.toPlainString());if(item.hasVariants())try{for(var v:ResponsiveTask.await(this,"Loading variants...",()->CustomOrderDataService.listActiveVariants(item.customItemId())))variantBox.addItem(v);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage());}}
+        private void addAddon(){try{List<CustomOrderDataService.PrintMaterialOption>materials=ResponsiveTask.await(this,"Loading print materials...",CustomOrderDataService::listActivePrintMaterials);if(materials.isEmpty())throw new IllegalArgumentException("No active print materials are configured.");CustomOrderDataService.PrintMaterialOption material=(CustomOrderDataService.PrintMaterialOption)JOptionPane.showInputDialog(this,"Material:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,materials.toArray(),materials.get(0));if(material==null)return;List<CustomOrderDataService.PrintSizePresetOption>presets=ResponsiveTask.await(this,"Loading print sizes...",()->CustomOrderDataService.listActivePrintSizePresets(material.printMaterialId()));CustomOrderDataService.PrintSizePresetOption preset=presets.isEmpty()?null:(CustomOrderDataService.PrintSizePresetOption)JOptionPane.showInputDialog(this,"Print size:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,presets.toArray(),presets.get(0));String description=JOptionPane.showInputDialog(this,"Print description:","");if(description==null)return;String chargeText=JOptionPane.showInputDialog(this,"Print charge:",preset==null||preset.fixedPrice()==null?"0":preset.fixedPrice().toPlainString());if(chargeText==null)return;addons.addRow(new Object[]{material.printMaterialId(),material.materialName(),preset==null?null:preset.printSizePresetId(),preset==null?"Custom":preset.presetName(),preset==null?"FIXED_PRESET":preset.pricingMode(),description,1,parseMoney(chargeText)});}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Print Add-on",JOptionPane.ERROR_MESSAGE);}}
+        private void save(){try{var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();if(item==null)throw new IllegalArgumentException("Select a custom item.");var variant=(CustomOrderDataService.VariantOption)variantBox.getSelectedItem();if(item.hasVariants()&&variant==null)throw new IllegalArgumentException("Select a variant.");int quantity=Integer.parseInt(qty.getText().trim());if(quantity<=0)throw new IllegalArgumentException("Quantity must be greater than zero.");BigDecimal entered=parseMoney(price.getText()),configured=variant!=null&&variant.fixedPrice()!=null?variant.fixedPrice():("AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice());BigDecimal w=width.getText().isBlank()?null:new BigDecimal(width.getText().trim()),l=length.getText().isBlank()?null:new BigDecimal(length.getText().trim()),area=null,base=entered;if("AREA".equals(item.pricingType())){if(w==null||l==null||w.signum()<=0||l.signum()<=0)throw new IllegalArgumentException("Enter valid width and length for area pricing.");area=w.multiply(l);base=area.multiply(entered).setScale(2,RoundingMode.HALF_UP);}List<QuotationInvoiceService.PrintAddonInput>print=new ArrayList<>();BigDecimal addonTotal=BigDecimal.ZERO;for(int r=0;r<addons.getRowCount();r++){BigDecimal charge=parseMoney(String.valueOf(addons.getValueAt(r,7)));addonTotal=addonTotal.add(charge);print.add(new QuotationInvoiceService.PrintAddonInput(((Number)addons.getValueAt(r,0)).longValue(),String.valueOf(addons.getValueAt(r,1)),addons.getValueAt(r,2)==null?null:((Number)addons.getValueAt(r,2)).longValue(),String.valueOf(addons.getValueAt(r,3)),String.valueOf(addons.getValueAt(r,4)),String.valueOf(addons.getValueAt(r,5)),Integer.parseInt(String.valueOf(addons.getValueAt(r,6))),charge));}BigDecimal unit=base.add(addonTotal),pct=parseMoney(discount.getText());if(pct.signum()<0||pct.compareTo(BigDecimal.valueOf(100))>0)throw new IllegalArgumentException("Discount must be between 0 and 100%.");String overrideReason=null,token=null;if(configured!=null&&entered.compareTo(configured)!=0){overrideReason=JOptionPane.showInputDialog(this,"Reason for custom-item price override:");if(overrideReason==null||overrideReason.isBlank())return;if(!PermissionManager.hasPermission("CUSTOM_ORDER_PRICE_OVERRIDE")&&!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")){var approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override","Reason for custom-item price override:");if(approval==null)return;token=approval.lanApprovalToken();}}var custom=new QuotationInvoiceService.CustomLineInput(item.customItemId(),variant==null?null:variant.variantId(),variant==null?null:variant.name(),item.pricingType(),w,l,item.dimensionUnit(),area,item.areaPriceUnit(),entered,design.getText().trim(),instructions.getText().trim(),print);String notesText=condensed(custom);line=new LineInput(null,item.name(),item.sku(),quantity,unit,unit,pct,String.valueOf(delivery.getSelectedItem()),notesText,overrideReason,null,null,token,custom);dispose();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Item",JOptionPane.ERROR_MESSAGE);}}
+        private static String condensed(QuotationInvoiceService.CustomLineInput c){List<String>parts=new ArrayList<>();if(c.variantName()!=null&&!c.variantName().isBlank())parts.add("Variant: "+c.variantName());if(c.widthValue()!=null&&c.lengthValue()!=null)parts.add("Size: "+c.widthValue()+" x "+c.lengthValue()+" "+c.dimensionUnit());if(c.customizationDetails()!=null&&!c.customizationDetails().isBlank())parts.add("Design: "+c.customizationDetails());if(c.orderInstructions()!=null&&!c.orderInstructions().isBlank())parts.add(c.orderInstructions());if(c.printAddons()!=null&&!c.printAddons().isEmpty())parts.add("Print: "+c.printAddons().stream().map(a->a.materialName()+" / "+a.printSizeName()).reduce((a,b)->a+", "+b).orElse(""));return String.join(" | ",parts);}
+        private static void hideAddonIds(JTable t){t.removeColumn(t.getColumnModel().getColumn(2));t.removeColumn(t.getColumnModel().getColumn(0));}
+    }
+
     private record LineInput(QuotationInvoiceViewService.ProductOption product, String itemName, String sku, int quantity,
                              BigDecimal unitPrice, BigDecimal originalUnitPrice, BigDecimal discountPercent,
                              String deliveryMethod, String notes, String priceOverrideReason,
                              Integer priceOverrideByUserId, String priceOverrideByName,
-                             String priceOverrideApprovalToken) {
+                             String priceOverrideApprovalToken,QuotationInvoiceService.CustomLineInput custom) {
     }
 
     record PaymentInput(BigDecimal amount, String method, String reference) {

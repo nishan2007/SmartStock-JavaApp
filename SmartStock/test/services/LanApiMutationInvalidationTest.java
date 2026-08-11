@@ -36,4 +36,11 @@ class LanApiMutationInvalidationTest {
             assertTrue(SessionDataCache.get("screen:snapshot", String.class, Duration.ofMinutes(1)).isEmpty(), route);
         }
     }
+
+    @Test
+    void receivingBarcodeMutationInvalidatesCatalogSnapshots(){
+        SessionDataCache.put("catalog:receiving","cached");
+        LanApiClient.invalidateCachesAfterMutation("/v1/inventory/receiving-barcode");
+        assertTrue(SessionDataCache.get("catalog:receiving",String.class,Duration.ofMinutes(1)).isEmpty());
+    }
 }

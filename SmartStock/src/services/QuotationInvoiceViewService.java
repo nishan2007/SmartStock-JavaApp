@@ -32,8 +32,8 @@ public final class QuotationInvoiceViewService {
     private static SQLException sql(Exception e){return e instanceof SQLException s?s:new SQLException(e.getMessage(),e);}
 
     public record QuotationSummary(long quotationId,String quotationNumber,String customerName,String status,Date validUntil,BigDecimal totalAmount){}
-    public record QuotationEditData(long quotationId,String quotationNumber,int customerId,String customerName,String status,Date validUntil,String notes,List<QuotationEditLine>lines){}
-    public record QuotationEditLine(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName){}
+    public record QuotationEditData(long quotationId,String quotationNumber,int customerId,String customerName,String status,Date validUntil,Date productionDueDate,String notes,List<QuotationEditLine>lines){}
+    public record QuotationEditLine(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName,QuotationInvoiceService.CustomLineInput custom){}
     public record InvoiceSummary(long invoiceId,String invoiceNumber,String customerName,String status,String paymentStatus,BigDecimal balanceDue,String quotationNumber){}
     public record DeliverySummary(long deliveryEventId,String deliveryNumber,String invoiceNumber,String customerName,String deliveryMethod,BigDecimal balanceDue,String createdAt){}
     public record InvoiceFinancials(long invoiceId,String invoiceNumber,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal balanceDue,BigDecimal customerBalance,BigDecimal creditLimit,BigDecimal availableCredit){}

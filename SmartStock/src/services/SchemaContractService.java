@@ -38,14 +38,18 @@ public final class SchemaContractService {
     );
     private static final List<String> LOCAL_POST_V1 = List.of(
             "database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql",
-            "database/migrations/v1_after/20260811190000_add_register_transfers.sql"
+            "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
+            "database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql",
+            "database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
             "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
             "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
-            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql"
+            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
+            "database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql",
+            "database/migrations/v1_after/20260811220100_secure_custom_variant_barcodes.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -92,9 +96,19 @@ public final class SchemaContractService {
         upgradeCustomerHistoryCacheBaseline(connection);
         upgradeCustomOrderCreditSeparation(connection);
         upgradeRegisterTransfers(connection);
+        upgradeCustomVariantBarcodes(connection);
+        upgradeQuotationCustomItems(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void upgradeQuotationCustomItems(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||columnExists(connection,"public","quotations","production_due_date"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic quotation custom-item installation is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql"));String next=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.setString(4,stored);if(update.executeUpdate()!=1)throw new SQLException("Local quotation custom-item metadata changed during upgrade.");}connection.commit();}catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The quotation custom-item schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     private static void upgradeRegisterTransfers(Connection connection)throws SQLException{
@@ -109,6 +123,20 @@ public final class SchemaContractService {
                 update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.setString(4,stored);if(update.executeUpdate()!=1)throw new SQLException("Local register-transfer metadata changed during upgrade.");}
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The register-transfer schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    private static void upgradeCustomVariantBarcodes(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","custom_order_item_variant_barcodes"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic custom variant barcode installation is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql"));
+            String next=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.setString(4,stored);if(update.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during custom variant barcode installation.");}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The custom variant barcode schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     private static void upgradeCustomOrderCreditSeparation(Connection connection)throws SQLException{

@@ -66,7 +66,8 @@ public final class CatalogBarcodeService {
                 "UNION ALL SELECT 1 FROM product_barcodes WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR product_id<>?) " +
                 "UNION ALL SELECT 1 FROM custom_order_items WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR custom_item_id<>?) " +
                 "UNION ALL SELECT 1 FROM custom_order_item_barcodes WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR custom_item_id<>?) " +
-                "UNION ALL SELECT 1 FROM custom_order_item_variants WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR custom_variant_id<>?)" +
+                "UNION ALL SELECT 1 FROM custom_order_item_variants WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR custom_variant_id<>?) " +
+                "UNION ALL SELECT 1 FROM custom_order_item_variant_barcodes WHERE " + normalized + " IN (" + placeholders + ") AND (? IS NULL OR custom_variant_id<>?)" +
                 ")";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int index = 1;
@@ -74,6 +75,7 @@ public final class CatalogBarcodeService {
             index = bindSection(ps, index, candidates, productId);
             index = bindSection(ps, index, candidates, customItemId);
             index = bindSection(ps, index, candidates, customItemId);
+            index = bindSection(ps, index, candidates, customVariantId);
             bindSection(ps, index, candidates, customVariantId);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();

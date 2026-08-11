@@ -198,7 +198,7 @@ public final class ServerQuotationInvoiceViewService {
         try (Connection conn = DB.getConnection()) {
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
-                    SELECT quotation_id, quotation_number, customer_id, customer_name, status, valid_until, quotation_notes
+                    SELECT quotation_id, quotation_number, customer_id, customer_name, status, valid_until, production_due_date, quotation_notes
                     FROM quotations
                     WHERE quotation_id = ?
                     """)) {
@@ -214,6 +214,7 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getString("customer_name"),
                             rs.getString("status"),
                             rs.getDate("valid_until"),
+                            rs.getDate("production_due_date"),
                             rs.getString("quotation_notes"),
                             loadQuotationLines(conn, quotationId)
                     );
@@ -227,7 +228,7 @@ public final class ServerQuotationInvoiceViewService {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT product_id, item_name, sku, quantity, unit_price, original_unit_price,
                        discount_percent, delivery_method, line_notes,
-                       price_override_reason, price_override_by_user_id, price_override_by_name
+                       price_override_reason, price_override_by_user_id, price_override_by_name, custom_configuration
                 FROM quotation_lines
                 WHERE quotation_id = ?
                 ORDER BY sort_order, quotation_line_id
@@ -248,7 +249,8 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getString("line_notes"),
                             rs.getString("price_override_reason"),
                             rs.getObject("price_override_by_user_id") == null ? null : rs.getInt("price_override_by_user_id"),
-                            rs.getString("price_override_by_name")
+                            rs.getString("price_override_by_name"),
+                            rs.getString("custom_configuration")==null?null:LanJson.create().fromJson(rs.getString("custom_configuration"),ServerQuotationInvoiceService.CustomLineInput.class)
                     ));
                 }
                 return rows;
@@ -308,6 +310,7 @@ public final class ServerQuotationInvoiceViewService {
                     FROM invoice_lines sol
                     JOIN invoices so ON so.invoice_id = sol.invoice_id
                     WHERE sol.invoice_id = ?
+                      AND sol.custom_item_id IS NULL
                       AND sol.quantity_invoiced > sol.quantity_delivered
                     ORDER BY sol.sort_order, sol.invoice_line_id
                     """)) {
@@ -370,14 +373,14 @@ public final class ServerQuotationInvoiceViewService {
     }
 
     public record QuotationEditData(long quotationId, String quotationNumber, int customerId, String customerName,
-                                String status, Date validUntil, String notes, List<QuotationEditLine> lines) {
+                                String status, Date validUntil, Date productionDueDate,String notes, List<QuotationEditLine> lines) {
     }
 
     public record QuotationEditLine(Integer productId, String itemName, String sku, int quantity,
                                 BigDecimal unitPrice, BigDecimal originalUnitPrice,
                                 BigDecimal discountPercent, String deliveryMethod, String notes,
                                 String priceOverrideReason, Integer priceOverrideByUserId,
-                                String priceOverrideByName) {
+                                String priceOverrideByName,ServerQuotationInvoiceService.CustomLineInput custom) {
     }
 
     public record InvoiceSummary(long invoiceId, String invoiceNumber, String customerName, String status,

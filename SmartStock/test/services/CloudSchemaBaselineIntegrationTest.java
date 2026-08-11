@@ -31,7 +31,7 @@ class CloudSchemaBaselineIntegrationTest {
                          SELECT count(*) FROM pg_tables WHERE schemaname='public'
                          """)) {
                 assertTrue(rows.next());
-                assertEquals(28, rows.getInt(1));
+                assertEquals(29, rows.getInt(1));
             }
         }
     }

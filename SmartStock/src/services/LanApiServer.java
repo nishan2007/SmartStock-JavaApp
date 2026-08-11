@@ -189,6 +189,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/inventory/lookups", exchange -> handle(exchange, this::inventoryLookups));
         server.createContext("/v1/inventory/cross-store-search", exchange -> handle(exchange, this::crossStoreInventorySearch));
         server.createContext("/v1/inventory/receiving-search", exchange -> handle(exchange, this::receivingSearch));
+        server.createContext("/v1/inventory/receiving-barcode", exchange -> handle(exchange, this::addReceivingBarcode));
         server.createContext("/v1/inventory/list", exchange -> handle(exchange, this::inventoryList));
         server.createContext("/v1/inventory/details", exchange -> handle(exchange, this::inventoryDetails));
         server.createContext("/v1/inventory/receiving-history", exchange -> handle(exchange, this::receivingHistory));
@@ -1607,6 +1608,24 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
+    private ApiResult addReceivingBarcode(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        String key=requireIdempotencyKey(context,"A valid idempotency key is required for adding a barcode.");
+        String operation="inventory.receiving-barcode.v1",hash=LanSecurity.sha256(GSON.toJson(context.body()));
+        String itemType=required(context.body(),"itemType",40),barcode=required(context.body(),"barcode",200);
+        int itemId=requiredInt(context.body(),"itemId");
+        try(Connection connection=DB.getConnection()){
+            connection.setAutoCommit(false);try{
+                Map<String,Object>previous=loadIdempotentResult(connection,device.deviceId(),key,operation,hash);
+                if(previous!=null){connection.commit();return ApiResult.ok(previous);}
+                Map<String,Object>result=ReceivingBarcodeService.add(connection,itemType,itemId,barcode,device.deviceId(),session.userId());
+                completeIdempotency(connection,device.deviceId(),key,result);connection.commit();return ApiResult.ok(result);
+            }catch(ReceivingBarcodeService.RuleViolation ex){connection.rollback();throw new ApiException(ex.status,ex.code,ex.safeMessage,false);}
+            catch(Exception ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}
+        }
+    }
+
     private ApiResult inventoryList(RequestContext context)throws Exception{
         requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);
@@ -2182,8 +2201,8 @@ public final class LanApiServer implements AutoCloseable {
             requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
             AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);Map<String,Object>r=new LinkedHashMap<>();
             try{switch(a){
-                case"CREATE"->{ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.createQuotation(c,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,null,lines)));}
-                case"UPDATE"->{long quotationId=requiredLong(x.body(),"quotationId");ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.updateDraftQuotation(c,quotationId,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,quotationId,lines)));}
+                case"CREATE"->{ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.createQuotation(c,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optionalDate(x.body(),"productionDueDate"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,null,lines)));}
+                case"UPDATE"->{long quotationId=requiredLong(x.body(),"quotationId");ServerQuotationInvoiceService.QuotationLineInput[]lines=GSON.fromJson(x.body().get("lines"),ServerQuotationInvoiceService.QuotationLineInput[].class);r.put("quotation",ServerQuotationInvoiceService.updateDraftQuotation(c,quotationId,requiredInt(x.body(),"customerId"),optionalDate(x.body(),"validUntil"),optionalDate(x.body(),"productionDueDate"),optional(x.body(),"notes",5000),trustedQuotationLines(c,d,s,u,quotationId,lines)));}
                 case"ISSUE"->{ServerQuotationInvoiceService.issueQuotation(c,requiredLong(x.body(),"quotationId"));r.put("updated",true);}
                 case"CANCEL"->{ServerQuotationInvoiceService.cancelQuotation(c,requiredLong(x.body(),"quotationId"),optional(x.body(),"reason",2000));r.put("updated",true);}
                 case"ACCEPT"->r.put("invoice",ServerQuotationInvoiceService.acceptQuotation(c,requiredLong(x.body(),"quotationId")));
@@ -2218,8 +2237,10 @@ public final class LanApiServer implements AutoCloseable {
         if(supplied==null)return List.of();
         List<ServerQuotationInvoiceService.QuotationLineInput> trusted=new ArrayList<>();
         boolean canChangePrice=hasPermission(c,s.userId(),"CHANGE_SALE_ITEM_PRICE");
+        boolean canOverrideCustomPrice=hasPermission(c,s.userId(),"CUSTOM_ORDER_PRICE_OVERRIDE")||hasPermission(c,s.userId(),"CUSTOM_ORDER_OVERRIDES");
         for(ServerQuotationInvoiceService.QuotationLineInput line:supplied){
             if(line==null)continue;
+            validateCustomQuotationLine(c,line.custom());
             BigDecimal original=line.unitPrice();
             String reason=null;
             Integer approvedBy=null;
@@ -2245,12 +2266,30 @@ public final class LanApiServer implements AutoCloseable {
                     approvedBy=approval.approverUserId();
                     approvedName=approval.approverName();
                 }
+            }else if(line.custom()!=null){
+                original=configuredCustomQuotationPrice(c,line.custom());BigDecimal entered=utils.CurrencyFormatter.normalize(line.unitPrice());
+                if(entered.compareTo(original)!=0){reason=line.priceOverrideReason()==null?"":line.priceOverrideReason().trim();if(reason.isBlank())throw new ApiException(400,"VALIDATION_ERROR","A custom-item price override reason is required.",false);if(canOverrideCustomPrice){approvedBy=s.userId();approvedName=displayName(u);}else{LanSalesService.Approval approval=consumeApproval(c,d,s,line.priceOverrideApprovalToken(),"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override",reason);approvedBy=approval.approverUserId();approvedName=approval.approverName();}}
             }
             trusted.add(new ServerQuotationInvoiceService.QuotationLineInput(
                     line.productId(),line.itemName(),line.sku(),line.quantity(),line.unitPrice(),original,
-                    line.discountPercent(),line.deliveryMethod(),line.notes(),reason,approvedBy,approvedName,null));
+                    line.discountPercent(),line.deliveryMethod(),line.notes(),reason,approvedBy,approvedName,null,line.custom()));
         }
         return trusted;
+    }
+    private BigDecimal configuredCustomQuotationPrice(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
+        BigDecimal price;String pricing;try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,COALESCE(fixed_price,0),COALESCE(area_price,0) FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);pricing=rs.getString(1);price="AREA".equals(pricing)?rs.getBigDecimal(3):rs.getBigDecimal(2);}}
+        if(custom.customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("SELECT fixed_price FROM custom_order_item_variants WHERE custom_variant_id=? AND custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customVariantId());ps.setLong(2,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_VARIANT_NOT_FOUND","The custom-item variant is invalid.",false);if(rs.getBigDecimal(1)!=null)price=rs.getBigDecimal(1);}}
+        if("AREA".equals(pricing))price=price.multiply(customArea(custom));if(custom.printAddons()!=null)for(var addon:custom.printAddons())if(addon.charge()!=null)price=price.add(addon.charge());return utils.CurrencyFormatter.normalize(price);
+    }
+    private static BigDecimal customArea(ServerQuotationInvoiceService.CustomLineInput c){BigDecimal w=c.widthValue(),l=c.lengthValue();String d=c.dimensionUnit()==null?"":c.dimensionUnit().trim().toUpperCase(java.util.Locale.ROOT),a=c.areaUnit()==null?"":c.areaUnit().trim().toUpperCase(java.util.Locale.ROOT);if(a.isBlank())return w.multiply(l);BigDecimal metres=switch(d){case"IN","INCH","INCHES"->new BigDecimal("0.0254");case"FT","FOOT","FEET"->new BigDecimal("0.3048");case"CM"->new BigDecimal("0.01");case"MM"->new BigDecimal("0.001");default->BigDecimal.ONE;};BigDecimal sqm=w.multiply(metres).multiply(l.multiply(metres));BigDecimal unit=switch(a){case"SQ_IN","SQUARE_INCH","SQUARE_INCHES"->new BigDecimal("0.00064516");case"SQ_FT","SQUARE_FOOT","SQUARE_FEET"->new BigDecimal("0.09290304");case"SQ_CM","SQUARE_CENTIMETRE","SQUARE_CENTIMETERS"->new BigDecimal("0.0001");case"SQ_MM"->new BigDecimal("0.000001");default->BigDecimal.ONE;};return sqm.divide(unit,6,java.math.RoundingMode.HALF_UP);}
+    private void validateCustomQuotationLine(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
+        if(custom==null)return;
+        if(custom.customItemId()==null)throw new ApiException(400,"VALIDATION_ERROR","Select a custom item.",false);
+        try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,has_variants FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE")){
+            ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);
+                if(rs.getBoolean(2)&&custom.customVariantId()==null)throw new ApiException(400,"VALIDATION_ERROR","Select a custom-item variant.",false);
+                if("AREA".equals(rs.getString(1))&&(custom.widthValue()==null||custom.lengthValue()==null||custom.widthValue().signum()<=0||custom.lengthValue().signum()<=0))throw new ApiException(400,"VALIDATION_ERROR","Enter valid custom-item dimensions.",false);}}
+        if(custom.customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM custom_order_item_variants WHERE custom_variant_id=? AND custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customVariantId());ps.setLong(2,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_VARIANT_NOT_FOUND","The custom-item variant is invalid.",false);}}
     }
     private LanSalesService.Approval existingQuotationPriceApproval(
             Connection c,Long quotationId,Integer productId,BigDecimal entered,BigDecimal original,

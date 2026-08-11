@@ -152,15 +152,18 @@ public class EnterInventory extends JFrame {
         JPanel bottomPanel = new JPanel(new BorderLayout(14, 0));
         DeckersSwing.styleBand(bottomPanel, DeckersPalette.CORAL, new Insets(14, 14, 14, 14));
         JButton removeSelectedBtn = new JButton("Remove Selected");
+        JButton addBarcodeBtn = new JButton("Add Barcode");
         JButton clearBtn = new JButton("Clear");
         JButton receiveBtn = new JButton("Add to Inventory");
         DeckersSwing.styleUtilityButton(removeSelectedBtn, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(addBarcodeBtn, DeckersPalette.MAGENTA);
         DeckersSwing.styleUtilityButton(clearBtn, DeckersPalette.PURPLE);
         DeckersSwing.styleUtilityButton(receiveBtn, DeckersPalette.LIME);
         totalUnitsLabel = DeckersSwing.totalLabel("Units to Add: 0", true);
         JPanel utilityActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         utilityActions.setOpaque(false);
         utilityActions.add(removeSelectedBtn);
+        utilityActions.add(addBarcodeBtn);
         utilityActions.add(clearBtn);
         JPanel receiveActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
         receiveActions.setOpaque(false);
@@ -175,6 +178,7 @@ public class EnterInventory extends JFrame {
         add(panel);
 
         searchBtn.addActionListener(e -> searchProducts());
+        addBarcodeBtn.addActionListener(e -> addBarcodeToSelectedItem());
         searchField.addActionListener(e -> addSelectedSearchResultToInventory());
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             private void restartSearchDebounce() {
@@ -373,6 +377,35 @@ public class EnterInventory extends JFrame {
 
     private void searchProducts() {
         searchProducts(true);
+    }
+
+    private void addBarcodeToSelectedItem(){
+        int viewRow=inventoryTable.getSelectedRow();
+        if(viewRow<0){JOptionPane.showMessageDialog(this,"Select an item in the receiving table first.");return;}
+        int row=inventoryTable.convertRowIndexToModel(viewRow);
+        String displayType=String.valueOf(inventoryModel.getValueAt(row,0));
+        String itemType=switch(displayType){case "Custom Item"->"CUSTOM_ITEM";case "Custom Variant"->"CUSTOM_VARIANT";default->"PRODUCT";};
+        int itemId=Integer.parseInt(String.valueOf(inventoryModel.getValueAt(row,1)));
+        String itemName=String.valueOf(inventoryModel.getValueAt(row,2));
+
+        JTextField barcodeField=new JTextField(28);DeckersSwing.styleField(barcodeField);
+        JPanel content=new JPanel(new BorderLayout(0,10));content.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+        content.add(new JLabel("Scan or enter a barcode for "+itemName+":"),BorderLayout.NORTH);content.add(barcodeField,BorderLayout.CENTER);
+        JOptionPane pane=new JOptionPane(content,JOptionPane.PLAIN_MESSAGE,JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog=pane.createDialog(this,"Add Barcode");
+        dialog.addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowOpened(java.awt.event.WindowEvent e){SwingUtilities.invokeLater(barcodeField::requestFocusInWindow);}});
+        barcodeField.addActionListener(e->{pane.setValue(JOptionPane.OK_OPTION);dialog.dispose();});
+        dialog.setVisible(true);
+        if(!Integer.valueOf(JOptionPane.OK_OPTION).equals(pane.getValue()))return;
+        String barcode=barcodeField.getText().trim();
+        if(barcode.isEmpty()){JOptionPane.showMessageDialog(this,"Scan or enter a barcode first.");return;}
+        String mutationKey=UUID.randomUUID().toString();
+        LanApiClient.ReceivingBarcodeRequest request=new LanApiClient.ReceivingBarcodeRequest(itemType,itemId,barcode);
+        UiTaskRunner.submit(this,"receiving-inventory.add-barcode",()->LanApiClient.addReceivingBarcode(request,mutationKey),result->{
+            SessionDataCache.invalidate("inventory-");SessionDataCache.invalidate("catalog-");
+            String place="PRIMARY".equals(result.destination())?"primary barcode":"additional barcodes";
+            JOptionPane.showMessageDialog(this,"Barcode "+result.barcode()+" added to "+place+" for "+itemName+".");
+        },ex->JOptionPane.showMessageDialog(this,"Barcode was not added: "+ex.getMessage()));
     }
 
     private void searchProducts(boolean showMessages) {

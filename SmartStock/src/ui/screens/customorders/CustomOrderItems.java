@@ -102,18 +102,18 @@ public final class CustomOrderItems extends JFrame {
         d.setSize(900,500);
         DefaultTableModel m=model("ID","Name","SKU","Barcode","Price","Qty","Reorder","Active");
         JTable t=new JTable(m);
-        JTextField n=new JTextField(),bc=new JTextField(),pr=new JTextField(),q=new JTextField("0"),re=new JTextField("0");
+        JTextField n=new JTextField(),bc=new JTextField(),pr=new JTextField(),q=new JTextField("0"),re=new JTextField("0");JTextArea extraBc=new JTextArea(3,20);
         ProductImageHelper.ImageSelector img=ProductImageHelper.createImageSelector(d);
         JCheckBox a=new JCheckBox("Active",true);
         final Long[]vid={null};
         Runnable load=()->{m.setRowCount(0);var item=state.items().stream().filter(x->x.itemId()==selectedItemId).findFirst().orElse(null);if(item!=null)for(var x:item.variants())m.addRow(new Object[]{x.variantId(),x.name(),x.sku(),x.barcode(),money(x.fixedPrice()),x.quantity(),x.reorderLevel(),x.active()});};
-        t.getSelectionModel().addListSelectionListener(e->{if(e.getValueIsAdjusting())return;int tableRow=t.getSelectedRow();if(tableRow<0)return;tableRow=t.convertRowIndexToModel(tableRow);vid[0]=Long.valueOf(m.getValueAt(tableRow,0).toString());var selected=state.items().stream().flatMap(i->i.variants().stream()).filter(v->v.variantId()==vid[0]).findFirst().orElse(null);if(selected!=null){n.setText(selected.name());bc.setText(selected.barcode());pr.setText(money(selected.fixedPrice()));q.setText(money(selected.quantity()));re.setText(money(selected.reorderLevel()));img.setImageUrl(selected.imageUrl());a.setSelected(selected.active());}});
-        JPanel f=form();row(f,0,"Name",n);row(f,1,"Barcode",BarcodeGenerationHelper.field(d,bc));row(f,2,"Price",pr);row(f,3,"Image",img);row(f,4,"Quantity",q);row(f,5,"Reorder",re);row(f,6,"",a);
+        t.getSelectionModel().addListSelectionListener(e->{if(e.getValueIsAdjusting())return;int tableRow=t.getSelectedRow();if(tableRow<0)return;tableRow=t.convertRowIndexToModel(tableRow);vid[0]=Long.valueOf(m.getValueAt(tableRow,0).toString());var selected=state.items().stream().flatMap(i->i.variants().stream()).filter(v->v.variantId()==vid[0]).findFirst().orElse(null);if(selected!=null){n.setText(selected.name());bc.setText(selected.barcode());extraBc.setText(String.join("\n",selected.extraBarcodes()));pr.setText(money(selected.fixedPrice()));q.setText(money(selected.quantity()));re.setText(money(selected.reorderLevel()));img.setImageUrl(selected.imageUrl());a.setSelected(selected.active());}});
+        JPanel f=form();row(f,0,"Name",n);row(f,1,"Barcode",BarcodeGenerationHelper.field(d,bc));JScrollPane extraScroll=new JScrollPane(extraBc);row(f,2,"More barcodes",BarcodeGenerationHelper.area(d,extraBc,extraScroll));row(f,3,"Price",pr);row(f,4,"Image",img);row(f,5,"Quantity",q);row(f,6,"Reorder",re);row(f,7,"",a);
         JButton save=new JButton("Save"),clear=new JButton("Clear"),off=new JButton("Deactivate");
-        Runnable reset=()->{vid[0]=null;t.clearSelection();n.setText("");bc.setText("");pr.setText("");q.setText("0");re.setText("0");img.setImageUrl("");a.setSelected(true);};
+        Runnable reset=()->{vid[0]=null;t.clearSelection();n.setText("");bc.setText("");extraBc.setText("");pr.setText("");q.setText("0");re.setText("0");img.setImageUrl("");a.setSelected(true);};
         save.addActionListener(e->{
             try{
-                Long variantId=vid[0];String variantName=n.getText(),variantBarcode=bc.getText(),sourceImage=img.getImageUrl();
+                Long variantId=vid[0];String variantName=n.getText(),variantBarcode=bc.getText(),sourceImage=img.getImageUrl();List<String>variantExtraCodes=new ArrayList<>(new LinkedHashSet<>(List.of(extraBc.getText().split("\\R"))));variantExtraCodes.removeIf(String::isBlank);
                 BigDecimal variantPrice=decimal(pr,"price",false),variantQuantity=decimal(q,"quantity",true),variantReorder=decimal(re,"reorder level",true);boolean isActive=a.isSelected();
                 save.setEnabled(false);off.setEnabled(false);
                 var parentItem=state.items().stream().filter(x->x.itemId()==selectedItemId).findFirst().orElse(null);
@@ -121,7 +121,7 @@ public final class CustomOrderItems extends JFrame {
                         ? new ProductImageHelper.ProductImageNaming("", "", "", "", variantName)
                         : new ProductImageHelper.ProductImageNaming(parentItem.name(),parentItem.brand(),
                         parentItem.itemType(),"",variantName);
-                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,imageNaming);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive);return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
+                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,imageNaming);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive,List.copyOf(variantExtraCodes));return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
             }catch(Exception ex){error("Variant was not saved",ex);}
         });
         clear.addActionListener(e->reset.run());

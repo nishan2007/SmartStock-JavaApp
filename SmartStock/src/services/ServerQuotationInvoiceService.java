@@ -18,8 +18,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.google.gson.Gson;
 
 public final class ServerQuotationInvoiceService {
+    private static final Gson GSON = LanJson.create();
     private ServerQuotationInvoiceService() {
     }
 
@@ -125,7 +127,7 @@ public final class ServerQuotationInvoiceService {
                 QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoiceId, "ORDER_CREATED_FROM_QUOTE", "quotation_number", null, quotation.quotationNumber(), null);
                 SyncOutboxService.recordEvent(conn, "QUOTATION_ACCEPTED", Map.of("quotation_id", quotationId, "invoice_id", invoiceId, "invoice_number", invoiceNumber));
                 conn.commit();
-                return new InvoiceResult(invoiceId, invoiceNumber);
+                return new InvoiceResult(invoiceId, invoiceNumber,null,null);
             } catch (SQLException ex) {
                 conn.rollback();
                 throw ex;
@@ -282,26 +284,26 @@ public final class ServerQuotationInvoiceService {
 
     /* Connection-bound variants are used by the LAN API so the domain write,
        audit/outbox rows, and idempotency result commit atomically. */
-    public static QuotationResult createQuotation(Connection conn,int customerId,LocalDate validUntil,String notes,
+    public static QuotationResult createQuotation(Connection conn,int customerId,LocalDate validUntil,LocalDate productionDueDate,String notes,
                                                    List<QuotationLineInput> lines)throws SQLException{
         if(lines==null||lines.isEmpty())throw new SQLException("Add at least one quotation line.");
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);int locationId=requireLocationId();
         CustomerInfo customer=loadCustomer(conn,customerId);LocalDate safe=validUntil==null?LocalDate.now().plusDays(QuotationInvoiceNumberManager.defaultQuotationValidityDays(conn,locationId)):validUntil;
         String number=QuotationInvoiceNumberManager.nextQuotationNumber(conn,locationId);Totals totals=totals(conn,locationId,lines);
-        long id=insertQuotation(conn,number,customer,safe,notes,totals,locationId);int sort=0;for(QuotationLineInput line:lines)insertQuotationLine(conn,id,line,locationId,sort++);
+        long id=insertQuotation(conn,number,customer,safe,productionDueDate,notes,totals,locationId);int sort=0;for(QuotationLineInput line:lines)insertQuotationLine(conn,id,line,locationId,sort++);
         QuotationInvoiceAuditService.recordQuotationStatus(conn,id,null,"DRAFT","Quotation created.");
         QuotationInvoiceAuditService.recordQuotationAudit(conn,id,"QUOTE_CREATED",null,null,number,notes);
         SyncOutboxService.recordEvent(conn,"QUOTATION_CREATED",Map.of("quotation_id",id,"quotation_number",number));return new QuotationResult(id,number);
     }
 
-    public static QuotationResult updateDraftQuotation(Connection conn,long quotationId,int customerId,LocalDate validUntil,
+    public static QuotationResult updateDraftQuotation(Connection conn,long quotationId,int customerId,LocalDate validUntil,LocalDate productionDueDate,
                                                         String notes,List<QuotationLineInput> lines)throws SQLException{
         if(lines==null||lines.isEmpty())throw new SQLException("Add at least one quotation line.");
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);QuotationHeader quotation=lockQuotation(conn,quotationId);
         if(!"DRAFT".equals(quotation.status()))throw new SQLException("Only draft quotations can be edited.");
         int locationId=quotation.locationId()==null?requireLocationId():quotation.locationId();CustomerInfo customer=loadCustomer(conn,customerId);
         LocalDate safe=validUntil==null?quotation.validUntil():validUntil;if(safe==null)safe=LocalDate.now().plusDays(QuotationInvoiceNumberManager.defaultQuotationValidityDays(conn,locationId));
-        Totals totals=totals(conn,locationId,lines);updateQuotationHeader(conn,quotationId,customer,safe,notes,totals);replaceQuotationLines(conn,quotationId,lines,locationId);
+        Totals totals=totals(conn,locationId,lines);updateQuotationHeader(conn,quotationId,customer,safe,productionDueDate,notes,totals);replaceQuotationLines(conn,quotationId,lines,locationId);
         QuotationInvoiceAuditService.recordQuotationAudit(conn,quotationId,"QUOTE_UPDATED",null,null,quotation.quotationNumber(),notes);
         SyncOutboxService.recordEvent(conn,"QUOTATION_UPDATED",Map.of("quotation_id",quotationId,"quotation_number",quotation.quotationNumber()));return new QuotationResult(quotationId,quotation.quotationNumber());
     }
@@ -314,11 +316,29 @@ public final class ServerQuotationInvoiceService {
         if(!"DRAFT".equals(quotation.status())&&!"ISSUED".equals(quotation.status()))throw new SQLException("Only draft or issued quotations can be accepted.");
         if(quotation.validUntil()!=null&&quotation.validUntil().isBefore(LocalDate.now()))throw new SQLException("This quotation expired on "+quotation.validUntil()+".");
         int locationId=quotation.locationId()==null?requireLocationId():quotation.locationId();String number=QuotationInvoiceNumberManager.nextInvoiceNumber(conn,locationId);
-        long invoiceId=insertInvoiceFromQuotation(conn,quotation,number);copyQuotationLinesToInvoice(conn,quotationId,invoiceId);updateQuotationAccepted(conn,quotationId);
+        long invoiceId=insertInvoiceFromQuotation(conn,quotation,number);copyQuotationLinesToInvoice(conn,quotationId,invoiceId);LinkedOrder linked=createLinkedCustomOrder(conn,quotation,invoiceId);updateQuotationAccepted(conn,quotationId);
         QuotationInvoiceAuditService.recordQuotationStatus(conn,quotationId,quotation.status(),"ACCEPTED","Quotation accepted and converted to invoice "+number+".");
         QuotationInvoiceAuditService.recordInvoiceStatus(conn,invoiceId,null,"OPEN","Sales invoice created from quotation "+quotation.quotationNumber()+".");
         QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"ORDER_CREATED_FROM_QUOTE","quotation_number",null,quotation.quotationNumber(),null);
-        SyncOutboxService.recordEvent(conn,"QUOTATION_ACCEPTED",Map.of("quotation_id",quotationId,"invoice_id",invoiceId,"invoice_number",number));return new InvoiceResult(invoiceId,number);
+        SyncOutboxService.recordEvent(conn,"QUOTATION_ACCEPTED",Map.of("quotation_id",quotationId,"invoice_id",invoiceId,"invoice_number",number));return new InvoiceResult(invoiceId,number,linked==null?null:linked.id(),linked==null?null:linked.number());
+    }
+
+    private static LinkedOrder createLinkedCustomOrder(Connection conn,QuotationHeader quotation,long invoiceId)throws SQLException{
+        List<ServerCustomOrderDataService.OrderLineRequest> orderLines=new ArrayList<>();BigDecimal customTotal=BigDecimal.ZERO;
+        try(PreparedStatement ps=conn.prepareStatement("SELECT item_name,quantity,unit_price,discount_percent,line_total,price_override_reason,custom_configuration FROM quotation_lines WHERE quotation_id=? AND custom_item_id IS NOT NULL ORDER BY sort_order,quotation_line_id")){ps.setLong(1,quotation.salesQuotationId());try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+            CustomLineInput c=GSON.fromJson(rs.getString("custom_configuration"),CustomLineInput.class);if(c==null)continue;int quantity=rs.getInt("quantity");BigDecimal lineTotal=zero(rs.getBigDecimal("line_total")),each=lineTotal.divide(BigDecimal.valueOf(quantity),2,RoundingMode.HALF_UP);customTotal=customTotal.add(lineTotal);
+            List<ServerCustomOrderDataService.PrintAddonRequest> addons=new ArrayList<>();if(c.printAddons()!=null)for(PrintAddonInput a:c.printAddons())addons.add(new ServerCustomOrderDataService.PrintAddonRequest(a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()));
+            BigDecimal addonTotal=addons.stream().map(ServerCustomOrderDataService.PrintAddonRequest::printCharge).filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO,BigDecimal::add);
+            for(int i=0;i<quantity;i++)orderLines.add(new ServerCustomOrderDataService.OrderLineRequest(c.customItemId(),c.customVariantId(),rs.getString("item_name"),c.variantName(),c.pricingType(),each,c.customizationDetails(),c.orderInstructions(),c.widthValue(),c.lengthValue(),c.dimensionUnit(),c.areaValue(),c.areaUnit(),c.areaPrice(),each.subtract(addonTotal).max(BigDecimal.ZERO),null,null,null,null,addonTotal,addons.stream().mapToInt(ServerCustomOrderDataService.PrintAddonRequest::printLineCount).sum(),each,rs.getBigDecimal("discount_percent"),BigDecimal.ZERO,null,null,null,BigDecimal.ZERO,each,null,rs.getString("price_override_reason"),null,null,addons,null,null));
+        }}}
+        if(orderLines.isEmpty())return null;
+        var customer=new ServerCustomOrderDataService.CustomerOption(quotation.customerId(),quotation.customerName(),quotation.customerPhone(),null,quotation.customerEmail());
+        var request=new ServerCustomOrderDataService.OrderSaveRequest(customer,quotation.customerName(),quotation.customerPhone(),quotation.productionDueDate(),customTotal,BigDecimal.ZERO,BigDecimal.ZERO,"ACCOUNT",null,"PAID",ServerRequestIdentity.userId(),ServerRequestIdentity.userName(),quotation.locationId(),quotation.locationName(),currentDocumentDeviceId(),currentDocumentDeviceName(),BigDecimal.ZERO,"Billed on invoice",null,null,"Billed on invoice; source quotation "+quotation.quotationNumber(),orderLines,null);
+        String number=ServerCustomOrderDataService.saveCustomOrder(conn,request);long id;try(PreparedStatement ps=conn.prepareStatement("SELECT custom_order_id FROM custom_orders WHERE order_number=? FOR UPDATE")){ps.setString(1,number);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Linked custom order was not created.");id=rs.getLong(1);}}
+        try(PreparedStatement ps=conn.prepareStatement("UPDATE custom_orders SET source_quotation_id=?,source_invoice_id=?,invoice_billed=TRUE WHERE custom_order_id=?")){ps.setLong(1,quotation.salesQuotationId());ps.setLong(2,invoiceId);ps.setLong(3,id);ps.executeUpdate();}
+        try(PreparedStatement ps=conn.prepareStatement("UPDATE quotations SET linked_custom_order_id=? WHERE quotation_id=?")){ps.setLong(1,id);ps.setLong(2,quotation.salesQuotationId());ps.executeUpdate();}
+        try(PreparedStatement ps=conn.prepareStatement("UPDATE invoices SET linked_custom_order_id=? WHERE invoice_id=?")){ps.setLong(1,id);ps.setLong(2,invoiceId);ps.executeUpdate();}
+        QuotationInvoiceAuditService.recordQuotationAudit(conn,quotation.salesQuotationId(),"CUSTOM_ORDER_CREATED","custom_order_number",null,number,"Production is billed on invoice.");SyncOutboxService.recordEvent(conn,"QUOTATION_CUSTOM_ORDER_CREATED",Map.of("quotation_id",quotation.salesQuotationId(),"invoice_id",invoiceId,"custom_order_id",id,"order_number",number));return new LinkedOrder(id,number);
     }
 
     public static PaymentReceiptRef recordPayment(Connection conn,long invoiceId,BigDecimal amount,String method,String reference)throws SQLException{return recordPayment(conn,invoiceId,amount,method,reference,false,null);}
@@ -408,14 +428,14 @@ public final class ServerQuotationInvoiceService {
     }
 
     private static long insertQuotation(Connection conn, String quotationNumber, CustomerInfo customer, LocalDate validUntil,
-                                    String notes, Totals totals, int locationId) throws SQLException {
+                                    LocalDate productionDueDate, String notes, Totals totals, int locationId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO quotations (
                     quotation_number, customer_id, customer_name, customer_phone, customer_email,
-                    valid_until, quotation_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount,
+                    valid_until, production_due_date, quotation_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount,
                     location_id, location_name, device_id, device_name, created_by_user_id, created_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING quotation_id
                 """)) {
             ps.setString(1, quotationNumber);
@@ -424,19 +444,20 @@ public final class ServerQuotationInvoiceService {
             ps.setString(4, blankToNull(customer.phone()));
             ps.setString(5, blankToNull(customer.email()));
             ps.setDate(6, Date.valueOf(validUntil));
-            ps.setString(7, blankToNull(notes));
-            ps.setBigDecimal(8, totals.subtotal());
-            ps.setBigDecimal(9, totals.discount());
-            ps.setBigDecimal(10, totals.vat());
-            ps.setBigDecimal(11, totals.vatRate());
-            ps.setString(12, totals.vatMode());
-            ps.setBigDecimal(13, totals.total());
-            ps.setInt(14, locationId);
-            ps.setString(15, ServerRequestIdentity.locationName());
-            ps.setString(16, blankToNull(currentDocumentDeviceId()));
-            ps.setString(17, blankToNull(currentDocumentDeviceName()));
-            setNullableInteger(ps, 18, ServerRequestIdentity.userId());
-            ps.setString(19, ServerRequestIdentity.userName());
+            if(productionDueDate==null)ps.setNull(7,Types.DATE);else ps.setDate(7,Date.valueOf(productionDueDate));
+            ps.setString(8, blankToNull(notes));
+            ps.setBigDecimal(9, totals.subtotal());
+            ps.setBigDecimal(10, totals.discount());
+            ps.setBigDecimal(11, totals.vat());
+            ps.setBigDecimal(12, totals.vatRate());
+            ps.setString(13, totals.vatMode());
+            ps.setBigDecimal(14, totals.total());
+            ps.setInt(15, locationId);
+            ps.setString(16, ServerRequestIdentity.locationName());
+            ps.setString(17, blankToNull(currentDocumentDeviceId()));
+            ps.setString(18, blankToNull(currentDocumentDeviceName()));
+            setNullableInteger(ps, 19, ServerRequestIdentity.userId());
+            ps.setString(20, ServerRequestIdentity.userName());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return rs.getLong("quotation_id");
@@ -446,6 +467,10 @@ public final class ServerQuotationInvoiceService {
         throw new SQLException("Quotation insert did not return an id.");
     }
 
+    private static long insertQuotation(Connection conn,String quotationNumber,CustomerInfo customer,LocalDate validUntil,String notes,Totals totals,int locationId)throws SQLException{
+        return insertQuotation(conn,quotationNumber,customer,validUntil,null,notes,totals,locationId);
+    }
+
     private static void insertQuotationLine(Connection conn, long quotationId, QuotationLineInput line, int locationId, int sortInvoice) throws SQLException {
         SalesVatSettings settings = loadSalesVatSettings(conn, locationId);
         LineAmounts amounts = lineAmounts(conn, settings, line);
@@ -453,10 +478,11 @@ public final class ServerQuotationInvoiceService {
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO quotation_lines (
                     quotation_id, product_id, item_name, sku, quantity, unit_price, original_unit_price, category_id,
-                    price_override_reason, price_override_by_user_id, price_override_by_name,
+                    price_override_reason, price_override_by_user_id, price_override_by_name, custom_item_id, custom_variant_id, custom_configuration,
                     discount_percent, discount_amount, vat_rate_percent, vat_amount, line_total, delivery_method, line_notes, sort_order
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING quotation_line_id
                 """)) {
             ps.setLong(1, quotationId);
             setNullableInteger(ps, 2, line.productId());
@@ -469,15 +495,19 @@ public final class ServerQuotationInvoiceService {
             ps.setString(9, blankToNull(line.priceOverrideReason()));
             setNullableInteger(ps, 10, line.priceOverrideByUserId());
             ps.setString(11, blankToNull(line.priceOverrideByName()));
-            ps.setBigDecimal(12, percent(line.discountPercent()));
-            ps.setBigDecimal(13, amounts.discount());
-            ps.setBigDecimal(14, amounts.vatRate());
-            ps.setBigDecimal(15, amounts.vatAmount());
-            ps.setBigDecimal(16, amounts.preVatTotal());
-            ps.setString(17, normalizeDeliveryMethod(line.deliveryMethod()));
-            ps.setString(18, blankToNull(line.notes()));
-            ps.setInt(19, sortInvoice);
-            ps.executeUpdate();
+            CustomLineInput custom=line.custom();
+            setNullableLong(ps,12,custom==null?null:custom.customItemId());
+            setNullableLong(ps,13,custom==null?null:custom.customVariantId());
+            if(custom==null)ps.setNull(14,Types.OTHER);else ps.setObject(14,GSON.toJson(custom),Types.OTHER);
+            ps.setBigDecimal(15, percent(line.discountPercent()));
+            ps.setBigDecimal(16, amounts.discount());
+            ps.setBigDecimal(17, amounts.vatRate());
+            ps.setBigDecimal(18, amounts.vatAmount());
+            ps.setBigDecimal(19, amounts.preVatTotal());
+            ps.setString(20, normalizeDeliveryMethod(line.deliveryMethod()));
+            ps.setString(21, blankToNull(line.notes()));
+            ps.setInt(22, sortInvoice);
+            try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Quotation line insert did not return an id.");insertQuotationPrintAddons(conn,rs.getLong(1),custom);}
         }
         if (line.priceOverrideReason() != null && !line.priceOverrideReason().isBlank()) {
             QuotationInvoiceAuditService.recordQuotationAudit(
@@ -492,8 +522,12 @@ public final class ServerQuotationInvoiceService {
         }
     }
 
+    private static void insertQuotationPrintAddons(Connection conn,long lineId,CustomLineInput custom)throws SQLException{
+        if(custom==null||custom.printAddons()==null)return;try(PreparedStatement ps=conn.prepareStatement("INSERT INTO quotation_line_print_addons(quotation_line_id,print_material_id,material_name,print_size_preset_id,print_size_name,pricing_mode,print_description,print_line_count,print_charge,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?)")){int sort=0;for(PrintAddonInput a:custom.printAddons()){ps.setLong(1,lineId);setNullableLong(ps,2,a.printMaterialId());ps.setString(3,a.materialName());setNullableLong(ps,4,a.printSizePresetId());ps.setString(5,a.printSizeName());ps.setString(6,a.pricingMode());ps.setString(7,blankToNull(a.description()));ps.setInt(8,Math.max(1,a.lineCount()));ps.setBigDecimal(9,money(a.charge()));ps.setInt(10,sort++);ps.addBatch();}ps.executeBatch();}
+    }
+
     private static void updateQuotationHeader(Connection conn, long quotationId, CustomerInfo customer,
-                                          LocalDate validUntil, String notes, Totals totals) throws SQLException {
+                                          LocalDate validUntil, LocalDate productionDueDate, String notes, Totals totals) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE quotations
                 SET customer_id = ?,
@@ -501,7 +535,7 @@ public final class ServerQuotationInvoiceService {
                     customer_phone = ?,
                     customer_email = ?,
                     valid_until = ?,
-                    quotation_notes = ?,
+                    production_due_date = ?, quotation_notes = ?,
                     subtotal_amount = ?,
                     discount_amount = ?,
                     vat_amount = ?,
@@ -515,16 +549,21 @@ public final class ServerQuotationInvoiceService {
             ps.setString(3, blankToNull(customer.phone()));
             ps.setString(4, blankToNull(customer.email()));
             ps.setDate(5, Date.valueOf(validUntil));
-            ps.setString(6, blankToNull(notes));
-            ps.setBigDecimal(7, totals.subtotal());
-            ps.setBigDecimal(8, totals.discount());
-            ps.setBigDecimal(9, totals.vat());
-            ps.setBigDecimal(10, totals.vatRate());
-            ps.setString(11, totals.vatMode());
-            ps.setBigDecimal(12, totals.total());
-            ps.setLong(13, quotationId);
+            if(productionDueDate==null)ps.setNull(6,Types.DATE);else ps.setDate(6,Date.valueOf(productionDueDate));
+            ps.setString(7, blankToNull(notes));
+            ps.setBigDecimal(8, totals.subtotal());
+            ps.setBigDecimal(9, totals.discount());
+            ps.setBigDecimal(10, totals.vat());
+            ps.setBigDecimal(11, totals.vatRate());
+            ps.setString(12, totals.vatMode());
+            ps.setBigDecimal(13, totals.total());
+            ps.setLong(14, quotationId);
             ps.executeUpdate();
         }
+    }
+
+    private static void updateQuotationHeader(Connection conn,long quotationId,CustomerInfo customer,LocalDate validUntil,String notes,Totals totals)throws SQLException{
+        updateQuotationHeader(conn,quotationId,customer,validUntil,null,notes,totals);
     }
 
     private static void replaceQuotationLines(Connection conn, long quotationId, List<QuotationLineInput> lines, int locationId) throws SQLException {
@@ -583,12 +622,12 @@ public final class ServerQuotationInvoiceService {
                 INSERT INTO invoice_lines (
                     invoice_id, quotation_line_id, product_id, item_name, sku,
                     quantity_invoiced, unit_price, original_unit_price, category_id, discount_percent,
-                    price_override_reason, price_override_by_user_id, price_override_by_name,
+                    price_override_reason, price_override_by_user_id, price_override_by_name, custom_item_id, custom_variant_id, custom_configuration,
                     discount_amount, vat_rate_percent, vat_amount, line_total, delivery_method, line_notes, sort_order
                 )
                 SELECT ?, quotation_line_id, product_id, item_name, sku,
                        quantity, unit_price, original_unit_price, category_id, discount_percent,
-                       price_override_reason, price_override_by_user_id, price_override_by_name,
+                       price_override_reason, price_override_by_user_id, price_override_by_name, custom_item_id, custom_variant_id, custom_configuration,
                        discount_amount, vat_rate_percent, vat_amount, line_total, delivery_method, line_notes, sort_order
                 FROM quotation_lines
                 WHERE quotation_id = ?
@@ -598,6 +637,7 @@ public final class ServerQuotationInvoiceService {
             ps.setLong(2, quotationId);
             ps.executeUpdate();
         }
+        try(PreparedStatement ps=conn.prepareStatement("INSERT INTO invoice_line_print_addons(invoice_line_id,quotation_line_print_addon_id,print_material_id,material_name,print_size_preset_id,print_size_name,pricing_mode,print_description,print_line_count,print_charge,sort_order) SELECT il.invoice_line_id,a.quotation_line_print_addon_id,a.print_material_id,a.material_name,a.print_size_preset_id,a.print_size_name,a.pricing_mode,a.print_description,a.print_line_count,a.print_charge,a.sort_order FROM quotation_line_print_addons a JOIN quotation_lines ql ON ql.quotation_line_id=a.quotation_line_id JOIN invoice_lines il ON il.quotation_line_id=ql.quotation_line_id WHERE ql.quotation_id=?")){ps.setLong(1,quotationId);ps.executeUpdate();}
     }
 
     private static void updateQuotationAccepted(Connection conn, long quotationId) throws SQLException {
@@ -935,7 +975,7 @@ public final class ServerQuotationInvoiceService {
             ps.setLong(1, quotationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    Date validUntil = rs.getDate("valid_until");
+                    Date validUntil = rs.getDate("valid_until");Date productionDueDate=rs.getDate("production_due_date");
                     return new QuotationHeader(
                             rs.getLong("quotation_id"),
                             rs.getString("quotation_number"),
@@ -945,6 +985,7 @@ public final class ServerQuotationInvoiceService {
                             rs.getString("customer_email"),
                             rs.getString("status"),
                             validUntil == null ? null : validUntil.toLocalDate(),
+                            productionDueDate==null?null:productionDueDate.toLocalDate(),
                             rs.getString("quotation_notes"),
                             zero(rs.getBigDecimal("subtotal_amount")),
                             zero(rs.getBigDecimal("discount_amount")),
@@ -1207,8 +1248,11 @@ public final class ServerQuotationInvoiceService {
                                  BigDecimal unitPrice, BigDecimal originalUnitPrice,
                                  BigDecimal discountPercent, String deliveryMethod, String notes,
                                  String priceOverrideReason, Integer priceOverrideByUserId,
-                                 String priceOverrideByName, String priceOverrideApprovalToken) {
+                                 String priceOverrideByName, String priceOverrideApprovalToken,CustomLineInput custom) {
     }
+
+    public record CustomLineInput(Long customItemId,Long customVariantId,String variantName,String pricingType,BigDecimal widthValue,BigDecimal lengthValue,String dimensionUnit,BigDecimal areaValue,String areaUnit,BigDecimal areaPrice,String customizationDetails,String orderInstructions,List<PrintAddonInput>printAddons){}
+    public record PrintAddonInput(Long printMaterialId,String materialName,Long printSizePresetId,String printSizeName,String pricingMode,String description,int lineCount,BigDecimal charge){}
 
     public record DeliveryLineInput(long salesInvoiceLineId, int quantityDelivered) {
     }
@@ -1216,7 +1260,7 @@ public final class ServerQuotationInvoiceService {
     public record QuotationResult(long quotationId, String quotationNumber) {
     }
 
-    public record InvoiceResult(long invoiceId, String invoiceNumber) {
+    public record InvoiceResult(long invoiceId, String invoiceNumber,Long customOrderId,String customOrderNumber) {
     }
 
     public record DeliveryResult(long deliveryEventId, String deliveryNumber) {
@@ -1229,11 +1273,12 @@ public final class ServerQuotationInvoiceService {
     }
 
     private record QuotationHeader(long salesQuotationId, String quotationNumber, int customerId, String customerName,
-                               String customerPhone, String customerEmail, String status, LocalDate validUntil,
+                               String customerPhone, String customerEmail, String status, LocalDate validUntil,LocalDate productionDueDate,
                                String quotationNotes, BigDecimal subtotalAmount, BigDecimal discountAmount,
                                BigDecimal vatAmount, BigDecimal vatRatePercent, String vatMode,
                                BigDecimal totalAmount, Integer locationId, String locationName) {
     }
+    private record LinkedOrder(long id,String number){}
 
     private record InvoiceHeader(long salesInvoiceId, String invoiceNumber, int customerId, String status,
                                BigDecimal totalAmount, BigDecimal amountPaid, BigDecimal balanceDue,

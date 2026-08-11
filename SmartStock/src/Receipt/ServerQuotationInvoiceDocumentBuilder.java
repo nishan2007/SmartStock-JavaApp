@@ -231,7 +231,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static List<DocumentLine> quotationLines(Connection conn, long quotationId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT item_name, quantity, 0 AS delivered_now, quantity AS remaining, unit_price, line_total
+                SELECT item_name || CASE WHEN COALESCE(line_notes,'')='' THEN '' ELSE E'\n' || line_notes END AS item_name, quantity, 0 AS delivered_now, quantity AS remaining, unit_price, line_total
                 FROM quotation_lines
                 WHERE quotation_id = ?
                 ORDER BY sort_order, quotation_line_id
@@ -243,7 +243,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static List<DocumentLine> invoiceLines(Connection conn, long invoiceId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT item_name, quantity_invoiced AS quantity, quantity_delivered AS delivered_now,
+                SELECT item_name || CASE WHEN COALESCE(line_notes,'')='' THEN '' ELSE E'\n' || line_notes END AS item_name, quantity_invoiced AS quantity, quantity_delivered AS delivered_now,
                        quantity_invoiced - quantity_delivered AS remaining, unit_price, line_total
                 FROM invoice_lines
                 WHERE invoice_id = ?
@@ -452,7 +452,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 html.append("<td class='center'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
                         .append("<td class='center'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description'>").append(esc(line.description())).append("</td>");
+            html.append("<td class='description'>").append(descriptionHtml(line.description())).append("</td>");
             if (!includeDelivery) {
                 html.append("<td class='num'>").append(esc(money(line.unitPrice()))).append("</td>")
                         .append("<td class='num'>").append(esc(money(line.amount()))).append("</td>");
@@ -503,7 +503,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 html.append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.deliveredNow() == null ? "" : line.deliveredNow()).append("</td>")
                         .append("<td class='center' style='border-top:2px solid #111; border-left:2px solid #111'>").append(line.remaining() == null ? "" : line.remaining()).append("</td>");
             }
-            html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(line.description())).append("</td>");
+            html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(descriptionHtml(line.description())).append("</td>");
             if (!includeDelivery) {
                 html.append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.unitPrice()))).append("</td>")
                         .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.amount()))).append("</td>");
@@ -667,6 +667,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
     }
+
+    private static String descriptionHtml(String value){String[]parts=clean(value).split("\\R",2);return esc(parts[0])+(parts.length<2?"":"<br><span class='muted'>"+esc(parts[1])+"</span>");}
 
     private static String escAttr(String value) {
         return esc(value).replace("'", "&#39;");

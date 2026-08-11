@@ -700,6 +700,15 @@ public final class ServerCustomOrderDataService {
                       AND coiv.is_active = TRUE
                       AND UPPER(COALESCE(coiv.barcode, '')) = UPPER(?)
                     UNION ALL
+                    SELECT coiv.custom_item_id,
+                           coiv.custom_variant_id,
+                           16 AS rank
+                    FROM custom_order_item_variant_barcodes coivb
+                    JOIN custom_order_item_variants coiv ON coiv.custom_variant_id=coivb.custom_variant_id
+                    JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
+                    WHERE coi.is_active=TRUE AND coiv.is_active=TRUE
+                      AND UPPER(coivb.barcode)=UPPER(?)
+                    UNION ALL
                     SELECT coi.custom_item_id,
                            NULL::BIGINT AS custom_variant_id,
                            60 AS rank
@@ -724,10 +733,10 @@ public final class ServerCustomOrderDataService {
                         ProductSearchHelper.customItemPredicate("coi", value),
                         ProductSearchHelper.customVariantPredicate("coi", "coiv", value));
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 1; i <= 5; i++) {
+            for (int i = 1; i <= 6; i++) {
                 ps.setString(i, value);
             }
-            int parameterIndex = ProductSearchHelper.bindTokens(ps, 6, value);
+            int parameterIndex = ProductSearchHelper.bindTokens(ps, 7, value);
             ProductSearchHelper.bindTokens(ps, parameterIndex, value);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {

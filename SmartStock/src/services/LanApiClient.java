@@ -516,6 +516,12 @@ public final class LanApiClient {
         return rows==null?List.of():List.of(rows);
     }
 
+    public static ReceivingBarcodeResult addReceivingBarcode(ReceivingBarcodeRequest request,String idempotencyKey)throws Exception{
+        requireIdempotencyKey(idempotencyKey,"A receiving barcode idempotency key is required.");
+        return GSON.fromJson(post("/v1/inventory/receiving-barcode",GSON.toJsonTree(request).getAsJsonObject(),true,true,
+                Map.of("Idempotency-Key",idempotencyKey)),ReceivingBarcodeResult.class);
+    }
+
     public static InventoryResult loadInventory(InventoryRequest request)throws Exception{
         return GSON.fromJson(post("/v1/inventory/list",GSON.toJsonTree(request).getAsJsonObject(),true,true),InventoryResult.class);
     }
@@ -1178,6 +1184,7 @@ public final class LanApiClient {
                 || path.endsWith("/device-code") || path.endsWith("/timezone")
                 || path.endsWith("/badge-printed") || path.endsWith("/change-pin")
                 || path.endsWith("/process-email") || path.endsWith("/add");
+        mutation = mutation || path.endsWith("/receiving-barcode");
         mutation = mutation || path.endsWith("/resume") || path.endsWith("/change-target")
                 || path.endsWith("/save-settings") || path.endsWith("/complete")
                 || path.endsWith("/delete") || path.endsWith("/deactivate")
@@ -1456,6 +1463,8 @@ public final class LanApiClient {
                                    List<String> brands,List<String> shelves) { }
     public record NamedId(int id,String name) { }
     public record LookupItem(String itemType,int itemId,String name,String description,String code,int quantityOnHand) { }
+    public record ReceivingBarcodeRequest(String itemType,int itemId,String barcode) { }
+    public record ReceivingBarcodeResult(String itemType,int itemId,String barcode,String destination) { }
     public record InventoryRequest(String search,String stockFilter,String department,String itemType,String brand,
                                    String shelf,String storageShelf) { }
     public record InventoryResult(List<InventoryProduct> products,int totalProducts,int totalUnits,
