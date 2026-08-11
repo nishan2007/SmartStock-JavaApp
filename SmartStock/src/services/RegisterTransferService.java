@@ -53,7 +53,7 @@ final class RegisterTransferService {
 
     static Map<String,Object> destinations(Connection c,int userId,int currentLocationId)throws Exception{
         requirePermission(c,userId);java.util.List<Map<String,Object>> rows=new java.util.ArrayList<>();
-        try(PreparedStatement ps=c.prepareStatement("SELECT location_id,name,COALESCE(receipt_store_code,'0001') FROM locations WHERE location_id<>? AND COALESCE(is_active,TRUE)=TRUE ORDER BY name")){
+        try(PreparedStatement ps=c.prepareStatement("SELECT location_id,name,COALESCE(receipt_store_code,'0001') FROM locations WHERE location_id<>? ORDER BY name")){
             ps.setInt(1,currentLocationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(Map.of("locationId",rs.getInt(1),"name",rs.getString(2),"storeCode",rs.getString(3)));}}
         return Map.of("locations",rows);
     }
@@ -92,7 +92,7 @@ final class RegisterTransferService {
 
     static void importCompanyDeviceForEmergency(Connection c,String installationId,int destination)throws Exception{
         try(PreparedStatement found=c.prepareStatement("SELECT 1 FROM devices WHERE installation_id=?")){found.setString(1,installationId);try(ResultSet rs=found.executeQuery()){if(rs.next())return;}}
-        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>? AND COALESCE(is_active,TRUE)=TRUE")){
+        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>?")){
             locations.setInt(1,destination);try(ResultSet rs=locations.executeQuery()){while(rs.next())for(JsonObject row:CrossStoreInventoryService.fetchTable(rs.getInt(1),"devices")){
                 if(!row.has("installation_id")||!installationId.equals(row.get("installation_id").getAsString()))continue;
                 if(row.has("is_blocked")&&row.get("is_blocked").getAsBoolean())throw rule(403,"DEVICE_REVOKED","This device is blocked and cannot be recovered at another store.");
@@ -103,7 +103,7 @@ final class RegisterTransferService {
 
     static void importPreparedTransferForDestination(Connection c,String installationId,int destination)throws Exception{
         try(PreparedStatement found=c.prepareStatement("SELECT 1 FROM register_transfers WHERE installation_id=? AND destination_location_id=? AND status='PREPARED' AND expires_at>CURRENT_TIMESTAMP")){found.setString(1,installationId);found.setInt(2,destination);try(ResultSet rs=found.executeQuery()){if(rs.next())return;}}
-        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>? AND COALESCE(is_active,TRUE)=TRUE")){
+        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>?")){
             locations.setInt(1,destination);try(ResultSet rs=locations.executeQuery()){while(rs.next()){
                 int source=rs.getInt(1);JsonObject transfer=null;
                 for(JsonObject row:CrossStoreInventoryService.fetchTable(source,"register_transfers"))if(row.has("installation_id")&&installationId.equals(row.get("installation_id").getAsString())&&row.has("destination_location_id")&&row.get("destination_location_id").getAsInt()==destination&&"PREPARED".equals(row.get("status").getAsString())){transfer=row;break;}
@@ -134,7 +134,7 @@ final class RegisterTransferService {
 
     static int synchronizeCompleted(Connection c,int localLocationId)throws SQLException{
         int applied=0;
-        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>? AND COALESCE(is_active,TRUE)=TRUE")){
+        try(PreparedStatement locations=c.prepareStatement("SELECT location_id FROM locations WHERE location_id<>?")){
             locations.setInt(1,localLocationId);try(ResultSet rs=locations.executeQuery()){while(rs.next()){
                 for(JsonObject row:CrossStoreInventoryService.fetchTable(rs.getInt(1),"register_transfers")){
                     if(!row.has("source_location_id")||row.get("source_location_id").isJsonNull()||row.get("source_location_id").getAsInt()!=localLocationId||!"COMPLETED".equals(row.get("status").getAsString()))continue;
@@ -159,7 +159,7 @@ final class RegisterTransferService {
     private static void deactivateAssignments(Connection c,UUID device,int location,int user,String notes)throws SQLException{try(PreparedStatement ps=c.prepareStatement("UPDATE cash_drawer_device_assignments SET is_active=FALSE,unassigned_at=CURRENT_TIMESTAMP,unassigned_by_user_id=?,notes=CONCAT_WS(' | ',NULLIF(notes,''),?),updated_at=CURRENT_TIMESTAMP WHERE device_id=? AND location_id=? AND is_active=TRUE")){ps.setInt(1,user);ps.setString(2,notes);ps.setObject(3,device);ps.setInt(4,location);ps.executeUpdate();}}
     private static void endSessions(Connection c,UUID device)throws SQLException{try(PreparedStatement ps=c.prepareStatement("UPDATE device_sessions SET logout_time=CURRENT_TIMESTAMP,session_status='ENDED' WHERE device_id=? AND logout_time IS NULL")){ps.setObject(1,device);ps.executeUpdate();}try(PreparedStatement ps=c.prepareStatement("UPDATE lan_api_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE device_id=? AND revoked_at IS NULL")){ps.setObject(1,device);ps.executeUpdate();}}
     private static void requirePermission(Connection c,int user)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM users u JOIN role_permissions rp ON rp.role_id=u.role_id JOIN permissions p ON p.permission_id=rp.permission_id WHERE u.user_id=? AND UPPER(p.permission_key)='DEVICE_MANAGEMENT' LIMIT 1")){ps.setInt(1,user);try(ResultSet rs=ps.executeQuery()){if(rs.next())return;}}throw rule(403,"PERMISSION_DENIED","You do not have permission to move registers.");}
-    private static void requireLocation(Connection c,int id)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM locations WHERE location_id=? AND COALESCE(is_active,TRUE)=TRUE")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())return;}}throw rule(400,"DESTINATION_INVALID","Choose an active destination store.");}
+    private static void requireLocation(Connection c,int id)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM locations WHERE location_id=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())return;}}throw rule(400,"DESTINATION_INVALID","Choose a valid destination store.");}
     private static void audit(Connection c,String type,UUID device,Integer user,String details)throws SQLException{try(PreparedStatement ps=c.prepareStatement("INSERT INTO security_audit_events(event_type,device_id,actor_user_id,details) VALUES(?,?,?,?)")){ps.setString(1,type);ps.setObject(2,device);if(user==null)ps.setNull(3,java.sql.Types.INTEGER);else ps.setInt(3,user);ps.setString(4,details);ps.executeUpdate();}}
     private static int requiredInt(JsonObject b,String k)throws RuleViolation{try{return b.get(k).getAsInt();}catch(Exception e){throw rule(400,"VALIDATION_ERROR",k+" is required.");}}
     private static String required(JsonObject b,String k)throws RuleViolation{String v=text(b,k);if(v.isBlank())throw rule(400,"VALIDATION_ERROR",k+" is required.");return v;}

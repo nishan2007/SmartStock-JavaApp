@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RegisterTransferArchitectureTest {
     private static String source(String path) throws Exception {
@@ -36,6 +37,7 @@ class RegisterTransferArchitectureTest {
         assertTrue(client.contains("clearServerTrust"));
         assertTrue(client.contains("LAN_API_FINGERPRINT_SECRET"));
         assertTrue(client.contains("TRANSFER_STATE_SECRET"));
+        assertFalse(service.contains("COALESCE(is_active,TRUE)"));
     }
 
     @Test
