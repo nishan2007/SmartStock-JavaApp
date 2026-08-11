@@ -42,8 +42,8 @@ public final class CashDrawerService {
 
     public static CashDrawerContext resolveCurrentDrawer(Connection conn) throws SQLException {
         ensureSchema(conn);
-        Integer locationId = SessionManager.getCurrentLocationId();
-        String deviceId = DeviceContextService.currentDeviceId();
+        Integer locationId = ServerRequestIdentity.locationId();
+        String deviceId = ServerRequestIdentity.deviceId();
         if (locationId == null || deviceId == null || deviceId.isBlank()) {
             return new CashDrawerContext(null, null);
         }

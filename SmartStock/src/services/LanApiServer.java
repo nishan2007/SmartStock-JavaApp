@@ -2155,7 +2155,25 @@ public final class LanApiServer implements AutoCloseable {
                 default->throw new ApiException(400,"VALIDATION_ERROR","The quotation change is invalid.",false);
             }}finally{ServerRequestIdentity.clear();}
             completeIdempotency(c,d.deviceId(),key,r);c.commit();return ApiResult.ok(r);
+        }catch(SQLException e){
+            c.rollback();
+            throw quotationMutationFailure(e);
         }catch(Exception e){c.rollback();throw e;}finally{ServerRequestIdentity.clear();c.setAutoCommit(true);}}}
+
+    private static ApiException quotationMutationFailure(SQLException error) {
+        String message = error.getMessage() == null ? "" : error.getMessage().trim();
+        if (message.startsWith("This device is not assigned to an active cash drawer")
+                || message.startsWith("Customer account credit limit would be exceeded")
+                || message.equals("Customer account is inactive.")
+                || message.equals("Customer account was not found.")
+                || message.equals("This invoice has no remaining balance to pay.")
+                || message.equals("This invoice has no remaining balance to place on account.")
+                || message.equals("Cancelled invoices cannot be paid.")) {
+            return new ApiException(409, "INVOICE_PAYMENT_REJECTED", message, false);
+        }
+        return new ApiException(409, "QUOTATION_CHANGE_REJECTED",
+                "The quotation or invoice change could not be completed.", false);
+    }
     private List<ServerQuotationInvoiceService.QuotationLineInput> trustedQuotationLines(
             Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u,Long quotationId,
             ServerQuotationInvoiceService.QuotationLineInput[] supplied)throws Exception{
