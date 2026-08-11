@@ -91,9 +91,24 @@ public final class SchemaContractService {
         normalizeInterimReturnReceiptFingerprint(connection);
         upgradeCustomerHistoryCacheBaseline(connection);
         upgradeCustomOrderCreditSeparation(connection);
+        upgradeRegisterTransfers(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void upgradeRegisterTransfers(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","register_transfers"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic register-transfer installation is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260811190000_add_register_transfers.sql"));
+            String next=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.setString(4,stored);if(update.executeUpdate()!=1)throw new SQLException("Local register-transfer metadata changed during upgrade.");}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The register-transfer schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     private static void upgradeCustomOrderCreditSeparation(Connection connection)throws SQLException{
