@@ -3517,6 +3517,7 @@ CREATE TABLE public.employee_schedule_shifts (
 
 CREATE TABLE public.employee_time_clock (
     clock_id bigint NOT NULL,
+    clock_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id integer NOT NULL,
     user_name text,
     location_id integer,
@@ -4832,6 +4833,7 @@ ALTER SEQUENCE public.other_income_entries_other_income_id_seq OWNED BY public.o
 
 CREATE TABLE public.payroll_payments (
     payroll_payment_id bigint NOT NULL,
+    sync_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id integer NOT NULL,
     employee_name text,
     employee_role text,
@@ -5669,6 +5671,7 @@ ALTER SEQUENCE public.store_transfer_items_transfer_item_id_seq OWNED BY public.
 
 CREATE TABLE public.store_transfers (
     transfer_id bigint NOT NULL,
+    transfer_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
     from_location_id integer NOT NULL,
     to_location_id integer NOT NULL,
     user_id integer,
@@ -7448,6 +7451,8 @@ ALTER TABLE ONLY public.employee_time_clock_adjustments
 ALTER TABLE ONLY public.employee_time_clock
     ADD CONSTRAINT employee_time_clock_pkey PRIMARY KEY (clock_id);
 
+CREATE UNIQUE INDEX employee_time_clock_clock_uuid_uidx ON public.employee_time_clock USING btree (clock_uuid);
+
 
 --
 -- Name: expenses expenses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -7799,6 +7804,8 @@ ALTER TABLE ONLY public.other_income_entries
 
 ALTER TABLE ONLY public.payroll_payments
     ADD CONSTRAINT payroll_payments_pkey PRIMARY KEY (payroll_payment_id);
+
+CREATE UNIQUE INDEX payroll_payments_sync_uuid_uidx ON public.payroll_payments USING btree (sync_uuid);
 
 
 --

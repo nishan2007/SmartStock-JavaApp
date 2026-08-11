@@ -1112,12 +1112,17 @@ BEGIN
                   'PRODUCT_CREATED', 'PRODUCT_UPDATED',
                   'ROLE_CREATED', 'ROLE_PERMISSIONS_UPDATED',
                   'TIME_CLOCK_AUTO_CLOSE_SETTINGS_UPDATED',
-                  'DEVICE_ACCESS_UPDATED'
+                  'DEVICE_ACCESS_UPDATED', 'REFERENCE_ROW_CHANGED'
               )
               OR (
                   o.event_type = 'STORE_TRANSFER_CREATED'
                   AND COALESCE(o.payload->>'destination_location_id', '') ~ '^[0-9]+$'
                   AND (o.payload->>'destination_location_id')::integer = p_location_id
+              )
+              OR (
+                  o.event_type = 'STORE_TRANSFER_RECEIVED'
+                  AND COALESCE(o.payload->>'source_location_id', '') ~ '^[0-9]+$'
+                  AND (o.payload->>'source_location_id')::integer = p_location_id
               )
           )
         ORDER BY o.cloud_sequence

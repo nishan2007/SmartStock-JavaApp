@@ -142,7 +142,16 @@ public final class SyncWorker {
                 CloudRowMirrorService.MirrorResult mirror =
                         CloudRowMirrorService.synchronize(local, config.locationId());
                 mirroredRows = mirror.uploaded();
-                RegisterTransferService.synchronizeCompleted(local,config.locationId());
+                CrossStoreTransferSyncService.announcePending(local,config.locationId());
+                CrossStoreReferenceSyncService.announceChanges(local,config.locationId());
+                try {
+                    RegisterTransferService.synchronizeCompleted(local,config.locationId());
+                } catch (SQLException registerTransferFailure) {
+                    // Register-device handoff is supplementary and must not block
+                    // operational store, schedule, transfer, or payroll events.
+                    System.err.println("Register transfer refresh failed: "
+                            + registerTransferFailure.getMessage());
+                }
                 ignored.heartbeat();
                 CrossStoreInventoryService.RefreshResult crossStore =
                         CrossStoreInventoryService.refreshAll(local, config.locationId());
@@ -158,6 +167,8 @@ public final class SyncWorker {
                 ignored.heartbeat();
                 CloudSyncApi.ExchangeResult exchange =
                         CloudSyncApi.exchange(local, config.locationId());
+                CrossStoreTransferSyncService.applyInbox(local,config.locationId());
+                CrossStoreReferenceSyncService.applyInbox(local);
                 pushed = mirror.uploaded() + exchange.acknowledged();
                 downloadedEvents = exchange.downloaded();
                 ImageCacheWarmupService.warmLocalCache(local);

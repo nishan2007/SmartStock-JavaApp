@@ -1,5 +1,7 @@
 package services;
 
+import com.google.gson.JsonObject;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -16,6 +18,17 @@ public final class SyncOutboxService {
 
     public static void recordEvent(Connection conn, String eventType, Map<String, ?> payload,
                                    Integer locationId, String deviceId, Integer userId) throws SQLException {
+        recordJsonEvent(conn,eventType,SyncJson.object(payload == null ? Map.of() : payload),
+                locationId,deviceId,userId);
+    }
+
+    static void recordJsonEvent(Connection conn,String eventType,JsonObject payload,
+                                Integer locationId,String deviceId,Integer userId)throws SQLException{
+        recordJsonEvent(conn,eventType,payload==null?"{}":payload.toString(),locationId,deviceId,userId);
+    }
+
+    private static void recordJsonEvent(Connection conn,String eventType,String payload,
+                                        Integer locationId,String deviceId,Integer userId)throws SQLException{
         if (eventType == null || eventType.isBlank()) {
             return;
         }
@@ -31,7 +44,7 @@ public final class SyncOutboxService {
             setNullableInteger(ps, 2, locationId);
             ps.setString(3, blankToNull(deviceId));
             setNullableInteger(ps, 4, userId);
-            ps.setString(5, SyncJson.object(payload == null ? Map.of() : payload));
+            ps.setString(5, payload);
             setNullableInteger(ps, 6, locationId);
             ps.setString(7, blankToNull(deviceId));
             ps.executeUpdate();

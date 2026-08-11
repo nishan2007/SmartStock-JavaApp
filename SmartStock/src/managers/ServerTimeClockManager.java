@@ -289,8 +289,7 @@ public final class ServerTimeClockManager {
                 LEFT JOIN locations l ON l.location_id = tc.location_id
                 """);
 
-        sql.append(" WHERE tc.location_id = ? ");
-        if (!canViewAllRecords) sql.append(" AND tc.user_id = ? ");
+        if (!canViewAllRecords) sql.append(" WHERE tc.user_id = ? ");
 
         sql.append(" ORDER BY tc.work_date DESC, tc.clock_in DESC, tc.clock_id DESC");
 
@@ -301,8 +300,7 @@ public final class ServerTimeClockManager {
             ps.setString(4, currentStoreZoneId());
             ps.setString(5, currentStoreZoneId());
             ps.setString(6, currentStoreZoneId());
-            ps.setInt(7, request().locationId());
-            if (!canViewAllRecords) ps.setInt(8, requireCurrentUserId());
+            if (!canViewAllRecords) ps.setInt(7, requireCurrentUserId());
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -586,8 +584,7 @@ public final class ServerTimeClockManager {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 for (PayrollSummary summary : summaries) {
                     ps.setInt(1, summary.userId());
-                    setNullableInteger(ps, 2, summary.locationId() == null
-                            ? request().locationId() : summary.locationId());
+                    setNullableInteger(ps, 2, request().locationId());
                     ps.setString(3, summary.employeeName());
                     ps.setDate(4, java.sql.Date.valueOf(summary.payPeriodStart()));
                     ps.setDate(5, java.sql.Date.valueOf(summary.payPeriodEnd()));
@@ -661,9 +658,7 @@ public final class ServerTimeClockManager {
                 """;
 
         ensurePayrollPaymentsSchema(conn);
-            Integer payrollLocationId = summary.locationId() == null
-                    ? request().locationId()
-                    : summary.locationId();
+            Integer payrollLocationId = request().locationId();
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setInt(1, summary.userId());
                 setNullableInteger(ps, 2, payrollLocationId);
@@ -728,7 +723,6 @@ public final class ServerTimeClockManager {
                                ORDER BY paid_at DESC, payment_number DESC, payroll_payment_id DESC
                            ) AS latest_rank
                     FROM payroll_payments
-                    WHERE location_id = ?
                 )
                 SELECT user_id,
                        pay_period_start,
@@ -742,7 +736,6 @@ public final class ServerTimeClockManager {
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, currentStoreZoneId());
-            ps.setInt(2, request().locationId());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     statuses.put(
@@ -811,11 +804,9 @@ public final class ServerTimeClockManager {
         String sql = """
                 SELECT user_id, pay_period_start, pay_period_end, SUM(amount) AS bonus_amount
                 FROM employee_payroll_bonuses
-                WHERE location_id = ?
                 GROUP BY user_id, pay_period_start, pay_period_end
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, request().locationId());
             try (ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 bonuses.put(

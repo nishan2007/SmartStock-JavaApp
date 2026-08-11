@@ -142,9 +142,7 @@ final class LanTransferService {
                 movement.setString(6,userName);movement.setInt(7,userId);movement.setString(8,deviceId.toString());movement.addBatch();
             } item.executeBatch();movement.executeBatch();
         }
-        SyncOutboxService.recordEvent(c,"STORE_TRANSFER_CREATED",map("transfer_id",transferId,"source_location_id",sourceLocationId,
-                "destination_location_id",request.destinationLocationId(),"line_count",lines.size(),"user_id",userId),
-                sourceLocationId,deviceId.toString(),userId);
+        CrossStoreTransferSyncService.announceTransfer(c,transferId,sourceLocationId);
         return map("transferId",transferId,"lineCount",lines.size());
     }
 
@@ -189,6 +187,7 @@ final class LanTransferService {
         SyncOutboxService.recordEvent(c,"INVENTORY_MOVEMENT_CREATED",map("source","STORE_TRANSFER_RECEIVE",
                 "transfer_id",transferId,"receive_id",receive.receiveId(),"location_id",locationId),
                 locationId,deviceId.toString(),userId);
+        CrossStoreTransferSyncService.recordReceived(c,transferId,locationId,deviceId,userId);
         return map("transferId",transferId,"receiveId",receive.receiveId(),"lineCount",lines.size());
     }
 

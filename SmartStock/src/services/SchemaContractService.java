@@ -40,14 +40,17 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql",
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
             "database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql",
-            "database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql"
+            "database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql",
+            "database/migrations/v1_after/20260811233000_add_store_transfer_uuid.sql",
+            "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
             "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
             "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
-            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql"
+            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
+            "database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -96,9 +99,44 @@ public final class SchemaContractService {
         upgradeRegisterTransfers(connection);
         upgradeCustomVariantBarcodes(connection);
         upgradeQuotationCustomItems(connection);
+        upgradeStoreTransferUuid(connection);
+        upgradeCrossStoreTimeClockIdentity(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void upgradeStoreTransferUuid(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","store_transfers","transfer_uuid"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic store-transfer UUID installation is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260811233000_add_store_transfer_uuid.sql"));String next=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.setString(4,stored);if(update.executeUpdate()!=1)throw new SQLException("Local store-transfer metadata changed during upgrade.");}connection.commit();}catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The store-transfer UUID schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    private static void upgradeCrossStoreTimeClockIdentity(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","employee_time_clock")
+                ||(columnExists(connection,"public","employee_time_clock","clock_uuid")
+                &&columnExists(connection,"public","payroll_payments","sync_uuid")))return;
+        if(tableExists(connection,"public","smartstock_schema_metadata")){
+            try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){
+                    if(rs.next()&&!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                        throw new SQLException("The local schema has drifted; automatic cross-store time-clock installation is blocked.","55000");
+                }
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata")){
+                String resource=resourceFingerprint(localContractResources()),next=catalogFingerprint(connection,List.of("public"),false);
+                try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                    update.setString(1,resource);update.setString(2,next);update.setInt(3,BASELINE_VERSION);update.executeUpdate();
+                }
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The cross-store time-clock identity schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     private static void upgradeQuotationCustomItems(Connection connection)throws SQLException{

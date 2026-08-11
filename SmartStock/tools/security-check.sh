@@ -185,6 +185,18 @@ rg -Fq 'FOR UPDATE OF i' src/services/LanTransferService.java \
   || fail "transfer stock is not locked before mutation"
 rg -Fq 'st.to_location_id=?' src/services/LanTransferService.java \
   || fail "incoming transfers are not scoped to the receiving store"
+rg -q 'CrossStoreTransferSyncService\.announceTransfer' src/services/LanTransferService.java \
+  || fail "store transfers do not publish complete cross-store envelopes"
+rg -q 'CrossStoreTransferSyncService\.recordReceived' src/services/LanTransferService.java \
+  || fail "store transfer receipts are not acknowledged to the source store"
+rg -q "event_type='STORE_TRANSFER_RECEIVED'" database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql \
+  || fail "store transfer receipt events are not routed back to the source store"
+rg -q "'REFERENCE_ROW_CHANGED'" database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql \
+  || fail "shared location and schedule rows are not routed to every store"
+rg -q 'CrossStoreReferenceSyncService\.announceChanges' src/services/SyncWorker.java \
+  || fail "shared location and schedule changes are not published by the sync worker"
+rg -q 'CrossStoreReferenceSyncService\.applyInbox' src/services/SyncWorker.java \
+  || fail "shared location and schedule changes are not applied by the sync worker"
 rg -Fq 'FOR UPDATE' src/services/LanInventoryService.java \
   || fail "receiving does not lock current inventory before mutation"
 rg -Fq 'v1/held-carts/create' src/services/LanApiServer.java \
