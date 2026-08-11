@@ -37,12 +37,15 @@ public final class SchemaContractService {
             "database/v1/cloud/003_metadata.sql"
     );
     private static final List<String> LOCAL_POST_V1 = List.of(
-            "database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql"
+            "database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql",
+            "database/migrations/v1_after/20260811190000_add_register_transfers.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
             "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
-            "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql"
+            "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
+            "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
+            "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();

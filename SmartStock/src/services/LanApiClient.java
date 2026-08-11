@@ -61,6 +61,7 @@ public final class LanApiClient {
     private static final String API_TOKEN_EXPIRES_SECRET = EnvironmentProfile.active().secretKey("lan-api-device-token-expires");
     private static final String API_HOST_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-host");
     private static final String API_PORT_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-port");
+    private static final String TRANSFER_STATE_SECRET = EnvironmentProfile.active().secretKey("register-transfer-state");
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
     private static final Object TRANSPORT_LOCK = new Object();
     private static volatile URI cachedBaseUri;
@@ -191,6 +192,10 @@ public final class LanApiClient {
      * screen before the server certificate is pinned or any secret is sent.
      */
     public static PairingResult pairOnce(String administratorPhrase) throws Exception {
+        return pairOnce(administratorPhrase,null);
+    }
+
+    public static PairingResult pairOnce(String administratorPhrase,String emergencyReason) throws Exception {
         String expected = normalizePhrase(administratorPhrase);
         URI endpoint = baseUri();
         Probe probe;
@@ -229,6 +234,7 @@ public final class LanApiClient {
         request.addProperty("appVersion", device.getAppVersion());
         request.addProperty("accessMode", DatabaseConfig.load().mode().name());
         request.addProperty("publicKey", publicKey);
+        if(emergencyReason!=null&&!emergencyReason.isBlank())request.addProperty("emergencyReason",emergencyReason.trim());
         JsonObject data = post("/v1/devices/enroll", request, false, false);
         String challenge = DeviceCredentialService.decryptLanEnvelope(
                 data.get("pairingChallengeEnvelope").getAsString());
@@ -236,6 +242,7 @@ public final class LanApiClient {
         String status = data.get("status").getAsString();
         if ("APPROVED".equals(status)) {
             claimApprovedCredential();
+            clearTransferState();
             return new PairingResult("PAIRED", false);
         }
         return new PairingResult(status, false);
@@ -291,6 +298,7 @@ public final class LanApiClient {
         cachedDeviceToken = token;
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET, data.get("expiresAt").getAsString());
         SecureCredentialStore.delete(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET);
+        clearTransferState();
         resetTransport(false, false);
         return true;
     }
@@ -738,6 +746,17 @@ public final class LanApiClient {
     public static BigDecimal saveCashDrawerChangeTarget(int locationId,BigDecimal target,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("locationId",locationId);r.addProperty("targetAmount",target);return post("/v1/cash/drawer/change-target",r,true,true,Map.of("Idempotency-Key",key)).get("targetAmount").getAsBigDecimal();}
     private static CashDrawerSession cashDrawerSessionMutation(String path,JsonObject request,String key)throws Exception{return GSON.fromJson(post(path,request,true,true,Map.of("Idempotency-Key",key)).get("session"),CashDrawerSession.class);}
     public static List<ManagedDevice> loadManagedDevices()throws Exception{JsonObject d=post("/v1/security/devices/list",new JsonObject(),true,true);ManagedDevice[]a=GSON.fromJson(d.getAsJsonArray("devices"),ManagedDevice[].class);return a==null?List.of():List.of(a);}
+    public static RegisterTransfer prepareRegisterTransfer(int destinationLocationId,String reason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("destinationLocationId",destinationLocationId);r.addProperty("reason",reason);JsonObject d=post("/v1/devices/transfers/prepare",r,true,true,Map.of("Idempotency-Key",key));RegisterTransfer transfer=GSON.fromJson(d,RegisterTransfer.class);enterTransferPending(transfer);return transfer;}
+    public static RegisterTransfer inspectRegisterTransfer()throws Exception{return GSON.fromJson(post("/v1/devices/transfers/inspect",new JsonObject(),true,true),RegisterTransfer.class);}
+    public static List<LocationRecord> loadRegisterTransferDestinations()throws Exception{JsonObject d=post("/v1/devices/transfers/destinations",new JsonObject(),true,true);LocationRecord[]a=GSON.fromJson(d.getAsJsonArray("locations"),LocationRecord[].class);return a==null?List.of():List.of(a);}
+    public static RegisterTransfer cancelRegisterTransfer(String transferId,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("transferId",transferId);return GSON.fromJson(post("/v1/devices/transfers/cancel",r,true,true,Map.of("Idempotency-Key",key)),RegisterTransfer.class);}
+    public static RegisterTransfer transferState(){try{String value=SecureCredentialStore.read(TRANSFER_STATE_SECRET);return value==null?null:GSON.fromJson(value,RegisterTransfer.class);}catch(Exception ex){return null;}}
+    public static boolean isTransferPending(){RegisterTransfer state=transferState();return state!=null&&"PREPARED".equals(state.status());}
+    public static void beginEmergencyRecovery(String reason)throws Exception{if(reason==null||reason.isBlank())throw new IllegalArgumentException("An emergency recovery reason is required.");RegisterTransfer state=new RegisterTransfer(null,null,null,0,"","Emergency destination","PREPARED",true,reason,null,null);SecureCredentialStore.write(TRANSFER_STATE_SECRET,GSON.toJson(state));clearServerTrust();}
+    private static void enterTransferPending(RegisterTransfer transfer)throws Exception{SecureCredentialStore.write(TRANSFER_STATE_SECRET,GSON.toJson(transfer));clearServerTrust();}
+    private static void clearServerTrust()throws Exception{deleteAndVerify(API_SESSION_SECRET);deleteAndVerify(DeviceCredentialService.LAN_API_TOKEN_SECRET);deleteAndVerify(API_TOKEN_EXPIRES_SECRET);deleteAndVerify(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET);deleteAndVerify(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET);deleteAndVerify(API_HOST_SECRET);deleteAndVerify(API_PORT_SECRET);resetTransport(true,true);}
+    private static void deleteAndVerify(String key)throws Exception{SecureCredentialStore.delete(key);if(SecureCredentialStore.read(key)!=null)throw new IOException("Could not clear old SmartStock server trust from "+SecureCredentialStore.backendLabel()+".");}
+    private static void clearTransferState()throws Exception{RegisterTransfer state=transferState();SecureCredentialStore.delete(TRANSFER_STATE_SECRET);if(SecureCredentialStore.read(TRANSFER_STATE_SECRET)!=null&&state!=null)SecureCredentialStore.write(TRANSFER_STATE_SECRET,GSON.toJson(new RegisterTransfer(state.transferId(),state.deviceId(),state.sourceLocationId(),state.destinationLocationId(),state.sourceStoreName(),state.destinationStoreName(),"COMPLETED",state.emergency(),state.reason(),state.preparedAt(),state.expiresAt())));}
     public static List<DeviceSessionRecord> loadDeviceSessions(String deviceId)throws Exception{JsonObject r=new JsonObject();r.addProperty("deviceId",deviceId);JsonObject d=post("/v1/security/devices/sessions",r,true,true);DeviceSessionRecord[]a=GSON.fromJson(d.getAsJsonArray("sessions"),DeviceSessionRecord[].class);return a==null?List.of():List.of(a);}
     public static void updateManagedDevice(DeviceAdminUpdate request,String key)throws Exception{post("/v1/security/devices/update",GSON.toJsonTree(request).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key));}
     public static ServerAdminState loadServerAdminState()throws Exception{
@@ -1360,6 +1379,7 @@ public final class LanApiClient {
         }
     }
     public record ServiceHealth(boolean online, String certificateFingerprint) { }
+    public record RegisterTransfer(String transferId,String deviceId,Integer sourceLocationId,int destinationLocationId,String sourceStoreName,String destinationStoreName,String status,boolean emergency,String reason,String preparedAt,String expiresAt) { }
     public record LoginResult(String sessionToken, String expiresAt, User user, String[] permissions,
                               String deviceId, String supabaseAccessToken, String supabaseRefreshToken,
                               boolean persistentLoginAllowed, boolean autoLogoutEnabled,

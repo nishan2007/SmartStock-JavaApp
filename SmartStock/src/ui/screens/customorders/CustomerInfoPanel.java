@@ -12,8 +12,11 @@ import java.awt.*;
 import java.util.List;
 
 public class CustomerInfoPanel extends JPanel {
+    private final JTextField searchField = new JTextField();
     private final JTextField nameField = new JTextField();
     private final JTextField phoneField = new JTextField();
+    private final JTextField accountNumberField = new JTextField();
+    private final JTextField emailField = new JTextField();
     private JComponent trailingField;
     private String trailingLabel;
     private final JPopupMenu searchPopup = new JPopupMenu();
@@ -49,12 +52,18 @@ public class CustomerInfoPanel extends JPanel {
         return phoneField.getText().trim();
     }
 
+    public String getCustomerAccountNumber(){return accountNumberField.getText().trim();}
+    public String getCustomerEmail(){return emailField.getText().trim();}
+
     public void clear() {
         selectedCustomer = null;
         updatingSearch = true;
+        searchField.setText("");
         nameField.setText("");
         updatingSearch = false;
         phoneField.setText("");
+        accountNumberField.setText("");
+        emailField.setText("");
         searchPopup.setVisible(false);
     }
 
@@ -64,22 +73,35 @@ public class CustomerInfoPanel extends JPanel {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.anchor = GridBagConstraints.WEST;
 
-        gbc.gridx = 0;
-        gbc.gridy = 0;
+        accountNumberField.setEditable(false);
+        emailField.setEditable(false);
+        gbc.gridx = 0;gbc.gridy = 0;
+        gbc.weightx = 0;
+        add(new JLabel("Search Customer:"), gbc);
+        gbc.gridx = 1;
+        gbc.gridwidth = 3;
+        gbc.weightx = 1;
+        searchField.setToolTipText("Search by customer name, email, phone number, or account number");
+        add(searchField, gbc);
+        gbc.gridwidth = 1;
+        gbc.gridx = 0;gbc.gridy = 1;
         gbc.weightx = 0;
         add(new JLabel("Name:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1;
-        add(nameField, gbc);
+        gbc.gridx = 1;gbc.weightx = 1;add(nameField, gbc);
         gbc.gridx = 2;
         gbc.weightx = 0;
         add(new JLabel("Phone:"), gbc);
         gbc.gridx = 3;
-        gbc.weightx = 0;
+        gbc.weightx = .35;
         phoneField.setColumns(16);
         add(phoneField, gbc);
+        gbc.gridx=0;gbc.gridy=2;gbc.weightx=0;add(new JLabel("Account #:"),gbc);
+        gbc.gridx=1;gbc.weightx=1;add(accountNumberField,gbc);
+        gbc.gridx=2;gbc.weightx=0;add(new JLabel("Email:"),gbc);
+        gbc.gridx=3;gbc.weightx=.35;add(emailField,gbc);
         if (trailingField != null) {
             gbc.gridx = 4;
+            gbc.gridy = 1;
             gbc.weightx = 0;
             add(new JLabel(trailingLabel == null ? "" : trailingLabel), gbc);
             gbc.gridx = 5;
@@ -96,14 +118,15 @@ public class CustomerInfoPanel extends JPanel {
         scrollPane.setPreferredSize(new Dimension(360, 180));
         searchPopup.add(scrollPane);
 
-        UiDebouncer.bind(nameField, 300, this::searchFromNameField);
-        nameField.addFocusListener(new java.awt.event.FocusAdapter() {
+        UiDebouncer.bind(searchField, 300, this::searchFromSearchField);
+        UiDebouncer.bind(nameField,300,()->{if(!updatingSearch&&selectedCustomer!=null&&!nameField.getText().trim().equals(selectedCustomer.name())){selectedCustomer=null;accountNumberField.setText("");emailField.setText("");}});
+        searchField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
             public void focusGained(java.awt.event.FocusEvent e) {
-                searchFromNameField();
+                searchFromSearchField();
             }
         });
-        nameField.addKeyListener(new java.awt.event.KeyAdapter() {
+        searchField.addKeyListener(new java.awt.event.KeyAdapter() {
             @Override
             public void keyPressed(java.awt.event.KeyEvent e) {
                 if (!searchPopup.isVisible()) {
@@ -135,14 +158,15 @@ public class CustomerInfoPanel extends JPanel {
         });
     }
 
-    private void searchFromNameField() {
+    private void searchFromSearchField() {
         if (updatingSearch) {
             return;
         }
-        String text = nameField.getText().trim();
-        if (selectedCustomer != null && !text.equals(selectedCustomer.name())) {
+        String text = searchField.getText().trim();
+        if(selectedCustomer!=null&&text.equals(selectedCustomer.toString()))return;
+        if (selectedCustomer != null && !text.equals(selectedCustomer.toString())) {
             selectedCustomer = null;
-            phoneField.setText("");
+            accountNumberField.setText("");emailField.setText("");
         }
         loadCustomers(text);
     }
@@ -152,7 +176,7 @@ public class CustomerInfoPanel extends JPanel {
         CachedUiLoader.loadAfterDisplay(this,"custom-orders.customer-search","custom-orders:customers:"+query,
                 CustomerSearchSnapshot.class, SessionDataCache.SCREEN_TTL,searchLoadingState,
                 ()->new CustomerSearchSnapshot(CustomOrderDataService.searchCustomers(query)),snapshot->{
-                    if(!nameField.getText().trim().equals(query))return;
+                    if(!searchField.getText().trim().equals(query))return;
                     searchModel.clear();snapshot.customers().forEach(searchModel::addElement);showCustomerPopup();
                 });
     }
@@ -160,7 +184,7 @@ public class CustomerInfoPanel extends JPanel {
     private record CustomerSearchSnapshot(List<CustomerOption> customers) { }
 
     private void showCustomerPopup() {
-        if (!nameField.isShowing()) {
+        if (!searchField.isShowing()) {
             return;
         }
         if (searchModel.isEmpty()) {
@@ -168,9 +192,9 @@ public class CustomerInfoPanel extends JPanel {
             return;
         }
         searchList.setSelectedIndex(0);
-        searchPopup.setPopupSize(nameField.getWidth(), 180);
-        searchPopup.show(nameField, 0, nameField.getHeight());
-        nameField.requestFocusInWindow();
+        searchPopup.setPopupSize(searchField.getWidth(), 180);
+        searchPopup.show(searchField, 0, searchField.getHeight());
+        searchField.requestFocusInWindow();
     }
 
     private void selectHighlightedCustomer() {
@@ -180,10 +204,13 @@ public class CustomerInfoPanel extends JPanel {
         }
         selectedCustomer = customer;
         updatingSearch = true;
+        searchField.setText(customer.toString());
         nameField.setText(customer.name() == null ? "" : customer.name());
         updatingSearch = false;
         phoneField.setText(customer.phone() == null ? "" : customer.phone());
+        accountNumberField.setText(customer.accountNumber() == null ? "" : customer.accountNumber());
+        emailField.setText(customer.email() == null ? "" : customer.email());
         searchPopup.setVisible(false);
-        nameField.requestFocusInWindow();
+        phoneField.requestFocusInWindow();
     }
 }

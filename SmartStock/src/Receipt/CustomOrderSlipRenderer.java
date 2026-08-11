@@ -76,9 +76,14 @@ public class CustomOrderSlipRenderer {
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
             g.drawString("Details:", left, currentY);
             currentY += 8;
-            currentY = drawDetails(g, left, right, currentY, data, slipSettings);
+            int footerRows = (slipSettings.showTakenBy() ? 1 : 0)
+                    + (slipSettings.showPaymentSummary() ? 2 : 0)
+                    + (slipSettings.showPaymentReference() && data.paymentReference() != null && !data.paymentReference().isBlank() ? 1 : 0)
+                    + (slipSettings.showSignatures() ? 1 : 0);
+            int footerStart = y + height - 24 - (footerRows * 18);
+            currentY = drawDetails(g, left, right, currentY, footerStart - 10, data, slipSettings);
 
-            currentY = Math.max(currentY + 12, y + height - 92);
+            currentY = Math.max(currentY + 8, footerStart);
             if (slipSettings.showTakenBy()) {
                 currentY = drawLabelLine(g, left, right, currentY, "DELIVERED BY:", data.takenByName(), "RECEIVED BY:", "");
             }
@@ -101,7 +106,7 @@ public class CustomOrderSlipRenderer {
         }
     }
 
-    private static int drawDetails(Graphics2D g, int left, int right, int y, CustomOrderSlipData data, CompanyCustomizationManager.CustomOrderSlipSettings settings) {
+    private static int drawDetails(Graphics2D g, int left, int right, int y, int maxY, CustomOrderSlipData data, CompanyCustomizationManager.CustomOrderSlipSettings settings) {
         g.setFont(new Font("SansSerif", Font.PLAIN, 11));
         int lineHeight = 15;
         int currentY = y;
@@ -116,20 +121,23 @@ public class CustomOrderSlipRenderer {
                     text.append(" - ").append(money(line.lineTotal()));
                 }
                 for (String wrapped : wrap(g, text.toString(), right - left)) {
+                    if (currentY + lineHeight > maxY) return currentY;
                     currentY = drawRuledText(g, left, right, currentY, wrapped, lineHeight);
                 }
                 String detailText = joinNonBlank(line.details(), line.instructions());
                 for (String wrapped : wrap(g, detailText, right - left - 18)) {
+                    if (currentY + lineHeight > maxY) return currentY;
                     currentY = drawRuledText(g, left + 18, right, currentY, wrapped, lineHeight);
                 }
             }
         }
         if (data.orderNotes() != null && !data.orderNotes().isBlank()) {
             for (String wrapped : wrap(g, "Notes: " + data.orderNotes(), right - left)) {
+                if (currentY + lineHeight > maxY) return currentY;
                 currentY = drawRuledText(g, left, right, currentY, wrapped, lineHeight);
             }
         }
-        for (int i = 0; i < settings.blankDetailLines(); i++) {
+        for (int i = 0; i < settings.blankDetailLines() && currentY + lineHeight <= maxY; i++) {
             currentY = drawRuledText(g, left, right, currentY, "", lineHeight);
         }
         return currentY;

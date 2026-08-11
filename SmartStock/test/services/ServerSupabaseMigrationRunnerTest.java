@@ -51,7 +51,7 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(6, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(8, ServerSupabaseMigrationRunner.migrationResources().size());
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }
@@ -68,5 +68,11 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(5));
+        assertEquals(
+                "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(6));
+        assertEquals(
+                "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(7));
     }
 }

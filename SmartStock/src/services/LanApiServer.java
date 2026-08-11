@@ -154,6 +154,10 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/devices/claim", exchange -> handle(exchange, this::claim));
         server.createContext("/v1/devices/local-claim", exchange -> handle(exchange, this::localServerClaim));
         server.createContext("/v1/devices/rotate", exchange -> handle(exchange, this::rotate));
+        server.createContext("/v1/devices/transfers/prepare", exchange -> handle(exchange, this::prepareRegisterTransfer));
+        server.createContext("/v1/devices/transfers/inspect", exchange -> handle(exchange, this::inspectRegisterTransfer));
+        server.createContext("/v1/devices/transfers/destinations", exchange -> handle(exchange, this::registerTransferDestinations));
+        server.createContext("/v1/devices/transfers/cancel", exchange -> handle(exchange, this::cancelRegisterTransfer));
         server.createContext("/v1/sessions/login", exchange -> handle(exchange, this::login));
         server.createContext("/v1/sessions/badge-status", exchange -> handle(exchange, this::badgeStatus));
         server.createContext("/v1/sessions/badge-pin-setup", exchange -> handle(exchange, this::badgePinSetup));
@@ -590,9 +594,14 @@ public final class LanApiServer implements AutoCloseable {
         String pairingChallengeEnvelope = encryptForDevice(publicKey, pairingChallenge);
 
         try (Connection connection = DB.getConnection()) {
+            Integer configuredDestination=DatabaseConfig.load().locationId();
+            String emergencyReason=optional(body,"emergencyReason",1000);
+            if(emergencyReason!=null){if(configuredDestination==null)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);try{RegisterTransferService.importCompanyDeviceForEmergency(connection,installationId,configuredDestination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
+            else if(configuredDestination!=null){try{RegisterTransferService.importPreparedTransferForDestination(connection,installationId,configuredDestination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
             UUID deviceId;
             boolean approved;
             boolean blocked;
+            Integer priorLocation;
             try (PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO devices (
                         installation_id, device_fingerprint, device_name, hostname,
@@ -615,7 +624,7 @@ public final class LanApiServer implements AutoCloseable {
                                 THEN devices.pairing_public_key
                             ELSE EXCLUDED.pairing_public_key
                         END
-                    RETURNING device_id, is_approved, is_blocked
+                    RETURNING device_id, is_approved, is_blocked, last_store_id
                     """)) {
                 statement.setString(1, installationId);
                 statement.setString(2, fingerprint);
@@ -630,6 +639,21 @@ public final class LanApiServer implements AutoCloseable {
                     deviceId = (UUID) rs.getObject("device_id");
                     approved = rs.getBoolean("is_approved");
                     blocked = rs.getBoolean("is_blocked");
+                    priorLocation = (Integer) rs.getObject("last_store_id");
+                }
+            }
+            Integer destination = configuredDestination;
+            if (destination == null) throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);
+            try{RegisterTransferService.enforceEnrollmentDestination(connection,installationId,destination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}
+            if(emergencyReason!=null&&priorLocation!=null&&priorLocation==destination)throw new ApiException(409,"SAME_STORE_RECOVERY","Emergency recovery must use a different store server.",false);
+            if (priorLocation != null && priorLocation != destination) {
+                try {
+                    if (blocked) throw new ApiException(403, "DEVICE_REVOKED", "This device has been revoked.", false);
+                    if (emergencyReason != null)
+                        RegisterTransferService.createEmergency(connection,deviceId,installationId,destination,emergencyReason);
+                    else RegisterTransferService.requirePreparedForDestination(connection,installationId,destination);
+                } catch (RegisterTransferService.RuleViolation ex) {
+                    throw new ApiException(ex.status,ex.code,ex.getMessage(),false);
                 }
             }
             auditSecurity(connection, "LAN_DEVICE_ENROLLMENT", deviceId, null,
@@ -659,8 +683,10 @@ public final class LanApiServer implements AutoCloseable {
                 String registeredKey;
                 String challengeHash;
                 Timestamp challengeExpiresAt;
+                Integer priorLocation;
                 try (PreparedStatement ps = connection.prepareStatement("""
                         SELECT device_id, is_approved, is_blocked, pairing_public_key,
+                               last_store_id,
                                api_pairing_challenge_hash, api_pairing_challenge_expires_at
                         FROM devices WHERE installation_id = ? FOR UPDATE
                         """)) {
@@ -671,8 +697,9 @@ public final class LanApiServer implements AutoCloseable {
                         approved = rs.getBoolean(2);
                         blocked = rs.getBoolean(3);
                         registeredKey = rs.getString(4);
-                        challengeHash = rs.getString(5);
-                        challengeExpiresAt = rs.getTimestamp(6);
+                        challengeHash = rs.getString("api_pairing_challenge_hash");
+                        challengeExpiresAt = rs.getTimestamp("api_pairing_challenge_expires_at");
+                        priorLocation = (Integer) rs.getObject("last_store_id");
                     }
                 }
                 if (blocked) throw new ApiException(403, "DEVICE_REVOKED", "This device has been revoked.", false);
@@ -685,6 +712,10 @@ public final class LanApiServer implements AutoCloseable {
                     throw new ApiException(403, "PAIRING_CHALLENGE_INVALID", "The one-time pairing approval expired; an administrator must restart setup.", false);
                 }
 
+                Integer destination=DatabaseConfig.load().locationId();
+                UUID transferId=null;
+                if(destination==null)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);
+                if(priorLocation!=null&&priorLocation!=destination){try{transferId=RegisterTransferService.requirePreparedForDestination(connection,installationId,destination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
                 String token = LanSecurity.randomToken();
                 String tokenHash = LanSecurity.sha256(token);
                 String envelope = encryptForDevice(publicKeyText, token);
@@ -708,6 +739,7 @@ public final class LanApiServer implements AutoCloseable {
                     ps.setObject(3, deviceId);
                     ps.executeUpdate();
                 }
+                if(transferId!=null){try{RegisterTransferService.complete(connection,transferId,deviceId,destination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
                 auditSecurity(connection, "LAN_API_CREDENTIAL_ISSUED", deviceId, null,
                         "Issued a 90-day device API credential with a 14-day rotation overlap");
                 connection.commit();
@@ -1911,6 +1943,11 @@ public final class LanApiServer implements AutoCloseable {
             Map<String,Object>result=LanDeviceAdminService.update(c,x.body(),s.userId());completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
         }catch(LanDeviceAdminService.RuleViolation e){c.rollback();throw apiException(e);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
     }
+    private ApiResult prepareRegisterTransfer(RequestContext x)throws Exception{return registerTransferMutation(x,"security.devices.transfer.prepare.v1",(c,d,s)->RegisterTransferService.prepare(c,x.body(),d.deviceId(),s.userId(),s.locationId()));}
+    private ApiResult cancelRegisterTransfer(RequestContext x)throws Exception{return registerTransferMutation(x,"security.devices.transfer.cancel.v1",(c,d,s)->RegisterTransferService.cancel(c,x.body(),d.deviceId(),s.userId()));}
+    private ApiResult inspectRegisterTransfer(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){try{return ApiResult.ok(RegisterTransferService.inspect(c,d.deviceId(),s.userId()));}catch(RegisterTransferService.RuleViolation e){throw new ApiException(e.status,e.code,e.getMessage(),false);}}}
+    private ApiResult registerTransferDestinations(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){try{return ApiResult.ok(RegisterTransferService.destinations(c,s.userId(),s.locationId()));}catch(RegisterTransferService.RuleViolation e){throw new ApiException(e.status,e.code,e.getMessage(),false);}}}
+    private ApiResult registerTransferMutation(RequestContext x,String operation,RegisterTransferOperation action)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required for a register transfer."),hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}Map<String,Object>result=action.run(c,d,s);completeIdempotency(c,d.deviceId(),key,result);c.commit();if(operation.contains("transfer.prepare"))SyncWorker.runOnceNow();return ApiResult.ok(result);}catch(RegisterTransferService.RuleViolation e){c.rollback();throw new ApiException(e.status,e.code,e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private ApiResult deviceAdminRead(RequestContext x,DeviceAdminOperation operation)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
         try(Connection c=DB.getConnection()){try{return ApiResult.ok(operation.run(c,s));}catch(LanDeviceAdminService.RuleViolation e){throw apiException(e);}}}
 
@@ -2081,8 +2118,8 @@ public final class LanApiServer implements AutoCloseable {
                 depositOverride?request.depositOverrideReason():null,depositBy,depositName,request.orderNotes(),lines,null);
     }
     private ServerCustomOrderDataService.CustomerOption trustedCustomOrderCustomer(Connection c,ServerCustomOrderDataService.CustomerOption selected,String name,String phone)throws Exception {
-        if(selected==null||selected.customerId()==null){String clean=name==null?"":name.trim();if(clean.isBlank())throw new ApiException(400,"VALIDATION_ERROR","Customer name is required.",false);return new ServerCustomOrderDataService.CustomerOption(null,clean,phone==null?"":phone.trim());}
-        try(PreparedStatement ps=c.prepareStatement("SELECT customer_id,name,COALESCE(phone,'') FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){ps.setInt(1,selected.customerId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(404,"CUSTOMER_NOT_FOUND","The selected customer account is not active.",false);return new ServerCustomOrderDataService.CustomerOption(rs.getInt(1),rs.getString(2),rs.getString(3));}}
+        if(selected==null||selected.customerId()==null){String clean=name==null?"":name.trim();if(clean.isBlank())throw new ApiException(400,"VALIDATION_ERROR","Customer name is required.",false);return new ServerCustomOrderDataService.CustomerOption(null,clean,phone==null?"":phone.trim(),"","");}
+        try(PreparedStatement ps=c.prepareStatement("SELECT customer_id,name,COALESCE(phone,''),COALESCE(account_number,''),COALESCE(email,'') FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){ps.setInt(1,selected.customerId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(404,"CUSTOMER_NOT_FOUND","The selected customer account is not active.",false);return new ServerCustomOrderDataService.CustomerOption(rs.getInt(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5));}}
     }
     private BigDecimal loadRequiredCustomOrderDeposit(Connection c,int locationId,BigDecimal total)throws SQLException {
         try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(custom_order_minimum_deposit_percent,0) FROM company_customization WHERE location_id=?")){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){BigDecimal percent=rs.next()?rs.getBigDecimal(1):BigDecimal.ZERO;return utils.CurrencyFormatter.normalize(total.multiply(percent==null?BigDecimal.ZERO:percent).divide(BigDecimal.valueOf(100),6,java.math.RoundingMode.HALF_UP));}}
@@ -3730,6 +3767,7 @@ public final class LanApiServer implements AutoCloseable {
     private interface Operation { ApiResult run(RequestContext context) throws Exception; }
     @FunctionalInterface private interface CashDrawerOperation { Map<String,Object> run(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u) throws Exception; }
     @FunctionalInterface private interface DeviceAdminOperation { Map<String,Object> run(Connection c,SessionPrincipal s) throws Exception; }
+    @FunctionalInterface private interface RegisterTransferOperation { Map<String,Object> run(Connection c,DevicePrincipal d,SessionPrincipal s) throws Exception; }
     @FunctionalInterface private interface TimeClockAutoCloseMutation { Map<String,Object> run(Connection c,SessionPrincipal s,AuthenticatedUser u) throws Exception; }
     @FunctionalInterface private interface TimeClockCoreMutation { Map<String,Object> run(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u) throws Exception; }
     @FunctionalInterface private interface ScheduleOperation { Map<String,Object> run(Connection c,DevicePrincipal d,SessionPrincipal s) throws Exception; }

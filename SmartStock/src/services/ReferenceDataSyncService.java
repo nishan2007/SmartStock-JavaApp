@@ -39,6 +39,7 @@ public final class ReferenceDataSyncService {
             "employee_time_clock",
             "employee_time_clock_adjustments",
             "devices",
+            "register_transfers",
             "device_sessions",
             "categories",
             "item_types",
@@ -76,6 +77,7 @@ public final class ReferenceDataSyncService {
             "employee_schedule_holidays",
             "employee_schedule_assignments",
             "devices",
+            "register_transfers",
             "device_sessions",
             "categories",
             "item_types",
@@ -257,7 +259,7 @@ public final class ReferenceDataSyncService {
         LOCAL_PUSH_ORDER.forEach(table -> tables.put(table, Boolean.TRUE));
         TABLES.forEach(table -> tables.put(table, Boolean.TRUE));
         List.of("cross_store_refund_requests", "cross_store_refund_lines",
-                "cross_store_refund_reconciliation", "security_audit_events")
+                "cross_store_refund_reconciliation", "security_audit_events", "register_transfers")
                 .forEach(table -> tables.put(table, Boolean.TRUE));
         return List.copyOf(tables.keySet());
     }

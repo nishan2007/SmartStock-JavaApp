@@ -57,6 +57,7 @@ public final class CloudRowMirrorService {
             Map.entry("custom_order_line_print_addons", "EXISTS (SELECT 1 FROM custom_order_lines l JOIN custom_orders p ON p.custom_order_id=l.custom_order_id WHERE l.custom_order_line_id=t.custom_order_line_id AND p.location_id=?)"),
             Map.entry("customer_account_payment_allocations", "EXISTS (SELECT 1 FROM customer_account_transactions p WHERE p.transaction_id=t.payment_transaction_id AND p.location_id=?)"),
             Map.entry("device_sessions", "t.store_id=?"),
+            Map.entry("register_transfers", "(t.source_location_id=? OR t.destination_location_id=?)"),
             Map.entry("devices", "(t.last_store_id=?"
                     + " OR EXISTS (SELECT 1 FROM device_sessions s WHERE s.device_id=t.device_id AND s.store_id=?)"
                     + " OR EXISTS (SELECT 1 FROM cash_drawer_device_assignments a WHERE a.device_id=t.device_id AND a.location_id=?)"

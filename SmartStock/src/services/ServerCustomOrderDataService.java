@@ -187,10 +187,10 @@ public final class ServerCustomOrderDataService {
         List<CustomerOption> customers = new ArrayList<>();
         String searchText = search == null ? "" : search;
         String sql = """
-                SELECT customer_id, name, phone
+                SELECT customer_id, name, phone, COALESCE(account_number,''), COALESCE(email,'')
                 FROM customer_accounts
                 WHERE is_active = TRUE
-                  AND (? = '' OR LOWER(name) LIKE LOWER(?) OR COALESCE(phone, '') LIKE ?)
+                  AND (? = '' OR name ILIKE ? OR COALESCE(phone, '') ILIKE ? OR COALESCE(email,'') ILIKE ? OR COALESCE(account_number,'') ILIKE ?)
                 ORDER BY name
                 LIMIT 100
                 """;
@@ -199,12 +199,16 @@ public final class ServerCustomOrderDataService {
             ps.setString(1, searchText);
             ps.setString(2, pattern);
             ps.setString(3, pattern);
+            ps.setString(4, pattern);
+            ps.setString(5, pattern);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     customers.add(new CustomerOption(
                             rs.getInt("customer_id"),
                             rs.getString("name"),
-                            rs.getString("phone")
+                            rs.getString("phone"),
+                            rs.getString("account_number"),
+                            rs.getString("email")
                     ));
                 }
             }
@@ -783,13 +787,15 @@ public final class ServerCustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email) {
         @Override
         public String toString() {
             if (customerId == null) {
                 return name;
             }
-            return name + (phone == null || phone.isBlank() ? " (no phone)" : " - " + phone);
+            String account=accountNumber==null||accountNumber.isBlank()?"":accountNumber+" - ";
+            String contact=email!=null&&!email.isBlank()?email:phone;
+            return account+name+(contact == null || contact.isBlank() ? "" : " - " + contact);
         }
     }
 

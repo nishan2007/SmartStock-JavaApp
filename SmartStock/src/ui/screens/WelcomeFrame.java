@@ -25,10 +25,13 @@ import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.Icon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -69,6 +72,7 @@ public class WelcomeFrame extends JFrame {
     private final JButton environmentBtn = new JButton("Switch Environment");
     private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
     private final JButton serverAddressBtn = new JButton("Set SmartStock Server Address");
+    private final JButton recoverRegisterBtn = new JButton("Recover at Another Store");
     private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Log In");
     private Timer displayRefreshTimer;
@@ -150,7 +154,10 @@ public class WelcomeFrame extends JFrame {
         boolean apiClientMode = DatabaseConfig.load().mode() == DatabaseMode.CLIENT
                 || DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN;
         pairRegisterBtn.setVisible(apiClientMode && !LanApiClient.isPaired());
+        LanApiClient.RegisterTransfer transfer=LanApiClient.transferState();
+        if(LanApiClient.isTransferPending()&&transfer!=null){pairRegisterBtn.setText("Pair at "+(transfer.destinationStoreName()==null||transfer.destinationStoreName().isBlank()?"Destination Store":transfer.destinationStoreName()));statusLabel.setText("Status: Transfer pending. Connect this register to the destination store network and pair it.");}
         serverAddressBtn.setVisible(apiClientMode);
+        recoverRegisterBtn.setVisible(apiClientMode&&LanApiClient.isPaired()&&!LanApiClient.isTransferPending());
         setupBtn.setVisible(isInitialSetupRequired(DatabaseConfig.load()));
         startProcessesBtn.setVisible(false);
         refreshModeLabel();
@@ -215,6 +222,7 @@ public class WelcomeFrame extends JFrame {
         styleWelcomeButton(environmentBtn, DeckersPalette.CORAL);
         styleWelcomeButton(pairRegisterBtn, DeckersPalette.PURPLE);
         styleWelcomeButton(serverAddressBtn, DeckersPalette.LIME);
+        styleWelcomeButton(recoverRegisterBtn, DeckersPalette.CORAL);
 
         panel.add(header);
         panel.add(Box.createVerticalStrut(12));
@@ -237,6 +245,8 @@ public class WelcomeFrame extends JFrame {
         panel.add(pairRegisterBtn);
         panel.add(Box.createVerticalStrut(8));
         panel.add(serverAddressBtn);
+        panel.add(Box.createVerticalStrut(8));
+        panel.add(recoverRegisterBtn);
         panel.add(Box.createVerticalGlue());
         return panel;
     }
@@ -330,6 +340,7 @@ public class WelcomeFrame extends JFrame {
         environmentBtn.addActionListener(e -> openEnvironmentSetup());
         pairRegisterBtn.addActionListener(e -> pairRegister());
         serverAddressBtn.addActionListener(e -> configureServerAddress());
+        recoverRegisterBtn.addActionListener(e -> recoverAtAnotherStore());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> openLogin());
     }
@@ -349,7 +360,8 @@ public class WelcomeFrame extends JFrame {
         statusLabel.setText("Status: Pairing this register...");
         new SwingWorker<LanApiClient.PairingResult, Void>() {
             @Override protected LanApiClient.PairingResult doInBackground() throws Exception {
-                return LanApiClient.pairOnce(phrase);
+                LanApiClient.RegisterTransfer transfer=LanApiClient.transferState();
+                return LanApiClient.pairOnce(phrase,transfer!=null&&transfer.emergency()?transfer.reason():null);
             }
 
             @Override protected void done() {
@@ -402,6 +414,13 @@ public class WelcomeFrame extends JFrame {
             JOptionPane.showMessageDialog(this, getRootCauseMessage(ex),
                     "SmartStock Server Address", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void recoverAtAnotherStore(){
+        JTextArea reason=new JTextArea(3,36);reason.setLineWrap(true);reason.setWrapStyleWord(true);JCheckBox acknowledge=new JCheckBox("I understand the old store may accept its existing credential until it reconnects and synchronizes.");JPanel panel=new JPanel();panel.setLayout(new BoxLayout(panel,BoxLayout.Y_AXIS));panel.add(new JLabel("Use this only when the original store server cannot be reached."));panel.add(Box.createVerticalStrut(8));panel.add(new JLabel("Required recovery reason:"));panel.add(new JScrollPane(reason));panel.add(Box.createVerticalStrut(8));panel.add(acknowledge);
+        if(JOptionPane.showConfirmDialog(this,panel,"Emergency Register Recovery",JOptionPane.OK_CANCEL_OPTION,JOptionPane.ERROR_MESSAGE)!=JOptionPane.OK_OPTION)return;
+        if(reason.getText().isBlank()||!acknowledge.isSelected()){JOptionPane.showMessageDialog(this,"Enter a reason and acknowledge the recovery warning.","Emergency Register Recovery",JOptionPane.WARNING_MESSAGE);return;}
+        try{LanApiClient.beginEmergencyRecovery(reason.getText());pairRegisterBtn.setText("Pair at Destination Store");pairRegisterBtn.setVisible(true);recoverRegisterBtn.setVisible(false);statusLabel.setText("Status: Emergency recovery pending. Set or discover the destination server, then enter its temporary pairing phrase.");}catch(Exception ex){JOptionPane.showMessageDialog(this,getRootCauseMessage(ex),"Emergency Register Recovery",JOptionPane.ERROR_MESSAGE);}
     }
 
     private void openDatabaseSetup() {
@@ -572,6 +591,7 @@ public class WelcomeFrame extends JFrame {
         if (!DatabaseConfig.hasConfigFile()) {
             return;
         }
+        if(LanApiClient.isTransferPending())return;
         if (!SupabaseSessionManager.hasPersistedSession()) {
             return;
         }
@@ -664,6 +684,9 @@ public class WelcomeFrame extends JFrame {
             refreshStatusBtn.setEnabled(true);
             startProcessesBtn.setVisible(false);
             return;
+        }
+        if(config.mode()==DatabaseMode.CLIENT&&LanApiClient.isTransferPending()){
+            systemStatusRefreshInProgress=false;LanApiClient.RegisterTransfer transfer=LanApiClient.transferState();String destination=transfer==null||transfer.destinationStoreName()==null||transfer.destinationStoreName().isBlank()?"destination store":transfer.destinationStoreName();localDbLabel.setText(connectionLabel+"Transfer pending");onlineDbLabel.setText("Online DB: Waiting for destination pairing");statusLabel.setText("Status: Connect to "+destination+" and pair this register.");pairRegisterBtn.setVisible(true);recoverRegisterBtn.setVisible(false);continueBtn.setEnabled(false);loginAvailable=false;refreshStatusBtn.setEnabled(true);return;
         }
         if (showCheckingState) {
             localDbLabel.setText(connectionLabel

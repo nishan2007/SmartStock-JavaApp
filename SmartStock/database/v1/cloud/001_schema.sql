@@ -4625,3 +4625,20 @@ GRANT ALL ON TABLE smartstock_private.store_user_credentials TO service_role;
 --
 -- PostgreSQL database dump complete
 --
+CREATE TABLE public.register_transfers (
+    transfer_id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    device_id uuid NOT NULL REFERENCES public.devices(device_id), installation_id text NOT NULL,
+    source_location_id integer REFERENCES public.locations(location_id), destination_location_id integer NOT NULL REFERENCES public.locations(location_id),
+    status text DEFAULT 'PREPARED' NOT NULL CHECK (status IN ('PREPARED','COMPLETED','CANCELLED','EXPIRED')),
+    emergency boolean DEFAULT false NOT NULL, reason text,
+    initiated_by_user_id integer REFERENCES public.users(user_id), completed_by_user_id integer REFERENCES public.users(user_id),
+    prepared_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL, expires_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone, cancelled_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE UNIQUE INDEX register_transfers_one_prepared_device_idx ON public.register_transfers(device_id) WHERE status='PREPARED';
+CREATE INDEX register_transfers_destination_idx ON public.register_transfers(destination_location_id,status,expires_at);
+CREATE INDEX register_transfers_installation_idx ON public.register_transfers(installation_id,status,expires_at);
+ALTER TABLE public.register_transfers ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.register_transfers FROM anon;
+REVOKE ALL ON TABLE public.register_transfers FROM authenticated;

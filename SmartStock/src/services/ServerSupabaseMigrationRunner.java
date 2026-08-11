@@ -215,7 +215,7 @@ public final class ServerSupabaseMigrationRunner {
                 "smartstock_store_snapshot_rows", "store_server_instances",
                 "store_server_handoffs", "store_server_events",
                 "smartstock_cross_store_refund_requests",
-                "smartstock_cross_store_refund_lines");
+                "smartstock_cross_store_refund_lines", "register_transfers");
         List<String> actual = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
@@ -223,7 +223,7 @@ public final class ServerSupabaseMigrationRunner {
             while (rows.next()) actual.add(rows.getString(1));
         }
         if (!actual.equals(expected.stream().sorted().toList())) {
-            throw new SQLException("Supabase v1 public table inventory does not match the approved 28-table contract.");
+            throw new SQLException("Supabase v1 public table inventory does not match the approved 29-table contract.");
         }
         SchemaContractService.Readiness readiness =
                 SchemaContractService.validateCloud(connection);

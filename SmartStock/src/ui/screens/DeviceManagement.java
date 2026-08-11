@@ -93,6 +93,7 @@ public class DeviceManagement extends JFrame {
     private final JButton securityStatusButton = new JButton("Security Status");
     private final JButton serversButton = new JButton("Servers");
     private final JButton rotateCredentialButton = new JButton("Rotate Device Credential");
+    private final JButton moveRegisterButton = new JButton("Move This Register");
     private final JButton closeButton = new JButton("Close");
 
     private final List<ManagedDevice> allDevices = new ArrayList<>();
@@ -248,6 +249,7 @@ public class DeviceManagement extends JFrame {
         actionPanel.setOpaque(false);
         actionPanel.add(saveApprovalButton);
         actionPanel.add(rotateCredentialButton);
+        actionPanel.add(moveRegisterButton);
         actionPanel.add(blockButton);
         actionPanel.add(closeButton);
 
@@ -266,6 +268,7 @@ public class DeviceManagement extends JFrame {
         securityStatusButton.addActionListener(e -> showSecurityStatus());
         serversButton.addActionListener(e -> loadServerManagement());
         rotateCredentialButton.addActionListener(e -> rotateSelectedCredential());
+        moveRegisterButton.addActionListener(e -> moveThisRegister());
         closeButton.addActionListener(e -> NavigationManager.showMainMenu(this));
         saveApprovalButton.addActionListener(e -> saveApprovalSetting());
         approvedBox.addActionListener(e -> setButtonState());
@@ -621,6 +624,28 @@ public class DeviceManagement extends JFrame {
         },"Could not queue credential rotation.");
     }
 
+    private void moveThisRegister(){
+        if(selectedDevice==null||!selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId())){
+            JOptionPane.showMessageDialog(this,"Select the register currently in use. Other registers must start their move on their own screen.","Move Register",JOptionPane.WARNING_MESSAGE);return;}
+        UiTaskRunner.submit(this,"devices.transfer.locations",LanApiClient::loadRegisterTransferDestinations,locations->{
+            int current=SessionManager.getCurrentLocationId();
+            List<LanApiClient.LocationRecord> choices=locations.stream().filter(l->l.locationId()!=null&&l.locationId()!=current).toList();
+            if(choices.isEmpty()){JOptionPane.showMessageDialog(this,"No other active stores are available.");return;}
+            String[] labels=choices.stream().map(l->l.name()+" ("+l.storeCode()+")").toArray(String[]::new);
+            String selected=(String)JOptionPane.showInputDialog(this,"Choose the destination store. The register must have no open cash drawer.","Move This Register",JOptionPane.PLAIN_MESSAGE,null,labels,labels[0]);
+            if(selected==null)return;int index=java.util.Arrays.asList(labels).indexOf(selected);LanApiClient.LocationRecord destination=choices.get(index);
+            JTextArea reason=new JTextArea(3,34);reason.setLineWrap(true);reason.setWrapStyleWord(true);JPanel form=new JPanel();form.setLayout(new BoxLayout(form,BoxLayout.Y_AXIS));form.add(new JLabel("Reason for moving this register to "+destination.name()+":"));form.add(new JScrollPane(reason));form.add(Box.createVerticalStrut(8));form.add(new JLabel("This will sign out employees, remove the old drawer assignment, and revoke this server credential."));
+            if(JOptionPane.showConfirmDialog(this,form,"Confirm Register Move",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+            if(reason.getText().isBlank()){JOptionPane.showMessageDialog(this,"Enter a reason for the transfer.");return;}
+            String key=UUID.randomUUID().toString();
+            UiTaskRunner.submit(this,"devices.transfer.prepare",()->LanApiClient.prepareRegisterTransfer(destination.locationId(),reason.getText(),key),transfer->{
+                SessionManager.clearSessionState();SupabaseSessionManager.clearSession();SupabaseSessionManager.clearPersistedSession();
+                JOptionPane.showMessageDialog(this,"Transfer prepared for "+transfer.destinationStoreName()+".\n\nMove this computer to the destination network, then pair it with that server's temporary phrase.","Register Transfer Prepared",JOptionPane.INFORMATION_MESSAGE);
+                dispose();new WelcomeFrame().setVisible(true);
+            },ex->JOptionPane.showMessageDialog(this,"The register could not be prepared for transfer.\n\n"+ex.getMessage(),"Move Register",JOptionPane.ERROR_MESSAGE));
+        },ex->JOptionPane.showMessageDialog(this,"Stores could not be loaded.\n\n"+ex.getMessage(),"Move Register",JOptionPane.ERROR_MESSAGE));
+    }
+
     private void showSecurityStatus() {
         UiTaskRunner.submit(this,"devices.security-status",LanApiClient::loadDeviceSecurityStatus,this::showSecurityStatus,ex->JOptionPane.showMessageDialog(this,"Could not inspect database security.\n\n"+ex.getMessage(),"Security Status",JOptionPane.ERROR_MESSAGE));
     }
@@ -779,6 +804,7 @@ public class DeviceManagement extends JFrame {
         saveCodeButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         blockButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         rotateCredentialButton.setEnabled(hasSelection && selectedDevice.isApproved() && !selectedDevice.isBlocked());
+        moveRegisterButton.setEnabled(hasSelection&&selectedDevice.isApproved()&&!selectedDevice.isBlocked()&&selectedDevice.getDeviceId().equals(SessionManager.getCurrentDeviceId()));
     }
 
     private String formatTimestamp(Timestamp timestamp) {

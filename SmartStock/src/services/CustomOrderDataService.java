@@ -97,9 +97,11 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email) {
         @Override public String toString() {
-            return name + (phone == null || phone.isBlank() ? "" : " (" + phone + ")");
+            String account=accountNumber==null||accountNumber.isBlank()?"":accountNumber+" - ";
+            String contact=email!=null&&!email.isBlank()?email:phone;
+            return account+name+(contact == null || contact.isBlank() ? "" : " (" + contact + ")");
         }
     }
 
