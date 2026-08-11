@@ -219,6 +219,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/customer-accounts/adjust", exchange -> handle(exchange, this::adjustCustomerAccount));
         server.createContext("/v1/customer-accounts/transactions", exchange -> handle(exchange, this::customerAccountTransactions));
         server.createContext("/v1/customer-accounts/payments", exchange -> handle(exchange, this::customerAccountPayments));
+        server.createContext("/v1/customer-accounts/open-balances", exchange -> handle(exchange, this::customerAccountOpenBalances));
         server.createContext("/v1/customer-accounts/payment-receipt", exchange -> handle(exchange, this::customerAccountPaymentReceipt));
         server.createContext("/v1/employees/change-pin", exchange -> handle(exchange, this::changeEmployeePin));
         server.createContext("/v1/cash/change-basket/state", exchange -> handle(exchange, this::changeBasketState));
@@ -2616,6 +2617,12 @@ public final class LanApiServer implements AutoCloseable {
         requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);int id=requiredInt(context.body(),"customerId");
         try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanCustomerAccountService.payments(c,id,session.userId()));}
+            catch(LanCustomerAccountService.RuleViolation ex){throw apiException(ex);}}
+    }
+    private ApiResult customerAccountOpenBalances(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);int id=requiredInt(context.body(),"customerId");
+        try(Connection c=DB.getConnection()){try{return ApiResult.ok(Map.of("balances",LanCustomerAccountService.openBalances(c,id,session.userId())));}
             catch(LanCustomerAccountService.RuleViolation ex){throw apiException(ex);}}
     }
     private ApiResult customerAccountPaymentReceipt(RequestContext context)throws Exception{

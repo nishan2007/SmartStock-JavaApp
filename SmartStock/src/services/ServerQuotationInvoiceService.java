@@ -799,10 +799,6 @@ public final class ServerQuotationInvoiceService {
             throw new SQLException("Delivery quantity for " + line.itemName() + " must be between 1 and " + remaining + ".");
         }
         if (line.productId() != null) {
-            int available = availableStock(conn, line.productId(), invoice.locationId());
-            if (available < input.quantityDelivered()) {
-                throw new SQLException("Only " + available + " in stock for " + line.itemName() + "; cannot deliver " + input.quantityDelivered() + ".");
-            }
             deductInventory(conn, invoice, line, input.quantityDelivered(), eventId);
         }
         int newDelivered = line.quantityDelivered() + input.quantityDelivered();

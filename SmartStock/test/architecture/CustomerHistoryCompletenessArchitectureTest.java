@@ -38,9 +38,12 @@ class CustomerHistoryCompletenessArchitectureTest {
         assertTrue(ledger.contains("sync_cross_store_customer_history_cache"));
         assertTrue(ledger.contains("requireCurrentMultiStoreBalance"));
         for(String path:new String[]{"src/services/LanSalesService.java","src/services/LanCustomerAccountService.java",
-                "src/services/ServerCustomOrderDataService.java","src/services/ServerQuotationInvoiceService.java"})
+                "src/services/ServerQuotationInvoiceService.java"})
             assertTrue(read(path).contains("requireCurrentMultiStoreBalance"),path+" must enforce synchronized company-wide credit");
+        String customOrders=read("src/services/ServerCustomOrderDataService.java");
+        assertTrue(customOrders.contains("CUSTOM_ORDER_BALANCE"),"Custom-order balances must be informational rather than revolving credit");
         String screen=read("src/ui/screens/CustomerAccounts.java");
-        assertTrue(screen.contains("Balance (All Stores)"));
+        assertTrue(screen.contains("Credit Balance"));
+        assertTrue(screen.contains("Custom Order Due"));
     }
 }

@@ -39,6 +39,8 @@ public class CustomerAccountDetails extends JFrame {
     private JCheckBox activeCheckBox;
     private JLabel balanceLabel;
     private JLabel availableCreditLabel;
+    private JLabel customOrderDueLabel;
+    private JLabel totalDueLabel;
     private JTextField creditLimitField;
     private JTextArea notesArea;
     private JButton saveButton;
@@ -123,6 +125,8 @@ public class CustomerAccountDetails extends JFrame {
         activeCheckBox = new JCheckBox("Active");
         balanceLabel = new JLabel();
         availableCreditLabel = new JLabel();
+        customOrderDueLabel = new JLabel();
+        totalDueLabel = new JLabel();
         creditLimitField = new JTextField();
         creditLimitField.setEditable(canSetCreditLimit);
         saveButton = new JButton("Save Changes");
@@ -134,11 +138,13 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 2, 0, "Email:", emailField);
         addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
         addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
-        addInfoField(grid, gbc, 3, 1, "Balance (All Stores):", balanceLabel);
-        addInfoField(grid, gbc, 4, 0, "Available Credit:", availableCreditLabel);
+        addInfoField(grid, gbc, 3, 1, "Credit Balance (All Stores):", balanceLabel);
+        addInfoField(grid, gbc, 4, 0, "Custom Order Due:", customOrderDueLabel);
+        addInfoField(grid, gbc, 4, 1, "Total Due:", totalDueLabel);
+        addInfoField(grid, gbc, 5, 0, "Available Credit:", availableCreditLabel);
 
         gbc.gridx = 0;
-        gbc.gridy = 5;
+        gbc.gridy = 6;
         gbc.weightx = 0;
         grid.add(new JLabel("Credit Limit:"), gbc);
         gbc.gridx = 1;
@@ -244,7 +250,7 @@ public class CustomerAccountDetails extends JFrame {
                         account.customerTypeId(),account.customerTypeName()
                 );
                 phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());
-                activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));availableCreditLabel.setText(money(account.availableCredit()));
+                activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));customOrderDueLabel.setText(money(account.customOrderDue()));totalDueLabel.setText(money(account.totalDue()));availableCreditLabel.setText(money(account.availableCredit()));
                 creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
         transactionModel.setRowCount(0);
             LanApiClient.CustomerTransactionResult result = snapshot.transactions();
@@ -336,6 +342,8 @@ public class CustomerAccountDetails extends JFrame {
             case "SALE_CREDIT" -> "Sale Credit";
             case "SALE_PAID" -> "Sale Paid";
             case "CUSTOM_ORDER_REFUND" -> "Custom Order Refund";
+            case "CUSTOM_ORDER_BALANCE" -> "Custom Order Balance";
+            case "CUSTOM_ORDER_PAYMENT" -> "Custom Order Payment";
             case "MANUAL_CHARGE" -> "Manual Charge";
             case "PAYMENT" -> "Payment";
             default -> type.replace('_', ' ');

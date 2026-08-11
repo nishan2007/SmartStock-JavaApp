@@ -57,15 +57,7 @@ public class ServerAccountPaymentReceiptBuilder {
                        COALESCE(t.device_name, t.device_id, '') AS device_name,
                        COALESCE(t.cash_drawer_name, '') AS cash_drawer_name,
                        ABS(COALESCE(t.amount, 0)) AS payment_amount,
-                       COALESCE((
-                           SELECT SUM(COALESCE(t2.amount, 0))
-                           FROM customer_account_transactions t2
-                           WHERE t2.customer_id = t.customer_id
-                             AND (
-                                 t2.created_at < t.created_at
-                                 OR (t2.created_at = t.created_at AND t2.transaction_id <= t.transaction_id)
-                             )
-                       ), 0) AS account_balance_after
+                       COALESCE(ca.current_balance, 0) AS account_balance_after
                 FROM customer_account_transactions t
                 LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
                 LEFT JOIN locations l ON l.location_id = t.location_id

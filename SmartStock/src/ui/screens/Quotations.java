@@ -527,9 +527,13 @@ public class Quotations extends JFrame {
                 "Original Unit", "Override Reason", "Override By User ID", "Override By", "Override Token"
         }, 0);
         private final JLabel statusLabel = new JLabel(" ");
+        private final JTextField catalogSearchField = new JTextField();
+        private final DefaultListModel<QuotationInvoiceViewService.ProductOption> catalogSearchModel = new DefaultListModel<>();
+        private final JList<QuotationInvoiceViewService.ProductOption> catalogSearchList = new JList<>(catalogSearchModel);
         private final Long editQuotationId;
         private final String editQuotationNumber;
         private final Timer customerSearchTimer;
+        private final Timer catalogSearchTimer;
         private JButton createButton;
         private JButton cancelButton;
         private boolean updatingCustomerResults;
@@ -547,6 +551,8 @@ public class Quotations extends JFrame {
             this.editQuotationNumber = editData == null ? null : editData.quotationNumber();
             this.customerSearchTimer = new Timer(300, e -> refreshCustomerResults(editorText(customerBox)));
             customerSearchTimer.setRepeats(false);
+            this.catalogSearchTimer = new Timer(250, e -> refreshCatalogSearch());
+            catalogSearchTimer.setRepeats(false);
             setSize(860, 620);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
@@ -564,7 +570,10 @@ public class Quotations extends JFrame {
             JTable lineTable = new JTable(lineModel);
             styleTable(lineTable);
             hideInternalLineColumns(lineTable);
-            main.add(new JScrollPane(lineTable), BorderLayout.CENTER);
+            JPanel lineArea = new JPanel(new BorderLayout(8, 8));
+            lineArea.add(catalogSearchPanel(), BorderLayout.NORTH);
+            lineArea.add(new JScrollPane(lineTable), BorderLayout.CENTER);
+            main.add(lineArea, BorderLayout.CENTER);
             JPanel southPanel = new JPanel(new BorderLayout(8, 8));
             statusLabel.setForeground(new Color(248, 113, 113));
             statusLabel.setFont(statusLabel.getFont().deriveFont(Font.BOLD, 13f));
@@ -595,6 +604,81 @@ public class Quotations extends JFrame {
             });
             createButton.addActionListener(e -> createQuotation());
             cancelButton.addActionListener(e -> dispose());
+        }
+
+        private JPanel catalogSearchPanel() {
+            JPanel panel = new JPanel(new BorderLayout(8, 4));
+            panel.setBorder(BorderFactory.createTitledBorder("Quick Add Catalog Product"));
+            styleReadableControl(catalogSearchField);
+            catalogSearchField.setToolTipText("Search by product name, SKU, barcode, or description. Press Enter to add.");
+            catalogSearchList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            catalogSearchList.setVisibleRowCount(3);
+            catalogSearchList.setFixedCellHeight(24);
+            panel.add(catalogSearchField, BorderLayout.NORTH);
+            panel.add(new JScrollPane(catalogSearchList), BorderLayout.CENTER);
+            catalogSearchField.getDocument().addDocumentListener(new DocumentListener() {
+                @Override public void insertUpdate(DocumentEvent e) { catalogSearchTimer.restart(); }
+                @Override public void removeUpdate(DocumentEvent e) { catalogSearchTimer.restart(); }
+                @Override public void changedUpdate(DocumentEvent e) { catalogSearchTimer.restart(); }
+            });
+            catalogSearchField.addActionListener(e -> addSelectedCatalogProduct());
+            catalogSearchList.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+                    if (e.getClickCount() == 2) addSelectedCatalogProduct();
+                }
+            });
+            catalogSearchList.getInputMap().put(KeyStroke.getKeyStroke("ENTER"), "add-product");
+            catalogSearchList.getActionMap().put("add-product", new AbstractAction() {
+                @Override public void actionPerformed(java.awt.event.ActionEvent e) { addSelectedCatalogProduct(); }
+            });
+            refreshCatalogSearch();
+            return panel;
+        }
+
+        private void refreshCatalogSearch() {
+            String search = catalogSearchField.getText().trim();
+            if (search.isBlank()) {
+                catalogSearchModel.clear();
+                return;
+            }
+            UiTaskRunner.submit(this, "quotation.quick-products", () -> QuotationInvoiceViewService.searchProducts(search), products -> {
+                if (!search.equals(catalogSearchField.getText().trim())) return;
+                catalogSearchModel.clear();
+                for (QuotationInvoiceViewService.ProductOption product : products) {
+                    if (product.productId() != null) catalogSearchModel.addElement(product);
+                }
+                if (!catalogSearchModel.isEmpty()) catalogSearchList.setSelectedIndex(0);
+            }, ex -> statusLabel.setText("Product search failed: " + ex.getMessage()));
+        }
+
+        private void addSelectedCatalogProduct() {
+            QuotationInvoiceViewService.ProductOption product = catalogSearchList.getSelectedValue();
+            if (product == null && catalogSearchModel.size() == 1) product = catalogSearchModel.get(0);
+            if (product == null || product.productId() == null) {
+                statusLabel.setText("Select a catalog product from the search results.");
+                return;
+            }
+            for (int row = 0; row < lineModel.getRowCount(); row++) {
+                if (product.productId().equals(nullableInteger(lineModel.getValueAt(row, LINE_COL_PRODUCT_ID)))) {
+                    int quantity = Integer.parseInt(String.valueOf(lineModel.getValueAt(row, LINE_COL_QTY)));
+                    lineModel.setValueAt(quantity + 1, row, LINE_COL_QTY);
+                    finishQuickAdd(product.name());
+                    return;
+                }
+            }
+            lineModel.addRow(new Object[]{
+                    product.productId(), product.name(), product.sku(), 1, product.price(), BigDecimal.ZERO,
+                    "PICKUP", "", product.price(), null, null, null, null
+            });
+            finishQuickAdd(product.name());
+        }
+
+        private void finishQuickAdd(String productName) {
+            statusLabel.setForeground(new Color(34, 197, 94));
+            statusLabel.setText("Added " + productName + ".");
+            catalogSearchField.setText("");
+            catalogSearchModel.clear();
+            catalogSearchField.requestFocusInWindow();
         }
 
         private void addLine() {
@@ -952,15 +1036,21 @@ public class Quotations extends JFrame {
         private final JComboBox<String> deliveryBox = new JComboBox<>(new String[]{"PICKUP", "LOCAL_DELIVERY", "SHIP", "INSTALLATION"});
         private final JTextField notesField = new JTextField();
         private final Timer productSearchTimer;
+        private final boolean manualOnly;
         private boolean updatingProductResults;
         private LineInput line;
 
         LineEditor(JDialog owner) {
-            this(owner, null);
+            this(owner, null, true);
         }
 
         LineEditor(JDialog owner, LineInput existingLine) {
+            this(owner, existingLine, false);
+        }
+
+        private LineEditor(JDialog owner, LineInput existingLine, boolean manualOnly) {
             super(owner, "Add Quotation Line", true);
+            this.manualOnly = manualOnly;
             productSearchTimer = new Timer(300, e -> refreshProductResults(editorText(productBox)));
             productSearchTimer.setRepeats(false);
             setSize(520, 360);
@@ -968,16 +1058,19 @@ public class Quotations extends JFrame {
             setLayout(new BorderLayout(8, 8));
             productBox.setEditable(true);
             productBox.setMaximumRowCount(12);
-            loadProducts("");
-            installProductSearch();
+            if (!manualOnly) {
+                loadProducts("");
+                installProductSearch();
+            }
             if (existingLine != null) {
                 loadExistingLine(existingLine);
             }
             productBox.addActionListener(e -> fillProduct());
-            JPanel panel = formPanel(
-                    new String[]{"Product", "Item", "SKU", "Qty", "Unit Price", "Discount %", "Delivery", "Notes"},
-                    new JComponent[]{productBox, itemField, skuField, qtyField, unitField, discountField, deliveryBox, notesField}
-            );
+            JPanel panel = manualOnly
+                    ? formPanel(new String[]{"Item", "SKU", "Qty", "Unit Price", "Discount %", "Delivery", "Notes"},
+                    new JComponent[]{itemField, skuField, qtyField, unitField, discountField, deliveryBox, notesField})
+                    : formPanel(new String[]{"Product", "Item", "SKU", "Qty", "Unit Price", "Discount %", "Delivery", "Notes"},
+                    new JComponent[]{productBox, itemField, skuField, qtyField, unitField, discountField, deliveryBox, notesField});
             panel.setBorder(new EmptyBorder(12, 12, 12, 12));
             add(panel, BorderLayout.CENTER);
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -1013,8 +1106,10 @@ public class Quotations extends JFrame {
 
         private void save() {
             try {
-                Object selected = productBox.getSelectedItem();
-                QuotationInvoiceViewService.ProductOption product = selected instanceof QuotationInvoiceViewService.ProductOption option ? option : null;
+                QuotationInvoiceViewService.ProductOption product = manualOnly ? null : selectedCatalogProduct();
+                if (!manualOnly && product == null) {
+                    throw new IllegalArgumentException("Select a catalog product from the search results. Use Add Line for a manual item.");
+                }
                 String itemName = itemField.getText().trim();
                 if (itemName.isBlank()) {
                     throw new IllegalArgumentException("Item name is required.");
@@ -1071,6 +1166,17 @@ public class Quotations extends JFrame {
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, ex.getMessage(), "Line", JOptionPane.ERROR_MESSAGE);
             }
+        }
+
+        private QuotationInvoiceViewService.ProductOption selectedCatalogProduct() {
+            Object selected = productBox.getSelectedItem();
+            if (selected instanceof QuotationInvoiceViewService.ProductOption option) return option;
+            String entered = editorText(productBox).trim();
+            for (int i = 0; i < productBox.getItemCount(); i++) {
+                QuotationInvoiceViewService.ProductOption candidate = productBox.getItemAt(i);
+                if (candidate.productId() != null && exactProductMatch(candidate, entered)) return candidate;
+            }
+            return null;
         }
 
         private String existingOverrideReason() {

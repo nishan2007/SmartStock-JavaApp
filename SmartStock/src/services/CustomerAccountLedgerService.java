@@ -15,9 +15,11 @@ public final class CustomerAccountLedgerService {
             CASE
                 WHEN COALESCE(transaction_type, '') IN ('SALE_CREDIT', 'CUSTOM_ORDER_CREDIT', 'INVOICE_CREDIT', 'MANUAL_CHARGE')
                     THEN ABS(COALESCE(amount, 0))
-                WHEN COALESCE(transaction_type, '') IN ('PAYMENT', 'RETURN', 'CUSTOM_ORDER_REFUND')
+                WHEN COALESCE(transaction_type, '') = 'PAYMENT'
+                    THEN -ABS(COALESCE(credit_applied_amount, amount, 0))
+                WHEN COALESCE(transaction_type, '') IN ('RETURN', 'CUSTOM_ORDER_REFUND')
                     THEN -ABS(COALESCE(amount, 0))
-                WHEN COALESCE(transaction_type, '') IN ('SALE_PAID', 'CUSTOM_ORDER_PAID')
+                WHEN COALESCE(transaction_type, '') IN ('SALE_PAID', 'CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')
                     THEN 0
                 WHEN COALESCE(amount, 0) < 0
                     THEN COALESCE(amount, 0)
@@ -101,7 +103,9 @@ public final class CustomerAccountLedgerService {
         }
         return BALANCE_DELTA_CASE
                 .replace("transaction_type", tableAlias + ".transaction_type")
-                .replace("amount", tableAlias + ".amount");
+                .replace("credit_applied_amount", "__CREDIT_APPLIED__")
+                .replace("amount", tableAlias + ".amount")
+                .replace("__CREDIT_APPLIED__", tableAlias + ".credit_applied_amount");
     }
 
     public static void requireCurrentMultiStoreBalance(Connection conn,int currentLocationId)throws SQLException{
@@ -135,8 +139,9 @@ public final class CustomerAccountLedgerService {
     static String remoteBalanceDeltaSql(){return """
             CASE
               WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
-              WHEN COALESCE(event_type,'') IN ('PAYMENT','RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
-              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID') THEN 0
+              WHEN COALESCE(event_type,'')='PAYMENT' THEN -ABS(COALESCE(credit_applied_amount,amount,0))
+              WHEN COALESCE(event_type,'') IN ('RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
+              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE','CUSTOM_ORDER_PAYMENT') THEN 0
               WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)
               ELSE COALESCE(amount,0)
             END

@@ -486,11 +486,13 @@ public class Invoices extends JFrame {
 
         private void post() {
             List<QuotationInvoiceService.DeliveryLineInput> lines = new ArrayList<>();
+            List<String> stockWarnings = new ArrayList<>();
             try {
                 for (int i = 0; i < lineModel.getRowCount(); i++) {
                     int qty = parseQuantity(lineModel.getValueAt(i, 6));
                     int remaining = parseQuantity(lineModel.getValueAt(i, 4));
-                    int available = availableQuantity(lineModel.getValueAt(i, 5));
+                    Object availableValue = lineModel.getValueAt(i, 5);
+                    Integer available = availableQuantity(availableValue);
                     String item = String.valueOf(lineModel.getValueAt(i, 1));
                     if (qty < 0) {
                         throw new IllegalArgumentException("Delivery quantity for " + item + " cannot be negative.");
@@ -498,8 +500,9 @@ public class Invoices extends JFrame {
                     if (qty > remaining) {
                         throw new IllegalArgumentException("Delivery quantity for " + item + " cannot be more than the remaining " + remaining + ".");
                     }
-                    if (available >= 0 && qty > available) {
-                        throw new IllegalArgumentException("Only " + available + " in stock for " + item + "; cannot deliver " + qty + ".");
+                    if (qty > 0 && available != null && qty > available) {
+                        stockWarnings.add(item + ": " + available + " in stock, delivering " + qty
+                                + " will leave " + (available - qty) + ".");
                     }
                     if (qty > 0) {
                         lines.add(new QuotationInvoiceService.DeliveryLineInput(
@@ -514,6 +517,15 @@ public class Invoices extends JFrame {
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(this, ex.getMessage(), "Delivery", JOptionPane.ERROR_MESSAGE);
                 return;
+            }
+            if (!stockWarnings.isEmpty()) {
+                String warning = "This delivery will create negative inventory:\n\n"
+                        + String.join("\n", stockWarnings)
+                        + "\n\nContinue posting this delivery?";
+                if (JOptionPane.showConfirmDialog(this, warning, "Negative Inventory Warning",
+                        JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) {
+                    return;
+                }
             }
             try {
                 String method=String.valueOf(methodBox.getSelectedItem()),receiver=receiverField.getText(),notes=notesField.getText();
@@ -540,9 +552,9 @@ public class Invoices extends JFrame {
             }
         }
 
-        private int availableQuantity(Object value) {
+        private Integer availableQuantity(Object value) {
             if (value == null || "Manual".equals(String.valueOf(value))) {
-                return -1;
+                return null;
             }
             return parseQuantity(value);
         }

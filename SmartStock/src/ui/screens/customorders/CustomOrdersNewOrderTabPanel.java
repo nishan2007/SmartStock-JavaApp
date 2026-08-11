@@ -42,6 +42,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final JTextField printChargeField;
     final JTextField printLineCountField;
     final JTextField printDescriptionField;
+    final JLabel printAddonSummaryLabel;
     final List<JComponent> printAddOnComponents = new ArrayList<>();
     final List<JComponent> printLineComponents = new ArrayList<>();
     DefaultTableModel printAddonModel;
@@ -116,6 +117,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         printChargeField = new JTextField("0");
         printLineCountField = new JTextField("1");
         printDescriptionField = new JTextField();
+        printAddonSummaryLabel = new JLabel("No print add-ons added.");
+        printAddonSummaryLabel.setForeground(MUTED);
         lineQuantityField = new JTextField("1", 6);
         lineDiscountPercentField = new JTextField("0", 6);
         lineDiscountReasonField = new JTextField();
@@ -256,7 +259,10 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         rightGbc.gridx = 1;
         rightGbc.gridy = 3;
         rightColumn.add(lineButtons, rightGbc);
-        addColumnBottomGlue(rightColumn, rightGbc, 4);
+        rightGbc.gridy = 4;
+        rightGbc.insets = new Insets(6, 4, 4, 4);
+        rightColumn.add(printAddonSummaryLabel, rightGbc);
+        addColumnBottomGlue(rightColumn, rightGbc, 5);
 
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -565,7 +571,16 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         buttons.setOpaque(false);
         buttons.add(addPrintAddonButton);
         buttons.add(removePrintAddonButton);
-        addTrackedField(printAddOnComponents, form, gbc, 5, "Add-ons:", buildPrintAddonsPanel(buttons));
+        JPanel addOnsPanel = buildPrintAddonsPanel(buttons);
+        JLabel addOnsLabel = addField(form, gbc, 5, "Add-ons:", addOnsPanel);
+        printAddOnComponents.add(addOnsLabel);
+        printAddOnComponents.add(addOnsPanel);
+        gbc.gridx = 1;
+        gbc.gridy = 5;
+        gbc.weightx = 1;
+        gbc.weighty = 1;
+        gbc.fill = GridBagConstraints.BOTH;
+        ((GridBagLayout) form.getLayout()).setConstraints(addOnsPanel, gbc);
 
         JButton doneButton = new JButton("Done");
         styleButton(doneButton, ACCENT_DARK);
@@ -654,16 +669,23 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
             printAddonTable = new JTable(printAddonModel);
             printAddonTable.setRowHeight(24);
             printAddonTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            printAddonTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
             styleTable(printAddonTable);
             hideColumn(printAddonTable, 0);
             hideColumn(printAddonTable, 2);
             hideColumn(printAddonTable, 4);
+            printAddonTable.getColumn("Material").setPreferredWidth(125);
+            printAddonTable.getColumn("Size").setPreferredWidth(105);
+            printAddonTable.getColumn("Description").setPreferredWidth(185);
+            printAddonTable.getColumn("Lines").setPreferredWidth(50);
+            printAddonTable.getColumn("Price").setPreferredWidth(70);
         }
 
         JPanel panel = new JPanel(new BorderLayout(0, 6));
         panel.setOpaque(false);
         JScrollPane scrollPane = new JScrollPane(printAddonTable);
-        scrollPane.setPreferredSize(new Dimension(440, 130));
+        scrollPane.setPreferredSize(new Dimension(440, 140));
+        scrollPane.setMinimumSize(new Dimension(320, 110));
         scrollPane.getViewport().setBackground(PANEL);
         scrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
         panel.add(scrollPane, BorderLayout.CENTER);

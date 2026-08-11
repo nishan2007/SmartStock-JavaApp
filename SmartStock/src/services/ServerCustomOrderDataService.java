@@ -365,9 +365,6 @@ public final class ServerCustomOrderDataService {
                 DeviceContextService.requireOrdersAllowed(conn);
                 int customerId = resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
                 boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
-                if (hasAccountBalanceDue) {
-                    validateAndChargeCustomerAccount(conn, customerId, request.balanceDue());
-                }
                 CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
                 boolean cashUpfrontPayment = request.amountPaid().compareTo(BigDecimal.ZERO) > 0
                         && "CASH".equalsIgnoreCase(blankToNull(request.paymentMethod()));
@@ -428,7 +425,7 @@ public final class ServerCustomOrderDataService {
                     paymentPs.executeUpdate();
                 }
                 BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
-                String accountHistoryType = hasAccountBalanceDue ? "CUSTOM_ORDER_CREDIT" : "CUSTOM_ORDER_PAID";
+                String accountHistoryType = hasAccountBalanceDue ? "CUSTOM_ORDER_BALANCE" : "CUSTOM_ORDER_PAID";
                 String accountHistoryNote = hasAccountBalanceDue
                         ? "Custom order balance charged to account. payment_method=" + blankToNull(request.paymentMethod())
                         + ", amount_paid=" + request.amountPaid()
@@ -639,48 +636,6 @@ public final class ServerCustomOrderDataService {
                 }
                 return rs.getInt("customer_id");
             }
-        }
-    }
-
-    private static void validateAndChargeCustomerAccount(Connection conn, int customerId, BigDecimal chargeAmount) throws SQLException {
-        Integer locationId=ServerRequestIdentity.locationId();
-        if(locationId==null)throw new SQLException("A store location is required to verify multi-store customer credit.");
-        CustomerAccountLedgerService.requireCurrentMultiStoreBalance(conn,locationId);
-        CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
-        String lockSql = """
-                SELECT current_balance, credit_limit, is_active
-                FROM customer_accounts
-                WHERE customer_id = ?
-                FOR UPDATE
-                """;
-        BigDecimal currentBalance;
-        BigDecimal creditLimit;
-        boolean active;
-        try (PreparedStatement ps = conn.prepareStatement(lockSql)) {
-            ps.setInt(1, customerId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("Customer account was not found.");
-                }
-                currentBalance = defaultZero(rs.getBigDecimal("current_balance"));
-                creditLimit = defaultZero(rs.getBigDecimal("credit_limit"));
-                active = rs.getBoolean("is_active");
-            }
-        }
-
-        if (!active) {
-            throw new SQLException("Customer account is inactive.");
-        }
-
-        BigDecimal newBalance = currentBalance.add(chargeAmount);
-        if (newBalance.compareTo(creditLimit) > 0) {
-            throw new SQLException("Account payment exceeds customer credit limit. Available credit: $" + creditLimit.subtract(currentBalance));
-        }
-
-        try (PreparedStatement ps = conn.prepareStatement("UPDATE customer_accounts SET current_balance = ? WHERE customer_id = ?")) {
-            ps.setBigDecimal(1, newBalance);
-            ps.setInt(2, customerId);
-            ps.executeUpdate();
         }
     }
 

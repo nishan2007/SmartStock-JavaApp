@@ -36,6 +36,9 @@ public final class SchemaContractService {
             "database/v1/cloud/002_storage.sql",
             "database/v1/cloud/003_metadata.sql"
     );
+    private static final List<String> LOCAL_POST_V1 = List.of(
+            "database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql"
+    );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
             "database/migrations/v1_after/20260809192551_restrict_service_only_rpc_execute.sql",
@@ -56,7 +59,7 @@ public final class SchemaContractService {
     }
 
     public static List<String> localContractResources() {
-        return LOCAL_BASELINE;
+        List<String> resources=new ArrayList<>(LOCAL_BASELINE);resources.addAll(LOCAL_POST_V1);return List.copyOf(resources);
     }
 
     public static List<String> cloudPostV1MigrationResources() {
@@ -84,9 +87,29 @@ public final class SchemaContractService {
         upgradePreReturnReceiptBaseline(connection);
         normalizeInterimReturnReceiptFingerprint(connection);
         upgradeCustomerHistoryCacheBaseline(connection);
+        upgradeCustomOrderCreditSeparation(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void upgradeCustomOrderCreditSeparation(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","customer_account_transactions")||columnExists(connection,"public","customer_account_transactions","credit_applied_amount"))return;
+        String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
+        if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic custom-order credit separation is blocked.","55000");
+        String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try(Statement s=connection.createStatement()){
+            s.execute("ALTER TABLE customer_account_transactions ADD COLUMN credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN document_balance numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("UPDATE customer_account_transactions SET transaction_type='CUSTOM_ORDER_BALANCE',credit_applied_amount=0 WHERE transaction_type='CUSTOM_ORDER_CREDIT'");
+            s.execute("UPDATE customer_account_transactions t SET credit_applied_amount=CASE WHEN t.transaction_type='PAYMENT' AND t.custom_order_id IS NULL THEN GREATEST(ABS(COALESCE(t.amount,0))-COALESCE((SELECT SUM(a.amount) FROM customer_account_payment_allocations a WHERE a.payment_transaction_id=t.transaction_id AND a.custom_order_id IS NOT NULL),0),0) ELSE 0 END");
+            s.execute("UPDATE customer_account_transactions SET transaction_type='CUSTOM_ORDER_PAYMENT',credit_applied_amount=0 WHERE transaction_type='PAYMENT' AND custom_order_id IS NOT NULL");
+            String next=catalogFingerprint(connection,List.of("public"),false);try(PreparedStatement u=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                u.setString(1,resource);u.setString(2,next);u.setInt(3,BASELINE_VERSION);u.setString(4,stored);if(u.executeUpdate()!=1)throw new SQLException("Local custom-order credit separation metadata changed during upgrade.");}
+            connection.commit();
+        }catch(SQLException ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(auto);}
     }
 
     /** Accepts the released 1.0.45 catalog while normalizing its SQL resource bytes. */
@@ -203,6 +226,10 @@ public final class SchemaContractService {
 
     static boolean isPreReturnReceiptFingerprint(String fingerprint) {
         return PRE_RETURN_RECEIPT_LOCAL_FINGERPRINTS.contains(fingerprint);
+    }
+
+    private static boolean columnExists(Connection connection,String schema,String table,String column)throws SQLException{
+        try(ResultSet rs=connection.getMetaData().getColumns(null,schema,table,column)){return rs.next();}
     }
 
     public static Readiness validateCloud(Connection connection) throws SQLException {

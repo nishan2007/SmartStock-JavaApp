@@ -701,6 +701,12 @@ public final class LanApiClient {
         JsonObject request=new JsonObject();request.addProperty("customerId",customerId);
         return GSON.fromJson(post("/v1/customer-accounts/payments",request,true,true),CustomerPaymentResult.class);
     }
+    public static List<CustomerOpenBalance> loadCustomerOpenBalances(int customerId)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("customerId",customerId);
+        JsonObject data=post("/v1/customer-accounts/open-balances",request,true,true);
+        CustomerOpenBalance[] rows=GSON.fromJson(data.getAsJsonArray("balances"),CustomerOpenBalance[].class);
+        return rows==null?List.of():List.of(rows);
+    }
     public static AccountPaymentReceiptPayload loadAccountPaymentReceipt(int customerId,long transactionId)throws Exception{
         JsonObject request=new JsonObject();request.addProperty("customerId",customerId);request.addProperty("transactionId",transactionId);
         return GSON.fromJson(post("/v1/customer-accounts/payment-receipt",request,true,true),AccountPaymentReceiptPayload.class);
@@ -1508,13 +1514,18 @@ public final class LanApiClient {
                                       String nextReceivePreview,String timezone) { }
     public record CustomerAccountRecord(int customerId,String accountNumber,String name,String phone,String email,
                                         BigDecimal creditLimit,BigDecimal currentBalance,BigDecimal availableCredit,
+                                        BigDecimal customOrderDue,BigDecimal totalDue,
                                         boolean business,boolean active,String accountNotes,Integer customerTypeId,
                                         String customerTypeName) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                              String phone,String email,BigDecimal creditLimit,boolean business,
                                              boolean active,String accountNotes) { }
     public record SavedCustomerAccount(int customerId,String accountNumber) { }
-    public record CustomerAccountAdjustmentRequest(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference) { }
+    public record CustomerAccountAdjustmentRequest(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,
+                                                   List<CustomerPaymentAllocationRequest> allocations) { }
+    public record CustomerPaymentAllocationRequest(String documentType,Long documentId,BigDecimal amount) { }
+    public record CustomerOpenBalance(String documentType,Long documentId,String documentNumber,long createdAtEpochMillis,
+                                      BigDecimal total,BigDecimal paid,BigDecimal balanceDue) { }
     public record CustomerAccountAdjustmentResult(long transactionId,String paymentId,BigDecimal balanceAfter) { }
     public record CustomerTransactionResult(List<CustomerTransactionRecord> transactions,int count,
                                             BigDecimal totalCharges,BigDecimal totalPayments) { }

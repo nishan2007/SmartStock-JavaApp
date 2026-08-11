@@ -29,7 +29,9 @@ final class LanCustomerAccountService {
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT ca.customer_id,COALESCE(ca.account_number,''),ca.name,COALESCE(ca.phone,''),
                   COALESCE(ca.email,''),COALESCE(ca.credit_limit,0),COALESCE(ca.current_balance,0),
-                  COALESCE(ca.credit_limit,0)-COALESCE(ca.current_balance,0),COALESCE(ca.is_business,FALSE),
+                  COALESCE(ca.credit_limit,0)-COALESCE(ca.current_balance,0),
+                  COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),
+                  COALESCE(ca.current_balance,0)+COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),COALESCE(ca.is_business,FALSE),
                   COALESCE(ca.is_active,TRUE),COALESCE(ca.account_notes,''),ca.customer_type_id,COALESCE(ct.name,'')
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
                 ORDER BY ca.name
@@ -42,7 +44,9 @@ final class LanCustomerAccountService {
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT ca.customer_id,COALESCE(ca.account_number,''),ca.name,COALESCE(ca.phone,''),
                   COALESCE(ca.email,''),COALESCE(ca.credit_limit,0),COALESCE(ca.current_balance,0),
-                  COALESCE(ca.credit_limit,0)-COALESCE(ca.current_balance,0),COALESCE(ca.is_business,FALSE),
+                  COALESCE(ca.credit_limit,0)-COALESCE(ca.current_balance,0),
+                  COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),
+                  COALESCE(ca.current_balance,0)+COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),COALESCE(ca.is_business,FALSE),
                   COALESCE(ca.is_active,TRUE),COALESCE(ca.account_notes,''),ca.customer_type_id,COALESCE(ct.name,'')
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
                 WHERE ca.customer_id=?
@@ -90,6 +94,7 @@ final class LanCustomerAccountService {
         try{r=GSON.fromJson(body,Adjustment.class);}catch(Exception ex){throw rule(400,"VALIDATION_ERROR","Account adjustment details are invalid.");}
         if(r==null||r.customerId()<=0)throw rule(400,"VALIDATION_ERROR","Select a customer account.");
         BigDecimal amount=money(r.amount());if(amount.signum()<=0)throw rule(400,"VALIDATION_ERROR","Amount must be greater than zero.");
+        if(amount.stripTrailingZeros().scale()>0)throw rule(400,"VALIDATION_ERROR","Customer account amounts must use whole GYD values.");
         String action=clean(r.action(),20).toUpperCase();boolean charge="CHARGE".equals(action);
         if(!charge&&!"PAYMENT".equals(action))throw rule(400,"VALIDATION_ERROR","Account adjustment type is invalid.");
         String method=charge?null:required(r.paymentMethod(),30,"Select a payment method.").toUpperCase();
@@ -101,8 +106,12 @@ final class LanCustomerAccountService {
         try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(current_balance,0),COALESCE(credit_limit,0),COALESCE(is_active,TRUE) FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
             ps.setInt(1,r.customerId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(404,"CUSTOMER_NOT_FOUND","Customer account was not found.");
                 balance=money(rs.getBigDecimal(1));limit=money(rs.getBigDecimal(2));if(!rs.getBoolean(3))throw rule(409,"ACCOUNT_INACTIVE","This customer account is inactive.");}}
-        BigDecimal next=charge?balance.add(amount):balance.subtract(amount);
-        if(next.signum()<0)throw rule(409,"PAYMENT_EXCEEDS_BALANCE","Payment is more than the current balance.");
+        List<PaymentAllocation> requested=r.allocations()==null?List.of():r.allocations();
+        BigDecimal allocated=requested.stream().map(a->money(a.amount())).reduce(BigDecimal.ZERO,BigDecimal::add);
+        if(!charge&&(requested.isEmpty()||allocated.compareTo(amount)!=0))throw rule(409,"ALLOCATION_MISMATCH","Selected allocation amounts must equal the payment amount.");
+        BigDecimal creditApplied=charge?BigDecimal.ZERO:requested.stream().filter(a->!"CUSTOM_ORDER".equalsIgnoreCase(a.documentType())).map(a->money(a.amount())).reduce(BigDecimal.ZERO,BigDecimal::add);
+        BigDecimal next=charge?balance.add(amount):balance.subtract(creditApplied);
+        if(next.signum()<0)throw rule(409,"PAYMENT_EXCEEDS_CREDIT_BALANCE","The amount allocated to account credit exceeds the credit balance.");
         if(charge&&next.compareTo(limit)>0)throw rule(409,"CREDIT_LIMIT_EXCEEDED","Charge exceeds the customer's credit limit.");
 
         CashDrawerContext drawer=new CashDrawerContext(null,null);String deviceName=deviceName(c,deviceId);
@@ -113,13 +122,13 @@ final class LanCustomerAccountService {
         }
         try(PreparedStatement ps=c.prepareStatement("UPDATE customer_accounts SET current_balance=?,updated_at=CURRENT_TIMESTAMP WHERE customer_id=?")){
             ps.setBigDecimal(1,next);ps.setInt(2,r.customerId());ps.executeUpdate();}
-        long transactionId=insertAdjustment(c,r.customerId(),charge?amount:amount.negate(),charge?"MANUAL_CHARGE":"PAYMENT",
+        long transactionId=insertAdjustment(c,r.customerId(),charge?amount:amount.negate(),creditApplied,charge?"MANUAL_CHARGE":"PAYMENT",
                 charge?"Manual account charge":"Customer payment",method,reference,drawer,deviceId,deviceName,userName,locationId);
         String paymentId=charge?"":"PAY-"+String.format("%06d",transactionId);
         if(!charge){
             try(PreparedStatement ps=c.prepareStatement("UPDATE customer_account_transactions SET payment_id=? WHERE transaction_id=?")){
                 ps.setString(1,paymentId);ps.setLong(2,transactionId);ps.executeUpdate();}
-            String note=allocatePayment(c,r.customerId(),amount,transactionId,method,reference,drawer,deviceId,deviceName,userId,userName);
+            String note=applySelectedAllocations(c,r.customerId(),requested,transactionId,method,reference,drawer,deviceId,deviceName,userId,userName);
             try(PreparedStatement ps=c.prepareStatement("UPDATE customer_account_transactions SET note=? WHERE transaction_id=?")){
                 ps.setString(1,note);ps.setLong(2,transactionId);ps.executeUpdate();}
         }
@@ -128,17 +137,36 @@ final class LanCustomerAccountService {
         return map("transactionId",transactionId,"paymentId",paymentId,"balanceAfter",next);
     }
 
-    private static long insertAdjustment(Connection c,int customerId,BigDecimal amount,String type,String note,String method,String reference,
+    private static long insertAdjustment(Connection c,int customerId,BigDecimal amount,BigDecimal creditApplied,String type,String note,String method,String reference,
                                          CashDrawerContext drawer,UUID deviceId,String deviceName,String userName,int locationId)throws SQLException{
         try(PreparedStatement ps=c.prepareStatement("""
-                INSERT INTO customer_account_transactions(customer_id,location_id,amount,transaction_type,note,user_name,device_id,device_name,
+                INSERT INTO customer_account_transactions(customer_id,location_id,amount,credit_applied_amount,transaction_type,note,user_name,device_id,device_name,
                   payment_method,payment_reference,cash_drawer_id,cash_drawer_name,cash_drawer_session_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING transaction_id
-                """)){ps.setInt(1,customerId);ps.setInt(2,locationId);ps.setBigDecimal(3,amount);ps.setString(4,type);ps.setString(5,note);
-            ps.setString(6,userName);ps.setObject(7,deviceId);ps.setString(8,deviceName);ps.setString(9,blank(method));ps.setString(10,blank(reference));
-            setLong(ps,11,drawer.cashDrawerId());ps.setString(12,blank(drawer.drawerName()));setLong(ps,13,drawer.sessionId());
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING transaction_id
+                """)){ps.setInt(1,customerId);ps.setInt(2,locationId);ps.setBigDecimal(3,amount);ps.setBigDecimal(4,creditApplied);ps.setString(5,type);ps.setString(6,note);
+            ps.setString(7,userName);ps.setObject(8,deviceId);ps.setString(9,deviceName);ps.setString(10,blank(method));ps.setString(11,blank(reference));
+            setLong(ps,12,drawer.cashDrawerId());ps.setString(13,blank(drawer.drawerName()));setLong(ps,14,drawer.sessionId());
             try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getLong(1);}}
         throw new SQLException("Failed to create account transaction.");
+    }
+
+    static List<Map<String,Object>> openBalances(Connection c,int customerId,int userId)throws Exception{
+        require(c,userId,"CUSTOMER_ACCOUNTS");CustomerAccountLedgerService.repairCustomerBalance(c,customerId);List<Map<String,Object>>out=new ArrayList<>();
+        String sql="""
+          SELECT document_type,document_id,document_number,created_at,total,paid,balance FROM (
+            SELECT 'SALE' document_type,sale_id::bigint document_id,COALESCE(receipt_number,'Sale #'||sale_id),created_at,
+              GREATEST(COALESCE(total_amount,0)-COALESCE(returned_amount,0),0) total,COALESCE(amount_paid,0) paid,
+              GREATEST(GREATEST(COALESCE(total_amount,0)-COALESCE(returned_amount,0),0)-COALESCE(amount_paid,0),0) balance
+            FROM sales WHERE customer_id=? AND payment_method='ACCOUNT' AND COALESCE(payment_status,'PAID')<>'PAID'
+            UNION ALL SELECT 'INVOICE',invoice_id,COALESCE(NULLIF(invoice_number,''),'Invoice '||invoice_id),created_at,COALESCE(total_amount,0),COALESCE(amount_paid,0),COALESCE(balance_due,0)
+            FROM invoices WHERE customer_id=? AND COALESCE(payment_status,'UNPAID')<>'PAID' AND COALESCE(balance_due,0)>0
+            UNION ALL SELECT 'CUSTOM_ORDER',custom_order_id,COALESCE(NULLIF(order_number,''),'Custom Order '||custom_order_id),created_at,COALESCE(total_amount,0),COALESCE(amount_paid,0),COALESCE(balance_due,0)
+            FROM custom_orders WHERE customer_id=? AND COALESCE(payment_status,'UNPAID')<>'PAID' AND COALESCE(balance_due,0)>0
+          ) x WHERE balance>0 ORDER BY created_at,document_type,document_id
+          """;
+        BigDecimal documentedCredit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement(sql)){for(int i=1;i<=3;i++)ps.setInt(i,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){String type=rs.getString(1);BigDecimal due=money(rs.getBigDecimal(7));out.add(map("documentType",type,"documentId",rs.getLong(2),"documentNumber",rs.getString(3),"createdAtEpochMillis",epoch(rs.getTimestamp(4)),"total",money(rs.getBigDecimal(5)),"paid",money(rs.getBigDecimal(6)),"balanceDue",due));if(!"CUSTOM_ORDER".equals(type))documentedCredit=documentedCredit.add(due);}}}
+        BigDecimal credit=CustomerAccountLedgerService.repairCustomerBalance(c,customerId),unattributed=credit.subtract(documentedCredit).max(BigDecimal.ZERO);if(unattributed.signum()>0)out.add(0,map("documentType","ACCOUNT","documentId",0L,"documentNumber","Manual / Unattributed Account Credit","createdAtEpochMillis",0L,"total",unattributed,"paid",BigDecimal.ZERO,"balanceDue",unattributed));
+        return out;
     }
 
     private static String allocatePayment(Connection c,int customerId,BigDecimal amount,long transactionId,String method,String reference,
@@ -210,6 +238,29 @@ final class LanCustomerAccountService {
                 allocation.setLong(1,tx);allocation.setInt(2,customerId);allocation.setLong(3,id);allocation.setBigDecimal(4,used);allocation.executeUpdate();append(applied,"invoice "+number+" "+used);remaining=remaining.subtract(used);}}}
         return remaining;
     }
+
+    private static String applySelectedAllocations(Connection c,int customerId,List<PaymentAllocation> requests,long tx,String method,String reference,
+                                                   CashDrawerContext drawer,UUID deviceId,String deviceName,int userId,String userName)throws Exception{
+        StringBuilder applied=new StringBuilder();for(PaymentAllocation request:requests){BigDecimal amount=money(request.amount());
+            if(amount.signum()<=0||amount.stripTrailingZeros().scale()>0)throw rule(400,"VALIDATION_ERROR","Every allocation must be a positive whole-GYD amount.");
+            String type=clean(request.documentType(),30).toUpperCase();if(!"ACCOUNT".equals(type)&&(request.documentId()==null||request.documentId()<=0))throw rule(400,"VALIDATION_ERROR","Every allocation must identify a document.");
+            long id=request.documentId();if("CUSTOM_ORDER".equals(type)){String number;BigDecimal due;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(order_number,''),custom_order_id::text),COALESCE(balance_due,0) FROM custom_orders WHERE custom_order_id=? AND customer_id=? FOR UPDATE")){ps.setLong(1,id);ps.setInt(2,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(409,"BALANCE_CHANGED","A selected custom order is no longer available.");number=rs.getString(1);due=money(rs.getBigDecimal(2));}}
+                if(amount.compareTo(due)>0)throw rule(409,"BALANCE_CHANGED","A custom-order allocation exceeds its current balance.");
+                try(PreparedStatement ps=c.prepareStatement("UPDATE custom_orders SET amount_paid=COALESCE(amount_paid,0)+?,balance_due=GREATEST(COALESCE(balance_due,0)-?,0),payment_status=CASE WHEN COALESCE(balance_due,0)-?<=0 THEN 'PAID' ELSE 'PARTIAL' END,updated_at=CURRENT_TIMESTAMP WHERE custom_order_id=?")){ps.setBigDecimal(1,amount);ps.setBigDecimal(2,amount);ps.setBigDecimal(3,amount);ps.setLong(4,id);ps.executeUpdate();}
+                try(PreparedStatement ps=c.prepareStatement("INSERT INTO custom_order_payments(custom_order_id,payment_amount,payment_method,payment_reference,taken_by_user_id,taken_by_name,payment_action,device_id,device_name,cash_drawer_id,cash_drawer_name,cash_drawer_session_id) VALUES(?,?,?,?,?,?,'PAYMENT',?,?,?,?,?)")){ps.setLong(1,id);ps.setBigDecimal(2,amount);ps.setString(3,method);ps.setString(4,paymentReference(tx,reference));ps.setInt(5,userId);ps.setString(6,userName);ps.setObject(7,deviceId);ps.setString(8,deviceName);setLong(ps,9,drawer.cashDrawerId());ps.setString(10,blank(drawer.drawerName()));setLong(ps,11,drawer.sessionId());ps.executeUpdate();}
+                insertAllocation(c,tx,customerId,type,id,amount);append(applied,"custom order "+number+" "+amount);
+            }else if("SALE".equals(type)){BigDecimal total,paid;try(PreparedStatement ps=c.prepareStatement("SELECT GREATEST(COALESCE(total_amount,0)-COALESCE(returned_amount,0),0),COALESCE(amount_paid,0) FROM sales WHERE sale_id=? AND customer_id=? AND payment_method='ACCOUNT' FOR UPDATE")){ps.setLong(1,id);ps.setInt(2,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(409,"BALANCE_CHANGED","A selected sale is no longer available.");total=money(rs.getBigDecimal(1));paid=money(rs.getBigDecimal(2));}}
+                if(amount.compareTo(total.subtract(paid))>0)throw rule(409,"BALANCE_CHANGED","A sale allocation exceeds its current balance.");try(PreparedStatement ps=c.prepareStatement("UPDATE sales SET amount_paid=?,payment_status=CASE WHEN ?>=GREATEST(COALESCE(total_amount,0)-COALESCE(returned_amount,0),0) THEN 'PAID' ELSE 'UNPAID' END WHERE sale_id=?")){ps.setBigDecimal(1,paid.add(amount));ps.setBigDecimal(2,paid.add(amount));ps.setLong(3,id);ps.executeUpdate();}insertAllocation(c,tx,customerId,type,id,amount);append(applied,"sale #"+id+" "+amount);
+            }else if("INVOICE".equals(type)){String number;BigDecimal due;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(invoice_number,''),invoice_id::text),COALESCE(balance_due,0) FROM invoices WHERE invoice_id=? AND customer_id=? FOR UPDATE")){ps.setLong(1,id);ps.setInt(2,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(409,"BALANCE_CHANGED","A selected invoice is no longer available.");number=rs.getString(1);due=money(rs.getBigDecimal(2));}}
+                if(amount.compareTo(due)>0)throw rule(409,"BALANCE_CHANGED","An invoice allocation exceeds its current balance.");try(PreparedStatement ps=c.prepareStatement("UPDATE invoices SET amount_paid=COALESCE(amount_paid,0)+?,balance_due=GREATEST(COALESCE(balance_due,0)-?,0),payment_status=CASE WHEN COALESCE(balance_due,0)-?<=0 THEN 'PAID' ELSE 'PARTIAL' END,updated_at=CURRENT_TIMESTAMP WHERE invoice_id=?")){ps.setBigDecimal(1,amount);ps.setBigDecimal(2,amount);ps.setBigDecimal(3,amount);ps.setLong(4,id);ps.executeUpdate();}
+                try(PreparedStatement ps=c.prepareStatement("INSERT INTO invoice_payments(invoice_id,customer_id,payment_amount,payment_method,payment_reference,taken_by_user_id,taken_by_name,location_id,device_id,device_name,cash_drawer_id,cash_drawer_name,cash_drawer_session_id) SELECT invoice_id,customer_id,?,?,?,?,?,location_id,?,?,?,?,? FROM invoices WHERE invoice_id=?")){ps.setBigDecimal(1,amount);ps.setString(2,method);ps.setString(3,paymentReference(tx,reference));ps.setInt(4,userId);ps.setString(5,userName);ps.setObject(6,deviceId);ps.setString(7,deviceName);setLong(ps,8,drawer.cashDrawerId());ps.setString(9,blank(drawer.drawerName()));setLong(ps,10,drawer.sessionId());ps.setLong(11,id);ps.executeUpdate();}
+                insertAllocation(c,tx,customerId,type,id,amount);append(applied,"invoice "+number+" "+amount);
+            }else if("ACCOUNT".equals(type)){insertAllocation(c,tx,customerId,type,0,amount);append(applied,"account credit "+amount);
+            }else throw rule(400,"VALIDATION_ERROR","An allocation document type is invalid.");}
+        return "Customer payment applied to "+applied;
+    }
+
+    private static void insertAllocation(Connection c,long tx,int customerId,String type,long id,BigDecimal amount)throws SQLException{if("ACCOUNT".equals(type)){try(PreparedStatement ps=c.prepareStatement("INSERT INTO customer_account_payment_allocations(payment_transaction_id,customer_id,amount) VALUES(?,?,?)")){ps.setLong(1,tx);ps.setInt(2,customerId);ps.setBigDecimal(3,amount);ps.executeUpdate();}return;}String column=switch(type){case"SALE"->"sale_id";case"CUSTOM_ORDER"->"custom_order_id";case"INVOICE"->"invoice_id";default->throw new SQLException("Invalid allocation type.");};try(PreparedStatement ps=c.prepareStatement("INSERT INTO customer_account_payment_allocations(payment_transaction_id,customer_id,"+column+",amount) VALUES(?,?,?,?)")){ps.setLong(1,tx);ps.setInt(2,customerId);ps.setLong(3,id);ps.setBigDecimal(4,amount);ps.executeUpdate();}}
 
     private static String deviceName(Connection c,UUID id)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(device_name,''),NULLIF(hostname,''),'LAN API Register') FROM devices WHERE device_id=?")){ps.setObject(1,id);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getString(1):"LAN API Register";}}}
     private static String paymentReference(long tx,String reference){return reference==null||reference.isBlank()?"Account payment transaction #"+tx:"Account payment transaction #"+tx+" / "+reference;}
@@ -328,8 +379,9 @@ final class LanCustomerAccountService {
 
     private static Map<String,Object>account(ResultSet rs)throws SQLException{return map("customerId",rs.getInt(1),"accountNumber",rs.getString(2),
             "name",rs.getString(3),"phone",rs.getString(4),"email",rs.getString(5),"creditLimit",money(rs.getBigDecimal(6)),
-            "currentBalance",money(rs.getBigDecimal(7)),"availableCredit",money(rs.getBigDecimal(8)),"business",rs.getBoolean(9),
-            "active",rs.getBoolean(10),"accountNotes",rs.getString(11),"customerTypeId",nullableInt(rs,12),"customerTypeName",rs.getString(13));}
+            "currentBalance",money(rs.getBigDecimal(7)),"availableCredit",money(rs.getBigDecimal(8)),
+            "customOrderDue",money(rs.getBigDecimal(9)),"totalDue",money(rs.getBigDecimal(10)),"business",rs.getBoolean(11),
+            "active",rs.getBoolean(12),"accountNotes",rs.getString(13),"customerTypeId",nullableInt(rs,14),"customerTypeName",rs.getString(15));}
     private static Request parsed(JsonObject b)throws RuleViolation{try{Request r=GSON.fromJson(b,Request.class);if(r==null)throw rule(400,"VALIDATION_ERROR","Customer details are required.");return r;}catch(RuleViolation e){throw e;}catch(Exception e){throw rule(400,"VALIDATION_ERROR","Customer details are invalid.");}}
     private static void requireReference(Connection c,String table,String column,int id,String label)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM "+table+" WHERE "+column+"=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(400,"VALIDATION_ERROR",label+" was not found.");}}}
     private static void require(Connection c,int u,String p)throws Exception{if(!has(c,u,p))throw rule(403,"PERMISSION_DENIED","You do not have permission to manage customer accounts.");}
@@ -348,7 +400,8 @@ final class LanCustomerAccountService {
     private static RuleViolation rule(int s,String c,String m){return new RuleViolation(s,c,m);}
     private record Request(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,
                            BigDecimal creditLimit,boolean business,boolean active,String accountNotes){}
-    private record Adjustment(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference){}
+    private record Adjustment(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,List<PaymentAllocation> allocations){}
+    private record PaymentAllocation(String documentType,Long documentId,BigDecimal amount){}
     static final class RuleViolation extends Exception{private final int status;private final String code;private final String safeMessage;
         RuleViolation(int s,String c,String m){super(m);status=s;code=c;safeMessage=m;}int status(){return status;}String code(){return code;}String safeMessage(){return safeMessage;}}
 }

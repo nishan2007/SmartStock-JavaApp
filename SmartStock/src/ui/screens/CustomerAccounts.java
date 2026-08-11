@@ -9,6 +9,7 @@ import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.ResponsiveTask;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -81,7 +82,7 @@ public class CustomerAccounts extends JFrame {
         searchPanel.add(searchField, BorderLayout.CENTER);
 
         customerModel = new DefaultTableModel(
-                new Object[]{"ID", "Account #", "Name", "Customer Type ID", "Customer Type", "Phone", "Email", "Credit Limit", "Balance (All Stores)", "Available Credit", "Account Type", "Active", "Notes"},
+                new Object[]{"ID", "Account #", "Name", "Customer Type ID", "Customer Type", "Phone", "Email", "Credit Limit", "Credit Balance", "Custom Order Due", "Total Due", "Available Credit", "Account Type", "Active", "Notes"},
                 0
         ) {
             @Override
@@ -97,9 +98,9 @@ public class CustomerAccounts extends JFrame {
         customerTable.setRowHeight(26);
         customerTable.getColumnModel().getColumn(0).setMaxWidth(60);
         hideColumn(customerTable, 3);
-        customerTable.getColumnModel().getColumn(10).setMaxWidth(95);
-        customerTable.getColumnModel().getColumn(11).setMaxWidth(70);
-        customerTable.getColumnModel().getColumn(12).setPreferredWidth(220);
+        customerTable.getColumnModel().getColumn(12).setMaxWidth(95);
+        customerTable.getColumnModel().getColumn(13).setMaxWidth(70);
+        customerTable.getColumnModel().getColumn(14).setPreferredWidth(220);
 
         customerTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -257,7 +258,7 @@ public class CustomerAccounts extends JFrame {
                     customerModel.addRow(new Object[]{
                             row.customerId(),row.accountNumber(),row.name(),row.customerTypeId()==null?"":row.customerTypeId(),
                             row.customerTypeName(),row.phone(),row.email(),money(row.creditLimit()),money(row.currentBalance()),
-                            money(row.availableCredit()),row.business()?"Business":"Personal",row.active(),row.accountNotes()
+                            money(row.customOrderDue()),money(row.totalDue()),money(row.availableCredit()),row.business()?"Business":"Personal",row.active(),row.accountNotes()
                     });
         }
     }
@@ -279,9 +280,9 @@ public class CustomerAccounts extends JFrame {
         emailField.setText(valueAt(modelRow, 6));
         creditLimitField.setText(stripMoney(valueAt(modelRow, 7)));
         balanceField.setText(stripMoney(valueAt(modelRow, 8)));
-        businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 10)));
-        activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 11)));
-        accountNotesArea.setText(valueAt(modelRow, 12));
+        businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 12)));
+        activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 13)));
+        accountNotesArea.setText(valueAt(modelRow, 14));
         updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
@@ -436,6 +437,7 @@ public class CustomerAccounts extends JFrame {
             JOptionPane.showMessageDialog(this, "Amount must be greater than zero.");
             return;
         }
+        if(amount.stripTrailingZeros().scale()>0){JOptionPane.showMessageDialog(this,"Customer account amounts must use whole GYD values.");return;}
 
         String paymentMethod = null;
         String paymentReference = null;
@@ -457,8 +459,10 @@ public class CustomerAccounts extends JFrame {
             }
         }
 
+        List<LanApiClient.CustomerPaymentAllocationRequest> allocations=addCharge?List.of():selectPaymentAllocations(amount);
+        if(!addCharge&&allocations==null)return;
         LanApiClient.CustomerAccountAdjustmentRequest request=new LanApiClient.CustomerAccountAdjustmentRequest(selectedCustomerId,amount,
-                addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference);String fingerprint=request.toString();
+                addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference,allocations);String fingerprint=request.toString();
         try {
             if(pendingAdjustmentKey==null||!fingerprint.equals(pendingAdjustmentFingerprint)){pendingAdjustmentKey=UUID.randomUUID().toString();pendingAdjustmentFingerprint=fingerprint;}
             String mutationKey=pendingAdjustmentKey;Integer customerId=selectedCustomerId;
@@ -472,6 +476,17 @@ public class CustomerAccounts extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update account balance: " + ex.getMessage());
         }
+    }
+
+    private List<LanApiClient.CustomerPaymentAllocationRequest> selectPaymentAllocations(BigDecimal paymentAmount){
+        List<LanApiClient.CustomerOpenBalance> balances;try{balances=ResponsiveTask.await(this,"Loading open customer balances...",()->LanApiClient.loadCustomerOpenBalances(selectedCustomerId));if(balances==null)return null;}catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to load open balances: "+ex.getMessage());return null;}
+        if(balances.isEmpty()){JOptionPane.showMessageDialog(this,"This customer has no open balances.");return null;}
+        DefaultTableModel model=new DefaultTableModel(new Object[]{"Pay","Type","Document","Date","Total","Paid","Balance Due","Apply"},0){@Override public Class<?> getColumnClass(int c){return c==0?Boolean.class:Object.class;}@Override public boolean isCellEditable(int r,int c){return c==0||c==7;}};
+        BigDecimal remaining=paymentAmount;for(var b:balances){BigDecimal apply=remaining.signum()>0?remaining.min(b.balanceDue()):BigDecimal.ZERO;model.addRow(new Object[]{apply.signum()>0,b.documentType(),b.documentNumber(),new java.util.Date(b.createdAtEpochMillis()),b.total(),b.paid(),b.balanceDue(),apply});remaining=remaining.subtract(apply).max(BigDecimal.ZERO);}
+        JTable table=new JTable(model);table.setRowHeight(26);JScrollPane scroll=new JScrollPane(table);scroll.setPreferredSize(new Dimension(850,260));
+        int choice=JOptionPane.showConfirmDialog(this,scroll,"Allocate Customer Payment",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);if(choice!=JOptionPane.OK_OPTION)return null;
+        List<LanApiClient.CustomerPaymentAllocationRequest> out=new java.util.ArrayList<>();BigDecimal sum=BigDecimal.ZERO;for(int i=0;i<model.getRowCount();i++)if(Boolean.TRUE.equals(model.getValueAt(i,0))){try{BigDecimal amount=new BigDecimal(String.valueOf(model.getValueAt(i,7)));if(amount.signum()<=0||amount.compareTo(balances.get(i).balanceDue())>0)throw new Exception();out.add(new LanApiClient.CustomerPaymentAllocationRequest(balances.get(i).documentType(),balances.get(i).documentId(),amount));sum=sum.add(amount);}catch(Exception ex){JOptionPane.showMessageDialog(this,"Every selected allocation must be greater than zero and no more than its balance due.");return null;}}
+        if(sum.compareTo(paymentAmount)!=0){JOptionPane.showMessageDialog(this,"Selected allocations must equal the payment amount of "+money(paymentAmount)+".");return null;}return List.copyOf(out);
     }
 
     private void clearFields() {

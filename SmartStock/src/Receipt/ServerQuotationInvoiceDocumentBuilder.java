@@ -407,7 +407,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static void appendBillTo(StringBuilder html, String customerName) {
-        html.append("<table class='joined'><tr><td class='bill-label'>Bill To:</td><td class='bill-name'>")
+        html.append("<table class='joined'><tr><td class='bill-label'>BILL TO:</td><td class='bill-name'>")
                 .append(esc(customerName))
                 .append("</td></tr></table>");
     }
@@ -437,11 +437,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         int unitPriceWidth = includeDelivery ? 8 : 16;
         html.append("<table class='joined'><tr><th width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%'>QTY</th>");
         if (includeDelivery) {
-            html.append("<th width='10%' style='width:10%'>DLVD</th><th width='10%' style='width:10%'>Due</th>");
+            html.append("<th width='10%' style='width:10%'>DLVD</th><th width='10%' style='width:10%'>DUE</th>");
         }
-        html.append("<th>Description</th>");
+        html.append("<th>DESCRIPTION</th>");
         if (!includeDelivery) {
-            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px'>U/Price</th><th width='16%' style='width:16%'>Amount</th>");
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px'>U/PRICE</th><th width='16%' style='width:16%'>AMOUNT</th>");
         }
         html.append("</tr>");
         int rows = 0;
@@ -481,18 +481,18 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         int quantityWidth = includeDelivery ? 10 : 12;
         int unitPriceWidth = includeDelivery ? 8 : 16;
         html.append("<table class='document-grid' cellspacing='0' cellpadding='0' border='0'>")
-                .append("<tr><td class='bill-label' width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; font-size:").append(includeDelivery ? 9 : 11).append("px'>Bill To:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
+                .append("<tr><td class='bill-label' width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; font-size:").append(includeDelivery ? 9 : 11).append("px'>BILL TO:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
                 .append(columns - 1)
                 .append("'>")
                 .append(esc(billTo))
                 .append("</td></tr>");
         html.append("<tr><th width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; border-top:2px solid #111'>QTY</th>");
         if (includeDelivery) {
-            html.append("<th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>DLVD</th><th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>Due</th>");
+            html.append("<th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>DLVD</th><th width='10%' style='width:10%; border-top:2px solid #111; border-left:2px solid #111'>DUE</th>");
         }
-        html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>Description</th>");
+        html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>DESCRIPTION</th>");
         if (!includeDelivery) {
-            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>U/Price</th><th width='16%' style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>Amount</th>");
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>U/PRICE</th><th width='16%' style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>AMOUNT</th>");
         }
         html.append("</tr>");
         int rows = 0;
@@ -544,9 +544,9 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                                 boolean showSignatures, boolean showDeliveredBy,
                                                 boolean receiverLabel, String receiverName) {
         if (showDeliveredBy) {
-            html.append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>DLVD By:</td>")
+            html.append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>DLVD BY:</td>")
                     .append("<td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(columns - 1).append("'></td></tr>")
-                    .append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>RCVD By:</td>")
+                    .append("<tr class='signature-row'><td class='signature-label' width='10%' style='width:10%; border-top:2px solid #111'>RCVD BY:</td>")
                     .append("<td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(columns - 1).append("'>")
                     .append(esc(clean(receiverName))).append("</td></tr>");
             return;
@@ -560,16 +560,16 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         html.append("<tr class='signature-row'>");
         if (showSignatures) {
             html.append("<td class='signature-label'").append(signatureWidth).append(">")
-                    .append(showDeliveredBy ? "DLVD By:" : "Received By:")
+                    .append(showDeliveredBy ? "DLVD BY:" : "RECEIVED BY:")
                     .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'></td>");
         } else {
             html.append("<td style='border-top:2px solid #111' colspan='").append(blankSpan + 1).append("'></td>");
         }
-        html.append("<td class='total-label' style='").append(totalLabelStyle).append("' colspan='").append(totalLabelSpan).append("' rowspan='2'>").append(esc(totalLabel)).append("</td>")
+        html.append("<td class='total-label' style='").append(totalLabelStyle).append("' colspan='").append(totalLabelSpan).append("' rowspan='2'>").append(esc(clean(totalLabel).toUpperCase(Locale.ROOT))).append("</td>")
                 .append("<td class='total-amount' style='border-top:2px solid #111; border-left:2px solid #111' rowspan='2'>").append(esc(money(total))).append("</td></tr>")
                 .append("<tr class='signature-row'>");
         if (showSignatures) {
-            html.append("<td class='signature-label'").append(signatureWidth).append(">").append(receiverLabel ? "RCVD By:" : "Approved By:")
+            html.append("<td class='signature-label'").append(signatureWidth).append(">").append(receiverLabel ? "RCVD BY:" : "APPROVED BY:")
                     .append("</td><td style='border-top:2px solid #111; border-left:2px solid #111' colspan='").append(blankSpan).append("'>")
                     .append(esc(clean(receiverName))).append("</td>");
         } else {
@@ -631,15 +631,15 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         html.append("<table class='joined'><tr class='signature-row'>");
         if (settings.showSignatures()) {
             html.append("<td class='signature-label'>")
-                    .append(showDeliveredBy ? "Delivered By:" : "Received By:")
+                    .append(showDeliveredBy ? "DELIVERED BY:" : "RECEIVED BY:")
                     .append("</td><td></td>");
         } else {
             html.append("<td></td>");
         }
-        html.append("<td class='total-label' rowspan='2'>").append(esc(totalLabel)).append("</td>")
+        html.append("<td class='total-label' rowspan='2'>").append(esc(clean(totalLabel).toUpperCase(Locale.ROOT))).append("</td>")
                 .append("<td class='total-amount' rowspan='2'>").append(esc(money(total))).append("</td></tr><tr class='signature-row'>");
         if (settings.showSignatures()) {
-            html.append("<td class='signature-label'>").append(receiverLabel ? "Received By:" : "Approved By:").append("</td><td>")
+            html.append("<td class='signature-label'>").append(receiverLabel ? "RECEIVED BY:" : "APPROVED BY:").append("</td><td>")
                     .append(esc(clean(receiverName))).append("</td>");
         } else {
             html.append("<td></td>");
@@ -798,8 +798,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static void appendSignatures(StringBuilder out) {
         appendRule(out);
-        out.append("Received By: ").append("_".repeat(54)).append('\n').append('\n');
-        out.append("Approved By: ").append("_".repeat(54)).append('\n');
+        out.append("RECEIVED BY: ").append("_".repeat(54)).append('\n').append('\n');
+        out.append("APPROVED BY: ").append("_".repeat(54)).append('\n');
     }
 
     private static void appendField(StringBuilder out, String label, String value) {
