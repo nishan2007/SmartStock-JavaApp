@@ -7,9 +7,123 @@ import org.junit.jupiter.api.Test;
 import java.sql.DriverManager;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class CrossStoreReferenceSyncIntegrationTest {
+    @Test
+    void retriesExistingPayrollAndTransferFailuresIdempotently() throws Exception {
+        String jdbc=System.getProperty("smartstock.test.jdbc","");
+        String user=System.getProperty("smartstock.test.dbUser","");
+        String password=System.getProperty("smartstock.test.dbPassword","");
+        assumeTrue(!jdbc.isBlank()&&!user.isBlank());
+        try(var connection=DriverManager.getConnection(jdbc,user,password)){
+            connection.setAutoCommit(false);
+            try{
+                JsonObject payment;
+                try(var ps=connection.prepareStatement(
+                        "SELECT to_jsonb(p)::text FROM payroll_payments p ORDER BY payroll_payment_id LIMIT 1");
+                    var rs=ps.executeQuery()){
+                    assumeTrue(rs.next());
+                    payment=JsonParser.parseString(rs.getString(1)).getAsJsonObject();
+                }
+                payment.addProperty("sync_uuid",java.util.UUID.randomUUID().toString());
+                JsonObject payload=new JsonObject();
+                payload.addProperty("table_name","payroll_payments");
+                payload.addProperty("operation","UPSERT");
+                payload.add("row_data",payment);
+                int before;
+                try(var ps=connection.prepareStatement("SELECT count(*) FROM payroll_payments");
+                    var rs=ps.executeQuery()){rs.next();before=rs.getInt(1);}
+                CrossStoreReferenceSyncService.applyPayload(connection,payload);
+                try(var ps=connection.prepareStatement("SELECT count(*) FROM payroll_payments");
+                    var rs=ps.executeQuery()){rs.next();assertEquals(before,rs.getInt(1));}
+
+                CrossStoreTransferSyncService.applyInbox(connection,2);
+                try(var ps=connection.prepareStatement("""
+                        SELECT count(*) FROM sync_inbox
+                        WHERE event_type='STORE_TRANSFER_RECEIVED' AND status='FAILED'
+                        """);var rs=ps.executeQuery()){
+                    rs.next();assertEquals(0,rs.getInt(1));
+                }
+            }finally{connection.rollback();connection.setAutoCommit(true);}
+        }
+    }
+
+    @Test
+    void replicatesEmployeePayrollSettingsAndAdjustmentAuditWithoutCredentials() throws Exception {
+        String jdbc=System.getProperty("smartstock.test.jdbc","");
+        String user=System.getProperty("smartstock.test.dbUser","");
+        String password=System.getProperty("smartstock.test.dbPassword","");
+        assumeTrue(!jdbc.isBlank()&&!user.isBlank());
+        try(var connection=DriverManager.getConnection(jdbc,user,password)){
+            connection.setAutoCommit(false);
+            try{
+                try(var ps=connection.prepareStatement(
+                        "UPDATE users SET updated_at=CURRENT_TIMESTAMP + INTERVAL '3 minutes' WHERE user_id=(SELECT min(user_id) FROM users)")){
+                    assertEquals(1,ps.executeUpdate());
+                }
+                CrossStoreReferenceSyncService.announceChanges(connection,2);
+                JsonObject employeePayload;
+                try(var ps=connection.prepareStatement("""
+                        SELECT payload FROM sync_outbox
+                        WHERE event_type='REFERENCE_ROW_CHANGED' AND payload->>'table_name'='users'
+                        ORDER BY created_at DESC,event_id DESC LIMIT 1
+                        """);var rs=ps.executeQuery()){
+                    assertTrue(rs.next());
+                    employeePayload=JsonParser.parseString(rs.getString(1)).getAsJsonObject();
+                }
+                JsonObject employee=employeePayload.getAsJsonObject("row_data");
+                assertTrue(!employee.has("password_hash"));
+                assertTrue(!employee.has("employee_pin_hash"));
+                assertTrue(!employee.has("badge_secret_hash"));
+                JsonObject protectedCredentials=employeePayload.getAsJsonObject("protected_credentials");
+                assertTrue(protectedCredentials.has("employee_pin_hash"));
+                assertTrue(protectedCredentials.has("badge_secret_hash"));
+                assertTrue(!protectedCredentials.has("password_hash"));
+                int employeeId=employee.get("user_id").getAsInt();
+                employee.addProperty("full_name","Rollback-only shared employee");
+                employee.addProperty("updated_at",java.time.Instant.now().plusSeconds(600).toString());
+                CrossStoreReferenceSyncService.applyPayload(connection,employeePayload);
+                try(var ps=connection.prepareStatement("SELECT full_name FROM users WHERE user_id=?")){
+                    ps.setInt(1,employeeId);try(var rs=ps.executeQuery()){
+                        assertTrue(rs.next());assertEquals("Rollback-only shared employee",rs.getString(1));
+                    }
+                }
+
+                JsonObject setting;
+                try(var ps=connection.prepareStatement(
+                        "SELECT to_jsonb(s)::text FROM employee_payroll_settings s ORDER BY effective_from LIMIT 1");
+                    var rs=ps.executeQuery()){
+                    assertTrue(rs.next());setting=JsonParser.parseString(rs.getString(1)).getAsJsonObject();
+                }
+                setting.addProperty("updated_at",java.time.Instant.now().plusSeconds(600).toString());
+                JsonObject settingPayload=new JsonObject();settingPayload.addProperty("table_name","employee_payroll_settings");
+                settingPayload.addProperty("operation","UPSERT");settingPayload.add("row_data",setting);
+                CrossStoreReferenceSyncService.applyPayload(connection,settingPayload);
+
+                JsonObject adjustment=null;
+                try(var ps=connection.prepareStatement("""
+                        SELECT (to_jsonb(a)-'clock_id'||jsonb_build_object('clock_uuid',tc.clock_uuid))::text
+                        FROM employee_time_clock_adjustments a JOIN employee_time_clock tc ON tc.clock_id=a.clock_id
+                        ORDER BY a.created_at LIMIT 1
+                        """);var rs=ps.executeQuery()){
+                    if(rs.next())adjustment=JsonParser.parseString(rs.getString(1)).getAsJsonObject();
+                }
+                if(adjustment!=null){
+                    var adjustmentId=java.util.UUID.randomUUID();
+                    adjustment.addProperty("adjustment_id",adjustmentId.toString());
+                    JsonObject adjustmentPayload=new JsonObject();adjustmentPayload.addProperty("table_name","employee_time_clock_adjustments");
+                    adjustmentPayload.addProperty("operation","UPSERT");adjustmentPayload.add("row_data",adjustment);
+                    CrossStoreReferenceSyncService.applyPayload(connection,adjustmentPayload);
+                    try(var ps=connection.prepareStatement("SELECT count(*) FROM employee_time_clock_adjustments WHERE adjustment_id=?")){
+                        ps.setObject(1,adjustmentId);try(var rs=ps.executeQuery()){rs.next();assertEquals(1,rs.getInt(1));}
+                    }
+                }
+            }finally{connection.rollback();connection.setAutoCommit(true);}
+        }
+    }
+
     @Test
     void emitsCompleteLocationAndScheduleRowsWithoutChangingTheDatabase() throws Exception {
         String jdbc=System.getProperty("smartstock.test.jdbc","");
@@ -21,6 +135,10 @@ class CrossStoreReferenceSyncIntegrationTest {
             try{
                 services.SqlScriptRunner.runSql(connection,services.SqlScriptRunner.readResource(
                         "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql"));
+                try(var ps=connection.prepareStatement(
+                        "UPDATE locations SET updated_at=CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE location_id=2")){
+                    assertEquals(1,ps.executeUpdate());
+                }
                 int announced=CrossStoreReferenceSyncService.announceChanges(connection,2);
                 assertTrue(announced>0);
                 try(var ps=connection.prepareStatement("""
@@ -40,7 +158,7 @@ class CrossStoreReferenceSyncIntegrationTest {
                     assertTrue(rs.next());location=JsonParser.parseString(rs.getString(1)).getAsJsonObject();
                 }
                 location.addProperty("name","Rollback-only replicated store");
-                location.addProperty("updated_at",java.time.Instant.now().plusSeconds(60).toString());
+                location.addProperty("updated_at",java.time.Instant.now().plusSeconds(300).toString());
                 JsonObject payload=new JsonObject();payload.addProperty("table_name","locations");
                 payload.addProperty("operation","UPSERT");payload.add("row_data",location);
                 CrossStoreReferenceSyncService.applyPayload(connection,payload);

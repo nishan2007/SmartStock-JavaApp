@@ -33,6 +33,8 @@ class StoreTransferSyncArchitectureTest {
         assertTrue(service.contains("STORE_TRANSFER_RECEIVED"));
         assertTrue(service.contains("status IN ('RECEIVED','FAILED')"));
         assertTrue(service.contains("IGNORED_LEGACY"));
+        assertFalse(service.contains("received_by_name=?,receive_id=?"),
+                "The source store must not reference the destination receiving batch.");
         assertTrue(cloudMigration.contains("destination_location_id"));
         assertTrue(cloudMigration.contains("source_location_id"));
         assertTrue(cloudMigration.contains("REVOKE ALL ON FUNCTION"));
@@ -74,11 +76,31 @@ class StoreTransferSyncArchitectureTest {
         assertTrue(migration.contains("clock_uuid uuid"));
         assertTrue(migration.contains("payroll_payments_sync_uuid_uidx"));
         assertTrue(service.contains("new TableSnapshot(\"employee_time_clock\""));
+        assertTrue(service.contains("new TableSnapshot(\"employee_time_clock_adjustments\""));
+        assertTrue(service.contains("new TableSnapshot(\"users\""));
+        assertTrue(service.contains("new TableSnapshot(\"user_locations\""));
+        assertTrue(service.contains("new TableSnapshot(\"employee_payroll_settings\""));
         assertTrue(service.contains("new TableSnapshot(\"employee_payroll_bonuses\""));
         assertTrue(service.contains("new TableSnapshot(\"payroll_payments\""));
         assertTrue(service.contains("ON CONFLICT(clock_uuid) DO UPDATE"));
+        assertTrue(service.contains("-'clock_id'") || service.contains("- 'clock_id'"));
+        assertTrue(service.contains("'password_hash','password_cache_invalidated_at','employee_pin_salt'"));
+        assertTrue(service.contains("'badge_secret_hash']::text[]"));
+        assertTrue(service.contains("payload.add(\"protected_credentials\""));
+        assertTrue(service.contains("applyProtectedCredentials"));
+        assertFalse(service.contains("'password_hash',password_hash"));
+        assertTrue(service.contains("ON CONFLICT(user_id,pay_period_start,pay_period_end,payment_number) DO NOTHING"),
+                "Existing paycheck business identities must make cloud replays idempotent.");
         assertFalse(manager.contains("WHERE tc.location_id = ?"));
         assertFalse(manager.contains("FROM employee_payroll_bonuses\n                WHERE location_id = ?"));
         assertTrue(manager.contains("Integer payrollLocationId = request().locationId()"));
+    }
+
+    @Test
+    void failedInboxRowsDegradeTheVisibleSyncHealth() throws Exception {
+        String worker=source("src/services/SyncWorker.java");
+        assertTrue(worker.contains("FROM sync_inbox WHERE status='FAILED'"));
+        assertTrue(worker.contains("\"Degraded\""));
+        assertTrue(worker.contains("operational event(s) failed to apply"));
     }
 }

@@ -227,7 +227,7 @@ final class CrossStoreTransferSyncService {
         if (source != locationId) throw new SQLException("Receipt event is not addressed to this store.");
         try (PreparedStatement ps = c.prepareStatement("""
                 UPDATE store_transfers
-                SET status='RECEIVED',received_at=?,received_by_user_id=?,received_by_name=?,receive_id=?
+                SET status='RECEIVED',received_at=?,received_by_user_id=?,received_by_name=?
                 WHERE transfer_uuid=? AND from_location_id=?
                   AND UPPER(COALESCE(status,'PENDING'))='PENDING'
                 """)) {
@@ -236,9 +236,11 @@ final class CrossStoreTransferSyncService {
                 ps.setInt(2, payload.get("received_by_user_id").getAsInt());
             else ps.setNull(2, java.sql.Types.INTEGER);
             ps.setString(3, text(payload, "received_by_name", 300));
-            ps.setString(4, text(payload, "receive_id", 200));
-            ps.setObject(5, transferUuid);
-            ps.setInt(6, locationId);
+            // receive_id belongs to the destination store's receiving_batches
+            // table. Persisting it on the source row violates the local FK and
+            // incorrectly couples two independently authoritative databases.
+            ps.setObject(4, transferUuid);
+            ps.setInt(5, locationId);
             int changed = ps.executeUpdate();
             if (changed == 0 && localTransferId(c, transferUuid) == null)
                 throw new SQLException("Source transfer is unavailable for receipt acknowledgement.");

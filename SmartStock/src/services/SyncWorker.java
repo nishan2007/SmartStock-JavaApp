@@ -172,7 +172,14 @@ public final class SyncWorker {
                 pushed = mirror.uploaded() + exchange.acknowledged();
                 downloadedEvents = exchange.downloaded();
                 ImageCacheWarmupService.warmLocalCache(local);
-                SyncServiceStatusService.mark(local, "Running", "Cloud reachable");
+                InboxHealth inboxHealth = inboxHealth(local);
+                SyncServiceStatusService.mark(local,
+                        inboxHealth.failedRows() == 0 ? "Running" : "Degraded",
+                        inboxHealth.failedRows() == 0
+                                ? "Cloud reachable; all operational events applied"
+                                : "Cloud reachable; " + inboxHealth.failedRows()
+                                + " operational event(s) failed to apply; oldest sequence="
+                                + inboxHealth.oldestFailedSequence());
                 String imageMessage = imageSync.uploaded() + imageSync.repaired() == 0 ? ""
                         : "; images uploaded=" + imageSync.uploaded()
                         + ", repaired=" + imageSync.repaired();
@@ -208,6 +215,18 @@ public final class SyncWorker {
             }
         }
     }
+
+    private static InboxHealth inboxHealth(Connection connection) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT count(*),min(cloud_sequence)
+                FROM sync_inbox WHERE status='FAILED'
+                """); ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            return new InboxHealth(rs.getInt(1), rs.getLong(2));
+        }
+    }
+
+    private record InboxHealth(int failedRows, long oldestFailedSequence) { }
 
     private static void markCloudStoreOnline(Connection cloud, Integer locationId) throws SQLException {
         if (locationId == null) return;

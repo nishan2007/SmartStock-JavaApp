@@ -17,16 +17,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/** Replicates shared store details and employee schedules between live store databases. */
+/** Replicates approved shared store, employee, schedule, time-clock, and payroll rows. */
 final class CrossStoreReferenceSyncService {
     static final String EVENT = "REFERENCE_ROW_CHANGED";
     private static final List<TableSnapshot> TABLES = List.of(
             new TableSnapshot("locations", "location_id", "location_id::text", "updated_at"),
+            new TableSnapshot("users", "user_id", "user_id::text", "updated_at", """
+                    to_jsonb(t)
+                      - ARRAY['password_hash','password_cache_invalidated_at','employee_pin_salt',
+                              'employee_pin_hash','employee_pin_updated_at','badge_secret_salt',
+                              'badge_secret_hash']::text[]
+                      || jsonb_build_object('role_name',
+                           (SELECT r.role_name FROM roles r WHERE r.role_id=t.role_id))
+                    """),
+            new TableSnapshot("user_locations", "user_id,location_id",
+                    "user_id::text||':'||location_id::text", "updated_at"),
+            new TableSnapshot("employee_payroll_settings", "setting_id", "setting_id::text", "updated_at"),
             new TableSnapshot("employee_schedule_shifts", "shift_id", "shift_id::text", "updated_at"),
             new TableSnapshot("employee_schedule_holidays", "holiday_date", "holiday_date::text", "updated_at"),
             new TableSnapshot("employee_schedule_assignments", "location_id,user_id,work_date",
                     "location_id::text||':'||user_id::text||':'||work_date::text", "updated_at"),
             new TableSnapshot("employee_time_clock", "clock_uuid", "clock_uuid::text", "updated_at"),
+            new TableSnapshot("employee_time_clock_adjustments", "adjustment_id", "adjustment_id::text", "created_at",
+                    "to_jsonb(t) - 'clock_id' || jsonb_build_object('clock_uuid',"
+                            + "(SELECT tc.clock_uuid FROM employee_time_clock tc WHERE tc.clock_id=t.clock_id))"),
             new TableSnapshot("employee_payroll_bonuses", "sync_uuid", "sync_uuid::text", "created_at"),
             new TableSnapshot("payroll_payments", "sync_uuid", "sync_uuid::text", "created_at")
     );
@@ -37,7 +51,7 @@ final class CrossStoreReferenceSyncService {
         int announced = 0;
         for (TableSnapshot table : TABLES) {
             try (PreparedStatement ps = connection.prepareStatement("SELECT " + table.keySql()
-                    + ",to_jsonb(t)::text,"+table.timestampSql()+" FROM " + table.name() + " t ORDER BY "
+                    + ",("+table.rowSql()+")::text,"+table.timestampSql()+" FROM " + table.name() + " t ORDER BY "
                     + table.orderSql())) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -51,6 +65,9 @@ final class CrossStoreReferenceSyncService {
                         payload.addProperty("row_key",rowKey);
                         payload.addProperty("row_hash",hash);
                         payload.add("row_data",JsonParser.parseString(rowData));
+                        if("users".equals(table.name()))
+                            payload.add("protected_credentials",protectedCredentials(connection,
+                                    payload.getAsJsonObject("row_data").get("user_id").getAsInt()));
                         payload.addProperty("source_updated_at",updated.toInstant().toString());
                         SyncOutboxService.recordJsonEvent(connection,EVENT,payload,locationId,null,null);
                         announced++;
@@ -61,7 +78,7 @@ final class CrossStoreReferenceSyncService {
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT table_name,key_data::text,deleted_at
                 FROM sync_tombstones
-                WHERE table_name IN ('employee_schedule_assignments','employee_schedule_holidays')
+                WHERE table_name IN ('user_locations','employee_schedule_assignments','employee_schedule_holidays')
                 ORDER BY deleted_at,table_name,key_data::text
                 """)) {
             try (ResultSet rs=ps.executeQuery()) {
@@ -105,10 +122,53 @@ final class CrossStoreReferenceSyncService {
 
     static void applyPayload(Connection connection,JsonObject payload)throws SQLException{
         String table=required(payload,"table_name"),operation=required(payload,"operation");
-        if("UPSERT".equals(operation))upsert(connection,table,payload.getAsJsonObject("row_data"));
+        if("UPSERT".equals(operation)){
+            upsert(connection,table,payload.getAsJsonObject("row_data"));
+            if("users".equals(table)&&payload.has("protected_credentials"))
+                applyProtectedCredentials(connection,payload.getAsJsonObject("protected_credentials"));
+        }
         else if("DELETE".equals(operation))delete(connection,table,payload.getAsJsonObject("key_data"),
                 Instant.parse(required(payload,"deleted_at")));
         else throw new SQLException("Shared reference event has an invalid operation.");
+    }
+
+    private static JsonObject protectedCredentials(Connection c,int userId)throws SQLException{
+        try(PreparedStatement p=c.prepareStatement("""
+                SELECT jsonb_build_object('user_id',user_id,
+                  'employee_pin_salt',employee_pin_salt,'employee_pin_hash',employee_pin_hash,
+                  'employee_pin_updated_at',employee_pin_updated_at,
+                  'badge_secret_salt',badge_secret_salt,'badge_secret_hash',badge_secret_hash,
+                  'badge_generated_at',badge_generated_at,'badge_rotated_at',badge_rotated_at)::text
+                FROM users WHERE user_id=?
+                """)){p.setInt(1,userId);try(ResultSet rs=p.executeQuery()){
+            if(!rs.next())throw new SQLException("Protected employee credentials are unavailable.");
+            return JsonParser.parseString(rs.getString(1)).getAsJsonObject();
+        }}
+    }
+
+    private static void applyProtectedCredentials(Connection c,JsonObject credentials)throws SQLException{
+        try(PreparedStatement p=c.prepareStatement("""
+                WITH incoming AS (
+                  SELECT (jsonb_populate_record(NULL::users,?::jsonb)).*
+                )
+                UPDATE users u SET
+                  employee_pin_salt=CASE WHEN i.employee_pin_updated_at IS NOT NULL AND
+                    i.employee_pin_updated_at>=COALESCE(u.employee_pin_updated_at,'epoch'::timestamptz)
+                    THEN i.employee_pin_salt ELSE u.employee_pin_salt END,
+                  employee_pin_hash=CASE WHEN i.employee_pin_updated_at IS NOT NULL AND
+                    i.employee_pin_updated_at>=COALESCE(u.employee_pin_updated_at,'epoch'::timestamptz)
+                    THEN i.employee_pin_hash ELSE u.employee_pin_hash END,
+                  employee_pin_updated_at=GREATEST(u.employee_pin_updated_at,i.employee_pin_updated_at),
+                  badge_secret_salt=CASE WHEN COALESCE(i.badge_rotated_at,i.badge_generated_at) IS NOT NULL AND
+                    COALESCE(i.badge_rotated_at,i.badge_generated_at)>=
+                    COALESCE(u.badge_rotated_at,u.badge_generated_at,'epoch'::timestamptz)
+                    THEN i.badge_secret_salt ELSE u.badge_secret_salt END,
+                  badge_secret_hash=CASE WHEN COALESCE(i.badge_rotated_at,i.badge_generated_at) IS NOT NULL AND
+                    COALESCE(i.badge_rotated_at,i.badge_generated_at)>=
+                    COALESCE(u.badge_rotated_at,u.badge_generated_at,'epoch'::timestamptz)
+                    THEN i.badge_secret_hash ELSE u.badge_secret_hash END
+                FROM incoming i WHERE u.user_id=i.user_id
+                """)){p.setString(1,credentials.toString());p.executeUpdate();}
     }
 
     private static boolean alreadyKnown(Connection c,String table,String key,String hash)throws SQLException{
@@ -128,7 +188,8 @@ final class CrossStoreReferenceSyncService {
 
     private static void upsert(Connection c,String table,JsonObject row)throws SQLException{
         JsonObject key=keyForRow(table,row);
-        String timestampColumn=("employee_payroll_bonuses".equals(table)||"payroll_payments".equals(table))?"created_at":"updated_at";
+        String timestampColumn=("employee_time_clock_adjustments".equals(table)
+                ||"employee_payroll_bonuses".equals(table)||"payroll_payments".equals(table))?"created_at":"updated_at";
         Timestamp updated=timestamp(row,timestampColumn);
         try(PreparedStatement ps=c.prepareStatement("SELECT deleted_at FROM sync_tombstones WHERE table_name=? AND key_data=?::jsonb")){
             ps.setString(1,table);ps.setString(2,key.toString());try(ResultSet rs=ps.executeQuery()){
@@ -136,16 +197,87 @@ final class CrossStoreReferenceSyncService {
             }}
         switch(table){
             case "locations"->upsertLocation(c,row);
+            case "users"->upsertUser(c,row);
+            case "user_locations"->upsertUserLocation(c,row);
+            case "employee_payroll_settings"->upsertPayrollSetting(c,row);
             case "employee_schedule_shifts"->upsertShift(c,row);
             case "employee_schedule_holidays"->upsertHoliday(c,row);
             case "employee_schedule_assignments"->upsertAssignment(c,row);
             case "employee_time_clock"->upsertTimeClock(c,row);
+            case "employee_time_clock_adjustments"->insertTimeClockAdjustment(c,row);
             case "employee_payroll_bonuses"->insertPayrollBonus(c,row);
             case "payroll_payments"->insertPayrollPayment(c,row);
             default->throw new SQLException("Shared reference event targets an unapproved table.");
         }
         try(PreparedStatement ps=c.prepareStatement("DELETE FROM sync_tombstones WHERE table_name=? AND key_data=?::jsonb AND deleted_at<?")){
             ps.setString(1,table);ps.setString(2,key.toString());ps.setTimestamp(3,updated);ps.executeUpdate();}
+    }
+
+    private static void upsertUser(Connection c,JsonObject r)throws SQLException{
+        String sql="""
+                INSERT INTO users(user_id,username,first_name,middle_name,last_name,full_name,nickname,email,phone,
+                  employee_photo_url,employee_id_card_document_url,date_of_birth,hire_date,badge_id,
+                  badge_generated_at,badge_print_count,badge_rotated_at,badge_rotated_by_user_id,
+                  badge_rotated_by_name,compensation_type,salary,role_id,auth_user_id,is_active,deactivated_at,
+                  deactivated_by_user_id,deactivated_by_name,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                  (SELECT role_id FROM roles WHERE UPPER(role_name)=UPPER(?)),?::uuid,?,?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,first_name=EXCLUDED.first_name,
+                  middle_name=EXCLUDED.middle_name,last_name=EXCLUDED.last_name,full_name=EXCLUDED.full_name,
+                  nickname=EXCLUDED.nickname,email=EXCLUDED.email,phone=EXCLUDED.phone,
+                  employee_photo_url=EXCLUDED.employee_photo_url,
+                  employee_id_card_document_url=EXCLUDED.employee_id_card_document_url,
+                  date_of_birth=EXCLUDED.date_of_birth,hire_date=EXCLUDED.hire_date,
+                  compensation_type=EXCLUDED.compensation_type,salary=EXCLUDED.salary,role_id=EXCLUDED.role_id,
+                  auth_user_id=EXCLUDED.auth_user_id,is_active=EXCLUDED.is_active,
+                  deactivated_at=EXCLUDED.deactivated_at,deactivated_by_user_id=EXCLUDED.deactivated_by_user_id,
+                  deactivated_by_name=EXCLUDED.deactivated_by_name,updated_at=EXCLUDED.updated_at
+                WHERE users.updated_at<EXCLUDED.updated_at
+                  AND (users.auth_user_id IS NULL OR EXCLUDED.auth_user_id IS NULL
+                       OR users.auth_user_id=EXCLUDED.auth_user_id)
+                """;
+        try(PreparedStatement p=c.prepareStatement(sql)){int i=1;
+            p.setInt(i++,integer(r,"user_id"));p.setString(i++,text(r,"username"));nullableText(p,i++,r,"first_name");
+            nullableText(p,i++,r,"middle_name");nullableText(p,i++,r,"last_name");p.setString(i++,text(r,"full_name"));
+            nullableText(p,i++,r,"nickname");nullableText(p,i++,r,"email");nullableText(p,i++,r,"phone");
+            nullableText(p,i++,r,"employee_photo_url");nullableText(p,i++,r,"employee_id_card_document_url");
+            nullableDate(p,i++,r,"date_of_birth");p.setDate(i++,date(r,"hire_date"));nullableText(p,i++,r,"badge_id");
+            nullableTimestamp(p,i++,r,"badge_generated_at");p.setInt(i++,integer(r,"badge_print_count"));
+            nullableTimestamp(p,i++,r,"badge_rotated_at");nullableInt(p,i++,r,"badge_rotated_by_user_id");
+            nullableText(p,i++,r,"badge_rotated_by_name");p.setObject(i++,text(r,"compensation_type"),java.sql.Types.OTHER);
+            p.setBigDecimal(i++,r.get("salary").getAsBigDecimal());nullableText(p,i++,r,"role_name");
+            nullableText(p,i++,r,"auth_user_id");p.setBoolean(i++,bool(r,"is_active"));nullableTimestamp(p,i++,r,"deactivated_at");
+            nullableInt(p,i++,r,"deactivated_by_user_id");nullableText(p,i++,r,"deactivated_by_name");
+            p.setTimestamp(i++,timestamp(r,"created_at"));p.setTimestamp(i,timestamp(r,"updated_at"));p.executeUpdate();}
+        try(PreparedStatement p=c.prepareStatement("""
+                SELECT setval(pg_get_serial_sequence('users','user_id'),
+                  GREATEST((SELECT COALESCE(MAX(user_id),1) FROM users),
+                           (SELECT last_value FROM users_user_id_seq)),true)
+                """)){p.execute();}
+    }
+
+    private static void upsertUserLocation(Connection c,JsonObject r)throws SQLException{
+        try(PreparedStatement p=c.prepareStatement("""
+                INSERT INTO user_locations(user_id,location_id,updated_at) VALUES(?,?,?)
+                ON CONFLICT(user_id,location_id) DO UPDATE SET updated_at=EXCLUDED.updated_at
+                WHERE user_locations.updated_at<EXCLUDED.updated_at
+                """)){p.setInt(1,integer(r,"user_id"));p.setInt(2,integer(r,"location_id"));
+            p.setTimestamp(3,timestamp(r,"updated_at"));p.executeUpdate();}
+    }
+
+    private static void upsertPayrollSetting(Connection c,JsonObject r)throws SQLException{
+        try(PreparedStatement p=c.prepareStatement("""
+                INSERT INTO employee_payroll_settings(setting_id,user_id,period_type,work_hour_limit,effective_from,
+                  created_by_user_id,created_by_name,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(setting_id) DO UPDATE SET period_type=EXCLUDED.period_type,
+                  work_hour_limit=EXCLUDED.work_hour_limit,effective_from=EXCLUDED.effective_from,
+                  created_by_user_id=EXCLUDED.created_by_user_id,created_by_name=EXCLUDED.created_by_name,
+                  updated_at=EXCLUDED.updated_at WHERE employee_payroll_settings.updated_at<EXCLUDED.updated_at
+                """)){int i=1;p.setObject(i++,uuid(r,"setting_id"));p.setInt(i++,integer(r,"user_id"));
+            p.setString(i++,text(r,"period_type"));p.setBigDecimal(i++,r.get("work_hour_limit").getAsBigDecimal());
+            p.setDate(i++,date(r,"effective_from"));nullableInt(p,i++,r,"created_by_user_id");
+            nullableText(p,i++,r,"created_by_name");p.setTimestamp(i++,timestamp(r,"created_at"));
+            p.setTimestamp(i,timestamp(r,"updated_at"));p.executeUpdate();}
     }
 
     private static void upsertLocation(Connection c,JsonObject r)throws SQLException{
@@ -243,17 +375,41 @@ final class CrossStoreReferenceSyncService {
         try(PreparedStatement ps=c.prepareStatement("WITH incoming AS (SELECT (jsonb_populate_record(NULL::employee_payroll_bonuses,?::jsonb)).*) INSERT INTO employee_payroll_bonuses("+cols+") SELECT "+cols+" FROM incoming ON CONFLICT(sync_uuid) DO NOTHING")){ps.setString(1,r.toString());ps.executeUpdate();}
     }
 
+    private static void insertTimeClockAdjustment(Connection c,JsonObject r)throws SQLException{
+        UUID clockUuid=uuid(r,"clock_uuid");
+        Long clockId=null;
+        try(PreparedStatement p=c.prepareStatement("SELECT clock_id FROM employee_time_clock WHERE clock_uuid=?")){
+            p.setObject(1,clockUuid);try(ResultSet rs=p.executeQuery()){if(rs.next())clockId=rs.getLong(1);}}
+        if(clockId==null)throw new SQLException("Time-clock adjustment parent is unavailable locally.");
+        JsonObject local=r.deepCopy();local.remove("clock_uuid");local.addProperty("clock_id",clockId);
+        try(PreparedStatement p=c.prepareStatement("""
+                INSERT INTO employee_time_clock_adjustments
+                SELECT (jsonb_populate_record(NULL::employee_time_clock_adjustments,?::jsonb)).*
+                ON CONFLICT(adjustment_id) DO NOTHING
+                """)){p.setString(1,local.toString());p.executeUpdate();}
+    }
+
     private static void insertPayrollPayment(Connection c,JsonObject r)throws SQLException{
         String cols="sync_uuid,user_id,employee_name,employee_role,location_id,pay_period_start,pay_period_end,payment_number,pay_date,days_worked,total_hours,pay_period_type,work_hour_limit,regular_hours,overtime_hours,regular_pay,overtime_pay,total_pay,record_count,compensation_type,location_name,payment_method,payment_reference,paid_at,paid_by_user_id,paid_by_name,created_at";
-        try(PreparedStatement ps=c.prepareStatement("WITH incoming AS (SELECT (jsonb_populate_record(NULL::payroll_payments,?::jsonb)).*) INSERT INTO payroll_payments("+cols+") SELECT "+cols+" FROM incoming ON CONFLICT(sync_uuid) DO NOTHING")){ps.setString(1,r.toString());ps.executeUpdate();}
+        // Older databases may already contain the same paycheck with a locally
+        // generated UUID.  The employee/period/payment number tuple is the
+        // durable business identity, so either unique key makes the replay
+        // idempotent instead of leaving the inbox permanently failed.
+        String sql="WITH incoming AS (SELECT (jsonb_populate_record(NULL::payroll_payments,?::jsonb)).*) "
+                +"INSERT INTO payroll_payments("+cols+") SELECT "+cols+" FROM incoming "
+                +"ON CONFLICT(user_id,pay_period_start,pay_period_end,payment_number) DO NOTHING";
+        try(PreparedStatement ps=c.prepareStatement(sql)){ps.setString(1,r.toString());ps.executeUpdate();}
     }
 
     private static void delete(Connection c,String table,JsonObject key,Instant deleted)throws SQLException{
         String sql=switch(table){
+            case "user_locations"->"DELETE FROM user_locations WHERE user_id=? AND location_id=? AND updated_at<=?";
             case "employee_schedule_holidays"->"DELETE FROM employee_schedule_holidays WHERE holiday_date=? AND updated_at<=?";
             case "employee_schedule_assignments"->"DELETE FROM employee_schedule_assignments WHERE location_id=? AND user_id=? AND work_date=? AND updated_at<=?";
             default->throw new SQLException("Shared reference deletion targets an unapproved table.");};
-        try(PreparedStatement ps=c.prepareStatement(sql)){if("employee_schedule_holidays".equals(table)){
+        try(PreparedStatement ps=c.prepareStatement(sql)){if("user_locations".equals(table)){
+            ps.setInt(1,integer(key,"user_id"));ps.setInt(2,integer(key,"location_id"));ps.setTimestamp(3,Timestamp.from(deleted));
+        }else if("employee_schedule_holidays".equals(table)){
             ps.setDate(1,date(key,"holiday_date"));ps.setTimestamp(2,Timestamp.from(deleted));
         }else{ps.setInt(1,integer(key,"location_id"));ps.setInt(2,integer(key,"user_id"));
             ps.setDate(3,date(key,"work_date"));ps.setTimestamp(4,Timestamp.from(deleted));}ps.executeUpdate();}
@@ -267,16 +423,21 @@ final class CrossStoreReferenceSyncService {
     private static JsonObject keyForRow(String table,JsonObject row)throws SQLException{
         JsonObject key=new JsonObject();switch(table){
             case "locations"->key.addProperty("location_id",integer(row,"location_id"));
+            case "users"->key.addProperty("user_id",integer(row,"user_id"));
+            case "user_locations"->{key.addProperty("user_id",integer(row,"user_id"));key.addProperty("location_id",integer(row,"location_id"));}
+            case "employee_payroll_settings"->key.addProperty("setting_id",required(row,"setting_id"));
             case "employee_schedule_shifts"->key.addProperty("shift_id",required(row,"shift_id"));
             case "employee_schedule_holidays"->key.addProperty("holiday_date",required(row,"holiday_date"));
             case "employee_schedule_assignments"->{key.addProperty("location_id",integer(row,"location_id"));key.addProperty("user_id",integer(row,"user_id"));key.addProperty("work_date",required(row,"work_date"));}
             case "employee_time_clock"->key.addProperty("clock_uuid",required(row,"clock_uuid"));
+            case "employee_time_clock_adjustments"->key.addProperty("adjustment_id",required(row,"adjustment_id"));
             case "employee_payroll_bonuses","payroll_payments"->key.addProperty("sync_uuid",required(row,"sync_uuid"));
             default->throw new SQLException("Shared reference event targets an unapproved table.");}
         return key;
     }
 
     private static String deleteKey(String table,JsonObject key)throws SQLException{return switch(table){
+        case "user_locations"->integer(key,"user_id")+":"+integer(key,"location_id");
         case "employee_schedule_holidays"->required(key,"holiday_date");
         case "employee_schedule_assignments"->integer(key,"location_id")+":"+integer(key,"user_id")+":"+required(key,"work_date");
         default->throw new SQLException("Unsupported shared reference tombstone.");};}
@@ -293,8 +454,13 @@ final class CrossStoreReferenceSyncService {
     private static void nullableInt(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.INTEGER);else p.setInt(i,r.get(k).getAsInt());}
     private static void nullableUuid(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.OTHER);else p.setObject(i,UUID.fromString(r.get(k).getAsString()));}
     private static void nullableTimestamp(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.TIMESTAMP_WITH_TIMEZONE);else p.setTimestamp(i,timestamp(r,k));}
+    private static void nullableDate(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.DATE);else p.setDate(i,date(r,k));}
     private static void nullableTime(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.TIME);else p.setTime(i,time(r,k));}
     private static String safeError(Exception e){String v=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();return v.substring(0,Math.min(v.length(),1000));}
-    private record TableSnapshot(String name,String orderSql,String keySql,String timestampSql) { }
+    private record TableSnapshot(String name,String orderSql,String keySql,String timestampSql,String rowSql) {
+        private TableSnapshot(String name,String orderSql,String keySql,String timestampSql){
+            this(name,orderSql,keySql,timestampSql,"to_jsonb(t)");
+        }
+    }
     private record InboxEvent(long sequence,String payload) { }
 }
