@@ -54,7 +54,7 @@ import java.util.regex.Pattern;
 public class CustomOrders extends JFrame {
     private static final Gson GSON=LanJson.create();
     private final List<CartLine>lines=new ArrayList<>();
-    private final DefaultTableModel allModel=model("ID","Order #","Status","Customer","Phone","Due","Total","Paid","Balance","Payment","Reference","Assigned","Taken By","Created"),myModel=model("ID","Order #","Status","Customer","Phone","Due","Total","Paid","Balance","Payment","Reference","Created");private final JTable allTable=new JTable(allModel),myTable=new JTable(myModel);private final JTextArea allDetails=details(),myDetails=details();private final JTextField allSearch=new JTextField(),mySearch=new JTextField();private final JComboBox<String>allStatus=new JComboBox<>(new String[]{"All","NEW","ASSIGNED","IN_PROGRESS","READY","COMPLETED","DELIVERED","CANCELLED"}),myStatus=new JComboBox<>(new String[]{"All","ASSIGNED","IN_PROGRESS","READY","COMPLETED","DELIVERED","CANCELLED"});private final TableRowSorter<DefaultTableModel>allSorter=new TableRowSorter<>(allModel),mySorter=new TableRowSorter<>(myModel);
+    private final DefaultTableModel myModel=model("ID","Order #","Status","Customer","Phone","Due","Total","Paid","Balance","Payment","Reference","Created");private final JTable myTable=new JTable(myModel);private final JTextArea myDetails=details();private final JTextField mySearch=new JTextField();private final JComboBox<String>myStatus=new JComboBox<>(new String[]{"All","ASSIGNED","IN_PROGRESS","READY","COMPLETED","DELIVERED","CANCELLED"});private final TableRowSorter<DefaultTableModel>mySorter=new TableRowSorter<>(myModel);
     private CustomOrdersLookupTabPanel lookup;
     private CustomOrdersNewOrderTabPanel guidedOrder;
     private String selectedPaymentMethod;
@@ -80,10 +80,7 @@ public class CustomOrders extends JFrame {
         if(orderManagementMode){
             tabs.addTab("Order Lookup",lookupTab());
             if(can("VIEW_ASSIGNED_CUSTOM_ORDERS")||can("MANAGE_CUSTOM_ORDERS")){
-                tabs.addTab("My Orders",ordersTab(false));
-            }
-            if(can("MANAGE_CUSTOM_ORDERS")){
-                tabs.addTab("All Orders",ordersTab(true));
+                tabs.addTab("My Orders",myOrdersTab());
             }
         }
 
@@ -127,7 +124,7 @@ public class CustomOrders extends JFrame {
         return guidedOrder;
     }
     private JPanel lookupTab(){lookup=new CustomOrdersLookupTabPanel(handler());return lookup;}
-    private JPanel ordersTab(boolean all){DefaultTableModel m=all?allModel:myModel;JTable t=all?allTable:myTable;JTextArea d=all?allDetails:myDetails;JTextField s=all?allSearch:mySearch;JComboBox<String>status=all?allStatus:myStatus;TableRowSorter<DefaultTableModel>sorter=all?allSorter:mySorter;t.setRowSorter(sorter);t.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);t.setRowHeight(26);t.getSelectionModel().addListSelectionListener(e->{if(!e.getValueIsAdjusting()){Long id=selected(t,m);if(id!=null)loadDetails(id,d);}});Runnable filter=()->filter(sorter,s,status);s.getDocument().addDocumentListener(listener(filter));status.addActionListener(e->filter.run());JButton refresh=new JButton("Refresh"),preview=new JButton("Preview Slip"),print=new JButton("Print Slip");refresh.addActionListener(e->loadOrders());preview.addActionListener(e->{Long id=selected(t,m);String number=selectedNumber(t,m);if(id!=null&&number!=null)try{WindowHelper.showPosWindow(new CustomOrderSlipPreview(number),this);}catch(Exception ex){error(ex);}});print.addActionListener(e->{String number=selectedNumber(t,m);if(number!=null)promptAndPrintSlip(number);});JPanel top=new JPanel(new BorderLayout(8,0));top.add(s);JPanel controls=new JPanel();controls.add(status);controls.add(refresh);controls.add(preview);controls.add(print);top.add(controls,BorderLayout.EAST);JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(d));split.setResizeWeight(.7);JPanel p=new JPanel(new BorderLayout(8,8));p.setBorder(new EmptyBorder(12,12,12,12));p.add(top,BorderLayout.NORTH);p.add(split);return p;}
+    private JPanel myOrdersTab(){DefaultTableModel m=myModel;JTable t=myTable;JTextArea d=myDetails;JTextField s=mySearch;JComboBox<String>status=myStatus;TableRowSorter<DefaultTableModel>sorter=mySorter;t.setRowSorter(sorter);t.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);t.setRowHeight(26);t.getSelectionModel().addListSelectionListener(e->{if(!e.getValueIsAdjusting()){Long id=selected(t,m);if(id!=null)loadDetails(id,d);}});Runnable filter=()->filter(sorter,s,status);s.getDocument().addDocumentListener(listener(filter));status.addActionListener(e->filter.run());JButton refresh=new JButton("Refresh");refresh.addActionListener(e->loadOrders());JPanel top=new JPanel(new BorderLayout(8,0));top.add(s);JPanel controls=new JPanel();controls.add(status);controls.add(refresh);top.add(controls,BorderLayout.EAST);JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,new JScrollPane(t),new JScrollPane(d));split.setResizeWeight(.7);JPanel p=new JPanel(new BorderLayout(8,8));p.setBorder(new EmptyBorder(12,12,12,12));p.add(top,BorderLayout.NORTH);p.add(split);return p;}
 
     private void loadCatalog(){
         if(guidedOrder==null)return;
@@ -213,7 +210,7 @@ public class CustomOrders extends JFrame {
     private static void selectItem(JComboBox<CustomItemOption>b,Long id){for(int i=0;i<b.getItemCount();i++)if(java.util.Objects.equals(id,b.getItemAt(i).customItemId())){b.setSelectedIndex(i);return;}}
     private static void selectVariant(JComboBox<VariantOption>b,Long id){for(int i=0;i<b.getItemCount();i++)if(java.util.Objects.equals(id,b.getItemAt(i).variantId())){b.setSelectedIndex(i);return;}}
 
-    private void loadOrders(){CachedUiLoader.load(this,"custom-orders:orders",OrderSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->{var all=UiTaskRunner.supplyAsync(()->workflow("ALL",""));var mine=UiTaskRunner.supplyAsync(()->workflow("MINE",""));return new OrderSnapshot(all.join(),mine.join());},snapshot->{renderOrders(allModel,snapshot.all(),true);renderOrders(myModel,snapshot.mine(),false);if(lookup!=null)lookup.load(handler());});}
+    private void loadOrders(){CachedUiLoader.load(this,"custom-orders:orders",OrderSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->new OrderSnapshot(workflow("MINE","")),snapshot->{renderOrders(myModel,snapshot.mine(),false);if(lookup!=null)lookup.load(handler());});}
     private List<LanCustomOrderWorkflowService.OrderRow>workflow(String action,String search)throws Exception{return GSON.fromJson(LanApiClient.customOrderWorkflowRead(action,null,search).get("orders"),new TypeToken<List<LanCustomOrderWorkflowService.OrderRow>>(){}.getType());}
     private void renderOrders(DefaultTableModel m,List<LanCustomOrderWorkflowService.OrderRow>rows,boolean all){m.setRowCount(0);for(var x:rows){List<Object>v=new ArrayList<>(List.of(x.orderId(),x.orderNumber(),x.status(),x.customer(),x.phone(),x.dueDate()==null?"":x.dueDate(),money(x.total()),money(x.paid()),money(x.balance()),payment(x),x.paymentReference()));if(all){v.add(x.assignedTo());v.add(x.takenBy());}v.add(new Date(x.createdAtEpochMillis()));m.addRow(v.toArray());}}
     private void loadLookupOrdersAsync(DefaultTableModel model,String search){String query=search==null?"":search.trim();CachedUiLoader.load(this,"custom-orders.lookup","custom-orders:lookup:"+query,LookupSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->new LookupSnapshot(workflow("LOOKUP",query)),snapshot->renderOrders(model,snapshot.rows(),false));}
@@ -324,6 +321,8 @@ public class CustomOrders extends JFrame {
             public boolean canRefundPayments() { return can("CUSTOM_ORDER_LINE_RETURNS") || can("CUSTOM_ORDER_REFUNDS") || can("CUSTOM_ORDER_OVERRIDES"); }
             public boolean canDeliverOrderLines() { return can("CUSTOM_ORDER_LINE_DELIVERY") || can("CUSTOM_ORDER_OVERRIDES"); }
             public boolean canUpdateProduction() { return can("CUSTOM_ORDER_PRODUCTION_STEPS") || can("CUSTOM_ORDER_OVERRIDES"); }
+            public void previewOrderSlip(String orderNumber) { try { WindowHelper.showPosWindow(new CustomOrderSlipPreview(orderNumber), CustomOrders.this); } catch (Exception ex) { error(ex); } }
+            public void printOrderSlip(String orderNumber) { promptAndPrintSlip(orderNumber); }
             public void reprintOrderLabels(String orderNumber) { promptAndPrintLabels(orderNumber); }
             public void refreshRelatedOrders() { loadOrders(); }
         };
@@ -420,7 +419,7 @@ public class CustomOrders extends JFrame {
     private record Catalog(List<CustomItemOption>items,List<PrintMaterialOption>materials,
                            List<String>placements,List<CustomerOption>initialCustomers,
                            BigDecimal minimumDepositPercent,boolean alwaysPrintOrderSlip){}
-    private record OrderSnapshot(List<LanCustomOrderWorkflowService.OrderRow>all,List<LanCustomOrderWorkflowService.OrderRow>mine){}
+    private record OrderSnapshot(List<LanCustomOrderWorkflowService.OrderRow>mine){}
     private record OrderPrintResult(CustomOrderSlipData data,Exception slipFailure,Exception labelFailure){}
     private record LookupSnapshot(List<LanCustomOrderWorkflowService.OrderRow>rows){}
     private record VariantSnapshot(long itemId,List<VariantOption>variants){}

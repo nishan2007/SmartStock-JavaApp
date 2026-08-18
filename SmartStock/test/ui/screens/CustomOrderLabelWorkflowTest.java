@@ -14,6 +14,10 @@ class CustomOrderLabelWorkflowTest {
         String screen = Files.readString(Path.of("src/ui/screens/customorders/CustomOrders.java"));
 
         assertTrue(panel.contains("Reprint Order Label(s)"));
+        assertTrue(panel.contains("Preview Slip"));
+        assertTrue(panel.contains("Print Slip"));
+        assertTrue(panel.contains("handler.previewOrderSlip(orderNumber)"));
+        assertTrue(panel.contains("handler.printOrderSlip(orderNumber)"));
         assertTrue(panel.contains("reprintLabelButton.setEnabled(false)"));
         assertTrue(panel.contains("handler.reprintOrderLabels(orderNumber)"));
         assertTrue(screen.contains("CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber)"));

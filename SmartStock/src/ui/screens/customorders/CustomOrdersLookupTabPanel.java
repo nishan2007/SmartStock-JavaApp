@@ -57,6 +57,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
         JButton deliveredButton = new JButton("Deliver Lines");
+        JButton previewSlipButton = new JButton("Preview Slip");
+        JButton printSlipButton = new JButton("Print Slip");
         JButton reprintLabelButton = new JButton("Reprint Order Label(s)");
         JButton closeButton = new JButton("Close");
         styleDialogButton(searchButton);
@@ -64,16 +66,24 @@ class CustomOrdersLookupTabPanel extends JPanel {
         styleDialogButton(refundButton);
         styleDialogButton(productionButton);
         styleDialogButton(deliveredButton);
+        styleDialogButton(previewSlipButton);
+        styleDialogButton(printSlipButton);
         styleDialogButton(reprintLabelButton);
         styleDialogButton(closeButton);
         refundButton.setEnabled(handler.canRefundPayments());
         productionButton.setEnabled(handler.canUpdateProduction());
         deliveredButton.setEnabled(handler.canDeliverOrderLines());
+        previewSlipButton.setEnabled(false);
+        printSlipButton.setEnabled(false);
         reprintLabelButton.setEnabled(false);
 
         JPanel detailsHeader = new JPanel(new BorderLayout(8, 0));
         detailsHeader.add(new JLabel("Order Details"), BorderLayout.WEST);
-        detailsHeader.add(reprintLabelButton, BorderLayout.EAST);
+        JPanel printControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        printControls.add(previewSlipButton);
+        printControls.add(printSlipButton);
+        printControls.add(reprintLabelButton);
+        detailsHeader.add(printControls, BorderLayout.EAST);
         JPanel detailsPanel = new JPanel(new BorderLayout(0, 8));
         detailsPanel.add(detailsHeader, BorderLayout.NORTH);
         detailsPanel.add(new JScrollPane(detailsArea), BorderLayout.CENTER);
@@ -102,11 +112,15 @@ class CustomOrdersLookupTabPanel extends JPanel {
             if (!e.getValueIsAdjusting()) {
                 Long orderId = handler.selectedLookupOrderId(table, model);
                 if (orderId != null) {
+                    previewSlipButton.setEnabled(true);
+                    printSlipButton.setEnabled(true);
                     reprintLabelButton.setEnabled(true);
                     handler.loadOrderDetails(orderId, detailsArea);
                     BigDecimal balance = handler.parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), 7));
                     amountField.setText(balance == null ? "" : balance.toPlainString());
                 } else {
+                    previewSlipButton.setEnabled(false);
+                    printSlipButton.setEnabled(false);
                     reprintLabelButton.setEnabled(false);
                 }
             }
@@ -220,12 +234,17 @@ class CustomOrdersLookupTabPanel extends JPanel {
                         });
             });
         });
+        previewSlipButton.addActionListener(e -> {
+            String orderNumber = selectedOrderNumber();
+            if (orderNumber != null) handler.previewOrderSlip(orderNumber);
+        });
+        printSlipButton.addActionListener(e -> {
+            String orderNumber = selectedOrderNumber();
+            if (orderNumber != null) handler.printOrderSlip(orderNumber);
+        });
         reprintLabelButton.addActionListener(e -> {
-            int selectedRow = table.getSelectedRow();
-            if (selectedRow < 0) return;
-            int modelRow = table.convertRowIndexToModel(selectedRow);
-            String orderNumber = String.valueOf(model.getValueAt(modelRow, 1));
-            handler.reprintOrderLabels(orderNumber);
+            String orderNumber = selectedOrderNumber();
+            if (orderNumber != null) handler.reprintOrderLabels(orderNumber);
         });
         closeButton.addActionListener(e -> {
             Window window = SwingUtilities.getWindowAncestor(this);
@@ -239,6 +258,13 @@ class CustomOrdersLookupTabPanel extends JPanel {
         add(searchPanel, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         add(actionPanel, BorderLayout.SOUTH);
+    }
+
+    private String selectedOrderNumber() {
+        int selectedRow = table.getSelectedRow();
+        if (selectedRow < 0) return null;
+        int modelRow = table.convertRowIndexToModel(selectedRow);
+        return String.valueOf(model.getValueAt(modelRow, 1));
     }
 
     private void refreshAfterMutation(Handler handler, Long orderId) {
@@ -576,6 +602,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
         boolean canRefundPayments();
         boolean canDeliverOrderLines();
         boolean canUpdateProduction();
+        void previewOrderSlip(String orderNumber);
+        void printOrderSlip(String orderNumber);
         void reprintOrderLabels(String orderNumber);
         void refreshRelatedOrders();
     }
