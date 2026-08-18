@@ -43,6 +43,7 @@ class MobileItemWebArchitectureTest {
         String api=source("src/services/MobileItemWebServer.java");
         String js=source("src/mobile-web/app.js");
         for(String value:new String[]{"UI_PORT = 8444","API_PORT = 8445","ACTIVATION_INVALID","CSRF_INVALID","SameSite=Strict","Idempotency-Key","requireLan"})assertTrue(api.contains(value),value);
+        assertTrue(api.contains("origin.equalsIgnoreCase(allowed)"));
         assertTrue(api.contains("LanProductAdminService.create"));
         assertTrue(api.contains("LanProductAdminService.update"));
         assertTrue(api.contains("LanCustomOrderCatalogAdminService.mutate"));
