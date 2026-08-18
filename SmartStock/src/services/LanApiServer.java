@@ -1258,6 +1258,7 @@ public final class LanApiServer implements AutoCloseable {
         SessionPrincipal session = authenticateSession(context.exchange(), device, true);
         String searchText = optional(context.body(), "query", 300);
         if (searchText == null) searchText = "";
+        String productType = normalizeCatalogProductTypeFilter(optional(context.body(), "productType", 30));
         try (Connection connection = DB.getConnection()) {
             requireAnyPermission(connection, session.userId(), "MAKE_SALE", "VIEW_INVENTORY",
                     "RECEIVING_INVENTORY", "EDIT_ITEM");
@@ -1269,7 +1270,8 @@ public final class LanApiServer implements AutoCloseable {
                            %s AS searchable_text
                     FROM products p
                     LEFT JOIN inventory i ON i.product_id = p.product_id AND i.location_id = ?
-                    WHERE %s
+                    WHERE (? IS NULL OR UPPER(COALESCE(p.product_type, 'INVENTORY')) = ?)
+                      AND %s
                     ORDER BY p.name
                     LIMIT 250
                     """.formatted(ProductSearchHelper.searchableTextExpression("p", session.locationId()),
@@ -1277,7 +1279,9 @@ public final class LanApiServer implements AutoCloseable {
             List<Map<String, Object>> rows = new ArrayList<>();
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
                 ps.setInt(1, session.locationId());
-                ProductSearchHelper.bindTokens(ps, 2, searchText);
+                ps.setString(2, productType);
+                ps.setString(3, productType);
+                ProductSearchHelper.bindTokens(ps, 4, searchText);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         Map<String, Object> row = new LinkedHashMap<>();
@@ -1297,6 +1301,15 @@ public final class LanApiServer implements AutoCloseable {
             }
             return ApiResult.ok(Map.of("products", rows));
         }
+    }
+
+    static String normalizeCatalogProductTypeFilter(String value) throws Exception {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim().toUpperCase().replace(' ', '_');
+        if (!Set.of("INVENTORY", "SERVICE", "NON_INVENTORY").contains(normalized)) {
+            throw new ApiException(400, "VALIDATION_ERROR", "The catalog product type is invalid.", false);
+        }
+        return normalized;
     }
 
     private ApiResult catalogIdentifier(RequestContext context) throws Exception {

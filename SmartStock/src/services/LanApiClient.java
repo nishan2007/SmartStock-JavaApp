@@ -426,8 +426,15 @@ public final class LanApiClient {
     }
 
     public static List<CatalogProduct> searchCatalog(String query) throws Exception {
+        return searchCatalog(query, null);
+    }
+
+    public static List<CatalogProduct> searchCatalog(String query, String productType) throws Exception {
         JsonObject request = new JsonObject();
         request.addProperty("query", query == null ? "" : query);
+        if (productType != null && !productType.isBlank()) {
+            request.addProperty("productType", productType);
+        }
         JsonObject data = post("/v1/catalog/search", request, true, true);
         CatalogProduct[] products = GSON.fromJson(data.getAsJsonArray("products"), CatalogProduct[].class);
         return products == null ? List.of() : List.of(products);

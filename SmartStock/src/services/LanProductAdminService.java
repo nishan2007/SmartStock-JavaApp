@@ -123,6 +123,7 @@ final class LanProductAdminService {
 
     static Map<String, Object> create(Connection connection, JsonObject body, UUID deviceId,
                                       int userId, String userName, int locationId) throws Exception {
+        requireDeviceId(deviceId);
         requirePermission(connection, userId, "NEW_ITEM");
         ProductRequest request = parsed(body);
         ValidatedProduct product = validate(connection, request, locationId);
@@ -164,6 +165,7 @@ final class LanProductAdminService {
 
     static Map<String, Object> update(Connection connection, JsonObject body, UUID deviceId,
                                       int userId, String userName, int locationId) throws Exception {
+        requireDeviceId(deviceId);
         requirePermission(connection, userId, "EDIT_ITEM");
         ProductRequest request = parsed(body);
         if (request.productId() == null || request.productId() <= 0)
@@ -335,6 +337,11 @@ final class LanProductAdminService {
             ps.setInt(1, productId); ps.setInt(2, locationId); ps.setInt(3, change); ps.setString(4, reason);
             ps.setString(5, note); ps.setString(6, userName); ps.setInt(7, userId); ps.setString(8, deviceId.toString()); ps.executeUpdate();
         }
+    }
+
+    static String deviceIdText(UUID deviceId) throws RuleViolation { requireDeviceId(deviceId); return deviceId.toString(); }
+    static void requireDeviceId(UUID deviceId) throws RuleViolation {
+        if (deviceId == null) throw rule(500, "DEVICE_ID_REQUIRED", "A device identity is required for every product change.");
     }
 
     private static void requireReference(Connection connection, String table, String idColumn,

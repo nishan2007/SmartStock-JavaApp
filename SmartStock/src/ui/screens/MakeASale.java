@@ -86,6 +86,7 @@ public class MakeASale extends JFrame {
     private JButton checkoutPrintBtn;
     private JButton holdCartBtn;
     private JButton resumeHeldCartBtn;
+    private JButton quickPickItemsBtn;
     private JButton removeCartItemBtn;
     private JLabel overrideStatusLabel;
     private JLabel selectedStoreLabel;
@@ -397,9 +398,11 @@ public class MakeASale extends JFrame {
        checkoutPrintBtn = createCheckoutButton("Checkout & Print");
        holdCartBtn = createActionUtilityButton("Hold Cart");
        resumeHeldCartBtn = createActionUtilityButton("Resume Hold");
+       quickPickItemsBtn = createActionUtilityButton("Quick Pick Items");
        removeCartItemBtn = createActionUtilityButton("Remove Item");
        removeCartItemBtn.setToolTipText("Remove the selected cart item. You can also press Delete.");
        removeCartItemBtn.setEnabled(false);
+       actionPanel.add(quickPickItemsBtn);
        actionPanel.add(removeCartItemBtn);
        actionPanel.add(holdCartBtn);
        actionPanel.add(resumeHeldCartBtn);
@@ -446,6 +449,7 @@ public class MakeASale extends JFrame {
                WindowHelper.showPosWindow(new NewItem(SessionManager.getCurrentLocationId()), MakeASale.this);
            }
        });
+       quickPickItemsBtn.addActionListener(e -> showServiceQuickPick());
        editItemBtn.addActionListener(new ActionListener() {
            public void actionPerformed(ActionEvent e) {
                if (!PermissionManager.requirePermission("EDIT_ITEM", MakeASale.this, "Edit Item")) {
@@ -810,6 +814,171 @@ public class MakeASale extends JFrame {
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.setPreferredSize(new Dimension(150, 56));
         return button;
+    }
+
+    private void showServiceQuickPick() {
+        if (SessionManager.getCurrentLocationId() == null) {
+            JOptionPane.showMessageDialog(this, "No store is selected for this session.");
+            return;
+        }
+
+        JDialog dialog = new JDialog(this, "Quick Pick Service Items", true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        dialog.setMinimumSize(new Dimension(560, 420));
+        dialog.setSize(820, 620);
+        dialog.setLocationRelativeTo(this);
+
+        JPanel content = new JPanel(new BorderLayout(12, 12));
+        content.setBackground(DeckersPalette.background());
+        content.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
+
+        JLabel heading = new JLabel("Quick Pick Service Items");
+        heading.setFont(new Font("SansSerif", Font.BOLD, 22));
+        heading.setForeground(DeckersPalette.text());
+        heading.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        content.add(heading, BorderLayout.NORTH);
+
+        JPanel center = new JPanel(new BorderLayout());
+        center.setOpaque(false);
+        content.add(center, BorderLayout.CENTER);
+
+        JButton doneButton = createActionUtilityButton("Done");
+        doneButton.addActionListener(e -> dialog.dispose());
+        JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        footer.setOpaque(false);
+        footer.add(doneButton);
+        content.add(footer, BorderLayout.SOUTH);
+
+        dialog.setContentPane(content);
+        loadServiceQuickPickItems(dialog, center);
+        dialog.setVisible(true);
+    }
+
+    private void loadServiceQuickPickItems(JDialog dialog, JPanel center) {
+        center.removeAll();
+        JLabel loading = new JLabel("Loading service items...", SwingConstants.CENTER);
+        loading.setFont(new Font("SansSerif", Font.PLAIN, 16));
+        loading.setForeground(DeckersPalette.muted());
+        center.add(loading, BorderLayout.CENTER);
+        center.revalidate();
+        center.repaint();
+
+        UiTaskRunner.submit(dialog, "make-sale.quick-pick-services",
+                () -> LanApiClient.searchCatalog("", "SERVICE"),
+                products -> {
+                    if (!dialog.isDisplayable()) return;
+                    showServiceQuickPickItems(center, products);
+                },
+                failure -> {
+                    if (!dialog.isDisplayable()) return;
+                    showServiceQuickPickError(dialog, center, failure);
+                });
+    }
+
+    private void showServiceQuickPickItems(JPanel center,
+                                           java.util.List<LanApiClient.CatalogProduct> products) {
+        center.removeAll();
+        if (products.isEmpty()) {
+            JLabel empty = new JLabel("No service items are available for this store.", SwingConstants.CENTER);
+            empty.setFont(new Font("SansSerif", Font.PLAIN, 16));
+            empty.setForeground(DeckersPalette.muted());
+            center.add(empty, BorderLayout.CENTER);
+        } else {
+            JPanel grid = new JPanel(new GridLayout(0, 3, 12, 12));
+            grid.setBackground(DeckersPalette.background());
+            grid.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+            for (LanApiClient.CatalogProduct product : products) {
+                grid.add(createServiceQuickPickButton(product));
+            }
+
+            JScrollPane scrollPane = new JScrollPane(grid);
+            scrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+            scrollPane.getVerticalScrollBar().setUnitIncrement(24);
+            scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+            scrollPane.getViewport().setBackground(DeckersPalette.background());
+            scrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent event) {
+                    int columns = Math.max(1, scrollPane.getViewport().getWidth() / 230);
+                    GridLayout layout = (GridLayout) grid.getLayout();
+                    if (layout.getColumns() != columns) {
+                        layout.setColumns(columns);
+                        grid.revalidate();
+                    }
+                }
+            });
+            center.add(scrollPane, BorderLayout.CENTER);
+        }
+        center.revalidate();
+        center.repaint();
+    }
+
+    private JButton createServiceQuickPickButton(LanApiClient.CatalogProduct product) {
+        String displayName = displayNameWithSize(product.name(), product.size());
+        String normalText = quickPickButtonText(displayName, product.price(), false);
+        JButton button = new RoundedFillButton(normalText);
+        button.setFont(new Font("SansSerif", Font.BOLD, 16));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(DeckersPalette.LIME));
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setFocusPainted(false);
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.sectionBorder(DeckersPalette.LIME),
+                4, 14, new Insets(16, 12, 16, 12)));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(210, 104));
+        button.setToolTipText("Add one " + displayName);
+        button.addActionListener(e -> {
+            button.setEnabled(false);
+            addCatalogProductToCart(product, 1);
+            button.setText(quickPickButtonText(displayName, product.price(), true));
+            javax.swing.Timer confirmationTimer = new javax.swing.Timer(450, ignored -> {
+                button.setText(normalText);
+                button.setEnabled(true);
+            });
+            confirmationTimer.setRepeats(false);
+            confirmationTimer.start();
+        });
+        return button;
+    }
+
+    private String quickPickButtonText(String name, BigDecimal price, boolean added) {
+        String status = added ? "<br><font size='3'>Added</font>" : "";
+        return "<html><center>" + escapeHtml(name) + "<br><font size='4'>"
+                + escapeHtml(utils.CurrencyFormatter.format(price)) + "</font>" + status + "</center></html>";
+    }
+
+    private String escapeHtml(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private void showServiceQuickPickError(JDialog dialog, JPanel center, Throwable failure) {
+        center.removeAll();
+        JPanel errorPanel = new JPanel();
+        errorPanel.setOpaque(false);
+        errorPanel.setLayout(new BoxLayout(errorPanel, BoxLayout.Y_AXIS));
+        JLabel message = new JLabel("Unable to load service items: "
+                + (failure.getMessage() == null ? "Unknown error" : failure.getMessage()),
+                SwingConstants.CENTER);
+        message.setAlignmentX(Component.CENTER_ALIGNMENT);
+        message.setForeground(DeckersPalette.text());
+        JButton retry = createActionUtilityButton("Retry");
+        retry.setAlignmentX(Component.CENTER_ALIGNMENT);
+        retry.addActionListener(e -> loadServiceQuickPickItems(dialog, center));
+        errorPanel.add(Box.createVerticalGlue());
+        errorPanel.add(message);
+        errorPanel.add(Box.createVerticalStrut(14));
+        errorPanel.add(retry);
+        errorPanel.add(Box.createVerticalGlue());
+        center.add(errorPanel, BorderLayout.CENTER);
+        center.revalidate();
+        center.repaint();
     }
 
     private JButton createProductDropdownButton() {

@@ -3,12 +3,19 @@ package services;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.Result;
+import com.google.zxing.common.HybridBinarizer;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import data.DB;
 import data.DatabaseConfig;
+import utils.DeviceUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -23,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +65,7 @@ public final class MobileItemWebServer implements AutoCloseable {
             ui.setHttpsConfigurator(new HttpsConfigurator(identity.sslContext()));api.setHttpsConfigurator(new HttpsConfigurator(identity.sslContext()));
             pool=Executors.newFixedThreadPool(8,r->{Thread t=new Thread(r,"smartstock-mobile-web");t.setDaemon(true);return t;});
             ui.setExecutor(pool);api.setExecutor(pool);MobileItemWebServer server=new MobileItemWebServer(ui,api,pool,owner,host);
+            try(Connection c=DB.getConnection()){server.mobileDeviceId(c,DatabaseConfig.load().locationId());}
             ui.createContext("/",server::ui);api.createContext("/api/v1/",server::api);ui.start();api.start();return server;
         }catch(Exception e){if(ui!=null)ui.stop(0);if(api!=null)api.stop(0);if(pool!=null)pool.shutdownNow();throw e;}
     }
@@ -66,7 +75,8 @@ public final class MobileItemWebServer implements AutoCloseable {
     private void ui(HttpExchange x) {
         try {
             requireLan(x); String path=x.getRequestURI().getPath();
-            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/app.css"->"mobile-web/app.css";case "/app.js"->"mobile-web/app.js";default->null;};
+            if(path.startsWith("/api/v1/")){api(x);return;}
+            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";default->null;};
             if(resource==null){sendText(x,404,"text/plain; charset=utf-8","Not found");return;}
             try(InputStream in=MobileItemWebServer.class.getClassLoader().getResourceAsStream(resource)){
                 if(in==null){sendText(x,404,"text/plain; charset=utf-8","Web asset missing");return;}
@@ -82,6 +92,14 @@ public final class MobileItemWebServer implements AutoCloseable {
             requireLan(x); cors(x);
             if("OPTIONS".equals(x.getRequestMethod())){x.sendResponseHeaders(204,-1);return;}
             String route=x.getRequestURI().getPath().substring("/api/v1".length());
+            if("GET".equals(x.getRequestMethod())&&"/trust".equals(route)){
+                security(x.getResponseHeaders());
+                sendText(x,200,"text/html; charset=utf-8","""
+                    <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmartStock API ready</title></head>
+                    <body style="font-family:-apple-system,sans-serif;background:#f3f5fa;color:#172033;padding:32px"><main style="max-width:560px;margin:auto;background:white;border-radius:20px;padding:28px"><h1>SmartStock API is ready</h1><p>The secure mobile API connection is working. Return to the previous SmartStock tab and tap <b>Try again</b>.</p></main></body></html>
+                    """);
+                return;
+            }
             JsonObject body=readJson(x);
             Object result=switch(route){
                 case "/activate"->activate(x,body);
@@ -94,6 +112,7 @@ public final class MobileItemWebServer implements AutoCloseable {
                 case "/custom/state"->customState(requireSession(x,false));
                 case "/custom/save"->customSave(x,requireSession(x,true),body);
                 case "/barcodes/generate"->barcode(requireSession(x,true));
+                case "/barcodes/scan"->barcodeScan(requireSession(x,true),body);
                 case "/images/upload"->imageUpload(x,requireSession(x,true),body);
                 case "/images/fetch"->imageFetch(requireSession(x,false),body);
                 default->throw new WebError(404,"NOT_FOUND","Web API route not found.");
@@ -140,10 +159,21 @@ public final class MobileItemWebServer implements AutoCloseable {
         }
     }
     private Object productSearch(Session s,JsonObject b)throws Exception{try(Connection c=DB.getConnection()){return Map.of("products",LanProductAdminService.searchEditable(c,optional(b,"query"),s.userId,s.locationId));}}
-    private Object productSave(HttpExchange x,Session s,JsonObject b)throws Exception{return idempotent(x,s,b,b.has("productId")&&!b.get("productId").isJsonNull()?"product.update":"product.create",c->b.has("productId")&&!b.get("productId").isJsonNull()?LanProductAdminService.update(c,b,null,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId):LanProductAdminService.create(c,b,null,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId));}
+    private Object productSave(HttpExchange x,Session s,JsonObject b)throws Exception{return idempotent(x,s,b,b.has("productId")&&!b.get("productId").isJsonNull()?"product.update":"product.create",c->{UUID deviceId=mobileDeviceId(c,s.locationId);return b.has("productId")&&!b.get("productId").isJsonNull()?LanProductAdminService.update(c,b,deviceId,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId):LanProductAdminService.create(c,b,deviceId,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId);});}
     private Object customState(Session s)throws Exception{owner.requireMobileCustomPermission(s.userId);try(Connection c=DB.getConnection()){return Map.of("state",LanCustomOrderCatalogAdminService.load(c));}}
     private Object customSave(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileCustomPermission(s.userId);return idempotent(x,s,b,"custom."+text(b,"action",40),c->Map.of("recordId",LanCustomOrderCatalogAdminService.mutate(c,text(b,"action",40),b)));}
     private Object barcode(Session s)throws Exception{owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");try(Connection c=DB.getConnection()){return Map.of("barcode",CatalogBarcodeService.generateAvailable(c));}}
+    private Object barcodeScan(Session s,JsonObject b)throws Exception{
+        owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
+        byte[] bytes;try{bytes=Base64.getDecoder().decode(text(b,"bytesBase64",12*1024*1024));}catch(IllegalArgumentException e){throw new WebError(400,"BARCODE_IMAGE_INVALID","The barcode photo is invalid.");}
+        if(bytes.length>8*1024*1024)throw new WebError(413,"BARCODE_IMAGE_TOO_LARGE","The barcode photo must be 8 MB or smaller.");
+        java.awt.image.BufferedImage image=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));if(image==null)throw new WebError(400,"BARCODE_IMAGE_INVALID","Choose a valid barcode photo.");
+        int[] pixels=image.getRGB(0,0,image.getWidth(),image.getHeight(),null,0,image.getWidth());BinaryBitmap attempt=new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(image.getWidth(),image.getHeight(),pixels)));
+        EnumMap<DecodeHintType,Object> hints=new EnumMap<>(DecodeHintType.class);hints.put(DecodeHintType.TRY_HARDER,Boolean.TRUE);hints.put(DecodeHintType.ALSO_INVERTED,Boolean.TRUE);Result result=null;
+        for(int rotation=0;rotation<4&&result==null;rotation++){try{result=new MultiFormatReader().decode(attempt,hints);}catch(com.google.zxing.NotFoundException ignored){}if(attempt.isRotateSupported())attempt=attempt.rotateCounterClockwise();else break;}
+        if(result==null||result.getText()==null||result.getText().isBlank())throw new WebError(422,"BARCODE_NOT_FOUND","No barcode was found. Move closer, keep the label sharp, and try again.");
+        return Map.of("barcode",result.getText().trim(),"format",result.getBarcodeFormat().name());
+    }
     private Object imageUpload(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");byte[] bytes=Base64.getDecoder().decode(text(b,"bytesBase64",16*1024*1024));if(bytes.length>2*1024*1024)throw new WebError(413,"IMAGE_TOO_LARGE","The optimized image must be 2 MB or smaller.");bytes=optimizeJpeg(bytes);String requested=optional(b,"category").toUpperCase(java.util.Locale.ROOT),category=switch(requested){case"CUSTOM_ITEM","CUSTOM_VARIANT"->requested;default->"PRODUCT";};String name="mobile-"+System.currentTimeMillis()+"-"+UUID.randomUUID()+".jpg";try(Connection c=DB.getConnection()){String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);return Map.of("reference",ref,"cloudStatus","PENDING");}}
     private Object imageFetch(Session s,JsonObject b)throws Exception{ServerImageAssetService.AssetBytes a=ServerImageAssetService.load(text(b,"reference",1000));return Map.of("contentType",a.contentType(),"bytesBase64",Base64.getEncoder().encodeToString(a.bytes()));}
 
@@ -160,7 +190,21 @@ public final class MobileItemWebServer implements AutoCloseable {
         """)){p.setObject(1,b.id);p.setString(2,LanSecurity.sha256(token));try(ResultSet r=p.executeQuery()){if(!r.next())throw new WebError(401,"SESSION_INVALID","Please log in again.");Instant now=Instant.now(),exp=r.getTimestamp(5).toInstant(),abs=r.getTimestamp(6).toInstant();if(!exp.isAfter(now)||!abs.isAfter(now))throw new WebError(401,"SESSION_EXPIRED","Please log in again.");if(csrf){String supplied=x.getRequestHeaders().getFirst("X-CSRF-Token");if(supplied==null||!LanSecurity.constantTimeEquals(LanSecurity.sha256(supplied),r.getString(4)))throw new WebError(403,"CSRF_INVALID","The form security token is invalid.");}UUID id=(UUID)r.getObject(1);Instant next=now.plus(IDLE).isBefore(abs)?now.plus(IDLE):abs;try(PreparedStatement q=c.prepareStatement("UPDATE mobile_item_web_sessions SET expires_at=?,last_seen_at=CURRENT_TIMESTAMP WHERE session_id=?")){q.setTimestamp(1,Timestamp.from(next));q.setObject(2,id);q.executeUpdate();}c.commit();return new Session(id,b.id,r.getInt(2),r.getInt(3));}}catch(Exception e){c.rollback();throw e;}}}
 
     private static List<Map<String,Object>> rows(Connection c,String sql)throws Exception{List<Map<String,Object>> out=new ArrayList<>();try(var p=c.prepareStatement(sql);var r=p.executeQuery()){while(r.next())out.add(Map.of("id",r.getObject(1),"name",r.getString(2)));}return out;}
-    private static void audit(Connection c,String type,Integer userId,String details)throws Exception{try(PreparedStatement p=c.prepareStatement("INSERT INTO security_audit_events(event_type,actor_user_id,details) VALUES(?,?,?)")){p.setString(1,type);if(userId==null)p.setNull(2,java.sql.Types.INTEGER);else p.setInt(2,userId);p.setString(3,details);p.executeUpdate();}}
+    private void audit(Connection c,String type,Integer userId,String details)throws Exception{try(PreparedStatement p=c.prepareStatement("INSERT INTO security_audit_events(event_type,device_id,actor_user_id,details) VALUES(?,?,?,?)")){p.setString(1,type);p.setObject(2,mobileDeviceId(c,DatabaseConfig.load().locationId()));if(userId==null)p.setNull(3,java.sql.Types.INTEGER);else p.setInt(3,userId);p.setString(4,details);p.executeUpdate();}}
+    static UUID mobileDeviceId(Connection c,Integer locationId)throws Exception{
+        String installationId="smartstock-mobile-item-web:"+DeviceUtils.collectDeviceInfo().getInstallationId();
+        try(PreparedStatement p=c.prepareStatement("""
+            INSERT INTO devices(installation_id,device_name,hostname,os_name,last_store_id,is_approved,is_blocked,
+              allow_sales,allow_orders,access_mode,credential_status,status_notes)
+            VALUES (?,'WEB APP','SmartStock Mobile Item Web App','WEB',?,TRUE,FALSE,FALSE,FALSE,'CLIENT','REVOKED',
+              'Server-owned virtual identity for Mobile Item Web App activity; not an enrolled browser or register.')
+            ON CONFLICT(installation_id) DO UPDATE SET device_name='WEB APP',hostname='SmartStock Mobile Item Web App',
+              os_name='WEB',last_store_id=COALESCE(EXCLUDED.last_store_id,devices.last_store_id),is_approved=TRUE,
+              is_blocked=FALSE,allow_sales=FALSE,allow_orders=FALSE,credential_status='REVOKED',
+              status_notes=EXCLUDED.status_notes,last_seen=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+            RETURNING device_id
+            """)){p.setString(1,installationId);if(locationId==null||locationId<=0)p.setNull(2,java.sql.Types.INTEGER);else p.setInt(2,locationId);try(ResultSet r=p.executeQuery()){if(!r.next())throw new java.sql.SQLException("The WEB APP device identity could not be created.");return (UUID)r.getObject(1);}}
+    }
     private static byte[] optimizeJpeg(byte[] input)throws Exception{java.awt.image.BufferedImage source=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(input));if(source==null)throw new WebError(400,"IMAGE_INVALID","Choose a valid JPEG or PNG image.");double scale=Math.min(1d,1200d/Math.max(source.getWidth(),source.getHeight()));int w=Math.max(1,(int)Math.round(source.getWidth()*scale)),h=Math.max(1,(int)Math.round(source.getHeight()*scale));java.awt.image.BufferedImage output=new java.awt.image.BufferedImage(w,h,java.awt.image.BufferedImage.TYPE_INT_RGB);java.awt.Graphics2D g=output.createGraphics();try{g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);g.setColor(java.awt.Color.WHITE);g.fillRect(0,0,w,h);g.drawImage(source,0,0,w,h,null);}finally{g.dispose();}ByteArrayOutputStream bytes=new ByteArrayOutputStream();var writers=javax.imageio.ImageIO.getImageWritersByFormatName("jpeg");var writer=writers.next();try(var stream=javax.imageio.ImageIO.createImageOutputStream(bytes)){writer.setOutput(stream);var param=writer.getDefaultWriteParam();param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);param.setCompressionQuality(.78f);writer.write(null,new javax.imageio.IIOImage(output,null,null),param);}finally{writer.dispose();}return bytes.toByteArray();}
     private static JsonObject readJson(HttpExchange x)throws Exception{if(!"POST".equals(x.getRequestMethod()))throw new WebError(405,"METHOD_NOT_ALLOWED","POST is required.");byte[] bytes=readLimited(x.getRequestBody(),MAX_JSON);if(bytes.length==0)return new JsonObject();return JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();}
     private static byte[] readLimited(InputStream in,int max)throws Exception{ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))>=0){total+=n;if(total>max)throw new WebError(413,"REQUEST_TOO_LARGE","The request is too large.");out.write(buf,0,n);}return out.toByteArray();}
