@@ -9,6 +9,7 @@ public final class LanApiSchemaInstaller {
     }
 
     public static void ensureSchema(Connection connection) throws SQLException {
+        SchemaContractService.ensureMobileItemWebUpgrade(connection);
         SchemaContractService.requireLocalReady(connection);
     }
 }

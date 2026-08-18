@@ -31,6 +31,10 @@ public final class CustomOrderDataService {
         return call(LanApiClient::loadCustomOrderDesignPlacements);
     }
 
+    public static CatalogSnapshot loadCatalogSnapshot() throws SQLException {
+        return call(LanApiClient::loadCustomOrderCatalogSnapshot);
+    }
+
     public static List<CustomerOption> searchCustomers(String search) throws SQLException {
         return call(() -> LanApiClient.searchCustomOrderCustomers(search));
     }
@@ -104,6 +108,11 @@ public final class CustomOrderDataService {
             return account+name+(contact == null || contact.isBlank() ? "" : " (" + contact + ")");
         }
     }
+
+    public record CatalogSnapshot(List<CustomItemOption> items,
+                                  List<PrintMaterialOption> materials,
+                                  List<String> placements,
+                                  List<CustomerOption> initialCustomers) { }
 
     public record EmployeeOption(Integer userId, String name) {
         @Override public String toString() { return name; }

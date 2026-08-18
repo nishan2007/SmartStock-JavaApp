@@ -67,6 +67,11 @@ public class CustomerInfoPanel extends JPanel {
         searchPopup.setVisible(false);
     }
 
+    public void preloadCustomers(List<CustomerOption> customers) {
+        CustomerSearchSnapshot snapshot = new CustomerSearchSnapshot(customers == null ? List.of() : List.copyOf(customers));
+        SessionDataCache.put("custom-orders:customers:", snapshot);
+    }
+
     private void buildLayout() {
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(6, 6, 6, 6);
@@ -173,7 +178,9 @@ public class CustomerInfoPanel extends JPanel {
 
     private void loadCustomers(String search) {
         String query=search==null?"":search.trim();
-        CachedUiLoader.loadAfterDisplay(this,"custom-orders.customer-search","custom-orders:customers:"+query,
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        if (owner == null) return;
+        CachedUiLoader.loadIfStale(owner,"custom-orders.customer-search","custom-orders:customers:"+query,
                 CustomerSearchSnapshot.class, SessionDataCache.SCREEN_TTL,searchLoadingState,
                 ()->new CustomerSearchSnapshot(CustomOrderDataService.searchCustomers(query)),snapshot->{
                     if(!searchField.getText().trim().equals(query))return;

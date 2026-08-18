@@ -177,7 +177,11 @@ public final class ThemeManager {
         window.repaint();
     }
 
-    private static void applyToComponent(Component component) {
+    static void applyToComponent(Component component) {
+        if (component instanceof JComponent themedComponent
+                && Boolean.TRUE.equals(themedComponent.getClientProperty("SmartStock.preserveThemeColors"))) {
+            return;
+        }
         boolean dark = isDarkModeEnabled();
         Color background = dark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
         Color surface = dark ? DARK_SURFACE : LIGHT_SURFACE;

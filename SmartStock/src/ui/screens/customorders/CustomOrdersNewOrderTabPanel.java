@@ -92,6 +92,10 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
     CustomOrdersNewOrderTabPanel(Handler handler) {
         super(new BorderLayout(8, 8));
+        // This workflow owns a complete high-contrast palette. The global theme
+        // pass otherwise replaces only some of these colors, producing dark text
+        // on dark tiles/buttons (most visibly with the Windows light theme).
+        putClientProperty("SmartStock.preserveThemeColors", Boolean.TRUE);
         setBorder(new EmptyBorder(8, 8, 8, 8));
         setBackground(BG);
         stepCards.setBackground(BG);

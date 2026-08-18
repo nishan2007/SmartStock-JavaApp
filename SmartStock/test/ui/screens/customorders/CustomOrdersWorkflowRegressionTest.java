@@ -28,6 +28,7 @@ final class CustomOrdersWorkflowRegressionTest {
         SwingUtilities.invokeAndWait(() -> {
             CustomOrdersNewOrderTabPanel panel = new CustomOrdersNewOrderTabPanel(new NoOpHandler());
 
+            assertEquals(Boolean.TRUE, panel.getClientProperty("SmartStock.preserveThemeColors"));
             assertNotNull(panel.printAddonModel);
             assertNotNull(panel.printAddonTable);
 

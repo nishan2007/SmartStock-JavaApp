@@ -670,6 +670,11 @@ public final class LanApiClient {
         return GSON.fromJson(post("/v1/sync/run", new JsonObject(), true, true), SyncStatusSnapshot.class);
     }
 
+    public static MobileItemWebStatus mobileItemWebStatus()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/status",new JsonObject(),true,true),MobileItemWebStatus.class);}
+    public static MobileItemWebStatus startMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/start",new JsonObject(),true,true),MobileItemWebStatus.class);}
+    public static MobileItemWebStatus stopMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/stop",new JsonObject(),true,true),MobileItemWebStatus.class);}
+    public static MobileItemWebStatus renewMobileItemWebActivation()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/activation",new JsonObject(),true,true),MobileItemWebStatus.class);}
+
     public static void resolveSyncConflict(long conflictId) throws Exception {
         JsonObject request = new JsonObject(); request.addProperty("conflictId", conflictId);
         post("/v1/sync/resolve", request, true, true,
@@ -801,6 +806,7 @@ public final class LanApiClient {
     public static int saveMaintenanceWorkflow(String action,Object value,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.add("SAVE_LOG".equals(action)?"log":"ticket",GSON.toJsonTree(value));return post("/v1/maintenance/workflow/update",r,true,true,Map.of("Idempotency-Key",key)).get("id").getAsInt();}
     public static void closeMaintenanceTicket(int id,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action","CLOSE_TICKET");r.addProperty("id",id);post("/v1/maintenance/workflow/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static List<CustomOrderDataService.CustomItemOption> loadCustomOrderItems()throws Exception{JsonObject d=customOrderQuery("ITEMS",new JsonObject());CustomOrderDataService.CustomItemOption[]a=GSON.fromJson(d.getAsJsonArray("items"),CustomOrderDataService.CustomItemOption[].class);return a==null?List.of():List.of(a);}
+    public static CustomOrderDataService.CatalogSnapshot loadCustomOrderCatalogSnapshot()throws Exception{JsonObject d=customOrderQuery("BOOTSTRAP",new JsonObject());return GSON.fromJson(d.get("catalog"),CustomOrderDataService.CatalogSnapshot.class);}
     public static List<CustomOrderDataService.VariantOption> loadCustomOrderVariants(long itemId)throws Exception{JsonObject r=new JsonObject();r.addProperty("customItemId",itemId);JsonObject d=customOrderQuery("VARIANTS",r);CustomOrderDataService.VariantOption[]a=GSON.fromJson(d.getAsJsonArray("variants"),CustomOrderDataService.VariantOption[].class);return a==null?List.of():List.of(a);}
     public static List<CustomOrderDataService.PrintMaterialOption> loadCustomOrderPrintMaterials()throws Exception{JsonObject d=customOrderQuery("PRINT_MATERIALS",new JsonObject());CustomOrderDataService.PrintMaterialOption[]a=GSON.fromJson(d.getAsJsonArray("materials"),CustomOrderDataService.PrintMaterialOption[].class);return a==null?List.of():List.of(a);}
     public static List<CustomOrderDataService.PrintSizePresetOption> loadCustomOrderPrintSizePresets(long materialId)throws Exception{JsonObject r=new JsonObject();r.addProperty("printMaterialId",materialId);JsonObject d=customOrderQuery("PRINT_PRESETS",r);CustomOrderDataService.PrintSizePresetOption[]a=GSON.fromJson(d.getAsJsonArray("presets"),CustomOrderDataService.PrintSizePresetOption[].class);return a==null?List.of():List.of(a);}
@@ -1648,6 +1654,7 @@ public final class LanApiClient {
             this(null,null,saleId,refundMethod,reason,approvalToken,approvalReason,lines);
         }
     }
+    public record MobileItemWebStatus(boolean enabled,boolean running,boolean uiRunning,boolean apiRunning,int uiPort,int apiPort,String url,String activationUrl,String activationExpiresAt){}
     public record RefundLine(int saleItemId,int quantity,String disposition,Integer destinationLocationId,String dispositionReason) {
         public RefundLine(int saleItemId,int quantity){this(saleItemId,quantity,null,null,null);}
     }

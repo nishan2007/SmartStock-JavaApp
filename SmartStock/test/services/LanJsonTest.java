@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Set;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -42,6 +43,17 @@ class LanJsonTest {
 
         assertEquals("2026-08-01",
                 gson.toJsonTree(request).getAsJsonObject().get("dueDate").getAsString());
+    }
+
+    @Test
+    void customOrderCatalogSnapshotRoundTripsTheLightweightShell() {
+        var material = new CustomOrderDataService.PrintMaterialOption(7L, "Vinyl");
+        var snapshot = new CustomOrderDataService.CatalogSnapshot(List.of(), List.of(material), List.of("Front"), List.of());
+
+        var decoded = gson.fromJson(gson.toJson(snapshot), CustomOrderDataService.CatalogSnapshot.class);
+
+        assertEquals(List.of(material), decoded.materials());
+        assertEquals(List.of("Front"), decoded.placements());
     }
 
     @Test

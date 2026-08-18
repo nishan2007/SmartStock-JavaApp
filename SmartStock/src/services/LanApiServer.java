@@ -35,6 +35,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -71,6 +72,7 @@ public final class LanApiServer implements AutoCloseable {
     private final ExecutorService executor;
     private final LanTlsIdentity tlsIdentity;
     private final LanDiscoveryService discoveryService;
+    private volatile MobileItemWebServer mobileItemWebServer;
 
     private LanApiServer(HttpsServer server, ExecutorService executor, LanTlsIdentity tlsIdentity,
                          LanDiscoveryService discoveryService) {
@@ -94,14 +96,15 @@ public final class LanApiServer implements AutoCloseable {
                 });
         https.setExecutor(executor);
         try (Connection connection = DB.getConnection()) {
-            DeviceCredentialSchemaInstaller.ensureSchema(connection);
             LanApiSchemaInstaller.ensureSchema(connection);
+            DeviceCredentialSchemaInstaller.ensureSchema(connection);
         }
         LanDiscoveryService discovery = Boolean.getBoolean("smartstock.remote.gateway")
                 ? null : LanDiscoveryService.start(port, identity, discoveryIdentity(identity));
         LanApiServer api = new LanApiServer(https, executor, identity, discovery);
         api.installRoutes();
         https.start();
+        api.restoreMobileItemWebIfEnabled();
         System.out.println("SmartStock LAN service listening on HTTPS port " + port
                 + "; certificate " + identity.fingerprint());
         return api;
@@ -215,6 +218,10 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/sync/status", exchange -> handle(exchange, this::syncStatus));
         server.createContext("/v1/sync/run", exchange -> handle(exchange, this::runSync));
         server.createContext("/v1/sync/resolve", exchange -> handle(exchange, this::resolveSyncConflict));
+        server.createContext("/v1/mobile-item-web/status", exchange -> handle(exchange, this::mobileItemWebStatus));
+        server.createContext("/v1/mobile-item-web/start", exchange -> handle(exchange, this::mobileItemWebStart));
+        server.createContext("/v1/mobile-item-web/stop", exchange -> handle(exchange, this::mobileItemWebStop));
+        server.createContext("/v1/mobile-item-web/activation", exchange -> handle(exchange, this::mobileItemWebActivation));
         server.createContext("/v1/workstation/settings", exchange -> handle(exchange, this::workstationSettings));
         server.createContext("/v1/workstation/device-code", exchange -> handle(exchange, this::updateWorkstationDeviceCode));
         server.createContext("/v1/workstation/timezone", exchange -> handle(exchange, this::updateWorkstationTimezone));
@@ -2039,6 +2046,11 @@ public final class LanApiServer implements AutoCloseable {
             requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","VIEW_ASSIGNED_CUSTOM_ORDERS","ORDERS_MANAGER_DASHBOARD");
             String action=required(x.body(),"action",40).toUpperCase(java.util.Locale.ROOT);
             return ApiResult.ok(switch(action) {
+                case "BOOTSTRAP" -> Map.of("catalog", Map.of(
+                        "items", ServerCustomOrderDataService.listActiveItems(c),
+                        "materials", ServerCustomOrderDataService.listActivePrintMaterials(c),
+                        "placements", ServerCustomOrderDataService.listActiveDesignPlacements(c),
+                        "initialCustomers", ServerCustomOrderDataService.searchCustomers(c, "")));
                 case "ITEMS" -> Map.of("items",ServerCustomOrderDataService.listActiveItems(c));
                 case "VARIANTS" -> Map.of("variants",ServerCustomOrderDataService.listActiveVariants(c,requiredLong(x.body(),"customItemId")));
                 case "PRINT_MATERIALS" -> Map.of("materials",ServerCustomOrderDataService.listActivePrintMaterials(c));
@@ -2778,6 +2790,73 @@ public final class LanApiServer implements AutoCloseable {
             catch (LanSyncAdminService.RuleViolation ex) { throw apiException(ex); }
         }
     }
+
+    private ApiResult mobileItemWebStatus(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());
+        SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){requireMobileQrAccess(c,s,d,context.exchange());return ApiResult.ok(mobileStatus(c,null,null));}
+    }
+
+    private ApiResult mobileItemWebStart(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());
+        SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            requireMobileControl(c,s,d,context.exchange());LanApiSchemaInstaller.ensureSchema(c);
+            UUID generation=UUID.randomUUID();
+            try(PreparedStatement p=c.prepareStatement("""
+                UPDATE mobile_item_web_runtime SET enabled=TRUE,generation=?,changed_by_user_id=?,changed_at=CURRENT_TIMESTAMP WHERE runtime_id=1
+                """)){p.setObject(1,generation);p.setInt(2,s.userId());p.executeUpdate();}
+            revokeMobileAccess(c);try{startMobileItemWeb();}catch(Exception ex){try(PreparedStatement p=c.prepareStatement("UPDATE mobile_item_web_runtime SET enabled=FALSE,generation=gen_random_uuid(),changed_at=CURRENT_TIMESTAMP WHERE runtime_id=1")){p.executeUpdate();}throw ex;}auditSecurity(c,"MOBILE_ITEM_WEB_STARTED",d.deviceId(),s.userId(),"Mobile item UI and API started on the store LAN");return ApiResult.ok(createMobileActivation(c,s.userId()));
+        }
+    }
+
+    private ApiResult mobileItemWebStop(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());
+        SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            requireMobileControl(c,s,d,context.exchange());try(PreparedStatement p=c.prepareStatement("UPDATE mobile_item_web_runtime SET enabled=FALSE,generation=gen_random_uuid(),changed_by_user_id=?,changed_at=CURRENT_TIMESTAMP WHERE runtime_id=1")){p.setInt(1,s.userId());p.executeUpdate();}
+            revokeMobileAccess(c);stopMobileItemWeb();auditSecurity(c,"MOBILE_ITEM_WEB_STOPPED",d.deviceId(),s.userId(),"Mobile item UI and API stopped; browser access revoked");return ApiResult.ok(mobileStatus(c,null,null));
+        }
+    }
+
+    private ApiResult mobileItemWebActivation(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());
+        SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){requireMobileQrAccess(c,s,d,context.exchange());if(mobileItemWebServer==null)throw new ApiException(409,"MOBILE_WEB_STOPPED","Ask a device manager at the server to start the mobile item web app first.",false);auditSecurity(c,"MOBILE_ITEM_WEB_QR_ISSUED",d.deviceId(),s.userId(),"Issued a one-time mobile item activation from an authorized register");return ApiResult.ok(createMobileActivation(c,s.userId()));}
+    }
+
+    private void requireMobileQrAccess(Connection c,SessionPrincipal s,DevicePrincipal d,HttpExchange exchange)throws Exception{
+        if(hasPermission(c,s.userId(),"NEW_ITEM"))return;
+        requireMobileControl(c,s,d,exchange);
+    }
+
+    private void requireMobileControl(Connection c,SessionPrincipal s,DevicePrincipal d,HttpExchange exchange)throws Exception{
+        requireAnyPermission(c,s.userId(),"DEVICE_MANAGEMENT");
+        if(DatabaseConfig.load().mode()!=DatabaseMode.SERVER||d.remoteAdmin()||!isLocalAddress(exchange.getRemoteAddress().getAddress()))throw new ApiException(403,"SERVER_CONSOLE_REQUIRED","The mobile item web app can be controlled only from the active store server.",false);
+        if(ServerRoleGuard.state()==ServerRoleGuard.State.RETIRED||ServerRoleGuard.state()==ServerRoleGuard.State.FENCED||ServerRoleGuard.state()==ServerRoleGuard.State.STANDBY)throw new ApiException(409,"SERVER_ROLE_INACTIVE",ServerRoleGuard.safeMessage(),false);
+    }
+    private static boolean isLocalAddress(java.net.InetAddress address)throws java.net.SocketException{
+        if(address==null||address.isLoopbackAddress())return true;
+        java.util.Enumeration<java.net.NetworkInterface> interfaces=java.net.NetworkInterface.getNetworkInterfaces();
+        while(interfaces.hasMoreElements()){java.util.Enumeration<java.net.InetAddress> addresses=interfaces.nextElement().getInetAddresses();while(addresses.hasMoreElements())if(address.equals(addresses.nextElement()))return true;}
+        return false;
+    }
+
+    private synchronized void startMobileItemWeb()throws Exception{if(mobileItemWebServer==null)mobileItemWebServer=MobileItemWebServer.start(tlsIdentity,this);}
+    private synchronized void stopMobileItemWeb(){if(mobileItemWebServer!=null){mobileItemWebServer.close();mobileItemWebServer=null;}}
+    private void restoreMobileItemWebIfEnabled(){try(Connection c=DB.getConnection()){LanApiSchemaInstaller.ensureSchema(c);try(PreparedStatement p=c.prepareStatement("SELECT enabled FROM mobile_item_web_runtime WHERE runtime_id=1");ResultSet r=p.executeQuery()){if(r.next()&&r.getBoolean(1))startMobileItemWeb();}}catch(Exception e){System.err.println("Mobile item web app could not be restored: "+e.getMessage());}}
+    private Map<String,Object> createMobileActivation(Connection c,int userId)throws Exception{
+        String token=LanSecurity.randomToken();Instant expires=Instant.now().plus(Duration.ofMinutes(10));UUID generation;
+        try(PreparedStatement p=c.prepareStatement("SELECT generation FROM mobile_item_web_runtime WHERE runtime_id=1 AND enabled=TRUE");ResultSet r=p.executeQuery()){if(!r.next())throw new ApiException(409,"MOBILE_WEB_STOPPED","Start the mobile item web app first.",false);generation=(UUID)r.getObject(1);}
+        try(PreparedStatement p=c.prepareStatement("UPDATE mobile_item_web_activations SET revoked_at=CURRENT_TIMESTAMP WHERE generation=? AND used_at IS NULL AND revoked_at IS NULL")){p.setObject(1,generation);p.executeUpdate();}
+        try(PreparedStatement p=c.prepareStatement("INSERT INTO mobile_item_web_activations(generation,token_hash,expires_at,created_by_user_id) VALUES(?,?,?,?)")){p.setObject(1,generation);p.setString(2,LanSecurity.sha256(token));p.setTimestamp(3,Timestamp.from(expires));p.setInt(4,userId);p.executeUpdate();}
+        String base=mobileItemWebServer.url();return mobileStatus(c,base+"?activate="+java.net.URLEncoder.encode(token,StandardCharsets.UTF_8),expires);
+    }
+    private Map<String,Object> mobileStatus(Connection c,String activation,Instant expires)throws Exception{
+        boolean enabled=false;try(PreparedStatement p=c.prepareStatement("SELECT enabled FROM mobile_item_web_runtime WHERE runtime_id=1");ResultSet r=p.executeQuery()){enabled=r.next()&&r.getBoolean(1);}
+        Map<String,Object> out=new LinkedHashMap<>();out.put("enabled",enabled);out.put("running",mobileItemWebServer!=null);out.put("uiRunning",mobileItemWebServer!=null);out.put("apiRunning",mobileItemWebServer!=null);out.put("uiPort",MobileItemWebServer.UI_PORT);out.put("apiPort",MobileItemWebServer.API_PORT);out.put("url",mobileItemWebServer==null?"":mobileItemWebServer.url());if(activation!=null){out.put("activationUrl",activation);out.put("activationExpiresAt",expires.toString());}return out;
+    }
+    private static void revokeMobileAccess(Connection c)throws SQLException{try(Statement s=c.createStatement()){s.executeUpdate("UPDATE mobile_item_web_activations SET revoked_at=CURRENT_TIMESTAMP WHERE revoked_at IS NULL");s.executeUpdate("UPDATE mobile_item_web_browsers SET revoked_at=CURRENT_TIMESTAMP WHERE revoked_at IS NULL");s.executeUpdate("UPDATE mobile_item_web_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE revoked_at IS NULL");}}
 
     private ApiResult runSync(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
@@ -3800,10 +3879,31 @@ public final class LanApiServer implements AutoCloseable {
 
     @Override
     public void close() {
+        stopMobileItemWeb();
         server.stop(2);
         if (discoveryService != null) discoveryService.close();
         executor.shutdownNow();
     }
+
+    MobileLogin authenticateMobileLogin(String identifier,String secret,int locationId)throws Exception{
+        if(locationId<=0)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);
+        if(identifier==null||identifier.isBlank())throw new ApiException(400,"LOGIN_REQUIRED","Login credentials are required.",false);
+        if(secret==null)secret="";
+        try(Connection c=DB.getConnection()){
+            LoginSecurityService.requireAllowed(c,identifier);ResolvedLoginUser resolved=resolveLoginUser(c,identifier,locationId);
+            if(resolved==null){LoginSecurityService.recordFailure(c,null,identifier,"Unknown mobile item web login identifier");throw new ApiException(401,"LOGIN_FAILED","The login was not accepted.",false);}
+            boolean badge=BadgeCredentialService.normalizeBadge(identifier).equals(BadgeCredentialService.normalizeBadge(resolved.badgeId()));String source;char[] entered=secret.toCharArray();
+            try{
+                if(badge){boolean pin=ServerCompanyCustomizationRepository.isBadgePinRequired(c,locationId);if(pin&&!LocalAuthCacheService.verifyEmployeePin(c,resolved.userId(),entered)){LoginSecurityService.recordFailure(c,null,identifier,"Mobile badge PIN failed");throw new ApiException(401,"LOGIN_FAILED","The login was not accepted.",false);}source=pin?"BADGE_PIN":"BADGE_ONLY";}
+                else{SupabasePasswordResult online=signInSupabasePassword(resolved.email(),secret);if(online.status()==SupabasePasswordStatus.SUCCESS){LocalAuthCacheService.savePasswordVerifier(c,resolved.cachedUser(),entered);source="SUPABASE_PASSWORD";}else if(LocalAuthCacheService.verifyEmployeePin(c,resolved.userId(),entered))source="EMPLOYEE_PIN";else if(online.status()==SupabasePasswordStatus.UNAVAILABLE&&LocalAuthCacheService.verify(c,identifier,entered,locationId)!=null)source="LOCAL_PASSWORD_CACHE";else{LoginSecurityService.recordFailure(c,null,identifier,"Mobile password or PIN failed");throw new ApiException(401,"LOGIN_FAILED","The login was not accepted.",false);}}
+            }finally{java.util.Arrays.fill(entered,'\0');}
+            LoginSecurityService.recordSuccess(c,identifier);return new MobileLogin(resolved.userId(),resolved.username(),resolved.fullName(),resolved.roleName(),resolved.locationId(),resolved.locationName(),source);
+        }
+    }
+    List<String> mobilePermissions(int userId)throws SQLException{try(Connection c=DB.getConnection()){return loadPermissions(c,userId);}}
+    String mobileDisplayName(Connection c,int userId,int locationId)throws Exception{return displayName(loadUser(c,userId,locationId));}
+    void requireMobileAny(int userId,String...keys)throws Exception{try(Connection c=DB.getConnection()){requireAnyPermission(c,userId,keys);}}
+    void requireMobileCustomPermission(int userId)throws Exception{requireMobileAny(userId,"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");}
 
     private interface Operation { ApiResult run(RequestContext context) throws Exception; }
     @FunctionalInterface private interface CashDrawerOperation { Map<String,Object> run(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u) throws Exception; }
@@ -3821,6 +3921,7 @@ public final class LanApiServer implements AutoCloseable {
     private record SessionPrincipal(UUID sessionId, int userId, int locationId, String plainToken) { }
     private record AuthenticatedUser(int userId, String username, String fullName, String email, String role,
                                      int locationId, String locationName, String locationTimezone) { }
+    record MobileLogin(int userId,String username,String fullName,String role,int locationId,String locationName,String source){}
     private enum SupabasePasswordStatus { SUCCESS, REJECTED, UNAVAILABLE }
     private record SupabasePasswordResult(SupabasePasswordStatus status, String accessToken,
                                           String refreshToken) { }

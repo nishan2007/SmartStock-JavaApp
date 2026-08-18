@@ -150,6 +150,7 @@ public final class CompanyBackupService {
     private static boolean isBackupTable(String tableName) {
         String lower = tableName == null ? "" : tableName.toLowerCase(Locale.ROOT);
         return !lower.startsWith("sync_")
+                && !lower.startsWith("mobile_item_web_")
                 && !lower.equals("app_releases")
                 && !lower.equals("spatial_ref_sys")
                 && !lower.equals("schema_migrations");

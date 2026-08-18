@@ -42,7 +42,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811220000_add_custom_variant_barcodes.sql",
             "database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql",
             "database/migrations/v1_after/20260811233000_add_store_transfer_uuid.sql",
-            "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql"
+            "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql",
+            "database/migrations/v1_after/20260818120000_mobile_item_web.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -88,6 +89,50 @@ public final class SchemaContractService {
         return validate(connection, "LOCAL", localContractResources(), List.of("public"), false);
     }
 
+    /** Safely advances an otherwise-valid local v1 schema to the mobile item web contract. */
+    public static void ensureMobileItemWebUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")
+                || tableExists(connection, "public", "mobile_item_web_runtime")) return;
+        String storedResource;
+        String storedCatalog;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256
+                FROM public.smartstock_schema_metadata
+                WHERE schema_scope='LOCAL' AND baseline_version=?
+                """)) {
+            ps.setInt(1, BASELINE_VERSION);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return;
+                storedResource = rs.getString(1);
+                storedCatalog = rs.getString(2);
+            }
+        }
+        if (!catalogFingerprint(connection, List.of("public"), false).equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic mobile item web installation is blocked.", "55000");
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260818120000_mobile_item_web.sql"));
+            String resource = resourceFingerprint(localContractResources());
+            String catalog = catalogFingerprint(connection, List.of("public"), false);
+            try (PreparedStatement update = connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?
+                    """)) {
+                update.setString(1, resource); update.setString(2, catalog);
+                update.setInt(3, BASELINE_VERSION); update.setString(4, storedResource);
+                if (update.executeUpdate() != 1) throw new SQLException("Local schema metadata changed during mobile web installation.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The mobile item web schema could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
     /** Blocks database-dependent work unless this database matches the packaged v1 baseline. */
     public static void requireLocalReady(Connection connection) throws SQLException {
         String key = connection.getMetaData().getURL() + "|" + connection.getMetaData().getUserName();
@@ -101,6 +146,7 @@ public final class SchemaContractService {
         upgradeQuotationCustomItems(connection);
         upgradeStoreTransferUuid(connection);
         upgradeCrossStoreTimeClockIdentity(connection);
+        ensureMobileItemWebUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);

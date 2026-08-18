@@ -23,6 +23,7 @@ import ui.screens.EnterInventory;
 import ui.screens.EmployeeManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.MainMenu;
+import ui.screens.MobileItemWebDialog;
 import ui.screens.MakeASale;
 import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
@@ -705,6 +706,7 @@ public class AppMenuBar {
         JMenuItem syncNowItem = new JMenuItem("Sync Now");
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
+        JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
         JMenuItem closeItem = new JMenuItem("Close");
         JMenuItem logoutItem = new JMenuItem("Logout");
@@ -744,6 +746,14 @@ public class AppMenuBar {
             }
         });
         remoteQueueItem.setVisible(DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN);
+        DatabaseMode mobileWebMode = DatabaseConfig.load().mode();
+        boolean canViewMobileWeb = PermissionManager.hasPermission("NEW_ITEM")
+                && mobileWebMode != DatabaseMode.REMOTE_ADMIN;
+        boolean canControlMobileWeb = mobileWebMode == DatabaseMode.SERVER
+                && PermissionManager.hasPermission("DEVICE_MANAGEMENT");
+        mobileItemWebItem.setVisible(canViewMobileWeb || canControlMobileWeb);
+        mobileItemWebItem.setEnabled(canViewMobileWeb || canControlMobileWeb);
+        mobileItemWebItem.addActionListener(e -> new MobileItemWebDialog(parent).setVisible(true));
         remoteQueueItem.addActionListener(e -> ui.helpers.UiTaskRunner.submit(parent, "remote-admin.commands",
                 LanApiClient::loadRemoteCommands, commands -> {
                     StringBuilder message = new StringBuilder("Recent changes for ")
@@ -778,6 +788,7 @@ public class AppMenuBar {
         statusMenu.add(syncNowItem);
         statusMenu.add(syncStatusItem);
         statusMenu.add(remoteQueueItem);
+        statusMenu.add(mobileItemWebItem);
         statusMenu.add(checkUpdatesItem);
 
         sessionMenu.add(changeStoreItem);

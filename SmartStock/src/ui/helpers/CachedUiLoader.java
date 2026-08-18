@@ -58,6 +58,23 @@ public final class CachedUiLoader {
                 () -> load(owner, jobKey, cacheKey, type, ttl, state, background, apply)));
     }
 
+    /** Uses a fresh cached value without starting another request; stale values remain cache-then-refresh. */
+    public static <T> void loadIfStale(Window owner, String jobKey, String cacheKey, Class<T> type, Duration ttl,
+                                       LoadingStatePanel state, Callable<T> background, Consumer<T> apply) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> loadIfStale(owner, jobKey, cacheKey, type, ttl, state, background, apply));
+            return;
+        }
+        Optional<SessionDataCache.CachedValue<T>> cached = SessionDataCache.get(cacheKey, type, ttl);
+        if (cached.isPresent() && cached.get().fresh()) {
+            PerformanceDiagnostics.cacheHit(cacheKey, true);
+            apply.accept(cached.get().value());
+            state.ready(cached.get().loadedAt());
+            return;
+        }
+        load(owner, jobKey, cacheKey, type, ttl, state, background, apply);
+    }
+
     /** Starts once the component belongs to a displayable window, keeping constructors I/O-free. */
     public static <T> void loadAfterDisplay(JComponent component, String key, Class<T> type, Duration ttl,
                                             LoadingStatePanel state, Callable<T> background,

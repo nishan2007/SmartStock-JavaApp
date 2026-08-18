@@ -235,6 +235,18 @@ class ResponsiveLoadingArchitectureTest {
     }
 
     @Test
+    void customOrderDependentSelectorsUseThePreloadedCatalogSnapshot() throws Exception {
+        String orders = Files.readString(SOURCE_ROOT.resolve("ui/screens/customorders/CustomOrders.java"));
+        String server = Files.readString(SOURCE_ROOT.resolve("services/LanApiServer.java"));
+
+        assertTrue(orders.contains("CustomOrderDataService::loadCatalogSnapshot"));
+        assertTrue(orders.contains("variantsByItem.containsKey"));
+        assertTrue(orders.contains("presetsByMaterial.containsKey"));
+        assertTrue(orders.contains("custom-orders.prefetch-addon"));
+        assertTrue(server.contains("case \"BOOTSTRAP\""));
+    }
+
+    @Test
     void macReleaseArchiveExcludesMetadataThatBreaksUpdateSignatures() throws Exception {
         String packaging = Files.readString(Path.of("tools/package-macos-release.sh"));
         assertTrue(packaging.contains("ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl"));

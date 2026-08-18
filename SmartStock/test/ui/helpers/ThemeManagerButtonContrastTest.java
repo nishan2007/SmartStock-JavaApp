@@ -3,12 +3,29 @@ package ui.helpers;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
 import java.awt.Color;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ThemeManagerButtonContrastTest {
+    @Test
+    void preserveThemeColorsKeepsAnOwnedPaletteForTheWholeSubtree() {
+        JPanel panel = new JPanel();
+        panel.setBackground(new Color(13, 17, 23));
+        panel.putClientProperty("SmartStock.preserveThemeColors", Boolean.TRUE);
+        JLabel label = new JLabel("Order Total");
+        label.setForeground(new Color(238, 242, 247));
+        panel.add(label);
+
+        ThemeManager.applyToComponent(panel);
+
+        assertEquals(new Color(13, 17, 23), panel.getBackground());
+        assertEquals(new Color(238, 242, 247), label.getForeground());
+    }
+
     @Test
     void repairsWhiteTextOnWhiteButton() {
         JButton button = new JButton("Save");

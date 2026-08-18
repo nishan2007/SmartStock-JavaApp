@@ -98,6 +98,7 @@ public final class ServerCustomOrderDataService {
         return variants;
     }
 
+
     public static List<PrintMaterialOption> listActivePrintMaterials() throws SQLException {
         try (Connection conn = DB.getConnection()) {
             return listActivePrintMaterials(conn);
@@ -153,6 +154,7 @@ public final class ServerCustomOrderDataService {
         }
         return presets;
     }
+
 
     public static List<String> listActiveDesignPlacements() throws SQLException {
         try (Connection conn = DB.getConnection()) {
