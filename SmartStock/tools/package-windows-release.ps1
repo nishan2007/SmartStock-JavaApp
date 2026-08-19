@@ -123,9 +123,29 @@ try {
         "@echo off",
         'start "" "%~dp0SmartStock.exe" --setup-wizard'
     )
+    # The in-app updater installs only the application JAR and dependency
+    # directory. Keep both at the archive root; a ZIP of the complete jpackage
+    # image nests them under SmartStock\app and cannot be applied by the
+    # currently installed updater.
     $Zip = Join-Path $Release "smartstock-windows-$Version.zip"
     if (Test-Path $Zip) { Remove-Item -LiteralPath $Zip -Force }
-    Compress-Archive -Path $AppImage -DestinationPath $Zip -CompressionLevel Optimal
+    Compress-Archive -Path (Join-Path $InputDir "*") -DestinationPath $Zip -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead($Zip)
+    try {
+        $ArchiveNames = @($Archive.Entries | ForEach-Object FullName)
+        if ($ArchiveNames -notcontains $Jar.Name) {
+            throw "The Windows updater archive does not contain $($Jar.Name) at its root."
+        }
+        if (-not ($ArchiveNames | Where-Object { $_ -like "dependency/*.jar" })) {
+            throw "The Windows updater archive does not contain root-level dependencies."
+        }
+        if ($ArchiveNames | Where-Object { $_ -like "SmartStock/*" }) {
+            throw "The Windows updater archive contains an incompatible nested SmartStock app image."
+        }
+    } finally {
+        $Archive.Dispose()
+    }
     $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash.ToLowerInvariant()
     Write-Host "Release artifact: $Zip"
     Write-Host "Version: $Version"
