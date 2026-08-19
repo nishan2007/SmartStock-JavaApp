@@ -189,7 +189,9 @@ public final class ServerCustomOrderDataService {
         List<CustomerOption> customers = new ArrayList<>();
         String searchText = search == null ? "" : search;
         String sql = """
-                SELECT customer_id, name, phone, COALESCE(account_number,''), COALESCE(email,'')
+                SELECT customer_id, name, phone,
+                       COALESCE(account_number,'') AS account_number,
+                       COALESCE(email,'') AS email
                 FROM customer_accounts
                 WHERE is_active = TRUE
                   AND (? = '' OR name ILIKE ? OR COALESCE(phone, '') ILIKE ? OR COALESCE(email,'') ILIKE ? OR COALESCE(account_number,'') ILIKE ?)

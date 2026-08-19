@@ -15,6 +15,10 @@ class CustomOrderCustomerSearchArchitectureTest {
         assertTrue(service.contains("COALESCE(phone, '') ILIKE ?"));
         assertTrue(service.contains("COALESCE(email,'') ILIKE ?"));
         assertTrue(service.contains("COALESCE(account_number,'') ILIKE ?"));
+        assertTrue(service.contains("COALESCE(account_number,'') AS account_number"),
+                "The computed account number must retain the ResultSet label used by the mapper");
+        assertTrue(service.contains("COALESCE(email,'') AS email"),
+                "The computed email must retain the ResultSet label used by the mapper");
         String panel=read("src/ui/screens/customorders/CustomerInfoPanel.java");
         assertTrue(panel.contains("Search Customer:"));
         assertTrue(panel.contains("Account #:"));

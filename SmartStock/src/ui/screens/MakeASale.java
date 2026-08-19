@@ -113,6 +113,7 @@ public class MakeASale extends JFrame {
     private long productSearchGeneration;
     private long identifierLookupGeneration;
     private String searchResultsQuery = "";
+    private boolean productSearchSelectionNavigated;
     private boolean resettingProductSearch;
     private int cachedProductLocationId = -1;
     private boolean suppressDiscountFieldEvents = false;
@@ -521,6 +522,7 @@ public class MakeASale extends JFrame {
                    if (nextRow >= 0) {
                        searchResultsTable.setRowSelectionInterval(nextRow, nextRow);
                        searchResultsTable.scrollRectToVisible(searchResultsTable.getCellRect(nextRow, 0, true));
+                       productSearchSelectionNavigated = true;
                    }
                    e.consume();
                } else if (e.getKeyCode() == java.awt.event.KeyEvent.VK_UP) {
@@ -528,7 +530,13 @@ public class MakeASale extends JFrame {
                    if (nextRow >= 0) {
                        searchResultsTable.setRowSelectionInterval(nextRow, nextRow);
                        searchResultsTable.scrollRectToVisible(searchResultsTable.getCellRect(nextRow, 0, true));
+                       productSearchSelectionNavigated = true;
                    }
+                   e.consume();
+               } else if (e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER
+                       && productSearchSelectionNavigated
+                       && searchResultsTable.getSelectedRow() >= 0) {
+                   addSelectedSearchResultToCart();
                    e.consume();
                } else if (e.getKeyCode() == java.awt.event.KeyEvent.VK_ESCAPE) {
                    closeSearchPopup();
@@ -1678,6 +1686,7 @@ public class MakeASale extends JFrame {
             model.addRow(row);
         }
         searchResultsQuery = searchText == null ? "" : searchText.trim();
+        productSearchSelectionNavigated = false;
 
         if (searchResultsTable.getRowCount() > 0) {
             searchResultsTable.setRowSelectionInterval(0, 0);
@@ -1798,6 +1807,7 @@ public class MakeASale extends JFrame {
             ((DefaultTableModel) searchResultsTable.getModel()).setRowCount(0);
         }
         searchResultsQuery = "";
+        productSearchSelectionNavigated = false;
         SwingUtilities.invokeLater(searchField::requestFocusInWindow);
     }
 

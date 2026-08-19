@@ -29,4 +29,14 @@ class MakeASaleItemSearchResetTest {
         assertTrue(source.contains("addCatalogProductToCart(lookup.products().get(0), 1);"));
         assertTrue(source.contains("\"AMBIGUOUS\".equals(lookup.status())"));
     }
+
+    @Test void enterAcceptsTheRowChosenWithArrowKeys() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
+
+        assertTrue(source.contains("productSearchSelectionNavigated = true;"));
+        assertTrue(source.contains("e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER"));
+        assertTrue(source.contains("&& productSearchSelectionNavigated"));
+        assertTrue(source.contains("addSelectedSearchResultToCart();"));
+        assertTrue(source.contains("productSearchSelectionNavigated = false;"));
+    }
 }
