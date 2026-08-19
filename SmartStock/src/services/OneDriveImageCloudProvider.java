@@ -31,13 +31,15 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     private volatile Token cachedToken;
     private volatile AppRoot cachedRoot;
 
+    void reset(){cachedToken=null;cachedRoot=null;}
+
     @Override public String name(){return "ONEDRIVE";}
     @Override public boolean configured(){return OneDriveImageStorageConfig.load().configured();}
 
     @Override public RemoteObject upload(UUID id,String category,String sourcePath,String contentType,byte[] bytes)throws Exception{
         if(bytes==null||bytes.length==0)throw new IOException("The OneDrive upload is empty.");
         AppRoot root=appRoot(); String path=remotePath(id,category,sourcePath);
-        HttpRequest request=authorized(graphUser()+"/drive/items/"+encode(root.itemId())+":/"+encodePath(path)+":/content")
+        HttpRequest request=authorized(graphDrive()+"/items/"+encode(root.itemId())+":/"+encodePath(path)+":/content")
                 .timeout(Duration.ofSeconds(90)).header("Content-Type",contentType).PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build();
         HttpResponse<String> response=send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"upload");
         JsonObject row=JsonParser.parseString(response.body()).getAsJsonObject();
@@ -47,8 +49,8 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     }
 
     @Override public byte[] download(UUID id,String category,String sourcePath,String remoteItemId,String remotePath)throws Exception{
-        String endpoint=!blank(remoteItemId)?graphUser()+"/drive/items/"+encode(remoteItemId)+"/content"
-                :graphUser()+"/drive/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath))+":/content";
+        String endpoint=!blank(remoteItemId)?graphDrive()+"/items/"+encode(remoteItemId)+"/content"
+                :graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath))+":/content";
         HttpResponse<byte[]> response=sendAllowNotFound(authorized(endpoint).timeout(Duration.ofSeconds(90)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray(),"download");
         if(response.statusCode()==404)return null;
@@ -57,8 +59,8 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     }
 
     @Override public void delete(UUID id,String category,String sourcePath,String remoteItemId,String remotePath)throws Exception{
-        String endpoint=!blank(remoteItemId)?graphUser()+"/drive/items/"+encode(remoteItemId)
-                :graphUser()+"/drive/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath));
+        String endpoint=!blank(remoteItemId)?graphDrive()+"/items/"+encode(remoteItemId)
+                :graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath));
         HttpResponse<String> response=sendAllowNotFound(authorized(endpoint).timeout(Duration.ofSeconds(60)).DELETE().build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"delete");
         if(response.statusCode()!=404)require(response.statusCode(),response.body(),"delete");
@@ -83,13 +85,13 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     private String path(UUID id,String category,String sourcePath,String remotePath){return blank(remotePath)?remotePath(id,category,sourcePath):remotePath;}
     private AppRoot appRoot()throws Exception{
         AppRoot root=cachedRoot;if(root!=null)return root;
-        HttpResponse<String> response=send(authorized(graphUser()+"/drive/special/approot").GET().build(),
+        HttpResponse<String> response=send(authorized(graphDrive()+"/special/approot").GET().build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"resolve application folder");
         JsonObject row=JsonParser.parseString(response.body()).getAsJsonObject();
         JsonObject parent=row.getAsJsonObject("parentReference");
         root=new AppRoot(text(parent,"driveId"),text(row,"id"));cachedRoot=root;return root;
     }
-    private String graphUser(){return GRAPH+"/users/"+encode(OneDriveImageStorageConfig.load().userId());}
+    private String graphDrive(){return GRAPH+"/drives/"+encode(OneDriveImageStorageConfig.load().driveId());}
     private HttpRequest.Builder authorized(String url)throws Exception{return HttpRequest.newBuilder(URI.create(url)).header("Authorization","Bearer "+token());}
     private String token()throws Exception{
         Token token=cachedToken;if(token!=null&&token.expiresAt().isAfter(Instant.now().plusSeconds(60)))return token.value();

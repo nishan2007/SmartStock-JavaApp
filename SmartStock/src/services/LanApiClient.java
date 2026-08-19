@@ -899,6 +899,7 @@ public final class LanApiClient {
     public static void beginOneDriveImageMigration()throws Exception{post("/v1/images/onedrive/begin",new JsonObject(),true,true);}
     public static void activateOneDriveImages()throws Exception{post("/v1/images/onedrive/activate",new JsonObject(),true,true);}
     public static void rollbackOneDriveImages()throws Exception{post("/v1/images/onedrive/rollback",new JsonObject(),true,true);}
+    public static void configureOneDriveImages(String tenantId,String clientId,String driveId,String certificatePem,String privateKeyPem)throws Exception{JsonObject r=new JsonObject();r.addProperty("tenantId",tenantId);r.addProperty("clientId",clientId);r.addProperty("driveId",driveId);r.addProperty("certificatePem",certificatePem);r.addProperty("privateKeyPem",privateKeyPem);post("/v1/images/onedrive/configure",r,true,true);}
     public static JsonObject companyCustomizationSave(String action,JsonElement settings,Integer locationId,String key)throws Exception{
         requireIdempotencyKey(key,"Configuration idempotency key is required.");JsonObject r=new JsonObject();r.addProperty("action",action);
         if(settings!=null)r.add("settings",settings);if(locationId!=null)r.addProperty("locationId",locationId);

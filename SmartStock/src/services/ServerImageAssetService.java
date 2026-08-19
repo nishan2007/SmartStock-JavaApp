@@ -771,6 +771,12 @@ public final class ServerImageAssetService {
         catch(Exception ex){putSyncState(conn,ONEDRIVE_READINESS_STATE,"FAILED");throw ex;}
     }
 
+    public static void configureOneDrive(String tenantId,String clientId,String driveId,
+                                         String certificatePem,String privateKeyPem)throws Exception{
+        OneDriveImageStorageConfig.save(tenantId,clientId,driveId,certificatePem,privateKeyPem);
+        ONEDRIVE.reset();
+    }
+
     private static void setPhase(Connection conn,OneDrivePhase phase)throws SQLException{
         putSyncState(conn,ONEDRIVE_PHASE_STATE,phase.name());
     }

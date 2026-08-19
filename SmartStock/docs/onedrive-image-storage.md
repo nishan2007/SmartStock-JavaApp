@@ -4,7 +4,7 @@ SmartStock keeps product and custom-item images in the store server's local imag
 
 ## Microsoft 365 preparation
 
-1. Provision a dedicated licensed Microsoft 365 business user and open OneDrive once so its drive exists.
+1. Provision a dedicated licensed Microsoft 365 business user and open OneDrive once so its drive exists. Record that OneDrive's Graph drive ID.
 2. Register a single-tenant Entra application.
 3. Grant and admin-consent the Microsoft Graph application permission `Files.ReadWrite.AppFolder`.
 4. Create an RSA certificate credential. Keep the private key in unencrypted PKCS#8 PEM form only long enough to load it into the SmartStock server's secure credential store; protect and then remove the staging file.
@@ -16,7 +16,7 @@ Run these commands only on the SmartStock server, with its normal server profile
 ```sh
 mvn -q -f SmartStock/pom.xml exec:java \
   -Dexec.mainClass=services.ServerImageAssetMaintenance \
-  -Dexec.args="configure TENANT_ID CLIENT_ID USER_UPN /secure/app-cert.pem /secure/app-key-pkcs8.pem"
+  -Dexec.args="configure TENANT_ID CLIENT_ID DRIVE_ID /secure/app-cert.pem /secure/app-key-pkcs8.pem"
 
 mvn -q -f SmartStock/pom.xml exec:java \
   -Dexec.mainClass=services.ServerImageAssetMaintenance -Dexec.args="probe"
@@ -39,4 +39,6 @@ Use `rollback` to return scoped image reads and writes to Supabase during the re
 
 After that acceptance, remove rollback copies individually with `cleanup-supabase <asset-uuid> I_HAVE_VERIFIED_ALL_STORES`. The command is deliberately per asset, works only in the active OneDrive phase, and reverifies the OneDrive SHA-256 before deleting the Supabase object. There is no automatic bulk deletion.
 
-The configuration command stores the tenant, client, user, certificate, and private key through `SecureCredentialStore`. Do not put these values in repository configuration, register installations, scripts, or support bundles.
+The installed server app can configure the same values under **Company Preferences → Image Storage → Set Up OneDrive**. This control is available only when SmartStock is running in server mode, and the LAN API rejects credential configuration from a remote register.
+
+The configuration command stores the tenant, client, drive ID, certificate, and private key through `SecureCredentialStore`. Do not put these values in repository configuration, register installations, scripts, or support bundles.

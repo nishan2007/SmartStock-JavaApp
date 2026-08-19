@@ -306,6 +306,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/images/onedrive/begin", exchange -> handle(exchange, c -> oneDriveImageAction(c,"BEGIN")));
         server.createContext("/v1/images/onedrive/activate", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ACTIVATE")));
         server.createContext("/v1/images/onedrive/rollback", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ROLLBACK")));
+        server.createContext("/v1/images/onedrive/configure", exchange -> handle(exchange, this::configureOneDriveImages));
         server.createContext("/v1/accounting/balance-sheet/read", exchange -> handle(exchange, this::balanceSheetRead));
         server.createContext("/v1/accounting/balance-sheet/update", exchange -> handle(exchange, this::balanceSheetMutation));
         server.createContext("/v1/email/queue", exchange -> handle(exchange, this::queueEmail));
@@ -546,6 +547,22 @@ public final class LanApiServer implements AutoCloseable {
                 default->throw new IllegalArgumentException("Unknown OneDrive image action.");
             }
             return ApiResult.ok(Map.of("updated",true,"phase",ServerImageAssetService.phase(connection).name()));
+        }
+    }
+
+    private ApiResult configureOneDriveImages(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        if(context.exchange().getRemoteAddress()==null||context.exchange().getRemoteAddress().getAddress()==null
+                ||!context.exchange().getRemoteAddress().getAddress().isLoopbackAddress())
+            throw new ApiException(403,"SERVER_LOCAL_REQUIRED","OneDrive credentials can be configured only from Company Preferences on the store server computer.",false);
+        try(Connection connection=DB.getConnection()){
+            requireAnyPermission(connection,session.userId(),"COMPANY_PREFERENCES","COMPANY_CUSTOMIZATION");
+            ServerImageAssetService.configureOneDrive(required(context.body(),"tenantId",200),
+                    required(context.body(),"clientId",200),required(context.body(),"driveId",500),
+                    required(context.body(),"certificatePem",20000),required(context.body(),"privateKeyPem",30000));
+            ImageCloudProvider.ProbeResult probe=ServerImageAssetService.probeOneDrive(connection);
+            return ApiResult.ok(Map.of("configured",true,"ready",probe.ready(),"message",probe.message()));
         }
     }
 

@@ -19,7 +19,7 @@ public final class ServerImageAssetMaintenance {
         }
         String command=args.length==0?"sync":args[0].trim().toLowerCase();
         if("configure".equals(command)){
-            if(args.length!=6)throw new IllegalArgumentException("Usage: configure <tenant-id> <client-id> <user-id-or-upn> <certificate-pem> <private-key-pem>");
+            if(args.length!=6)throw new IllegalArgumentException("Usage: configure <tenant-id> <client-id> <drive-id> <certificate-pem> <private-key-pem>");
             OneDriveImageStorageConfig.save(args[1],args[2],args[3],Files.readString(Path.of(args[4])),Files.readString(Path.of(args[5])));
             System.out.println("OneDrive image credentials saved in "+utils.SecureCredentialStore.backendLabel()+".");return;
         }

@@ -12,6 +12,8 @@ import java.awt.image.BufferedImage;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /** Company Preferences administrator surface for the server image manifest. */
 public final class ImageStoragePanel extends JPanel {
@@ -41,9 +43,10 @@ public final class ImageStoragePanel extends JPanel {
         JButton beginMigration = new JButton("Begin OneDrive Copy");
         JButton activateOneDrive = new JButton("Activate OneDrive");
         JButton rollback = new JButton("Rollback to Supabase");
+        JButton setupOneDrive = new JButton("Set Up OneDrive");
         actions.add(refresh);
         actions.add(reconcile);
-        actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
+        actions.add(setupOneDrive);actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
         actions.add(keepButton);
         actions.add(purgeButton);
         heading.add(actions, BorderLayout.EAST);
@@ -70,6 +73,9 @@ public final class ImageStoragePanel extends JPanel {
         beginMigration.addActionListener(event->runAction("Starting verified OneDrive copy...",()->{LanApiClient.beginOneDriveImageMigration();return null;},this::load));
         activateOneDrive.addActionListener(event->runAction("Activating OneDrive...",()->{LanApiClient.activateOneDriveImages();return null;},this::load));
         rollback.addActionListener(event->runAction("Rolling product images back to Supabase...",()->{LanApiClient.rollbackOneDriveImages();return null;},this::load));
+        setupOneDrive.addActionListener(event->setupOneDrive());
+        setupOneDrive.setEnabled(data.DatabaseConfig.load().mode()==data.DatabaseMode.SERVER);
+        setupOneDrive.setToolTipText(setupOneDrive.isEnabled()?"Import the server-only Microsoft certificate and test the Graph connection.":"Open Company Preferences on the store server computer to configure credentials.");
         keepButton.addActionListener(event -> {
             String id = selectedId();
             if (id != null) runAction("Keeping image...", () -> {
@@ -173,6 +179,34 @@ public final class ImageStoragePanel extends JPanel {
             return null;
         }, this::load);
     }
+
+    private void setupOneDrive(){
+        JTextField tenant=new JTextField(),client=new JTextField(),drive=new JTextField();
+        JTextField certificate=new JTextField();certificate.setEditable(false);
+        JTextField privateKey=new JTextField();privateKey.setEditable(false);
+        JButton chooseCertificate=new JButton("Choose Certificate...");
+        JButton choosePrivateKey=new JButton("Choose Private Key...");
+        final Path[] certificatePath={null},privateKeyPath={null};
+        chooseCertificate.addActionListener(e->{Path p=choosePem("Select the public certificate PEM");if(p!=null){certificatePath[0]=p;certificate.setText(p.getFileName().toString());}});
+        choosePrivateKey.addActionListener(e->{Path p=choosePem("Select the PKCS#8 private key PEM");if(p!=null){privateKeyPath[0]=p;privateKey.setText(p.getFileName().toString());}});
+        JPanel form=new JPanel(new GridLayout(0,2,8,8));
+        form.add(new JLabel("Microsoft tenant ID"));form.add(tenant);
+        form.add(new JLabel("Entra application/client ID"));form.add(client);
+        form.add(new JLabel("OneDrive drive ID"));form.add(drive);
+        form.add(chooseCertificate);form.add(certificate);
+        form.add(choosePrivateKey);form.add(privateKey);
+        JPanel wrapper=new JPanel(new BorderLayout(8,8));
+        wrapper.add(new JLabel("<html>Configure this only on the store server. The Entra app needs the Microsoft Graph<br><b>application</b> permission Files.ReadWrite.AppFolder with administrator consent.</html>"),BorderLayout.NORTH);
+        wrapper.add(form,BorderLayout.CENTER);
+        if(JOptionPane.showConfirmDialog(this,wrapper,"Set Up OneDrive Image Storage",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+        if(certificatePath[0]==null||privateKeyPath[0]==null){showError(new IllegalArgumentException("Select both the public certificate and PKCS#8 private key PEM files."));return;}
+        runAction("Saving credentials and testing OneDrive...",()->{
+            LanApiClient.configureOneDriveImages(tenant.getText().trim(),client.getText().trim(),drive.getText().trim(),
+                    Files.readString(certificatePath[0]),Files.readString(privateKeyPath[0]));return null;
+        },()->{JOptionPane.showMessageDialog(this,"OneDrive connection verified. You can now begin the copy.","OneDrive Image Storage",JOptionPane.INFORMATION_MESSAGE);load();});
+    }
+
+    private Path choosePem(String title){JFileChooser chooser=new JFileChooser();chooser.setDialogTitle(title);return chooser.showOpenDialog(this)==JFileChooser.APPROVE_OPTION?chooser.getSelectedFile().toPath():null;}
 
     private <T> void runAction(String message, java.util.concurrent.Callable<T> action, Runnable success) {
         setBusy(true, message);
