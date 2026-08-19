@@ -58,7 +58,6 @@ public final class CashDrawerService {
                 JOIN cash_drawers cd ON cd.cash_drawer_id = cdda.cash_drawer_id
                 LEFT JOIN cash_drawer_sessions cds ON cds.cash_drawer_id = cd.cash_drawer_id
                     AND cds.location_id = cdda.location_id
-                    AND cds.device_id = cdda.device_id
                     AND cds.status = 'OPEN'
                 WHERE cdda.location_id = ?
                   AND cdda.device_id = ?::uuid
@@ -337,10 +336,16 @@ public final class CashDrawerService {
         ensureSchema(conn);
         String sql = """
                 SELECT cds.*
-                FROM cash_drawer_sessions cds
-                WHERE cds.location_id = ?
-                  AND cds.device_id = ?::uuid
-                  AND cds.status = 'OPEN'
+                FROM cash_drawer_device_assignments cdda
+                JOIN cash_drawers cd ON cd.cash_drawer_id = cdda.cash_drawer_id
+                    AND cd.location_id = cdda.location_id
+                    AND cd.is_active = TRUE
+                JOIN cash_drawer_sessions cds ON cds.cash_drawer_id = cd.cash_drawer_id
+                    AND cds.location_id = cdda.location_id
+                    AND cds.status = 'OPEN'
+                WHERE cdda.location_id = ?
+                  AND cdda.device_id = ?::uuid
+                  AND cdda.is_active = TRUE
                 ORDER BY cds.opened_at DESC
                 LIMIT 1
                 """;
@@ -383,6 +388,15 @@ public final class CashDrawerService {
             }
         }
 
+        lockDrawer(conn,drawer.cashDrawerId());
+        drawer=resolveDrawerForDevice(conn,locationId,deviceId);
+        if (drawer.hasActiveSession()) {
+            CashDrawerSession existing=getActiveSessionForDevice(conn,locationId,deviceId);
+            if (existing!=null) {
+                return existing;
+            }
+        }
+
         String sql = """
                 INSERT INTO cash_drawer_sessions (
                     cash_drawer_id, location_id, device_id, drawer_name, device_name,
@@ -419,6 +433,15 @@ public final class CashDrawerService {
             }
         }
         throw new SQLException("Failed to start draw session.");
+    }
+
+    private static void lockDrawer(Connection conn,long drawerId)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement("SELECT cash_drawer_id FROM cash_drawers WHERE cash_drawer_id=? FOR UPDATE")){
+            ps.setLong(1,drawerId);
+            try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())throw new SQLException("The assigned cash drawer was not found.");
+            }
+        }
     }
 
     public static CashDrawerHandover recordHandover(Connection conn, long sessionId, BigDecimal countedCash, String notes) throws SQLException {

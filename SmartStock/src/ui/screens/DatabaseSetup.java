@@ -544,6 +544,30 @@ public class DatabaseSetup extends JFrame {
     }
 
     private void assignStore(ServerStoreSetupService.Store store, Runnable onReady) {
+        DatabaseConfig current=DatabaseConfig.load();
+        if(selectedMode()==DatabaseMode.SERVER&&current.locationId()!=null
+                &&current.locationId()!=store.locationId()){
+            try{
+                services.ServerStoreSwitchService.Preflight preflight=
+                        services.ServerStoreSwitchService.preflight(
+                                current.locationId(),store.locationId());
+                if(!preflight.ready()){
+                    JOptionPane.showMessageDialog(this,preflight.blockerMessage(),
+                            "Store Switch Blocked",JOptionPane.WARNING_MESSAGE);return;
+                }
+                int confirm=JOptionPane.showConfirmDialog(this,
+                        "Switch this server to "+store.name()+"?\n\n"
+                                +preflight.registerCount()+" paired register(s) will switch automatically.\n"
+                                +"Current sessions will end and old drawer assignments will be removed.",
+                        "Confirm Server Store Switch",JOptionPane.YES_NO_OPTION,JOptionPane.WARNING_MESSAGE);
+                if(confirm!=JOptionPane.YES_OPTION)return;
+                services.ServerStoreSwitchService.switchServerStore(
+                        current.locationId(),store.locationId());
+            }catch(Exception ex){
+                JOptionPane.showMessageDialog(this,rootCauseMessage(ex),
+                        "Store Switch",JOptionPane.ERROR_MESSAGE);return;
+            }
+        }
         locationIdField.setText(String.valueOf(store.locationId()));
         if (saveConfigWithLocation(store.locationId())) {
             statusLabel.setText("Status: Assigned to " + store.name()

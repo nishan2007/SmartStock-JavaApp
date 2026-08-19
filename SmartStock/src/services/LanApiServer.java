@@ -1095,15 +1095,20 @@ public final class LanApiServer implements AutoCloseable {
                     ELSE device_name END,
                   hostname=?,os_name=?,os_version=?,os_arch=?,java_version=?,app_version=?,
                   local_username=?,mac_addresses=?,last_seen=CURRENT_TIMESTAMP
-                WHERE device_id=?
+                WHERE device_id=? RETURNING last_store_id
                 """)){
             ps.setString(1,localUsername);ps.setString(2,reportedName);ps.setString(3,hostname);
             ps.setString(4,osName);ps.setString(5,osVersion);ps.setString(6,osArch);
             ps.setString(7,javaVersion);ps.setString(8,appVersion);ps.setString(9,localUsername);
             ps.setString(10,macAddresses);ps.setObject(11,device.deviceId());
-            if(ps.executeUpdate()!=1)throw new ApiException(404,"DEVICE_NOT_FOUND","This device is no longer enrolled.",false);
+            try(ResultSet rows=ps.executeQuery()){
+                if(!rows.next())throw new ApiException(404,"DEVICE_NOT_FOUND","This device is no longer enrolled.",false);
+                Integer locationId=(Integer)rows.getObject(1);
+                Map<String,Object> response=new LinkedHashMap<>();
+                response.put("updated",true);response.put("locationId",locationId);
+                return ApiResult.ok(response);
+            }
         }
-        return ApiResult.ok(Map.of("updated",true));
     }
 
     private ApiResult rotate(RequestContext context) throws Exception {
@@ -2153,7 +2158,19 @@ public final class LanApiServer implements AutoCloseable {
             requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
             AuthenticatedUser user=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,user);ServerCustomOrderDataService.OrderSaveRequest supplied=GSON.fromJson(x.body(),ServerCustomOrderDataService.OrderSaveRequest.class);
             String number=ServerCustomOrderDataService.saveCustomOrder(c,trustedCustomOrderRequest(c,d,s,user,supplied));Map<String,Object>result=Map.of("orderNumber",number);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
-        }catch(ApiException e){c.rollback();throw e;}catch(SQLException e){c.rollback();throw new ApiException(409,"CUSTOM_ORDER_REJECTED","The custom order could not be created. Review the order and try again.",false);}catch(Exception e){c.rollback();throw e;}finally{ServerRequestIdentity.clear();c.setAutoCommit(true);}}}
+        }catch(ApiException e){c.rollback();throw e;}catch(SQLException e){c.rollback();throw customOrderSqlException(e);}catch(Exception e){c.rollback();throw e;}finally{ServerRequestIdentity.clear();c.setAutoCommit(true);}}}
+    private ApiException customOrderSqlException(SQLException failure) {
+        String message=failure.getMessage()==null?"":failure.getMessage().trim();
+        if(message.startsWith("This device is not assigned to an active cash drawer")
+                ||message.startsWith("No active draw session is open for")) {
+            return new ApiException(409,"CUSTOM_ORDER_CASH_DRAWER_REQUIRED",message,false);
+        }
+        if(message.startsWith("This device is not allowed to create orders")
+                ||message.startsWith("No active device record found for this workstation")) {
+            return new ApiException(409,"CUSTOM_ORDER_DEVICE_NOT_ALLOWED",message,false);
+        }
+        return new ApiException(409,"CUSTOM_ORDER_REJECTED","The custom order could not be created. Review the order and try again.",false);
+    }
     private ServerCustomOrderDataService.OrderSaveRequest trustedCustomOrderRequest(
             Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser user,
             ServerCustomOrderDataService.OrderSaveRequest request)throws Exception {

@@ -77,9 +77,6 @@ public class CustomOrderSlipFormatter {
         if (!clean(data.orderNotes()).isBlank()) {
             appendWrapped(builder, "Notes: " + clean(data.orderNotes()), RECEIPT_WIDTH);
         }
-        for (int i = 0; i < slipSettings.blankDetailLines(); i++) {
-            builder.append(repeat("_", RECEIPT_WIDTH)).append('\n');
-        }
         appendRule(builder);
 
         if (slipSettings.showTakenBy()) {

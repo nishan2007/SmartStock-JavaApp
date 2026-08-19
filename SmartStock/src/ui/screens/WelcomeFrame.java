@@ -849,6 +849,7 @@ public class WelcomeFrame extends JFrame {
         }
         try {
             LanApiClient.checkHealth();
+            if (LanApiClient.isPaired()) LanApiClient.syncDeviceMetadata();
             return "Online";
         } catch (Exception ex) {
             return "Offline - " + getRootCauseMessage(ex);

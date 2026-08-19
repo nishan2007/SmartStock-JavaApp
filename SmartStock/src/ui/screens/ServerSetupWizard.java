@@ -638,6 +638,22 @@ public final class ServerSetupWizard extends JFrame {
                 selected = ServerStoreSetupService.restoreFromCloud(selected);
             }
             DatabaseConfig current = DatabaseConfig.load();
+            services.ServerStoreSwitchService.Preflight switchPreflight=null;
+            if(current.locationId()!=null&&current.locationId()!=selected.locationId()){
+                try(java.sql.Connection connection=data.DB.getConnection()){
+                    switchPreflight=services.ServerStoreSwitchService.preflight(
+                            connection,current.locationId(),selected.locationId());
+                }
+                if(!switchPreflight.ready())throw new IllegalStateException(switchPreflight.blockerMessage());
+                int confirm=JOptionPane.showConfirmDialog(this,
+                        "Switch this server from store "+current.locationId()+" to "
+                                +selected.name()+"?\n\n"
+                                +switchPreflight.registerCount()+" paired register(s) will switch automatically.\n"
+                                +"Their current employee sessions will end and old cash-drawer assignments will be removed.\n"
+                                +"Assign each register to a cash drawer at the new store before taking cash.",
+                        "Confirm Server Store Switch",JOptionPane.YES_NO_OPTION,JOptionPane.WARNING_MESSAGE);
+                if(confirm!=JOptionPane.YES_OPTION)return;
+            }
             DatabaseConfig selectedConfig = new DatabaseConfig(DatabaseMode.SERVER, current.jdbcUrl(),
                     current.dbUser(), current.dbPassword(), current.serverHost(), current.serverPort(),
                     selected.locationId(), current.syncIntervalSeconds());
@@ -678,9 +694,16 @@ public final class ServerSetupWizard extends JFrame {
                 try (java.sql.Connection connection = data.DB.getConnection()) {
                     connection.setAutoCommit(false);
                     try {
+                        int moved=0;
+                        if(current.locationId()!=null&&current.locationId()!=selected.locationId()){
+                            moved=services.ServerStoreSwitchService.switchPairedRegisters(
+                                    connection,current.locationId(),selected.locationId());
+                        }
                         services.DeviceCredentialService.assignLocalInstallationToStore(
                                 connection, selected.locationId());
                         connection.commit();
+                        if(moved>0)statusLabel.setText("Store "+selected.name()+" assigned; "
+                                +moved+" paired register(s) will switch automatically.");
                     } catch (Exception ex) {
                         connection.rollback();
                         throw ex;

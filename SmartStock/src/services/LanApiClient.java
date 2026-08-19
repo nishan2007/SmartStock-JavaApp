@@ -278,7 +278,9 @@ public final class LanApiClient {
         if (!isPaired()) return;
         JsonObject request=new JsonObject();
         addDeviceMetadata(request,DeviceUtils.collectDeviceInfo());
-        post("/v1/devices/metadata",request,true,false);
+        JsonObject response=post("/v1/devices/metadata",request,true,false);
+        saveServerAssignedLocation(response.has("locationId")&&!response.get("locationId").isJsonNull()
+                ? response.get("locationId").getAsInt() : null);
     }
 
     private static void addDeviceMetadata(JsonObject request, DeviceInfo device) {
