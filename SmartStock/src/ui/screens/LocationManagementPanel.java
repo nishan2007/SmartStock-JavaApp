@@ -6,11 +6,15 @@ import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiDebouncer;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.LocalOAuthCallbackServer;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.net.URI;
+import java.nio.file.Files;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.time.zone.ZoneRulesException;
 import java.util.ArrayList;
@@ -41,6 +45,11 @@ public class LocationManagementPanel extends JPanel {
     private final JCheckBox emailQuotesBox = new JCheckBox("Quotes");
     private final JCheckBox emailInvoicesBox = new JCheckBox("Invoices");
     private final JCheckBox emailDeliveryBillsBox = new JCheckBox("Delivery Bills");
+    private final JLabel gmailStatusLabel = new JLabel("Not configured");
+    private final JButton gmailImportButton = new JButton("Import OAuth JSON");
+    private final JButton gmailConnectButton = new JButton("Connect Gmail");
+    private final JButton gmailDisconnectButton = new JButton("Disconnect");
+    private final JButton gmailTestButton = new JButton("Send Test Email");
     private final JComboBox<String> timezoneBox = new JComboBox<>();
     private final DefaultTableModel tableModel;
     private final JTable locationTable;
@@ -77,6 +86,7 @@ public class LocationManagementPanel extends JPanel {
         });
 
         configureTimezoneBox();
+        configureGmailActions();
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(new JScrollPane(locationTable), BorderLayout.CENTER);
         add(buildEditorPanel(), BorderLayout.EAST);
@@ -184,12 +194,13 @@ public class LocationManagementPanel extends JPanel {
         addFormRow(panel, gbc, 13, "BCC Email:", bccEmailField);
         addFormRow(panel, gbc, 14, "Balance Sheet Email:", balanceSheetEmailField);
         addFormRow(panel, gbc, 15, "Auto Email:", buildEmailTogglePanel());
-        addFormRow(panel, gbc, 16, "Timezone:", timezoneBox);
+        addFormRow(panel, gbc, 16, "Gmail Connection:", buildGmailPanel());
+        addFormRow(panel, gbc, 17, "Timezone:", timezoneBox);
 
         JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for report date boundaries and store totals.</div></html>");
         timezoneHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.gridx = 1;
-        gbc.gridy = 17;
+        gbc.gridy = 18;
         gbc.gridwidth = 1;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -203,7 +214,7 @@ public class LocationManagementPanel extends JPanel {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 18;
+        gbc.gridy = 19;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -217,6 +228,101 @@ public class LocationManagementPanel extends JPanel {
 
         return panel;
     }
+
+    private JPanel buildGmailPanel() {
+        JPanel panel = new JPanel(new GridLayout(0, 1, 0, 4));
+        panel.setOpaque(false);
+        gmailStatusLabel.setForeground(new Color(107, 114, 128));
+        panel.add(gmailStatusLabel);
+        JPanel first = new JPanel(new GridLayout(1, 2, 4, 0)); first.setOpaque(false);
+        first.add(gmailImportButton); first.add(gmailConnectButton); panel.add(first);
+        JPanel second = new JPanel(new GridLayout(1, 2, 4, 0)); second.setOpaque(false);
+        second.add(gmailDisconnectButton); second.add(gmailTestButton); panel.add(second);
+        return panel;
+    }
+
+    private void configureGmailActions() {
+        gmailImportButton.addActionListener(e -> importGmailClient());
+        gmailConnectButton.addActionListener(e -> connectGmail());
+        gmailDisconnectButton.addActionListener(e -> disconnectGmail());
+        gmailTestButton.addActionListener(e -> sendGmailTest());
+        gmailDisconnectButton.setEnabled(false);
+        gmailTestButton.setEnabled(false);
+    }
+
+    private void importGmailClient() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Google Desktop OAuth client JSON");
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Window owner = SwingUtilities.getWindowAncestor(this); if (owner == null) return;
+        try {
+            String json = Files.readString(chooser.getSelectedFile().toPath());
+            UiTaskRunner.submit(owner,"locations.gmail.import",()->LanApiClient.importGmailClient(json),result->{
+                JOptionPane.showMessageDialog(this,"Google OAuth client imported ("+result.clientIdHint()+").");
+                refreshGmailStatus();
+            },ex->showGmailError("Could not import the OAuth client",ex));
+        } catch (Exception ex) { showGmailError("Could not read the selected file", ex); }
+    }
+
+    private void connectGmail() {
+        String sender = senderEmailField.getText().trim();
+        if (!isValidEmail(sender)) { JOptionPane.showMessageDialog(this,"Enter a valid Sender Gmail first.","Gmail",JOptionPane.WARNING_MESSAGE); return; }
+        Window owner = SwingUtilities.getWindowAncestor(this); if (owner == null) return;
+        UiTaskRunner.submit(owner,"locations.gmail.connect",()->{
+            try (LocalOAuthCallbackServer callback = LocalOAuthCallbackServer.start()) {
+                LanApiClient.GmailAuthorizationStart start = LanApiClient.beginGmailAuthorization(sender,callback.redirectUri());
+                if (!Desktop.isDesktopSupported()) throw new IllegalStateException("Open this authorization URL in a browser: " + start.authorizationUrl());
+                Desktop.getDesktop().browse(URI.create(start.authorizationUrl()));
+                LocalOAuthCallbackServer.Result result = callback.await(Duration.ofMinutes(10));
+                if (!result.error().isBlank()) throw new IllegalStateException("Google authorization failed: " + result.error());
+                if (!start.state().equals(result.state())) throw new SecurityException("Google authorization state did not match.");
+                return LanApiClient.completeGmailAuthorization(result.state(),result.code());
+            }
+        },status->{
+            applyGmailStatus(status);
+            JOptionPane.showMessageDialog(this,"Gmail connected for "+status.senderEmail()+".\nQueued emails restored: "+status.requeued());
+        },ex->showGmailError("Could not connect Gmail",ex));
+    }
+
+    private void disconnectGmail() {
+        String sender = senderEmailField.getText().trim();
+        if (!isValidEmail(sender)) return;
+        int answer=JOptionPane.showConfirmDialog(this,"Disconnect "+sender+" from Gmail? Queued email will stop until it is reconnected.","Disconnect Gmail",JOptionPane.YES_NO_OPTION);
+        if(answer!=JOptionPane.YES_OPTION)return;
+        Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"locations.gmail.disconnect",()->LanApiClient.disconnectGmail(sender),this::applyGmailStatus,ex->showGmailError("Could not disconnect Gmail",ex));
+    }
+
+    private void sendGmailTest() {
+        if(selectedLocationId==null){JOptionPane.showMessageDialog(this,"Select and save a location first.","Gmail",JOptionPane.WARNING_MESSAGE);return;}
+        String defaultRecipient=emailLine1Field.getText().trim();
+        String recipient=JOptionPane.showInputDialog(this,"Send the Gmail test to:",defaultRecipient);
+        if(recipient==null)return;recipient=recipient.trim();
+        if(!isValidEmail(recipient)){JOptionPane.showMessageDialog(this,"Enter a valid recipient email.","Gmail",JOptionPane.WARNING_MESSAGE);return;}
+        String target=recipient;Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"locations.gmail.test",()->LanApiClient.sendGmailTest(selectedLocationId,target),result->JOptionPane.showMessageDialog(this,
+                "Test email sent.\nFrom: "+result.senderEmail()+"\nTo: "+result.recipientEmail()+"\nGmail message ID: "+result.messageId(),"Gmail Test",JOptionPane.INFORMATION_MESSAGE),ex->showGmailError("Test email failed",ex));
+    }
+
+    private void refreshGmailStatus() {
+        String sender=senderEmailField.getText().trim();
+        if(!isValidEmail(sender)){gmailStatusLabel.setText("Not connected");gmailDisconnectButton.setEnabled(false);gmailTestButton.setEnabled(false);return;}
+        Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        UiTaskRunner.submit(owner,"locations.gmail.status",()->LanApiClient.loadGmailStatus(sender),this::applyGmailStatus,ex->{gmailStatusLabel.setText("Status unavailable");gmailDisconnectButton.setEnabled(false);gmailTestButton.setEnabled(false);});
+    }
+
+    private void applyGmailStatus(LanApiClient.GmailConnectionStatus status) {
+        String label=switch(status.status()){
+            case "NOT_CONFIGURED"->"Not configured";case "NOT_CONNECTED"->"Not connected";
+            case "AUTHORIZATION_EXPIRED"->"Authorization expired";case "CONNECTED"->"Connected";default->status.status();};
+        gmailStatusLabel.setText(label+" — "+status.message());
+        boolean connected="CONNECTED".equals(status.status());
+        gmailConnectButton.setText(connected?"Reconnect":"Connect Gmail");
+        gmailDisconnectButton.setEnabled(connected||"AUTHORIZATION_EXPIRED".equals(status.status()));
+        gmailTestButton.setEnabled(connected&&selectedLocationId!=null);
+    }
+
+    private void showGmailError(String title,Throwable ex){JOptionPane.showMessageDialog(this,title+": "+ex.getMessage(),"Gmail",JOptionPane.ERROR_MESSAGE);refreshGmailStatus();}
 
     private JPanel buildEmailTogglePanel() {
         JPanel panel = new JPanel(new GridLayout(0, 1, 0, 2));
@@ -302,6 +408,7 @@ public class LocationManagementPanel extends JPanel {
         emailInvoicesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 18))));
         emailDeliveryBillsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 19))));
         timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 20)));
+        refreshGmailStatus();
     }
 
     private void saveLocation() {
@@ -397,6 +504,10 @@ public class LocationManagementPanel extends JPanel {
         emailInvoicesBox.setSelected(false);
         emailDeliveryBillsBox.setSelected(false);
         timezoneBox.setSelectedItem(DEFAULT_TIMEZONE);
+        gmailStatusLabel.setText("Not configured");
+        gmailConnectButton.setText("Connect Gmail");
+        gmailDisconnectButton.setEnabled(false);
+        gmailTestButton.setEnabled(false);
         nameField.requestFocusInWindow();
     }
 

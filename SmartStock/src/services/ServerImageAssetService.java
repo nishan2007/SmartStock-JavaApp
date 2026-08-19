@@ -43,11 +43,14 @@ public final class ServerImageAssetService {
     private static final Path LEGACY_IMAGE_ROOT =
             Path.of(System.getProperty("user.home"), ".smartstock", "image-store");
     private static final String INVENTORY_SCAN_STATE = "storage-inventory-last-completed-at";
+    private static final String ONEDRIVE_PHASE_STATE = "onedrive-image-phase";
+    private static final String ONEDRIVE_READINESS_STATE = "onedrive-image-readiness";
     private static final long DEFAULT_INVENTORY_SCAN_HOURS = 24L;
     private static final Object IMAGE_ROOT_LOCK = new Object();
     private static volatile Path preparedImageRoot;
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15)).build();
+    private static final OneDriveImageCloudProvider ONEDRIVE = new OneDriveImageCloudProvider();
     private static final List<ReferenceSource> SOURCES = List.of(
             new ReferenceSource("products", "product_id", "image_url", "PRODUCT"),
             new ReferenceSource("custom_order_items", "custom_item_id", "image_url", "CUSTOM_ITEM"),
@@ -75,13 +78,14 @@ public final class ServerImageAssetService {
         UUID id;
         String sql = """
                 INSERT INTO image_assets(category,bucket_name,object_path,access_level,original_filename,
-                    content_type,byte_size,sha256,local_status,cloud_status,last_verified_at,last_error)
-                VALUES(?,?,?,?,?,?,?,?, 'PRESENT','PENDING',CURRENT_TIMESTAMP,NULL)
+                    content_type,byte_size,sha256,local_status,cloud_status,cloud_provider,migration_status,last_verified_at,last_error)
+                VALUES(?,?,?,?,?,?,?,?, 'PRESENT','PENDING',?,?,CURRENT_TIMESTAMP,NULL)
                 ON CONFLICT(bucket_name,object_path) DO UPDATE SET
                     category=EXCLUDED.category,access_level=EXCLUDED.access_level,
                     original_filename=EXCLUDED.original_filename,content_type=EXCLUDED.content_type,
                     byte_size=EXCLUDED.byte_size,sha256=EXCLUDED.sha256,local_status='PRESENT',
-                    cloud_status='PENDING',lifecycle_status='ACTIVE',deleted_at=NULL,
+                    cloud_status='PENDING',cloud_provider=EXCLUDED.cloud_provider,
+                    migration_status=EXCLUDED.migration_status,lifecycle_status='ACTIVE',deleted_at=NULL,
                     last_verified_at=CURRENT_TIMESTAMP,last_error=NULL
                 RETURNING asset_id
                 """;
@@ -94,6 +98,9 @@ public final class ServerImageAssetService {
             ps.setString(6, clean(contentType, 200, "application/octet-stream"));
             ps.setLong(7, bytes.length);
             ps.setString(8, hash);
+            boolean scoped=isOneDriveCategory(category);
+            ps.setString(9,scoped&&phase(conn)==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");
+            ps.setString(10,scoped?"PENDING":"NOT_REQUIRED");
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw new SQLException("Image manifest row was not created.");
                 id = rs.getObject(1, UUID.class);
@@ -119,7 +126,7 @@ public final class ServerImageAssetService {
                 touchLocal(conn, row.id(), "CORRUPT", "Local image checksum did not match the manifest.");
             }
             byte[] downloaded = restoreFromLegacyCache(row);
-            if (downloaded == null) downloaded = download(row);
+            if (downloaded == null) downloaded = downloadCloud(row);
             if (downloaded == null || downloaded.length == 0) throw new IOException("The image is missing locally and in cloud storage.");
             if (!row.sha256().isBlank() && !row.sha256().equals(sha256(downloaded))) {
                 touchLocal(conn, row.id(), "CORRUPT", "Cloud image checksum did not match the manifest.");
@@ -177,7 +184,7 @@ public final class ServerImageAssetService {
                     Path path = mirrorPath(row.bucket(), row.objectPath());
                     if (!Files.isRegularFile(path)) {
                         byte[] bytes = restoreFromLegacyCache(row);
-                        if (bytes == null) bytes = download(row);
+                        if (bytes == null) bytes = downloadCloud(row);
                         if (bytes != null && bytes.length > 0
                                 && (row.sha256().isBlank() || row.sha256().equals(sha256(bytes)))) {
                             writeAtomically(path, bytes);
@@ -188,8 +195,8 @@ public final class ServerImageAssetService {
                     if (Files.isRegularFile(path)) {
                         recordLocalBytes(local, id, Files.readAllBytes(path));
                     }
-                    if (Files.isRegularFile(path) && !"PRESENT".equals(row.cloudStatus())) {
-                        upload(row, Files.readAllBytes(path));
+                    if (Files.isRegularFile(path) && needsCloudWork(row,phase(local))) {
+                        synchronizeCloud(local,row,Files.readAllBytes(path),phase(local));
                         try (PreparedStatement update = local.prepareStatement("""
                                 UPDATE image_assets SET cloud_status='PRESENT',last_verified_at=CURRENT_TIMESTAMP,
                                     last_error=NULL WHERE asset_id=?
@@ -202,6 +209,8 @@ public final class ServerImageAssetService {
                 } catch (Exception ex) {
                     try (PreparedStatement update = local.prepareStatement("""
                             UPDATE image_assets SET cloud_status=CASE WHEN cloud_status='PRESENT' THEN cloud_status ELSE 'FAILED' END,
+                                migration_status=CASE WHEN category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                                    AND migration_status<>'RESOLVED' THEN 'FAILED' ELSE migration_status END,
                                 last_error=? WHERE asset_id=?
                             """)) {
                         update.setString(1, clean(ex.getMessage(), 2000, "Image synchronization failed."));
@@ -347,6 +356,10 @@ public final class ServerImageAssetService {
                     UUID id = ImageAssetReference.isAssetReference(value)
                             ? ImageAssetReference.assetId(value) : registerLegacy(conn, source.category(), value);
                     if (id == null) continue;
+                    try(PreparedStatement categoryUpdate=conn.prepareStatement("UPDATE image_assets SET category=? WHERE asset_id=? AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND category IS DISTINCT FROM ?")){
+                        categoryUpdate.setString(1,source.category());categoryUpdate.setObject(2,id);
+                        categoryUpdate.setString(3,source.category());categoryUpdate.executeUpdate();
+                    }
                     upsertReference(conn, id, source.table(), rs.getString(1), source.column());
                     markReferenceSeen(conn, source.table(), rs.getString(1), source.column());
                     active++;
@@ -445,7 +458,8 @@ public final class ServerImageAssetService {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT a.asset_id,a.category,a.original_filename,a.byte_size,a.lifecycle_status,
                        a.local_status,a.cloud_status,a.created_at,a.updated_at,a.unused_since,
-                       a.last_error,COUNT(r.reference_id) FILTER (WHERE r.active) AS reference_count
+                       a.last_error,COUNT(r.reference_id) FILTER (WHERE r.active) AS reference_count,
+                       a.cloud_provider,a.migration_status,a.remote_path,a.cloud_verified_at
                 FROM image_assets a LEFT JOIN image_asset_references r ON r.asset_id=a.asset_id
                 GROUP BY a.asset_id ORDER BY (a.lifecycle_status='UNUSED') DESC,a.updated_at DESC
                 """);
@@ -454,7 +468,8 @@ public final class ServerImageAssetService {
                     rs.getObject(1, UUID.class).toString(), rs.getString(2), rs.getString(3), rs.getLong(4),
                     rs.getString(5), rs.getString(6), rs.getString(7),
                     epoch(rs.getTimestamp(8)), epoch(rs.getTimestamp(9)), epoch(rs.getTimestamp(10)),
-                    rs.getString(11), rs.getInt(12)));
+                    rs.getString(11), rs.getInt(12),rs.getString(13),rs.getString(14),rs.getString(15),
+                    epoch(rs.getTimestamp(16))));
         }
         return rows;
     }
@@ -545,20 +560,22 @@ public final class ServerImageAssetService {
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return new Counts(rs.getInt(1), rs.getInt(2), rs.getInt(3), rs.getInt(4), rs.getInt(5),
-                    ServerSupabaseCredentials.isConfigured());
+                    ServerSupabaseCredentials.isConfigured(),ONEDRIVE.configured(),
+                    phase(conn).name(),migrationPending(conn),"READY".equals(syncState(conn,ONEDRIVE_READINESS_STATE)));
         }
     }
 
     private static AssetRow find(Connection conn, UUID id) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT asset_id,bucket_name,object_path,access_level,content_type,sha256,
-                       lifecycle_status,local_status,cloud_status FROM image_assets WHERE asset_id=?
+                SELECT asset_id,category,bucket_name,object_path,access_level,content_type,sha256,
+                       lifecycle_status,local_status,cloud_status,cloud_provider,remote_drive_id,remote_item_id,
+                       remote_path,cloud_etag,migration_status FROM image_assets WHERE asset_id=?
                 """)) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? new AssetRow(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
-                        rs.getString(8), rs.getString(9)) : null;
+                return rs.next() ? new AssetRow(rs.getObject(1, UUID.class),rs.getString(2),rs.getString(3),rs.getString(4),
+                        rs.getString(5),rs.getString(6),rs.getString(7),rs.getString(8),rs.getString(9),rs.getString(10),
+                        rs.getString(11),rs.getString(12),rs.getString(13),rs.getString(14),rs.getString(15),rs.getString(16)):null;
             }
         }
     }
@@ -615,7 +632,7 @@ public final class ServerImageAssetService {
         }
     }
 
-    private static void upload(AssetRow row, byte[] bytes) throws Exception {
+    private static void uploadSupabase(AssetRow row, byte[] bytes) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder()
                         .uri(storageUri("/storage/v1/object/", row.bucket(), row.objectPath()))
                         .timeout(Duration.ofSeconds(60))
@@ -627,7 +644,7 @@ public final class ServerImageAssetService {
         requireSuccess(response.statusCode(), response.body(), "upload");
     }
 
-    private static byte[] download(AssetRow row) throws Exception {
+    private static byte[] downloadSupabase(AssetRow row) throws Exception {
         boolean publicAsset = "PUBLIC".equals(row.accessLevel());
         String credential = publicAsset
                 ? SupabaseSessionManager.getSupabasePublishableKey()
@@ -647,7 +664,7 @@ public final class ServerImageAssetService {
         return response.body();
     }
 
-    private static void deleteCloud(AssetRow row) throws Exception {
+    private static void deleteSupabase(AssetRow row) throws Exception {
         if ("DELETED".equals(row.cloudStatus()) || "MISSING".equals(row.cloudStatus())) return;
         HttpRequest.Builder request = HttpRequest.newBuilder()
                         .uri(storageUri("/storage/v1/object/", row.bucket(), row.objectPath()))
@@ -656,6 +673,112 @@ public final class ServerImageAssetService {
                 ServerSupabaseCredentials.applyTo(request).build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() != 404) requireSuccess(response.statusCode(), response.body(), "delete");
+    }
+
+    private static boolean isOneDriveCategory(String category){
+        return "PRODUCT".equalsIgnoreCase(category)||"CUSTOM_ITEM".equalsIgnoreCase(category)
+                ||"CUSTOM_VARIANT".equalsIgnoreCase(category);
+    }
+
+    private static boolean needsCloudWork(AssetRow row,OneDrivePhase phase){
+        if(!"PRESENT".equals(row.cloudStatus()))return true;
+        return isOneDriveCategory(row.category())&&phase!=OneDrivePhase.DISABLED
+                &&!"VERIFIED".equals(row.migrationStatus());
+    }
+
+    private static void synchronizeCloud(Connection conn,AssetRow row,byte[] bytes,OneDrivePhase phase)throws Exception{
+        if(!isOneDriveCategory(row.category())||phase==OneDrivePhase.DISABLED){uploadSupabase(row,bytes);return;}
+        if(phase==OneDrivePhase.MIGRATING&&(!"PRESENT".equals(row.cloudStatus())||"ONEDRIVE".equals(row.cloudProvider())))
+            uploadSupabase(row,bytes);
+        ImageCloudProvider.RemoteObject remote=ONEDRIVE.upload(row.id(),row.category(),row.objectPath(),row.contentType(),bytes);
+        byte[] verified=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),remote.itemId(),remote.path());
+        if(verified==null||verified.length!=bytes.length||!sha256(verified).equals(sha256(bytes)))
+            throw new IOException("OneDrive image verification failed.");
+        try(PreparedStatement ps=conn.prepareStatement("""
+                UPDATE image_assets SET remote_drive_id=?,remote_item_id=?,remote_path=?,cloud_etag=?,
+                    migration_status='VERIFIED',cloud_verified_at=CURRENT_TIMESTAMP,
+                    cloud_provider=?,last_error=NULL WHERE asset_id=?
+                """)){
+            ps.setString(1,remote.driveId());ps.setString(2,remote.itemId());ps.setString(3,remote.path());
+            ps.setString(4,remote.eTag());ps.setString(5,phase==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");
+            ps.setObject(6,row.id());ps.executeUpdate();
+        }
+    }
+
+    private static byte[] downloadCloud(AssetRow row)throws Exception{
+        if(isOneDriveCategory(row.category())&&"ONEDRIVE".equals(row.cloudProvider())){
+            byte[] bytes=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
+            if(bytes!=null)return bytes;
+            return downloadSupabase(row); // retained rollback copy during the cutover window
+        }
+        return downloadSupabase(row);
+    }
+
+    private static void deleteCloud(AssetRow row)throws Exception{
+        if(isOneDriveCategory(row.category())&&"ONEDRIVE".equals(row.cloudProvider()))
+            ONEDRIVE.delete(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
+        else deleteSupabase(row);
+    }
+
+    public static OneDrivePhase phase(Connection conn)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement("SELECT state_value FROM image_sync_state WHERE state_key=?")){
+            ps.setString(1,ONEDRIVE_PHASE_STATE);try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())return OneDrivePhase.DISABLED;
+                try{return OneDrivePhase.valueOf(rs.getString(1));}catch(Exception ex){return OneDrivePhase.DISABLED;}
+            }
+        }
+    }
+
+    public static void beginOneDriveMigration(Connection conn)throws Exception{
+        if(!ONEDRIVE.configured())throw new SQLException("OneDrive image storage is not configured on this server.");
+        probeOneDrive(conn);boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
+            setPhase(conn,OneDrivePhase.MIGRATING);
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET migration_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')")){ps.executeUpdate();}
+            conn.commit();
+        }catch(Exception ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
+    }
+
+    public static void activateOneDrive(Connection conn)throws Exception{
+        ImageCloudProvider.ProbeResult probe=probeOneDrive(conn);if(!probe.ready())throw new SQLException(probe.message());
+        int pending=migrationPending(conn);if(pending>0)throw new SQLException(pending+" active product/custom images are not verified in OneDrive.");
+        boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='ONEDRIVE' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
+            setPhase(conn,OneDrivePhase.ACTIVE);conn.commit();
+        }catch(Exception ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
+    }
+
+    public static void rollbackToSupabase(Connection conn)throws SQLException{
+        boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='SUPABASE',cloud_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
+            setPhase(conn,OneDrivePhase.DISABLED);conn.commit();
+        }catch(SQLException ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
+    }
+
+    public static void purgeSupabaseRollbackCopy(Connection conn,UUID id)throws Exception{
+        if(phase(conn)!=OneDrivePhase.ACTIVE)throw new SQLException("Supabase rollback copies can be removed only after OneDrive is active.");
+        AssetRow row=find(conn,id);
+        if(row==null||!isOneDriveCategory(row.category())||!"ONEDRIVE".equals(row.cloudProvider())
+                ||!"VERIFIED".equals(row.migrationStatus()))throw new SQLException("The image is not a verified active OneDrive asset.");
+        byte[] bytes=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
+        if(bytes==null||(!row.sha256().isBlank()&&!row.sha256().equals(sha256(bytes))))
+            throw new SQLException("The OneDrive copy could not be reverified; the Supabase rollback copy was retained.");
+        deleteSupabase(row);
+        putSyncState(conn,"onedrive-supabase-cleaned:"+id,Instant.now().toString());
+    }
+
+    public static ImageCloudProvider.ProbeResult probeOneDrive(Connection conn)throws Exception{
+        try{ImageCloudProvider.ProbeResult result=ONEDRIVE.probe();putSyncState(conn,ONEDRIVE_READINESS_STATE,"READY");return result;}
+        catch(Exception ex){putSyncState(conn,ONEDRIVE_READINESS_STATE,"FAILED");throw ex;}
+    }
+
+    private static void setPhase(Connection conn,OneDrivePhase phase)throws SQLException{
+        putSyncState(conn,ONEDRIVE_PHASE_STATE,phase.name());
+    }
+    private static void putSyncState(Connection conn,String key,String value)throws SQLException{try(PreparedStatement ps=conn.prepareStatement("INSERT INTO image_sync_state(state_key,state_value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(state_key) DO UPDATE SET state_value=EXCLUDED.state_value,updated_at=CURRENT_TIMESTAMP")){ps.setString(1,key);ps.setString(2,value);ps.executeUpdate();}}
+    private static String syncState(Connection conn,String key)throws SQLException{try(PreparedStatement ps=conn.prepareStatement("SELECT state_value FROM image_sync_state WHERE state_key=?")){ps.setString(1,key);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getString(1):"";}}}
+
+    private static int migrationPending(Connection conn)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement("SELECT COUNT(*) FROM image_assets WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')");ResultSet rs=ps.executeQuery()){rs.next();return rs.getInt(1);}
     }
 
     private static URI storageUri(String route, String bucket, String path) {
@@ -824,13 +947,17 @@ public final class ServerImageAssetService {
     private record ReferenceSource(String table, String key, String column, String category) { }
     private record CloudPrefix(String bucket, String prefix, String category, String accessLevel) { }
     private record LegacyLocation(String bucket, String path, boolean authenticated) { }
-    private record AssetRow(UUID id, String bucket, String objectPath, String accessLevel, String contentType,
-                            String sha256, String lifecycleStatus, String localStatus, String cloudStatus) { }
+    private record AssetRow(UUID id,String category,String bucket,String objectPath,String accessLevel,String contentType,
+                            String sha256,String lifecycleStatus,String localStatus,String cloudStatus,String cloudProvider,
+                            String remoteDriveId,String remoteItemId,String remotePath,String cloudEtag,String migrationStatus) { }
     public record AssetBytes(byte[] bytes, String contentType, String sha256) { }
     public record AssetView(String assetId, String category, String filename, long byteSize, String lifecycleStatus,
                             String localStatus, String cloudStatus, long createdAtEpochMillis, long updatedAtEpochMillis,
-                            long unusedSinceEpochMillis, String lastError, int referenceCount) { }
+                            long unusedSinceEpochMillis, String lastError, int referenceCount,String cloudProvider,
+                            String migrationStatus,String remotePath,long cloudVerifiedAtEpochMillis) { }
     public record SyncResult(int references, int uploaded, int repaired) { }
     public record Counts(int pendingUploads, int missingLocal, int missingCloud, int unused, int failedPurges,
-                         boolean cloudCredentialConfigured) { }
+                         boolean cloudCredentialConfigured,boolean oneDriveConfigured,String oneDrivePhase,
+                         int migrationPending,boolean oneDriveReady) { }
+    public enum OneDrivePhase { DISABLED,MIGRATING,ACTIVE }
 }

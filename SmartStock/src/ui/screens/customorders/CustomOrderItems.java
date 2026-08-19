@@ -86,7 +86,7 @@ public final class CustomOrderItems extends JFrame {
             UiTaskRunner.submit(this,"custom-catalog.save-item",()->{
                 String imageUrl=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,
                         new ProductImageHelper.ProductImageNaming(
-                                itemName, brand, itemType, "", ""));
+                                itemName, brand, itemType, "", ""),"CUSTOM_ITEM");
                 var request=new LanCustomOrderCatalogAdminService.ItemSave(targetId,itemName,primaryBarcode,itemDescription,imageUrl,selectedProductType,selectedPricingType,itemPrice,selectedAreaUnit,selectedDimensionUnit,width,length,hasVariants,itemQuantity,reorderLevel,isActive,categoryId,itemType,brand,codes);
                 return new ItemMutationResult(mutate("SAVE_ITEM","item",request),imageUrl);
             },result->{itemId=result.id();image.setImageUrl(result.imageUrl());refresh();info("Custom item saved.");},failure->error("Custom item was not saved",asException(failure)));
@@ -121,7 +121,7 @@ public final class CustomOrderItems extends JFrame {
                         ? new ProductImageHelper.ProductImageNaming("", "", "", "", variantName)
                         : new ProductImageHelper.ProductImageNaming(parentItem.name(),parentItem.brand(),
                         parentItem.itemType(),"",variantName);
-                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,imageNaming);var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive,List.copyOf(variantExtraCodes));return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
+                UiTaskRunner.submit(d,"custom-catalog.save-variant",()->{String url=ProductImageHelper.uploadLocalImageIfNeeded(sourceImage,imageNaming,"CUSTOM_VARIANT");var request=new LanCustomOrderCatalogAdminService.VariantSave(variantId,selectedItemId,variantName,variantBarcode,url,variantPrice,variantQuantity,variantReorder,isActive,List.copyOf(variantExtraCodes));return mutate("SAVE_VARIANT","variant",request);},ignored->{d.dispose();refresh();info("Variant saved.");},failure->{save.setEnabled(true);off.setEnabled(true);error("Variant was not saved",asException(failure));});
             }catch(Exception ex){error("Variant was not saved",ex);}
         });
         clear.addActionListener(e->reset.run());

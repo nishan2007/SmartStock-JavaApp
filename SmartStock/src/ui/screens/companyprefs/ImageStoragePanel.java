@@ -18,7 +18,7 @@ public final class ImageStoragePanel extends JPanel {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
             .withZone(ZoneId.systemDefault());
     private final DefaultTableModel model = new DefaultTableModel(
-            new Object[]{"Asset ID", "Category", "Filename", "Size", "References", "Lifecycle", "Local", "Cloud", "Unused Since", "Error"}, 0) {
+            new Object[]{"Asset ID", "Category", "Filename", "Size", "References", "Lifecycle", "Local", "Provider", "Cloud", "Migration", "Unused Since", "Error"}, 0) {
         @Override public boolean isCellEditable(int row, int column) { return false; }
     };
     private final JTable table = new JTable(model);
@@ -38,8 +38,12 @@ public final class ImageStoragePanel extends JPanel {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         JButton refresh = new JButton("Refresh");
         JButton reconcile = new JButton("Reconcile Now");
+        JButton beginMigration = new JButton("Begin OneDrive Copy");
+        JButton activateOneDrive = new JButton("Activate OneDrive");
+        JButton rollback = new JButton("Rollback to Supabase");
         actions.add(refresh);
         actions.add(reconcile);
+        actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
         actions.add(keepButton);
         actions.add(purgeButton);
         heading.add(actions, BorderLayout.EAST);
@@ -63,6 +67,9 @@ public final class ImageStoragePanel extends JPanel {
             LanApiClient.reconcileImageAssets();
             return null;
         }, this::load));
+        beginMigration.addActionListener(event->runAction("Starting verified OneDrive copy...",()->{LanApiClient.beginOneDriveImageMigration();return null;},this::load));
+        activateOneDrive.addActionListener(event->runAction("Activating OneDrive...",()->{LanApiClient.activateOneDriveImages();return null;},this::load));
+        rollback.addActionListener(event->runAction("Rolling product images back to Supabase...",()->{LanApiClient.rollbackOneDriveImages();return null;},this::load));
         keepButton.addActionListener(event -> {
             String id = selectedId();
             if (id != null) runAction("Keeping image...", () -> {
@@ -97,13 +104,15 @@ public final class ImageStoragePanel extends JPanel {
         model.setRowCount(0);
         for (LanApiClient.ImageAssetRecord row : state.assets()) {
             model.addRow(new Object[]{row.assetId(), row.category(), row.filename(), formatBytes(row.byteSize()),
-                    row.referenceCount(), row.lifecycleStatus(), row.localStatus(), row.cloudStatus(),
+                    row.referenceCount(), row.lifecycleStatus(), row.localStatus(),row.cloudProvider(), row.cloudStatus(),row.migrationStatus(),
                     formatDate(row.unusedSinceEpochMillis()), row.lastError() == null ? "" : row.lastError()});
         }
         LanApiClient.ImageAssetCounts counts = state.counts();
         summary.setText("Unused: " + counts.unused() + "   Pending uploads: " + counts.pendingUploads()
                 + "   Missing local: " + counts.missingLocal() + "   Missing cloud: " + counts.missingCloud()
                 + "   Failed purges: " + counts.failedPurges()
+                + "   OneDrive: "+counts.oneDrivePhase()+" / "+(counts.oneDriveReady()?"ready":"not verified")+" ("+counts.migrationPending()+" pending)"
+                + (counts.oneDriveConfigured()?"":"   • OneDrive server credential required")
                 + (counts.cloudCredentialConfigured() ? "" : "   • Server cloud credential required for private images/uploads"));
         updateButtons();
     }
@@ -155,7 +164,7 @@ public final class ImageStoragePanel extends JPanel {
         }
         String filename = String.valueOf(model.getValueAt(row, 2));
         int answer = JOptionPane.showConfirmDialog(this,
-                "Permanently delete \"" + filename + "\" from both the server and Supabase Storage?\n\n"
+                "Permanently delete \"" + filename + "\" from the server and its assigned cloud provider?\n\n"
                         + "SmartStock will check all references again before deletion.",
                 "Permanently Delete Image", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (answer != JOptionPane.YES_OPTION) return;

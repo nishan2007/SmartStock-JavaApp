@@ -9,22 +9,15 @@ import Receipt.ReceiptData;
 import Receipt.ReceiptFormatter;
 import data.DB;
 import managers.ServerCompanyCustomizationRepository;
-import managers.SupabaseSessionManager;
 import utils.CurrencyFormatter;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,11 +26,7 @@ import java.util.Locale;
 public final class ServerEmailOutboxService {
     private static final Gson GSON=LanJson.create();
     private static final ThreadLocal<Connection> REQUEST_CONNECTION = new ThreadLocal<>();
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(12))
-            .build();
-    private static final String EMAIL_FUNCTION_URL = getConfig("SMARTSTOCK_EMAIL_FUNCTION_URL", "");
-    private static final String EMAIL_FUNCTION_KEY = getConfig("SMARTSTOCK_EMAIL_FUNCTION_KEY", "");
+    private static final String AUTHORIZATION_REQUIRED_PREFIX = "GMAIL_AUTHORIZATION_REQUIRED:";
 
     private ServerEmailOutboxService() {
     }
@@ -220,11 +209,15 @@ public final class ServerEmailOutboxService {
         try (ConnectionLease lease = connectionLease()) {
             Connection conn = lease.connection();
             EmailSchemaInstaller.ensureSchema(conn);
+            recoverConflictingApiKeyFailures(conn);
             String sql = """
                     SELECT email_outbox_id
                     FROM email_outbox
                     WHERE status IN ('QUEUED', 'FAILED')
                       AND attempts < max_attempts
+                      AND COALESCE(last_error, '') NOT LIKE 'GMAIL_AUTHORIZATION_REQUIRED:%'
+                      AND (attempts=0 OR updated_at <= CURRENT_TIMESTAMP
+                           - make_interval(secs => LEAST(300, CAST(power(2, attempts) AS INTEGER))))
                     ORDER BY created_at
                     LIMIT ?
                     """;
@@ -256,27 +249,21 @@ public final class ServerEmailOutboxService {
         }
 
         try {
-            String accessToken = emailAuthorizationToken();
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(emailFunctionUrl()))
-                    .timeout(Duration.ofSeconds(30))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("apikey", SupabaseSessionManager.getSupabasePublishableKey())
-                    .POST(HttpRequest.BodyPublishers.ofString(toJson(message), StandardCharsets.UTF_8));
-            if (!isBlank(EMAIL_FUNCTION_KEY)) {
-                requestBuilder.header("x-smartstock-email-key", EMAIL_FUNCTION_KEY);
+            GmailOAuthService.SendResult sent = GmailOAuthService.send(new GmailOAuthService.GmailMessage(
+                    message.senderEmail(), message.senderName(), message.recipientEmail(), message.bccEmail(),
+                    message.subject(), message.bodyText(), message.bodyHtml(), message.attachmentName(),
+                    message.attachmentContentType(), message.attachmentBody()));
+            markSent(outboxId, sent.messageId());
+            return SendResult.sent(outboxId, sent.messageId());
+        } catch (GmailOAuthService.GmailException ex) {
+            if (ex.authorizationRequired()) {
+                markAuthorizationRequired(outboxId, ex.getMessage());
+            } else {
+                markFailed(outboxId, ex.category() + ": " + ex.getMessage());
             }
-            HttpResponse<String> response = HTTP_CLIENT.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                markSent(outboxId);
-                return SendResult.sent(outboxId);
-            }
-            String error = "Email sender returned HTTP " + response.statusCode() + ": " + trimError(response.body());
-            markFailed(outboxId, error);
-            return SendResult.failed(outboxId, error);
+            return SendResult.failed(outboxId, ex.category() + ": " + ex.getMessage());
         } catch (IOException ex) {
-            String error = "Email sender request failed: " + ex.getMessage();
+            String error = "GMAIL_NETWORK_ERROR: " + ex.getMessage();
             markFailed(outboxId, error);
             return SendResult.failed(outboxId, error);
         } catch (InterruptedException ex) {
@@ -288,6 +275,47 @@ public final class ServerEmailOutboxService {
             String error = "Email sender authentication failed: " + ex.getMessage();
             markFailed(outboxId, error);
             return SendResult.failed(outboxId, error);
+        }
+    }
+
+    public static int requeueAuthorizationFailures(String senderEmail) throws SQLException {
+        String sender = GmailOAuthService.normalizeEmail(senderEmail);
+        try (Connection conn = DB.getConnection(); PreparedStatement ps = conn.prepareStatement("""
+                UPDATE email_outbox
+                SET status='QUEUED', attempts=0, last_error=NULL
+                WHERE LOWER(TRIM(sender_email))=?
+                  AND status='FAILED'
+                  AND last_error LIKE 'GMAIL_AUTHORIZATION_REQUIRED:%'
+                RETURNING email_outbox_id
+                """)) {
+            ps.setString(1, sender);
+            int count = 0;
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    count++;
+                    recordEvent(conn, rs.getLong(1), "QUEUED", "Email requeued after Gmail authorization.");
+                }
+            }
+            return count;
+        }
+    }
+
+    private static void recoverConflictingApiKeyFailures(Connection conn)throws SQLException{
+        List<Long> recovered=new ArrayList<>();
+        try(PreparedStatement ps=conn.prepareStatement("""
+                UPDATE email_outbox
+                SET status='QUEUED',attempts=0,last_error=NULL
+                WHERE status='FAILED'
+                  AND attempts>=max_attempts
+                  AND last_error LIKE '%Conflicting API keys%'
+                RETURNING email_outbox_id
+                """)){
+            try(ResultSet rs=ps.executeQuery()){
+                while(rs.next())recovered.add(rs.getLong(1));
+            }
+        }
+        for(Long outboxId:recovered){
+            recordEvent(conn,outboxId,"QUEUED","Email requeued for direct Gmail delivery.");
         }
     }
 
@@ -558,7 +586,7 @@ public final class ServerEmailOutboxService {
         }
     }
 
-    private static void markSent(long outboxId) throws SQLException {
+    private static void markSent(long outboxId, String gmailMessageId) throws SQLException {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement("""
                      UPDATE email_outbox
@@ -569,7 +597,7 @@ public final class ServerEmailOutboxService {
                      """)) {
             ps.setLong(1, outboxId);
             ps.executeUpdate();
-            recordEvent(conn, outboxId, "SENT", "Email sent.");
+            recordEvent(conn, outboxId, "SENT", "Email sent through Gmail. Message ID: " + trimError(gmailMessageId));
             try (PreparedStatement updateLocation = conn.prepareStatement("""
                     UPDATE locations
                     SET email_connected_at = COALESCE(email_connected_at, CURRENT_TIMESTAMP),
@@ -579,6 +607,20 @@ public final class ServerEmailOutboxService {
                 updateLocation.setLong(1, outboxId);
                 updateLocation.executeUpdate();
             }
+        }
+    }
+
+    private static void markAuthorizationRequired(long outboxId, String error) throws SQLException {
+        try (Connection conn = DB.getConnection(); PreparedStatement ps = conn.prepareStatement("""
+                UPDATE email_outbox
+                SET status='FAILED', attempts=0, last_error=?
+                WHERE email_outbox_id=?
+                """)) {
+            String message = AUTHORIZATION_REQUIRED_PREFIX + " " + trimError(error);
+            ps.setString(1, message);
+            ps.setLong(2, outboxId);
+            ps.executeUpdate();
+            recordEvent(conn, outboxId, "AUTHORIZATION_REQUIRED", message);
         }
     }
 
@@ -825,34 +867,6 @@ public final class ServerEmailOutboxService {
                 .trim();
     }
 
-    private static String toJson(EmailMessage message) {
-        return "{"
-                + "\"outbox_id\":" + message.outboxId()
-                + ",\"from_email\":" + jsonValue(message.senderEmail())
-                + ",\"from_name\":" + jsonValue(message.senderName())
-                + ",\"to_email\":" + jsonValue(message.recipientEmail())
-                + ",\"bcc_email\":" + jsonValue(message.bccEmail())
-                + ",\"subject\":" + jsonValue(message.subject())
-                + ",\"body_text\":" + jsonValue(message.bodyText())
-                + ",\"body_html\":" + jsonValue(message.bodyHtml())
-                + ",\"attachment_name\":" + jsonValue(message.attachmentName())
-                + ",\"attachment_content_type\":" + jsonValue(message.attachmentContentType())
-                + ",\"attachment_body\":" + jsonValue(message.attachmentBody())
-                + "}";
-    }
-
-    private static String jsonValue(String value) {
-        if (value == null) {
-            return "null";
-        }
-        return "\"" + value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t") + "\"";
-    }
-
     private static String htmlEscape(String value) {
         return value == null ? "" : value
                 .replace("&", "&amp;")
@@ -910,31 +924,6 @@ public final class ServerEmailOutboxService {
         return clean.length() <= 500 ? clean : clean.substring(0, 500);
     }
 
-    private static String getConfig(String key, String fallback) {
-        String value = System.getProperty(key);
-        if (value == null || value.isBlank()) {
-            value = System.getenv(key);
-        }
-        return value == null || value.isBlank() ? fallback : value.trim();
-    }
-
-    private static String emailAuthorizationToken() {
-        String serviceRole = ServerSupabaseCredentials.get();
-        if (!serviceRole.isBlank()) {
-            return serviceRole;
-        }
-        String userToken = ServerRequestIdentity.supabaseAccessToken();
-        if (userToken == null || userToken.isBlank()) {
-            throw new IllegalStateException("The SmartStock Server email authorization credential is not configured.");
-        }
-        return userToken;
-    }
-
-    private static String emailFunctionUrl() {
-        return isBlank(EMAIL_FUNCTION_URL)
-                ? SupabaseSessionManager.getSupabaseUrl() + "/functions/v1/smartstock-gmail-sender"
-                : EMAIL_FUNCTION_URL;
-    }
 
     private record StoreEmailSettings(int locationId, String senderEmail, String senderName, String bccEmail,
                                       boolean receiptsEnabled, boolean orderConfirmationsEnabled,
@@ -1002,8 +991,8 @@ public final class ServerEmailOutboxService {
     }
 
     public record SendResult(long outboxId, String status, String message) {
-        public static SendResult sent(long outboxId) {
-            return new SendResult(outboxId, "SENT", "Email sent.");
+        public static SendResult sent(long outboxId, String gmailMessageId) {
+            return new SendResult(outboxId, "SENT", "Email sent. Gmail message ID: " + gmailMessageId);
         }
 
         public static SendResult failed(long outboxId, String message) {

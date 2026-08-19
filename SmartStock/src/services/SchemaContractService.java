@@ -43,7 +43,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811230000_add_custom_items_to_quotations.sql",
             "database/migrations/v1_after/20260811233000_add_store_transfer_uuid.sql",
             "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql",
-            "database/migrations/v1_after/20260818120000_mobile_item_web.sql"
+            "database/migrations/v1_after/20260818120000_mobile_item_web.sql",
+            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -51,7 +52,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260809211000_cloud_return_receipt_numbers.sql",
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
             "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
-            "database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql"
+            "database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql",
+            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -147,9 +149,27 @@ public final class SchemaContractService {
         upgradeStoreTransferUuid(connection);
         upgradeCrossStoreTimeClockIdentity(connection);
         ensureMobileItemWebUpgrade(connection);
+        ensureOneDriveImageUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void ensureOneDriveImageUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","image_assets")
+                ||columnExists(connection,"public","image_assets","cloud_provider"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata")){
+                String resource=resourceFingerprint(localContractResources());
+                String catalog=catalogFingerprint(connection,List.of("public"),false);
+                try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                    update.setString(1,resource);update.setString(2,catalog);update.setInt(3,BASELINE_VERSION);update.executeUpdate();
+                }
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The OneDrive image schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     private static void upgradeStoreTransferUuid(Connection connection)throws SQLException{

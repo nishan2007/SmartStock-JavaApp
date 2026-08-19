@@ -43,6 +43,10 @@ public final class ProductImageHelper {
     }
 
     public static String uploadLocalImageIfNeeded(String imageUrl, ProductImageNaming naming) throws Exception {
+        return uploadLocalImageIfNeeded(imageUrl,naming,"PRODUCT");
+    }
+
+    public static String uploadLocalImageIfNeeded(String imageUrl,ProductImageNaming naming,String category)throws Exception{
         if (imageUrl == null || imageUrl.isBlank() || isRemoteImageUrl(imageUrl)) {
             return imageUrl == null ? "" : imageUrl.trim();
         }
@@ -52,7 +56,7 @@ public final class ProductImageHelper {
             throw new IllegalArgumentException("The selected image file was not found.");
         }
 
-        return uploadProductImage(imageFile, naming);
+        return uploadProductImage(imageFile,naming,category);
     }
 
     public static void setPreviewImage(JLabel label, String imageUrl, int width, int height) {
@@ -224,7 +228,7 @@ public final class ProductImageHelper {
         }
     }
 
-    private static String uploadProductImage(File imageFile, ProductImageNaming naming) throws Exception {
+    private static String uploadProductImage(File imageFile, ProductImageNaming naming,String category) throws Exception {
         try (ImageOptimizationHelper.OptimizedImage optimizedImage = ImageOptimizationHelper.optimizeForUpload(
                 imageFile,
                 "product-image",
@@ -241,7 +245,7 @@ public final class ProductImageHelper {
                     safeNaming.productName(), safeNaming.brand(), safeNaming.type(), safeNaming.size(),
                     safeNaming.variantName(), "product-image");
             String objectPath = "products/" + filename;
-            String publicUrl = services.LanApiClient.uploadCloudFile(
+            String publicUrl = services.LanApiClient.uploadManagedImage(category,
                     PRODUCT_IMAGE_BUCKET, objectPath, optimizedImage.contentType(),
                     java.nio.file.Files.readAllBytes(optimizedImage.file().toPath()));
             ImageCacheManager.cacheUploadedImage(publicUrl, optimizedImage.file().toPath());

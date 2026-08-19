@@ -2079,6 +2079,13 @@ CREATE TABLE public.image_assets (
     lifecycle_status text DEFAULT 'ACTIVE'::text NOT NULL,
     local_status text DEFAULT 'MISSING'::text NOT NULL,
     cloud_status text DEFAULT 'PENDING'::text NOT NULL,
+    cloud_provider text DEFAULT 'SUPABASE'::text NOT NULL,
+    remote_drive_id text,
+    remote_item_id text,
+    remote_path text,
+    cloud_etag text,
+    migration_status text DEFAULT 'NOT_REQUIRED'::text NOT NULL,
+    cloud_verified_at timestamp with time zone,
     retained boolean DEFAULT false NOT NULL,
     unused_since timestamp with time zone,
     last_verified_at timestamp with time zone,
@@ -2091,6 +2098,8 @@ CREATE TABLE public.image_assets (
     CONSTRAINT image_assets_access_level_check CHECK ((access_level = ANY (ARRAY['PUBLIC'::text, 'AUTHENTICATED'::text]))),
     CONSTRAINT image_assets_byte_size_check CHECK ((byte_size >= 0)),
     CONSTRAINT image_assets_cloud_status_check CHECK ((cloud_status = ANY (ARRAY['PENDING'::text, 'PRESENT'::text, 'MISSING'::text, 'FAILED'::text, 'DELETED'::text]))),
+    CONSTRAINT image_assets_cloud_provider_check CHECK ((cloud_provider = ANY (ARRAY['SUPABASE'::text, 'ONEDRIVE'::text]))),
+    CONSTRAINT image_assets_migration_status_check CHECK ((migration_status = ANY (ARRAY['NOT_REQUIRED'::text, 'PENDING'::text, 'VERIFIED'::text, 'FAILED'::text, 'RESOLVED'::text]))),
     CONSTRAINT image_assets_lifecycle_status_check CHECK ((lifecycle_status = ANY (ARRAY['ACTIVE'::text, 'UNUSED'::text, 'DELETE_PENDING'::text, 'DELETED'::text]))),
     CONSTRAINT image_assets_local_status_check CHECK ((local_status = ANY (ARRAY['PRESENT'::text, 'MISSING'::text, 'CORRUPT'::text])))
 );

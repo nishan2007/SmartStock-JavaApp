@@ -817,6 +817,13 @@ public final class LanApiClient {
     public static List<LocationRecord> loadLocationRecords(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search);JsonObject d=post("/v1/locations/list",r,true,true);LocationRecord[]a=GSON.fromJson(d.getAsJsonArray("locations"),LocationRecord[].class);return a==null?List.of():List.of(a);}
     public static int saveLocationRecord(LocationRecord r,String key)throws Exception{return post("/v1/locations/save",GSON.toJsonTree(r).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key)).get("locationId").getAsInt();}
     public static EmailProcessingResult processLocationEmailOutbox()throws Exception{return GSON.fromJson(post("/v1/locations/process-email",new JsonObject(),true,true),EmailProcessingResult.class);}
+    public static GmailClientStatus loadGmailClientStatus()throws Exception{return GSON.fromJson(post("/v1/locations/gmail/client-status",new JsonObject(),true,true),GmailClientStatus.class);}
+    public static GmailClientStatus importGmailClient(String clientJson)throws Exception{JsonObject r=new JsonObject();r.addProperty("clientJson",clientJson);return GSON.fromJson(post("/v1/locations/gmail/import-client",r,true,true),GmailClientStatus.class);}
+    public static GmailConnectionStatus loadGmailStatus(String senderEmail)throws Exception{JsonObject r=new JsonObject();r.addProperty("senderEmail",senderEmail);return GSON.fromJson(post("/v1/locations/gmail/status",r,true,true),GmailConnectionStatus.class);}
+    public static GmailAuthorizationStart beginGmailAuthorization(String senderEmail,String redirectUri)throws Exception{JsonObject r=new JsonObject();r.addProperty("senderEmail",senderEmail);r.addProperty("redirectUri",redirectUri);return GSON.fromJson(post("/v1/locations/gmail/begin",r,true,true),GmailAuthorizationStart.class);}
+    public static GmailConnectionStatus completeGmailAuthorization(String state,String code)throws Exception{JsonObject r=new JsonObject();r.addProperty("state",state);r.addProperty("code",code);return GSON.fromJson(post("/v1/locations/gmail/complete",r,true,true),GmailConnectionStatus.class);}
+    public static GmailConnectionStatus disconnectGmail(String senderEmail)throws Exception{JsonObject r=new JsonObject();r.addProperty("senderEmail",senderEmail);return GSON.fromJson(post("/v1/locations/gmail/disconnect",r,true,true),GmailConnectionStatus.class);}
+    public static GmailTestResult sendGmailTest(int locationId,String recipientEmail)throws Exception{JsonObject r=new JsonObject();r.addProperty("locationId",locationId);r.addProperty("recipientEmail",recipientEmail);return GSON.fromJson(post("/v1/locations/gmail/test",r,true,true),GmailTestResult.class);}
     public static ReportDataService.FilterOptions loadReportOptions()throws Exception{return GSON.fromJson(post("/v1/reports/options",new JsonObject(),true,true).get("options"),ReportDataService.FilterOptions.class);}
     public static ReportDataService.Snapshot loadReportSnapshot(ReportDataService.Filters filters,boolean allRevenue)throws Exception{JsonObject r=new JsonObject();r.add("filters",GSON.toJsonTree(filters));r.addProperty("allRevenue",allRevenue);return GSON.fromJson(post("/v1/reports/load",r,true,true).get("snapshot"),ReportDataService.Snapshot.class);}
     public static OrderReport loadOrderReport(java.time.ZonedDateTime from,java.time.ZonedDateTime to)throws Exception{return GSON.fromJson(post("/v1/reports/orders",range(from,to),true,true),OrderReport.class);}
@@ -877,6 +884,7 @@ public final class LanApiClient {
     public static AppUpdateService.AppRelease loadLatestAppRelease(String platform)throws Exception{JsonObject r=new JsonObject();r.addProperty("platform",platform);JsonObject d=post("/v1/cloud/update/latest",r,true,true);return !d.has("release")||d.get("release").isJsonNull()?null:GSON.fromJson(d.get("release"),AppUpdateService.AppRelease.class);}
     public static String createUpdateDownloadUrl(String bucket,String path)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);return post("/v1/cloud/update/sign",r,true,true).get("url").getAsString();}
     public static String uploadCloudFile(String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
+    public static String uploadManagedImage(String category,String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("category",category);r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
     public static byte[] downloadEmployeeCloudFile(String url)throws Exception{JsonObject r=new JsonObject();r.addProperty("url",url);return java.util.Base64.getDecoder().decode(post("/v1/cloud/storage/download",r,true,true).get("bytesBase64").getAsString());}
     public static byte[] downloadImageAsset(String reference)throws Exception{JsonObject r=new JsonObject();r.addProperty("reference",reference);return java.util.Base64.getDecoder().decode(post("/v1/images/fetch",r,true,true).get("bytesBase64").getAsString());}
     public static ImageAssetState imageAssets()throws Exception{
@@ -888,6 +896,9 @@ public final class LanApiClient {
     public static void reconcileImageAssets()throws Exception{post("/v1/images/reconcile",new JsonObject(),true,true);}
     public static void retainImageAsset(String assetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("assetId",assetId);post("/v1/images/retain",r,true,true);}
     public static void purgeImageAsset(String assetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("assetId",assetId);post("/v1/images/purge",r,true,true);}
+    public static void beginOneDriveImageMigration()throws Exception{post("/v1/images/onedrive/begin",new JsonObject(),true,true);}
+    public static void activateOneDriveImages()throws Exception{post("/v1/images/onedrive/activate",new JsonObject(),true,true);}
+    public static void rollbackOneDriveImages()throws Exception{post("/v1/images/onedrive/rollback",new JsonObject(),true,true);}
     public static JsonObject companyCustomizationSave(String action,JsonElement settings,Integer locationId,String key)throws Exception{
         requireIdempotencyKey(key,"Configuration idempotency key is required.");JsonObject r=new JsonObject();r.addProperty("action",action);
         if(settings!=null)r.add("settings",settings);if(locationId!=null)r.addProperty("locationId",locationId);
@@ -1659,6 +1670,10 @@ public final class LanApiClient {
                                  String phoneLine1,String phoneLine2,String emailLine1,String emailLine2,String senderEmail,String senderName,String bccEmail,
                                  String balanceSheetEmail,boolean emailReceipts,boolean emailOrders,boolean emailQuotes,boolean emailInvoices,boolean emailDelivery,String timezone) { }
     public record EmailProcessingResult(int processed,long sent,long failed,long skipped) { }
+    public record GmailClientStatus(boolean configured,String clientIdHint) { }
+    public record GmailConnectionStatus(String senderEmail,String status,String message,int requeued) { }
+    public record GmailAuthorizationStart(String state,String authorizationUrl,String expiresAt) { }
+    public record GmailTestResult(String senderEmail,String recipientEmail,String messageId,String category) { }
     public record TimeClockPunchState(boolean requiresOverride,boolean requesterCanOverride) { }
     public record ScheduleMutation(Integer locationId,java.time.LocalDate date,Integer userId,UUID shiftId,java.time.LocalTime lunchStart,java.time.LocalDate endDate,String name,List<UUID>shiftIds,Boolean active) { }
     private record ScheduleDay(java.time.LocalDate date,List<EmployeeScheduleService.Assignment>assignments) { }
@@ -1734,7 +1749,9 @@ public final class LanApiClient {
     public record ImageAssetState(List<ImageAssetRecord>assets,ImageAssetCounts counts) { }
     public record ImageAssetRecord(String assetId,String category,String filename,long byteSize,String lifecycleStatus,
                                    String localStatus,String cloudStatus,long createdAtEpochMillis,long updatedAtEpochMillis,
-                                   long unusedSinceEpochMillis,String lastError,int referenceCount) { }
+                                   long unusedSinceEpochMillis,String lastError,int referenceCount,String cloudProvider,
+                                   String migrationStatus,String remotePath,long cloudVerifiedAtEpochMillis) { }
     public record ImageAssetCounts(int pendingUploads,int missingLocal,int missingCloud,int unused,int failedPurges,
-                                   boolean cloudCredentialConfigured) { }
+                                   boolean cloudCredentialConfigured,boolean oneDriveConfigured,String oneDrivePhase,
+                                   int migrationPending,boolean oneDriveReady) { }
 }

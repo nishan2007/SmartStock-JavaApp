@@ -264,6 +264,13 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/locations/list", exchange -> handle(exchange, this::locationList));
         server.createContext("/v1/locations/save", exchange -> handle(exchange, this::saveLocation));
         server.createContext("/v1/locations/process-email", exchange -> handle(exchange, this::processLocationEmail));
+        server.createContext("/v1/locations/gmail/client-status", exchange -> handle(exchange, x -> gmailOperation(x, "CLIENT_STATUS")));
+        server.createContext("/v1/locations/gmail/import-client", exchange -> handle(exchange, x -> gmailOperation(x, "IMPORT_CLIENT")));
+        server.createContext("/v1/locations/gmail/status", exchange -> handle(exchange, x -> gmailOperation(x, "STATUS")));
+        server.createContext("/v1/locations/gmail/begin", exchange -> handle(exchange, x -> gmailOperation(x, "BEGIN")));
+        server.createContext("/v1/locations/gmail/complete", exchange -> handle(exchange, x -> gmailOperation(x, "COMPLETE")));
+        server.createContext("/v1/locations/gmail/disconnect", exchange -> handle(exchange, x -> gmailOperation(x, "DISCONNECT")));
+        server.createContext("/v1/locations/gmail/test", exchange -> handle(exchange, x -> gmailOperation(x, "TEST")));
         server.createContext("/v1/reports/options", exchange -> handle(exchange, this::reportOptions));
         server.createContext("/v1/reports/load", exchange -> handle(exchange, this::loadReports));
         server.createContext("/v1/reports/orders", exchange -> handle(exchange, this::orderReport));
@@ -296,6 +303,9 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/images/reconcile", exchange -> handle(exchange, this::reconcileImageAssets));
         server.createContext("/v1/images/retain", exchange -> handle(exchange, this::retainImageAsset));
         server.createContext("/v1/images/purge", exchange -> handle(exchange, this::purgeImageAsset));
+        server.createContext("/v1/images/onedrive/begin", exchange -> handle(exchange, c -> oneDriveImageAction(c,"BEGIN")));
+        server.createContext("/v1/images/onedrive/activate", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ACTIVATE")));
+        server.createContext("/v1/images/onedrive/rollback", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ROLLBACK")));
         server.createContext("/v1/accounting/balance-sheet/read", exchange -> handle(exchange, this::balanceSheetRead));
         server.createContext("/v1/accounting/balance-sheet/update", exchange -> handle(exchange, this::balanceSheetMutation));
         server.createContext("/v1/email/queue", exchange -> handle(exchange, this::queueEmail));
@@ -431,7 +441,9 @@ public final class LanApiServer implements AutoCloseable {
         byte[] bytes;
         try { bytes = Base64.getDecoder().decode(required(context.body(), "bytesBase64", MAX_CLOUD_FILE_BODY_BYTES)); }
         catch (IllegalArgumentException ex) { throw new ApiException(400, "INVALID_FILE", "The uploaded employee file is invalid.", false); }
-        String category = employeeFile ? "EMPLOYEE_PHOTO" : "PRODUCT";
+        String requestedCategory=context.body().has("category")?context.body().get("category").getAsString():"PRODUCT";
+        String category=employeeFile?"EMPLOYEE_PHOTO":switch(requestedCategory.toUpperCase(java.util.Locale.ROOT)){
+            case "CUSTOM_ITEM"->"CUSTOM_ITEM";case "CUSTOM_VARIANT"->"CUSTOM_VARIANT";default->"PRODUCT";};
         if (path.startsWith("ID cards/")) {
             String encodedPath = java.util.Arrays.stream(path.split("/"))
                     .filter(part -> !part.isBlank()).map(LanApiServer::cloudEncode)
@@ -519,6 +531,21 @@ public final class LanApiServer implements AutoCloseable {
             AuthenticatedUser actor = loadUser(connection, session.userId(), session.locationId());
             ServerImageAssetService.purge(connection, assetId, session.userId(), displayName(actor));
             return ApiResult.ok(Map.of("deleted", true));
+        }
+    }
+
+    private ApiResult oneDriveImageAction(RequestContext context,String action)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection connection=DB.getConnection()){
+            requireAnyPermission(connection,session.userId(),"COMPANY_PREFERENCES","COMPANY_CUSTOMIZATION");
+            switch(action){
+                case "BEGIN"->ServerImageAssetService.beginOneDriveMigration(connection);
+                case "ACTIVATE"->ServerImageAssetService.activateOneDrive(connection);
+                case "ROLLBACK"->ServerImageAssetService.rollbackToSupabase(connection);
+                default->throw new IllegalArgumentException("Unknown OneDrive image action.");
+            }
+            return ApiResult.ok(Map.of("updated",true,"phase",ServerImageAssetService.phase(connection).name()));
         }
     }
 
@@ -2103,7 +2130,27 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private ApiResult locationList(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){try{return ApiResult.ok(LanLocationService.list(c,x.body(),s.userId()));}catch(LanLocationService.RuleViolation e){throw apiException(e);}}}
-    private ApiResult processLocationEmail(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);ServerRequestIdentity.bindSupabaseAccessToken(optional(x.body(),"supabaseAccessToken",16384));try{return ApiResult.ok(LanLocationService.processEmail(c,s.userId()));}catch(LanLocationService.RuleViolation e){throw apiException(e);}finally{ServerRequestIdentity.clear();}}}
+    private ApiResult processLocationEmail(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);try{return ApiResult.ok(LanLocationService.processEmail(c,s.userId()));}catch(LanLocationService.RuleViolation e){throw apiException(e);}finally{ServerRequestIdentity.clear();}}}
+    private ApiResult gmailOperation(RequestContext x,String action)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            try{
+                Map<String,Object> result=switch(action){
+                    case "CLIENT_STATUS"->LanGmailService.clientStatus(c,s.userId());
+                    case "IMPORT_CLIENT"->LanGmailService.importClient(c,x.body(),s.userId(),d.deviceId());
+                    case "STATUS"->LanGmailService.status(c,x.body(),s.userId());
+                    case "BEGIN"->LanGmailService.begin(c,x.body(),s.userId());
+                    case "COMPLETE"->LanGmailService.complete(c,x.body(),s.userId(),d.deviceId());
+                    case "DISCONNECT"->LanGmailService.disconnect(c,x.body(),s.userId(),d.deviceId());
+                    case "TEST"->LanGmailService.sendTest(c,x.body(),s.userId(),d.deviceId());
+                    default->throw new ApiException(404,"GMAIL_OPERATION_NOT_FOUND","Unknown Gmail operation.",false);
+                };
+                return ApiResult.ok(result);
+            }catch(LanGmailService.RuleViolation e){throw apiException(e);}
+            catch(GmailOAuthService.GmailException e){throw new ApiException(e.authorizationRequired()?409:502,e.category(),e.getMessage(),e.transientFailure());}
+            catch(IllegalArgumentException e){throw new ApiException(400,"VALIDATION_ERROR",e.getMessage(),false);}
+        }
+    }
     private ApiResult saveLocation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required to save a location."),operation="locations.save.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
         try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}Map<String,Object>result=LanLocationService.save(c,x.body(),s.userId());completeIdempotency(c,d.deviceId(),key,result);c.commit();c.setAutoCommit(true);SyncWorker.runOnceNow();return ApiResult.ok(result);
         }catch(LanLocationService.RuleViolation e){c.rollback();throw apiException(e);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
@@ -3383,6 +3430,7 @@ public final class LanApiServer implements AutoCloseable {
         return new ApiException(409,code,ex.getMessage(),false);
     }
     private static ApiException apiException(LanLocationService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
+    private static ApiException apiException(LanGmailService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanMaintenancePartsService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
     private static ApiException apiException(LanDocumentDataService.RuleViolation ex){return new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);}
 
