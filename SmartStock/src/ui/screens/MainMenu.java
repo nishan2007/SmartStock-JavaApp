@@ -1190,40 +1190,40 @@ public class MainMenu extends JFrame {
         boolean canCompanyCustomization = hasCompanyPreferencesPermission();
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
 
-        makeSaleButton.setEnabled(canMakeSale);
-        returnSaleButton.setEnabled(canProcessReturns);
-        balanceDrawButton.setEnabled(canBalanceDrawer);
-        changeBasketButton.setEnabled(canBalanceDrawer);
-        balanceSheetButton.setEnabled(canBalanceSheet);
-        ordersManagerDashboardButton.setEnabled(canOrdersManagerDashboard);
-        reportsButton.setEnabled(canReports);
-        enterInventoryButton.setEnabled(canEnterInventory);
-        receivingHistoryButton.setEnabled(canReceivingHistory);
-        storeTransferButton.setEnabled(canStoreTransfer);
-        customOrderItemsButton.setEnabled(canCustomOrderItems);
-        departmentListButton.setEnabled(canDepartmentManagement);
-        vendorListButton.setEnabled(canVendorManagement);
-        viewSalesButton.setEnabled(canViewSales);
-        customerAccountsButton.setEnabled(canCustomerAccounts);
-        customerTransactionHistoryButton.setEnabled(canCustomerAccounts);
-        invoicesButton.setEnabled(canQuotationsInvoices);
-        customOrdersButton.setEnabled(canCustomOrders);
-        ordersButton.setEnabled(canOrders);
-        viewInventoryButton.setEnabled(canViewInventory);
-        priceTagPrintingButton.setEnabled(canViewInventory);
-        addItemButton.setEnabled(canAddItem);
-        editItemsButton.setEnabled(canEditItem);
-        timeClockButton.setEnabled(canTimeClock);
-        payrollDashboardButton.setEnabled(canPayrollDashboard);
-        weeklyScheduleButton.setEnabled(canViewEmployeeSchedule);
-        employeeManagementButton.setEnabled(canEmployeeManagement);
-        rolesPermissionsButton.setEnabled(canRolesPermissions);
-        deviceManagementButton.setEnabled(canDeviceManagement);
-        machineManagementButton.setEnabled(canMachineManagement);
-        partsManagementButton.setEnabled(canPartsManagement);
-        maintenanceManagementButton.setEnabled(canMaintenanceManagement);
-        companyCustomizationButton.setEnabled(canCompanyCustomization);
-        workstationPreferencesButton.setEnabled(canWorkstationPreferences);
+        setMenuButtonAuthorized(makeSaleButton, canMakeSale);
+        setMenuButtonAuthorized(returnSaleButton, canProcessReturns);
+        setMenuButtonAuthorized(balanceDrawButton, canBalanceDrawer);
+        setMenuButtonAuthorized(changeBasketButton, canBalanceDrawer);
+        setMenuButtonAuthorized(balanceSheetButton, canBalanceSheet);
+        setMenuButtonAuthorized(ordersManagerDashboardButton, canOrdersManagerDashboard);
+        setMenuButtonAuthorized(reportsButton, canReports);
+        setMenuButtonAuthorized(enterInventoryButton, canEnterInventory);
+        setMenuButtonAuthorized(receivingHistoryButton, canReceivingHistory);
+        setMenuButtonAuthorized(storeTransferButton, canStoreTransfer);
+        setMenuButtonAuthorized(customOrderItemsButton, canCustomOrderItems);
+        setMenuButtonAuthorized(departmentListButton, canDepartmentManagement);
+        setMenuButtonAuthorized(vendorListButton, canVendorManagement);
+        setMenuButtonAuthorized(viewSalesButton, canViewSales);
+        setMenuButtonAuthorized(customerAccountsButton, canCustomerAccounts);
+        setMenuButtonAuthorized(customerTransactionHistoryButton, canCustomerAccounts);
+        setMenuButtonAuthorized(invoicesButton, canQuotationsInvoices);
+        setMenuButtonAuthorized(customOrdersButton, canCustomOrders);
+        setMenuButtonAuthorized(ordersButton, canOrders);
+        setMenuButtonAuthorized(viewInventoryButton, canViewInventory);
+        setMenuButtonAuthorized(priceTagPrintingButton, canViewInventory);
+        setMenuButtonAuthorized(addItemButton, canAddItem);
+        setMenuButtonAuthorized(editItemsButton, canEditItem);
+        setMenuButtonAuthorized(timeClockButton, canTimeClock);
+        setMenuButtonAuthorized(payrollDashboardButton, canPayrollDashboard);
+        setMenuButtonAuthorized(weeklyScheduleButton, canViewEmployeeSchedule);
+        setMenuButtonAuthorized(employeeManagementButton, canEmployeeManagement);
+        setMenuButtonAuthorized(rolesPermissionsButton, canRolesPermissions);
+        setMenuButtonAuthorized(deviceManagementButton, canDeviceManagement);
+        setMenuButtonAuthorized(machineManagementButton, canMachineManagement);
+        setMenuButtonAuthorized(partsManagementButton, canPartsManagement);
+        setMenuButtonAuthorized(maintenanceManagementButton, canMaintenanceManagement);
+        setMenuButtonAuthorized(companyCustomizationButton, canCompanyCustomization);
+        setMenuButtonAuthorized(workstationPreferencesButton, canWorkstationPreferences);
 
         if (navigationInProgress) {
             for (JButton button : menuButtons()) {
@@ -1232,6 +1232,13 @@ public class MainMenu extends JFrame {
         }
 
         refreshMenuButtonThemes();
+        revalidate();
+        repaint();
+    }
+
+    private void setMenuButtonAuthorized(JButton button, boolean authorized) {
+        button.setVisible(authorized);
+        button.setEnabled(authorized && !navigationInProgress);
     }
 
     /** Gives the first accepted tile click immediate feedback and prevents duplicate navigation. */

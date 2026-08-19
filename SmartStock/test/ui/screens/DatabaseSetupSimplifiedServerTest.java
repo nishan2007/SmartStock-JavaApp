@@ -25,13 +25,13 @@ class DatabaseSetupSimplifiedServerTest {
     }
 
     @Test
-    void registerAndRemoteConnectionFieldsRemainVisible() throws Exception {
+    void registerConnectionUsesServerAssignedStoreInsteadOfManualField() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/DatabaseSetup.java"));
         assertTrue(source.contains(
                 "setRowVisible(serverHostField, serverAdvanced || client || remote)"));
         assertTrue(source.contains(
                 "setRowVisible(serverPortSpinner, serverAdvanced || client || remote)"));
-        assertTrue(source.contains(
-                "setRowVisible(locationIdField, serverAdvanced || client || remote)"));
+        assertTrue(source.contains("setRowVisible(locationIdField, serverAdvanced)"));
+        assertTrue(source.contains("selected.locationId()"));
     }
 }

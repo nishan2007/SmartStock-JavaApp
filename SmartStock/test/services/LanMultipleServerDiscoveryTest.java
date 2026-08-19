@@ -22,6 +22,7 @@ class LanMultipleServerDiscoveryTest {
         assertTrue(label.contains("store-server-1"));
         assertTrue(label.contains("Developer/Test"));
         assertTrue(label.contains("A1B2C3D4"));
+        assertTrue(server.locationId() == 1);
         assertFalse(label.contains("pairing-proof"));
         assertFalse(label.contains("fingerprint-value"));
     }
@@ -41,7 +42,7 @@ class LanMultipleServerDiscoveryTest {
             String computerName, String serverId) {
         return new LanApiClient.DiscoveredServer(
                 "SmartStock LAN Service", computerName + ".local", 8443,
-                environment, storeName, storeCode, computerName, serverId,
+                environment, 1, storeName, storeCode, computerName, serverId,
                 "fingerprint-value", "pairing-proof", "previous-proof");
     }
 }

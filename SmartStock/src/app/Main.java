@@ -95,13 +95,12 @@ public class Main {
                             Thread.sleep(1_000L);
                         }
                     }
-                    return;
-                }
-                if (!LanApiClient.isPaired()) {
+                } else if (!LanApiClient.isPaired()) {
                     LanApiClient.claimApprovedCredential();
                 } else {
                     LanApiClient.renewDeviceCredentialIfDue();
                 }
+                if (LanApiClient.isPaired()) LanApiClient.syncDeviceMetadata();
             } catch (Exception ex) {
                 // Pairing state is deliberately preserved during outages. Employees
                 // receive the normal server-unavailable message from their workflow.

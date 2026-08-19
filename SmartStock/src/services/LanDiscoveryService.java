@@ -44,6 +44,8 @@ final class LanDiscoveryService implements AutoCloseable {
                             Map.entry("host", host),
                             Map.entry("port", apiPort),
                             Map.entry("environment", advertisedIdentity.environment()),
+                            Map.entry("locationId", advertisedIdentity.locationId() == null
+                                    ? 0 : advertisedIdentity.locationId()),
                             Map.entry("storeName", advertisedIdentity.storeName()),
                             Map.entry("storeCode", advertisedIdentity.storeCode()),
                             Map.entry("computerName", advertisedIdentity.computerName()),
@@ -73,7 +75,7 @@ final class LanDiscoveryService implements AutoCloseable {
         thread.interrupt();
     }
 
-    record DiscoveryIdentity(String environment, String storeName, String storeCode,
+    record DiscoveryIdentity(String environment, Integer locationId, String storeName, String storeCode,
                              String computerName, String serverId) {
     }
 }

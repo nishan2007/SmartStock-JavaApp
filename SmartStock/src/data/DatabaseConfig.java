@@ -182,6 +182,11 @@ public record DatabaseConfig(
                 syncIntervalSeconds);
     }
 
+    public DatabaseConfig withLocationId(Integer assignedLocationId) {
+        return new DatabaseConfig(mode, jdbcUrl, dbUser, dbPassword, serverHost, serverPort,
+                assignedLocationId, syncIntervalSeconds);
+    }
+
     public static DatabaseConfig fromForm(DatabaseMode mode, String jdbcUrl, String dbUser, String dbPassword,
                                           String serverHost, int serverPort, Integer locationId,
                                           int syncIntervalSeconds) {

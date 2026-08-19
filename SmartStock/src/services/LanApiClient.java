@@ -161,7 +161,7 @@ public final class LanApiClient {
         String reachableHost = advertised.host() == null || advertised.host().isBlank()
                 ? sourceHost : advertised.host();
         return new DiscoveredServer(advertised.service(), reachableHost, advertised.port(),
-                advertised.environment(), advertised.storeName(), advertised.storeCode(),
+                advertised.environment(), advertised.locationId(), advertised.storeName(), advertised.storeCode(),
                 advertised.computerName(), advertised.serverId(),
                 advertised.certificateFingerprint(), advertised.pairingProof(), advertised.previousPairingProof());
     }
@@ -219,6 +219,7 @@ public final class LanApiClient {
         if (!matchesPairingProof(expected, probe.certificateFingerprint(), probe.pairingProof(), probe.previousPairingProof())) {
             throw new IllegalStateException("The pairing phrase does not match the SmartStock server.");
         }
+        saveServerAssignedLocation(probe.locationId());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET,
                 probe.certificateFingerprint());
         resetTransport(false, false);
@@ -229,13 +230,12 @@ public final class LanApiClient {
         request.addProperty("pairingPhrase", expected);
         request.addProperty("installationId", device.getInstallationId());
         request.addProperty("deviceFingerprint", device.getFingerprint());
-        request.addProperty("deviceName", device.getDeviceName());
-        request.addProperty("hostname", device.getHostname());
-        request.addProperty("appVersion", device.getAppVersion());
+        addDeviceMetadata(request, device);
         request.addProperty("accessMode", DatabaseConfig.load().mode().name());
         request.addProperty("publicKey", publicKey);
         if(emergencyReason!=null&&!emergencyReason.isBlank())request.addProperty("emergencyReason",emergencyReason.trim());
         JsonObject data = post("/v1/devices/enroll", request, false, false);
+        saveServerAssignedLocation(data.has("locationId") ? data.get("locationId").getAsInt() : null);
         String challenge = DeviceCredentialService.decryptLanEnvelope(
                 data.get("pairingChallengeEnvelope").getAsString());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET, challenge);
@@ -262,9 +262,7 @@ public final class LanApiClient {
         JsonObject request=new JsonObject();
         request.addProperty("installationId",device.getInstallationId());
         request.addProperty("deviceFingerprint",device.getFingerprint());
-        request.addProperty("deviceName",device.getDeviceName());
-        request.addProperty("hostname",device.getHostname());
-        request.addProperty("appVersion",device.getAppVersion());
+        addDeviceMetadata(request,device);
         request.addProperty("publicKey",DeviceCredentialService.pairingPublicKey());
         JsonObject data=post("/v1/devices/local-claim",request,false,false);
         String token=DeviceCredentialService.decryptLanEnvelope(data.get("credentialEnvelope").getAsString());
@@ -273,6 +271,26 @@ public final class LanApiClient {
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET,data.get("expiresAt").getAsString());
         resetTransport(false, false);
         return true;
+    }
+
+    /** Refreshes descriptive workstation details without changing approval or friendly-name policy. */
+    public static void syncDeviceMetadata() throws Exception {
+        if (!isPaired()) return;
+        JsonObject request=new JsonObject();
+        addDeviceMetadata(request,DeviceUtils.collectDeviceInfo());
+        post("/v1/devices/metadata",request,true,false);
+    }
+
+    private static void addDeviceMetadata(JsonObject request, DeviceInfo device) {
+        request.addProperty("deviceName",device.getDeviceName());
+        request.addProperty("hostname",device.getHostname());
+        request.addProperty("osName",device.getOsName());
+        request.addProperty("osVersion",device.getOsVersion());
+        request.addProperty("osArch",device.getOsArch());
+        request.addProperty("javaVersion",device.getJavaVersion());
+        request.addProperty("appVersion",device.getAppVersion());
+        request.addProperty("localUsername",device.getLocalUsername());
+        request.addProperty("macAddresses",device.getMacAddresses());
     }
 
     /** Called silently at startup; pending approval never becomes an employee prompt. */
@@ -294,6 +312,7 @@ public final class LanApiClient {
         }
         String token = DeviceCredentialService.decryptLanEnvelope(
                 data.get("credentialEnvelope").getAsString());
+        saveServerAssignedLocation(data.has("locationId") ? data.get("locationId").getAsInt() : null);
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_TOKEN_SECRET, token);
         cachedDeviceToken = token;
         SecureCredentialStore.write(API_TOKEN_EXPIRES_SECRET, data.get("expiresAt").getAsString());
@@ -1108,8 +1127,10 @@ public final class LanApiClient {
                 throw new IllegalStateException("The server certificate fingerprint did not match its health response.");
             }
         }
+        Integer locationId = data.has("locationId") && !data.get("locationId").isJsonNull()
+                ? data.get("locationId").getAsInt() : null;
         return new Probe(advertised, optionalString(data, "pairingProof"),
-                optionalString(data, "previousPairingProof"));
+                optionalString(data, "previousPairingProof"), locationId);
     }
 
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth) throws Exception {
@@ -1372,18 +1393,33 @@ public final class LanApiClient {
         return object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsString() : "";
     }
 
-    private record Probe(String certificateFingerprint, String pairingProof, String previousPairingProof) { }
+    private static void saveServerAssignedLocation(Integer locationId) throws Exception {
+        if (locationId == null || locationId <= 0
+                || DatabaseConfig.load().mode() != data.DatabaseMode.CLIENT) return;
+        DatabaseConfig.load().withLocationId(locationId).save();
+    }
+
+    private record Probe(String certificateFingerprint, String pairingProof,
+                         String previousPairingProof, Integer locationId) { }
     public record PairingResult(String status, boolean employeeActionRequired) { }
     public record DiscoveredServer(String service, String host, int port,
-                                   String environment, String storeName, String storeCode,
+                                   String environment, Integer locationId, String storeName, String storeCode,
                                    String computerName, String serverId,
                                    String certificateFingerprint, String pairingProof,
                                    String previousPairingProof) {
         public DiscoveredServer(String service, String host, int port,
                                 String certificateFingerprint, String pairingProof,
                                 String previousPairingProof) {
-            this(service, host, port, null, null, null, null, null,
+            this(service, host, port, null, null, null, null, null, null,
                     certificateFingerprint, pairingProof, previousPairingProof);
+        }
+
+        public DiscoveredServer(String service, String host, int port,
+                                String environment, String storeName, String storeCode,
+                                String computerName, String serverId, String certificateFingerprint,
+                                String pairingProof, String previousPairingProof) {
+            this(service, host, port, environment, null, storeName, storeCode, computerName,
+                    serverId, certificateFingerprint, pairingProof, previousPairingProof);
         }
 
         @Override

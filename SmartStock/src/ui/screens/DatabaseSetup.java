@@ -293,7 +293,7 @@ public class DatabaseSetup extends JFrame {
         setRowVisible(dbPasswordField, serverAdvanced);
         setRowVisible(serverHostField, serverAdvanced || client || remote);
         setRowVisible(serverPortSpinner, serverAdvanced || client || remote);
-        setRowVisible(locationIdField, serverAdvanced || client || remote);
+        setRowVisible(locationIdField, serverAdvanced);
         setRowVisible(supabaseProjectUrlField, server);
         setRowVisible(supabasePublishableKeyField, server);
         setRowVisible(lanSubnetField, serverAdvanced);
@@ -642,8 +642,12 @@ public class DatabaseSetup extends JFrame {
                     if (selected == null) return;
                     serverHostField.setText(selected.host());
                     serverPortSpinner.setValue(selected.port());
+                    locationIdField.setText(selected.locationId() == null || selected.locationId() <= 0
+                            ? "" : String.valueOf(selected.locationId()));
                     LanApiClient.configureEndpoint(selected.host(), selected.port());
-                    statusLabel.setText("Status: SmartStock service found. An administrator can now pair this register once.");
+                    statusLabel.setText(selected.locationId() == null || selected.locationId() <= 0
+                            ? "Status: SmartStock service found, but it has no assigned store yet."
+                            : "Status: SmartStock service and store found. Save, then an administrator can pair this register once.");
                 } catch (Exception ex) {
                     statusLabel.setText("Status: Service discovery failed. Enter the server hostname manually.");
                     JOptionPane.showMessageDialog(DatabaseSetup.this, rootCauseMessage(ex), "Find SmartStock Server", JOptionPane.ERROR_MESSAGE);

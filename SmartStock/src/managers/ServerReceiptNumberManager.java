@@ -19,7 +19,7 @@ public class ServerReceiptNumberManager {
     /** Server-service transaction variant; receipt allocation commits with the owning mutation. */
     public static ReceiptNumber nextReceipt(Connection conn, int locationId, UUID deviceId) throws SQLException {
         String storeCode = resolveStoreCode(conn, locationId);
-        String deviceCode = resolveDeviceCode(conn, deviceId, true);
+        String deviceCode = resolveDeviceCode(conn, locationId, deviceId, true);
         int sequence = nextStoreReceiptSequence(conn, locationId);
         return new ReceiptNumber(formatReceiptNumber(storeCode, deviceCode, sequence), deviceCode, sequence);
     }
@@ -27,7 +27,7 @@ public class ServerReceiptNumberManager {
     /** Server-service transaction variant; receive allocation commits with the owning mutation. */
     public static ReceiveNumber nextReceive(Connection conn, int locationId, UUID deviceId) throws SQLException {
         String storeCode = resolveStoreCode(conn, locationId);
-        String deviceCode = resolveDeviceCode(conn, deviceId, true);
+        String deviceCode = resolveDeviceCode(conn, locationId, deviceId, true);
         int sequence = nextStoreReceiptSequence(conn, locationId);
         return new ReceiveNumber(formatReceiveId(storeCode, deviceCode, sequence), deviceCode, sequence);
     }
@@ -35,7 +35,7 @@ public class ServerReceiptNumberManager {
     /** Allocates a permanent return receipt number in the owning refund transaction. */
     public static ReturnNumber nextReturn(Connection conn, int locationId, UUID deviceId) throws SQLException {
         String storeCode = resolveStoreCode(conn, locationId);
-        String deviceCode = resolveDeviceCode(conn, deviceId, false);
+        String deviceCode = resolveDeviceCode(conn, locationId, deviceId, false);
         int sequence = nextStoreReceiptSequence(conn, locationId);
         return new ReturnNumber(formatReturnNumber(storeCode, deviceCode, sequence), deviceCode, sequence);
     }
@@ -44,7 +44,7 @@ public class ServerReceiptNumberManager {
     public static DeviceReceiptSettings getDeviceReceiptSettings(Connection conn, int locationId,
                                                                   UUID deviceId) throws SQLException {
         String storeCode = resolveStoreCode(conn, locationId);
-        String deviceCode = resolveDeviceCode(conn, deviceId, false);
+        String deviceCode = resolveDeviceCode(conn, locationId, deviceId, false);
         int nextSequence = currentStoreReceiptSequence(conn, locationId);
         return new DeviceReceiptSettings(CONFIG_PATH, deviceCode, storeCode, nextSequence,
                 formatReceiptNumber(storeCode, deviceCode, nextSequence), nextSequence,
@@ -63,6 +63,75 @@ public class ServerReceiptNumberManager {
             if (ps.executeUpdate() != 1) throw new SQLException("This register is no longer approved.");
         }
         return sanitized;
+    }
+
+    /** Assigns a store-unique receipt device code while the enrollment transaction owns the store lock. */
+    public static String assignCodeForEnrollment(Connection conn, int locationId, UUID deviceId)
+            throws SQLException {
+        try (PreparedStatement lock = conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)")) {
+            lock.setInt(1, 0x53534B44); // SSKD: SmartStock device-code allocation namespace
+            lock.setInt(2, locationId);
+            lock.execute();
+        }
+
+        String currentCode = "";
+        try (PreparedStatement current = conn.prepareStatement("""
+                SELECT COALESCE(receipt_device_code, '')
+                FROM devices WHERE device_id=? FOR UPDATE
+                """)) {
+            current.setObject(1, deviceId);
+            try (ResultSet rows = current.executeQuery()) {
+                if (!rows.next()) throw new SQLException("The enrolling register no longer exists.");
+                currentCode = sanitizeCode(rows.getString(1));
+            }
+        }
+
+        boolean available = !currentCode.isBlank();
+        if (available) {
+            try (PreparedStatement duplicate = conn.prepareStatement("""
+                    SELECT 1 FROM devices
+                    WHERE last_store_id=? AND device_id<>?
+                      AND UPPER(COALESCE(access_mode,'CLIENT')) IN ('SERVER','CLIENT')
+                      AND receipt_device_code=?
+                    LIMIT 1
+                    """)) {
+                duplicate.setInt(1, locationId);
+                duplicate.setObject(2, deviceId);
+                duplicate.setString(3, currentCode);
+                try (ResultSet rows = duplicate.executeQuery()) { available = !rows.next(); }
+            }
+        }
+
+        String assigned = currentCode;
+        if (!available) {
+            int next;
+            try (PreparedStatement maximum = conn.prepareStatement("""
+                    SELECT COALESCE(MAX(receipt_device_code::integer),0)+1
+                    FROM devices
+                    WHERE last_store_id=?
+                      AND UPPER(COALESCE(access_mode,'CLIENT')) IN ('SERVER','CLIENT')
+                      AND receipt_device_code ~ '^[0-9]{4}$'
+                    """)) {
+                maximum.setInt(1, locationId);
+                try (ResultSet rows = maximum.executeQuery()) { rows.next(); next = rows.getInt(1); }
+            }
+            if (next < 1 || next > 9999) {
+                throw new SQLException("No receipt device codes remain for this store.");
+            }
+            assigned = String.format("%04d", next);
+        }
+
+        try (PreparedStatement update = conn.prepareStatement("""
+                UPDATE devices
+                SET receipt_device_code=?, last_store_id=?, last_seen=CURRENT_TIMESTAMP
+                WHERE device_id=?
+                """)) {
+            update.setString(1, assigned);
+            update.setInt(2, locationId);
+            update.setObject(3, deviceId);
+            if (update.executeUpdate() != 1) throw new SQLException("The enrolling register no longer exists.");
+        }
+        return assigned;
     }
 
     public static String previewSanitizedDeviceId(String deviceId) {
@@ -200,7 +269,9 @@ public class ServerReceiptNumberManager {
         }
     }
 
-    private static String resolveDeviceCode(Connection conn, UUID deviceId, boolean requireSalesAllowed) throws SQLException {
+    private static String resolveDeviceCode(Connection conn, int locationId, UUID deviceId,
+                                            boolean requireSalesAllowed) throws SQLException {
+        String assignedCode = assignCodeForEnrollment(conn, locationId, deviceId);
         String sql = """
                 SELECT COALESCE(receipt_device_code, '') AS receipt_device_code,
                        COALESCE(allow_sales, TRUE) AS allow_sales
@@ -214,7 +285,7 @@ public class ServerReceiptNumberManager {
                 if (requireSalesAllowed && !rs.getBoolean("allow_sales")) {
                     throw new SQLException("This device is not allowed to make sales. Enable Allow Sales in Device Management.");
                 }
-                return requireCode(rs.getString("receipt_device_code"), "devices.receipt_device_code");
+                return requireCode(assignedCode, "devices.receipt_device_code");
             }
         }
     }

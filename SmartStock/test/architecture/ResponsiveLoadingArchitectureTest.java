@@ -59,6 +59,10 @@ class ResponsiveLoadingArchitectureTest {
                 "Returning to the main menu must restore permission-based tile states");
         assertTrue(mainMenu.contains("Cursor.WAIT_CURSOR"));
         assertTrue(mainMenu.contains("for (JButton button : menuButtons())"));
+        assertTrue(mainMenu.contains("button.setVisible(authorized)"),
+                "Tiles for unauthorized screens must be hidden instead of shown disabled");
+        assertTrue(mainMenu.contains("button.setEnabled(authorized && !navigationInProgress)"),
+                "Authorized tiles must still participate in duplicate-navigation protection");
         assertTrue(mainMenu.contains("forwardTileClicks(textPanel, button)"),
                 "Every nested text component must forward its mouse clicks to the containing tile");
         assertTrue(mainMenu.contains("if (activate) button.doClick(0)"));

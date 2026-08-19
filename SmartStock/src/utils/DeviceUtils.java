@@ -10,6 +10,7 @@ import java.util.prefs.Preferences;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.io.InputStream;
+import java.util.concurrent.TimeUnit;
 
 public class DeviceUtils {
 
@@ -34,7 +35,7 @@ public class DeviceUtils {
         info.setInstallationId(installationId);
         info.setFingerprint(fingerprint);
         info.setHostname(hostname);
-        info.setDeviceName(preferredDeviceName(localUsername, hostname));
+        info.setDeviceName(getDeviceName(hostname));
         info.setOsName(osName);
         info.setOsVersion(osVersion);
         info.setOsArch(osArch);
@@ -46,9 +47,10 @@ public class DeviceUtils {
         return info;
     }
 
-    private static String preferredDeviceName(String localUsername, String hostname) {
-        if (localUsername != null && !localUsername.isBlank()) {
-            return localUsername.trim();
+    private static String getDeviceName(String hostname) {
+        if (isMac()) {
+            String computerName = macSystemName("ComputerName");
+            if (!computerName.isBlank()) return computerName;
         }
         if (hostname != null && !hostname.isBlank()) {
             return hostname.trim();
@@ -69,10 +71,46 @@ public class DeviceUtils {
     }
 
     private static String getHostName() {
+        if (isWindows()) {
+            String computerName = System.getenv("COMPUTERNAME");
+            if (computerName != null && !computerName.isBlank()) return computerName.trim();
+        }
+        if (isMac()) {
+            String configuredHostName = macSystemName("HostName");
+            if (!configuredHostName.isBlank()) return configuredHostName;
+            String localHostName = macSystemName("LocalHostName");
+            if (!localHostName.isBlank()) return localHostName + ".local";
+        }
         try {
             return InetAddress.getLocalHost().getHostName();
         } catch (Exception e) {
             return "Unknown";
+        }
+    }
+
+    private static boolean isMac() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private static String macSystemName(String key) {
+        Process process = null;
+        try {
+            process = new ProcessBuilder("/usr/sbin/scutil", "--get", key)
+                    .redirectErrorStream(true).start();
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "";
+            }
+            if (process.exitValue() != 0) return "";
+            return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            if (process != null) process.destroy();
         }
     }
 

@@ -13,6 +13,7 @@ import data.EnvironmentProfile;
 import data.DatabaseMode;
 import managers.ServerTimeClockManager;
 import managers.ServerCompanyCustomizationRepository;
+import managers.ServerReceiptNumberManager;
 import managers.SupabaseSessionManager;
 import ui.helpers.PerformanceDiagnostics;
 
@@ -140,7 +141,8 @@ public final class LanApiServer implements AutoCloseable {
         String serverId = fingerprint == null ? "UNKNOWN"
                 : fingerprint.substring(0, Math.min(8, fingerprint.length())).toUpperCase();
         return new LanDiscoveryService.DiscoveryIdentity(
-                EnvironmentProfile.active().id(), storeName, storeCode, computerName, serverId);
+                EnvironmentProfile.active().id(), config.locationId(), storeName, storeCode,
+                computerName, serverId);
     }
 
     public String pairingPhrase() {
@@ -156,6 +158,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/devices/enroll", exchange -> handle(exchange, this::enroll));
         server.createContext("/v1/devices/claim", exchange -> handle(exchange, this::claim));
         server.createContext("/v1/devices/local-claim", exchange -> handle(exchange, this::localServerClaim));
+        server.createContext("/v1/devices/metadata", exchange -> handle(exchange, this::updateDeviceMetadata));
         server.createContext("/v1/devices/rotate", exchange -> handle(exchange, this::rotate));
         server.createContext("/v1/devices/transfers/prepare", exchange -> handle(exchange, this::prepareRegisterTransfer));
         server.createContext("/v1/devices/transfers/inspect", exchange -> handle(exchange, this::inspectRegisterTransfer));
@@ -583,6 +586,7 @@ public final class LanApiServer implements AutoCloseable {
         List<String> pairingProofs = tlsIdentity.pairingProofs();
         data.put("pairingProof", pairingProofs.get(0));
         data.put("previousPairingProof", pairingProofs.get(1));
+        data.put("locationId", DatabaseConfig.load().locationId());
         send(exchange, 200, success(data));
     }
 
@@ -595,6 +599,12 @@ public final class LanApiServer implements AutoCloseable {
         String fingerprint = optional(body, "deviceFingerprint", 512);
         String deviceName = optional(body, "deviceName", 200);
         String hostname = optional(body, "hostname", 255);
+        String osName = optional(body, "osName", 200);
+        String osVersion = optional(body, "osVersion", 200);
+        String osArch = optional(body, "osArch", 100);
+        String javaVersion = optional(body, "javaVersion", 100);
+        String localUsername = optional(body, "localUsername", 255);
+        String macAddresses = optional(body, "macAddresses", 4000);
         String appVersion = optional(body, "appVersion", 100);
         String accessMode = "REMOTE_ADMIN".equals(optional(body, "accessMode", 30))
                 ? "REMOTE_ADMIN" : "CLIENT";
@@ -602,6 +612,8 @@ public final class LanApiServer implements AutoCloseable {
         String pairingChallengeEnvelope = encryptForDevice(publicKey, pairingChallenge);
 
         try (Connection connection = DB.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
             Integer configuredDestination=DatabaseConfig.load().locationId();
             String emergencyReason=optional(body,"emergencyReason",1000);
             if(emergencyReason!=null){if(configuredDestination==null)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);try{RegisterTransferService.importCompanyDeviceForEmergency(connection,installationId,configuredDestination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
@@ -613,16 +625,26 @@ public final class LanApiServer implements AutoCloseable {
             try (PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO devices (
                         installation_id, device_fingerprint, device_name, hostname,
-                        app_version, pairing_public_key, api_pairing_challenge_hash,
+                        os_name, os_version, os_arch, java_version, app_version,
+                        local_username, mac_addresses, pairing_public_key, api_pairing_challenge_hash,
                         api_pairing_challenge_expires_at, first_seen, last_seen,
                         is_approved, is_blocked, credential_status, access_mode
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '24 hours',
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '24 hours',
                               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE, FALSE, 'PENDING', ?)
                     ON CONFLICT (installation_id) DO UPDATE SET
                         device_fingerprint = EXCLUDED.device_fingerprint,
-                        device_name = COALESCE(NULLIF(devices.device_name, ''), EXCLUDED.device_name),
+                        device_name = CASE
+                            WHEN NULLIF(TRIM(devices.device_name),'') IS NULL
+                              OR devices.device_name=EXCLUDED.local_username THEN EXCLUDED.device_name
+                            ELSE devices.device_name END,
                         hostname = EXCLUDED.hostname,
+                        os_name = EXCLUDED.os_name,
+                        os_version = EXCLUDED.os_version,
+                        os_arch = EXCLUDED.os_arch,
+                        java_version = EXCLUDED.java_version,
                         app_version = EXCLUDED.app_version,
+                        local_username = EXCLUDED.local_username,
+                        mac_addresses = EXCLUDED.mac_addresses,
                         access_mode = CASE WHEN devices.is_approved THEN devices.access_mode ELSE EXCLUDED.access_mode END,
                         last_seen = CURRENT_TIMESTAMP,
                         api_pairing_challenge_hash = EXCLUDED.api_pairing_challenge_hash,
@@ -638,10 +660,16 @@ public final class LanApiServer implements AutoCloseable {
                 statement.setString(2, fingerprint);
                 statement.setString(3, deviceName);
                 statement.setString(4, hostname);
-                statement.setString(5, appVersion);
-                statement.setString(6, publicKey);
-                statement.setString(7, LanSecurity.sha256(pairingChallenge));
-                statement.setString(8, accessMode);
+                statement.setString(5, osName);
+                statement.setString(6, osVersion);
+                statement.setString(7, osArch);
+                statement.setString(8, javaVersion);
+                statement.setString(9, appVersion);
+                statement.setString(10, localUsername);
+                statement.setString(11, macAddresses);
+                statement.setString(12, publicKey);
+                statement.setString(13, LanSecurity.sha256(pairingChallenge));
+                statement.setString(14, accessMode);
                 try (ResultSet rs = statement.executeQuery()) {
                     rs.next();
                     deviceId = (UUID) rs.getObject("device_id");
@@ -664,14 +692,24 @@ public final class LanApiServer implements AutoCloseable {
                     throw new ApiException(ex.status,ex.code,ex.getMessage(),false);
                 }
             }
+            String receiptDeviceCode = "REMOTE_ADMIN".equals(accessMode) ? null
+                    : ServerReceiptNumberManager.assignCodeForEnrollment(connection, destination, deviceId);
             auditSecurity(connection, "LAN_DEVICE_ENROLLMENT", deviceId, null,
                     approved ? "Existing approved device requested LAN enrollment" : "Device is pending administrator approval");
             if (blocked) throw new ApiException(403, "DEVICE_REVOKED", "This device has been revoked.", false);
-            return ApiResult.ok(Map.of(
-                    "deviceId", deviceId.toString(),
-                    "status", approved ? "APPROVED" : "PENDING_APPROVAL",
-                    "pairingChallengeEnvelope", pairingChallengeEnvelope,
-                    "employeeActionRequired", false));
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("deviceId", deviceId.toString());
+            response.put("status", approved ? "APPROVED" : "PENDING_APPROVAL");
+            response.put("locationId", destination);
+            response.put("receiptDeviceCode", receiptDeviceCode);
+            response.put("pairingChallengeEnvelope", pairingChallengeEnvelope);
+            response.put("employeeActionRequired", false);
+            connection.commit();
+            return ApiResult.ok(response);
+            } catch (Exception ex) {
+                connection.rollback();
+                throw ex;
+            }
         }
     }
 
@@ -753,6 +791,7 @@ public final class LanApiServer implements AutoCloseable {
                 connection.commit();
                 return ApiResult.ok(Map.of(
                         "deviceId", deviceId.toString(),
+                        "locationId", destination,
                         "credentialEnvelope", envelope,
                         "certificateFingerprint", tlsIdentity.fingerprint(),
                         "expiresAt", Instant.now().plus(Duration.ofDays(90)).toString()));
@@ -1034,6 +1073,37 @@ public final class LanApiServer implements AutoCloseable {
             return ApiResult.ok(Map.of("deviceId",deviceId.toString(),"credentialEnvelope",encryptForDevice(publicKey,token),
                     "certificateFingerprint",tlsIdentity.fingerprint(),"expiresAt",Instant.now().plus(Duration.ofDays(90)).toString()));
         }
+    }
+
+    private ApiResult updateDeviceMetadata(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        JsonObject body=context.body();
+        String reportedName=optional(body,"deviceName",200);
+        String hostname=optional(body,"hostname",255);
+        String osName=optional(body,"osName",200);
+        String osVersion=optional(body,"osVersion",200);
+        String osArch=optional(body,"osArch",100);
+        String javaVersion=optional(body,"javaVersion",100);
+        String appVersion=optional(body,"appVersion",100);
+        String localUsername=optional(body,"localUsername",255);
+        String macAddresses=optional(body,"macAddresses",4000);
+        try(Connection connection=DB.getConnection();PreparedStatement ps=connection.prepareStatement("""
+                UPDATE devices SET
+                  device_name=CASE
+                    WHEN NULLIF(TRIM(device_name),'') IS NULL OR device_name=? THEN ?
+                    ELSE device_name END,
+                  hostname=?,os_name=?,os_version=?,os_arch=?,java_version=?,app_version=?,
+                  local_username=?,mac_addresses=?,last_seen=CURRENT_TIMESTAMP
+                WHERE device_id=?
+                """)){
+            ps.setString(1,localUsername);ps.setString(2,reportedName);ps.setString(3,hostname);
+            ps.setString(4,osName);ps.setString(5,osVersion);ps.setString(6,osArch);
+            ps.setString(7,javaVersion);ps.setString(8,appVersion);ps.setString(9,localUsername);
+            ps.setString(10,macAddresses);ps.setObject(11,device.deviceId());
+            if(ps.executeUpdate()!=1)throw new ApiException(404,"DEVICE_NOT_FOUND","This device is no longer enrolled.",false);
+        }
+        return ApiResult.ok(Map.of("updated",true));
     }
 
     private ApiResult rotate(RequestContext context) throws Exception {
@@ -2769,8 +2839,21 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);
         try(Connection connection=DB.getConnection()){
-            try{return ApiResult.ok(LanWorkstationSettingsService.load(connection,device.deviceId(),session.userId(),session.locationId()));}
-            catch(LanWorkstationSettingsService.RuleViolation ex){throw apiException(ex);}
+            connection.setAutoCommit(false);
+            try {
+                Map<String,Object> result=LanWorkstationSettingsService.load(
+                        connection,device.deviceId(),session.userId(),session.locationId());
+                connection.commit();
+                return ApiResult.ok(result);
+            } catch(LanWorkstationSettingsService.RuleViolation ex) {
+                connection.rollback();
+                throw apiException(ex);
+            } catch(Exception ex) {
+                connection.rollback();
+                throw ex;
+            } finally {
+                connection.setAutoCommit(true);
+            }
         }
     }
 

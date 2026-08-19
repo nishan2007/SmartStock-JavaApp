@@ -54,6 +54,53 @@ final class LanApiBoundaryTest {
     }
 
     @Test
+    void registerStoreAssignmentComesFromAuthenticatedServer() throws Exception {
+        String client = Files.readString(SRC.resolve("services/LanApiClient.java"));
+        String server = Files.readString(SRC.resolve("services/LanApiServer.java"));
+        assertTrue(server.contains("data.put(\"locationId\", DatabaseConfig.load().locationId())"));
+        assertTrue(server.contains("\"locationId\", destination"));
+        assertTrue(client.contains("saveServerAssignedLocation(probe.locationId())"));
+        assertTrue(client.contains("DatabaseConfig.load().withLocationId(locationId).save()"));
+    }
+
+    @Test
+    void registerEnrollmentAllocatesStoreUniqueReceiptDeviceCode() throws Exception {
+        String server = Files.readString(SRC.resolve("services/LanApiServer.java"));
+        String receipts = Files.readString(SRC.resolve("managers/ServerReceiptNumberManager.java"));
+        assertTrue(server.contains("assignCodeForEnrollment(connection, destination, deviceId)"));
+        assertTrue(server.contains("connection.setAutoCommit(false)"));
+        assertTrue(server.contains("connection.commit()"));
+        assertTrue(server.contains("connection.rollback()"));
+        assertTrue(receipts.contains("pg_advisory_xact_lock"));
+        assertTrue(receipts.contains("last_store_id=? AND device_id<>?"));
+        assertTrue(receipts.contains("MAX(receipt_device_code::integer),0)+1"));
+        assertTrue(receipts.contains("assignCodeForEnrollment(conn, locationId, deviceId)"),
+                "Existing duplicate device codes must self-repair before another receipt is allocated");
+    }
+
+    @Test
+    void registerReportsHostnameAsDefaultNameAndRefreshesHardwareDetails() throws Exception {
+        String deviceUtils = Files.readString(SRC.resolve("utils/DeviceUtils.java"));
+        String client = Files.readString(SRC.resolve("services/LanApiClient.java"));
+        String server = Files.readString(SRC.resolve("services/LanApiServer.java"));
+        String main = Files.readString(SRC.resolve("app/Main.java"));
+        assertTrue(deviceUtils.contains("getDeviceName(hostname)"));
+        assertFalse(deviceUtils.contains("preferredDeviceName(localUsername, hostname)"));
+        assertTrue(deviceUtils.contains("macSystemName(\"ComputerName\")"));
+        assertTrue(deviceUtils.contains("macSystemName(\"LocalHostName\")"));
+        assertTrue(deviceUtils.contains("System.getenv(\"COMPUTERNAME\")"));
+        for (String field : List.of("osName", "osVersion", "osArch", "javaVersion",
+                "localUsername", "macAddresses")) {
+            assertTrue(client.contains("request.addProperty(\"" + field + "\""), field);
+            assertTrue(server.contains("optional(body,\"" + field + "\""), field);
+        }
+        assertTrue(server.contains("/v1/devices/metadata"));
+        assertTrue(main.contains("LanApiClient.syncDeviceMetadata()"));
+        assertTrue(server.contains("device_name=? THEN ?"),
+                "An old username-derived default must be replaced without overwriting custom names");
+    }
+
+    @Test
     void registerDatabaseAccessFailsBeforeAnyConnectionAttempt() {
         String old = System.getProperty("smartstock.db.mode");
         System.setProperty("smartstock.db.mode", "CLIENT");
