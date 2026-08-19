@@ -10,6 +10,7 @@ import javax.print.PrintException;
 import javax.print.PrintService;
 import javax.print.PrintServiceLookup;
 import javax.print.SimpleDoc;
+import javax.swing.SwingUtilities;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -35,7 +36,28 @@ public class ReceiptPrinter {
     }
 
     public static void printToPosPrinter(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer) throws PrintException {
+        printToPosPrinter(receipt, printer, false, false);
+    }
+
+    public static EpsonReceiptPrintService.PrintResult printToPosPrinter(ReceiptData receipt,
+            HardwareSettingsManager.PosPrinter printer, boolean openDrawer, boolean reprint) throws PrintException {
+        if (printer != null && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            EpsonReceiptPrintService.PrintResult result = EpsonReceiptPrintService.print(receipt, printer, openDrawer, reprint);
+            if (!result.successful()) {
+                try {
+                    if (HardwareSettingsManager.getEpsonSettings().printDialogFallback()) {
+                        printWithSystemDialog(receipt, reprint);
+                        return EpsonReceiptPrintService.PrintResult.queued("Selected in system print dialog");
+                    }
+                } catch (Exception fallbackFailure) {
+                    throw new PrintException(result.message() + " Print dialog fallback failed: " + fallbackFailure.getMessage());
+                }
+                throw new PrintException(result.message());
+            }
+            return result;
+        }
         printToPosPrinter(receipt, printer, printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat());
+        return EpsonReceiptPrintService.PrintResult.queued(printer == null ? "" : printer.systemName());
     }
 
     public static void printToPosPrinter(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer, HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
@@ -63,11 +85,55 @@ public class ReceiptPrinter {
             return;
         }
 
-        byte[] bytes = ReceiptFormatter.formatEscPos(receipt, settings);
+        byte[] bytes = EpsonReceiptPrintService.composeJob(ReceiptFormatter.formatEscPos(receipt, settings),
+                loadEpsonSettings(), false);
         DocFlavor flavor = DocFlavor.BYTE_ARRAY.AUTOSENSE;
         Doc doc = new SimpleDoc(bytes, flavor, null);
         DocPrintJob job = service.createPrintJob();
         job.print(doc, null);
+    }
+
+    private static HardwareSettingsManager.EpsonSettings loadEpsonSettings() throws PrintException {
+        try {
+            return HardwareSettingsManager.getEpsonSettings();
+        } catch (java.io.IOException ex) {
+            throw new PrintException(ex);
+        }
+    }
+
+    private static void printWithSystemDialog(ReceiptData receipt, boolean reprint) throws Exception {
+        final Exception[] failure = new Exception[1];
+        Runnable dialogTask = () -> {
+            PrinterJob job = PrinterJob.getPrinterJob();
+            String prefix = reprint ? "DUPLICATE / REPRINT\n" : "";
+            String[] lines = (prefix + ReceiptFormatter.formatText(receipt)).split("\\R", -1);
+            Font font = new Font(Font.MONOSPACED, Font.PLAIN, 9);
+            Paper paper = new Paper();
+            double width = 80.0 / 25.4 * 72.0;
+            double height = Math.max((lines.length + 4) * 12.0, 144.0);
+            paper.setSize(width, height);
+            paper.setImageableArea(6, 6, width - 12, height - 12);
+            PageFormat format = new PageFormat();
+            format.setPaper(paper);
+            job.setPrintable((graphics, pageFormat, pageIndex) -> {
+                if (pageIndex > 0) return Printable.NO_SUCH_PAGE;
+                graphics.setFont(font);
+                int y = (int) pageFormat.getImageableY() + graphics.getFontMetrics().getAscent();
+                for (String line : lines) {
+                    graphics.drawString(line, (int) pageFormat.getImageableX(), y);
+                    y += graphics.getFontMetrics().getHeight();
+                }
+                return Printable.PAGE_EXISTS;
+            }, format);
+            if (!job.printDialog()) {
+                failure[0] = new PrinterException("Printing was cancelled.");
+                return;
+            }
+            try { job.print(); } catch (PrinterException ex) { failure[0] = ex; }
+        };
+        if (SwingUtilities.isEventDispatchThread()) dialogTask.run();
+        else SwingUtilities.invokeAndWait(dialogTask);
+        if (failure[0] != null) throw failure[0];
     }
 
     private static void printLetterToService(ReceiptData receipt, PrintService service, CompanyCustomizationManager.ReceiptSettings settings) throws PrintException {

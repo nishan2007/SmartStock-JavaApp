@@ -2724,7 +2724,7 @@ public class MakeASale extends JFrame {
                             "CASH".equals(paymentMethod) ? result.cashCollected() : null,
                             "CASH".equals(paymentMethod) ? result.changeDue() : null);
                     HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
-                    ReceiptPrinter.printToPosPrinter(receipt, printer);
+                    ReceiptPrinter.printToPosPrinter(receipt, printer, "CASH".equals(paymentMethod), false);
                 } catch (Exception ex) {
                     if (receipt == null) {
                         receiptError = ex.getMessage();
@@ -2755,7 +2755,7 @@ public class MakeASale extends JFrame {
             if (snapshot.printError() != null) {
                 message += "\n\nReceipt printing failed: " + snapshot.printError();
             } else if (showReceiptPreview) {
-                message += "\n\nReceipt sent to the printer.";
+                message += "\n\nReceipt submitted to the Windows print queue.";
             }
             JOptionPane.showMessageDialog(this, message);
             cartModel.setRowCount(0);

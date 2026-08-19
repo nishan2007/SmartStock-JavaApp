@@ -110,17 +110,25 @@ public class ReceiptFormatter {
     }
 
     public static byte[] formatEscPos(ReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings) {
+        return formatEscPos(receipt, settings, false);
+    }
+
+    public static byte[] formatEscPos(ReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings, boolean reprint) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         write(out, 0x1B, 0x40);
         write(out, 0x1B, 0x4D, 0x00);
         write(out, 0x1D, 0x21, 0x00);
         appendEscPosLogo(out, settings);
         write(out, 0x1B, 0x61, 0x00);
+        if (reprint) {
+            write(out, 0x1B, 0x45, 0x01);
+            writeAscii(out, "              DUPLICATE / REPRINT\n");
+            write(out, 0x1B, 0x45, 0x00);
+        }
         writeAscii(out, formatText(receipt, settings));
         appendEscPosBarcode(out, receipt);
         write(out, 0x1B, 0x61, 0x01);
-        writeAscii(out, "\n\n\n");
-        write(out, 0x1D, 0x56, 0x42, 0x00);
+        writeAscii(out, "\n");
         return out.toByteArray();
     }
 

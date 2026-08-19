@@ -47,7 +47,7 @@ public class HardwareSettingsManager {
     }
 
     public static void saveConfiguredPrinters(List<PosPrinter> printers) throws IOException {
-        Properties properties = new Properties();
+        Properties properties = loadProperties();
         List<PosPrinter> cleanPrinters = normalizePrinters(printers);
 
         properties.setProperty("printer.count", String.valueOf(cleanPrinters.size()));
@@ -63,6 +63,34 @@ public class HardwareSettingsManager {
         Files.createDirectories(CONFIG_PATH.getParent());
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
+    public static EpsonSettings getEpsonSettings() throws IOException {
+        Properties p = loadProperties();
+        return new EpsonSettings(
+                Boolean.parseBoolean(p.getProperty("epson.enabled", "false")),
+                Boolean.parseBoolean(p.getProperty("epson.automatic_cut", "true")),
+                Boolean.parseBoolean(p.getProperty("epson.cash_drawer_enabled", "false")),
+                parseInt(p.getProperty("epson.drawer_pin"), 0),
+                parseInt(p.getProperty("epson.drawer_on_ms"), 120),
+                parseInt(p.getProperty("epson.drawer_off_ms"), 240),
+                Boolean.parseBoolean(p.getProperty("epson.print_dialog_fallback", "true")));
+    }
+
+    public static void saveEpsonSettings(EpsonSettings settings) throws IOException {
+        EpsonSettings clean = settings == null ? EpsonSettings.defaults() : settings;
+        Properties p = loadProperties();
+        p.setProperty("epson.enabled", String.valueOf(clean.enabled()));
+        p.setProperty("epson.automatic_cut", String.valueOf(clean.automaticCut()));
+        p.setProperty("epson.cash_drawer_enabled", String.valueOf(clean.cashDrawerEnabled()));
+        p.setProperty("epson.drawer_pin", String.valueOf(clean.drawerPin()));
+        p.setProperty("epson.drawer_on_ms", String.valueOf(clean.drawerOnMillis()));
+        p.setProperty("epson.drawer_off_ms", String.valueOf(clean.drawerOffMillis()));
+        p.setProperty("epson.print_dialog_fallback", String.valueOf(clean.printDialogFallback()));
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            p.store(outputStream, "SmartStock local hardware settings");
         }
     }
 
@@ -184,6 +212,24 @@ public class HardwareSettingsManager {
         @Override
         public String toString() {
             return label;
+        }
+    }
+
+    public record EpsonSettings(boolean enabled, boolean automaticCut, boolean cashDrawerEnabled,
+                                int drawerPin, int drawerOnMillis, int drawerOffMillis,
+                                boolean printDialogFallback) {
+        public EpsonSettings {
+            drawerPin = drawerPin == 1 ? 1 : 0;
+            drawerOnMillis = clampPulse(drawerOnMillis, 120);
+            drawerOffMillis = clampPulse(drawerOffMillis, 240);
+        }
+
+        public static EpsonSettings defaults() {
+            return new EpsonSettings(false, true, false, 0, 120, 240, true);
+        }
+
+        private static int clampPulse(int value, int fallback) {
+            return value < 2 || value > 510 ? fallback : value;
         }
     }
 

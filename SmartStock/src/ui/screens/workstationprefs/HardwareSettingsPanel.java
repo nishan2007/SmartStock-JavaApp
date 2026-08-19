@@ -21,6 +21,13 @@ public class HardwareSettingsPanel extends JPanel {
     private final JTable configuredPrinterTable;
     private final JTextField configPathField = new JTextField();
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private final JCheckBox epsonEnabledBox = new JCheckBox("Epson ESC/POS");
+    private final JCheckBox automaticCutBox = new JCheckBox("Automatic cut", true);
+    private final JCheckBox cashDrawerBox = new JCheckBox("Cash drawer");
+    private final JCheckBox dialogFallbackBox = new JCheckBox("Print dialog fallback", true);
+    private final JComboBox<String> drawerPinBox = new JComboBox<>(new String[]{"Pin 2", "Pin 5"});
+    private final JSpinner drawerOnSpinner = new JSpinner(new SpinnerNumberModel(120, 2, 510, 2));
+    private final JSpinner drawerOffSpinner = new JSpinner(new SpinnerNumberModel(240, 2, 510, 2));
 
     public HardwareSettingsPanel() {
         setLayout(new BorderLayout(0, 12));
@@ -60,10 +67,28 @@ public class HardwareSettingsPanel extends JPanel {
         JPanel bottomPanel = new JPanel(new BorderLayout(12, 12));
         bottomPanel.setOpaque(false);
 
+        JPanel epsonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        epsonPanel.setOpaque(false);
+        epsonPanel.setBorder(BorderFactory.createTitledBorder("Epson receipt printer (80 mm)"));
+        epsonPanel.add(epsonEnabledBox);
+        epsonPanel.add(automaticCutBox);
+        epsonPanel.add(cashDrawerBox);
+        epsonPanel.add(new JLabel("Drawer:"));
+        epsonPanel.add(drawerPinBox);
+        epsonPanel.add(new JLabel("On ms:"));
+        epsonPanel.add(drawerOnSpinner);
+        epsonPanel.add(new JLabel("Off ms:"));
+        epsonPanel.add(drawerOffSpinner);
+        epsonPanel.add(dialogFallbackBox);
+
         configPathField.setEditable(false);
         configPathField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         configPathField.setText(HardwareSettingsManager.getConfigPath().toString());
-        bottomPanel.add(configPathField, BorderLayout.NORTH);
+        JPanel localSettingsPanel = new JPanel(new BorderLayout(0, 6));
+        localSettingsPanel.setOpaque(false);
+        localSettingsPanel.add(epsonPanel, BorderLayout.CENTER);
+        localSettingsPanel.add(configPathField, BorderLayout.SOUTH);
+        bottomPanel.add(localSettingsPanel, BorderLayout.NORTH);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttonPanel.setOpaque(false);
@@ -73,6 +98,12 @@ public class HardwareSettingsPanel extends JPanel {
         JButton defaultButton = new JButton("Set Receipt Default");
         JButton labelDefaultButton = new JButton("Set Order Label Default");
         JButton saveButton = new JButton("Save");
+        JButton testReceiptButton = new JButton("Test Receipt");
+        JButton testCutButton = new JButton("Test Cutter");
+        JButton testDrawerButton = new JButton("Test Drawer");
+        buttonPanel.add(testReceiptButton);
+        buttonPanel.add(testCutButton);
+        buttonPanel.add(testDrawerButton);
         buttonPanel.add(refreshButton);
         buttonPanel.add(addButton);
         buttonPanel.add(removeButton);
@@ -91,6 +122,9 @@ public class HardwareSettingsPanel extends JPanel {
         defaultButton.addActionListener(e -> setSelectedDefault());
         labelDefaultButton.addActionListener(e -> setSelectedLabelDefault());
         saveButton.addActionListener(e -> saveConfiguredPrinters());
+        testReceiptButton.addActionListener(e -> testReceipt());
+        testCutButton.addActionListener(e -> testControl(Receipt.EpsonReceiptPrintService.ControlAction.CUT));
+        testDrawerButton.addActionListener(e -> testControl(Receipt.EpsonReceiptPrintService.ControlAction.DRAWER));
 
         loadHardware();
     }
@@ -123,8 +157,9 @@ public class HardwareSettingsPanel extends JPanel {
                 SessionDataCache.REFERENCE_TTL,loadingState,()->{
                     var installed=UiTaskRunner.supplyAsync(HardwareSettingsManager::getAvailablePrinterNames);
                     var configured=UiTaskRunner.supplyAsync(HardwareSettingsManager::getConfiguredPrinters);
-                    return new HardwareSnapshot(installed.join(),configured.join());
-                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyConfiguredPrinters(snapshot.configured());});
+                    var epson=UiTaskRunner.supplyAsync(HardwareSettingsManager::getEpsonSettings);
+                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join());
+                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());});
     }
 
     private void loadConfiguredPrinters() {
@@ -214,11 +249,74 @@ public class HardwareSettingsPanel extends JPanel {
 
         try {
             HardwareSettingsManager.saveConfiguredPrinters(printers);
+            HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
             SessionDataCache.invalidate("workstation:hardware");
             JOptionPane.showMessageDialog(this, "Hardware settings saved.");
             loadHardware();
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to save hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private HardwareSettingsManager.EpsonSettings readEpsonSettings() {
+        return new HardwareSettingsManager.EpsonSettings(epsonEnabledBox.isSelected(), automaticCutBox.isSelected(),
+                cashDrawerBox.isSelected(), drawerPinBox.getSelectedIndex(),
+                ((Number) drawerOnSpinner.getValue()).intValue(), ((Number) drawerOffSpinner.getValue()).intValue(),
+                dialogFallbackBox.isSelected());
+    }
+
+    private void applyEpsonSettings(HardwareSettingsManager.EpsonSettings settings) {
+        HardwareSettingsManager.EpsonSettings value = settings == null ? HardwareSettingsManager.EpsonSettings.defaults() : settings;
+        epsonEnabledBox.setSelected(value.enabled());
+        automaticCutBox.setSelected(value.automaticCut());
+        cashDrawerBox.setSelected(value.cashDrawerEnabled());
+        drawerPinBox.setSelectedIndex(value.drawerPin());
+        drawerOnSpinner.setValue(value.drawerOnMillis());
+        drawerOffSpinner.setValue(value.drawerOffMillis());
+        dialogFallbackBox.setSelected(value.printDialogFallback());
+    }
+
+    private HardwareSettingsManager.PosPrinter selectedConfiguredPrinter() {
+        int viewRow = configuredPrinterTable.getSelectedRow();
+        if (viewRow < 0) {
+            try { return HardwareSettingsManager.getDefaultReceiptPrinter(); }
+            catch (IOException ex) { return null; }
+        }
+        int row = configuredPrinterTable.convertRowIndexToModel(viewRow);
+        return new HardwareSettingsManager.PosPrinter(String.valueOf(configuredPrinterModel.getValueAt(row, 0)),
+                String.valueOf(configuredPrinterModel.getValueAt(row, 1)),
+                Boolean.TRUE.equals(configuredPrinterModel.getValueAt(row, 2)),
+                Boolean.TRUE.equals(configuredPrinterModel.getValueAt(row, 3)),
+                getPrintFormat(configuredPrinterModel.getValueAt(row, 4)));
+    }
+
+    private void testControl(Receipt.EpsonReceiptPrintService.ControlAction action) {
+        try {
+            HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+            var result = Receipt.EpsonReceiptPrintService.testControl(selectedConfiguredPrinter(), action);
+            JOptionPane.showMessageDialog(this, result.message(), "Epson " + action + " Test",
+                    result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void testReceipt() {
+        Receipt.ReceiptData sample = new Receipt.ReceiptData(0, "TEST-RECEIPT", new java.sql.Timestamp(System.currentTimeMillis()),
+                "SmartStock", "Hardware Test", "", "", "TEST", "TEST", "This workstation",
+                java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, "", java.math.BigDecimal.TEN,
+                java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, null, null,
+                List.of(new Receipt.ReceiptItem("Epson 80 mm printer test", "TEST", 1,
+                        java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, java.math.BigDecimal.TEN,
+                        java.math.BigDecimal.TEN)));
+        try {
+            HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+            var result = Receipt.EpsonReceiptPrintService.print(sample, selectedConfiguredPrinter(), false, false);
+            JOptionPane.showMessageDialog(this, result.message(), "Epson Receipt Test",
+                    result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -242,5 +340,6 @@ public class HardwareSettingsPanel extends JPanel {
     }
 
     private record HardwareSnapshot(List<String> installed,
-                                    List<HardwareSettingsManager.PosPrinter> configured) { }
+                                    List<HardwareSettingsManager.PosPrinter> configured,
+                                    HardwareSettingsManager.EpsonSettings epson) { }
 }

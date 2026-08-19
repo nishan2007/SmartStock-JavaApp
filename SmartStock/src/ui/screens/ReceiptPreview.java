@@ -158,7 +158,12 @@ public class ReceiptPreview extends JFrame {
     private void printReceipt() {
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
-            ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer, getSelectedPrintFormat());
+            if (selected != null && selected.printer != null
+                    && getSelectedPrintFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+                ReceiptPrinter.printToPosPrinter(receiptData, selected.printer, false, true);
+            } else {
+                ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer, getSelectedPrintFormat());
+            }
             JOptionPane.showMessageDialog(this, "Receipt sent to " + (selected == null ? "the printer" : selected) + ".");
         } catch (PrintException ex) {
             JOptionPane.showMessageDialog(
