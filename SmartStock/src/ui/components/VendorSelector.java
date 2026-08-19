@@ -28,7 +28,7 @@ public class VendorSelector extends JPanel {
 
     public void loadVendors() {
         String selectedText = getSelectedVendorName();
-        CachedUiLoader.loadAfterDisplay(this, "reference:inventory-lookups:all",
+        CachedUiLoader.loadAfterDisplay(vendorBox, "reference:inventory-lookups:all",
                 LanApiClient.InventoryLookups.class, SessionDataCache.REFERENCE_TTL, loadingState,
                 () -> LanApiClient.loadInventoryLookups(null),
                 lookups -> applyVendors(lookups, selectedText));

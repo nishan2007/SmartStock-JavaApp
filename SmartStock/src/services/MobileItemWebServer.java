@@ -153,7 +153,9 @@ public final class MobileItemWebServer implements AutoCloseable {
         try(Connection c=DB.getConnection()){
             Map<String,Object> out=new LinkedHashMap<>();out.put("permissions",owner.mobilePermissions(s.userId));
             out.put("departments",rows(c,"SELECT category_id id,name FROM categories ORDER BY name"));
-            out.put("vendors",rows(c,"SELECT vendor_id id,name FROM vendors ORDER BY name"));
+            out.put("vendors",rows(c,"SELECT vendor_id id,name FROM vendors WHERE COALESCE(is_active,TRUE)=TRUE ORDER BY name"));
+            out.put("itemTypes",itemTypeRows(c));
+            out.put("brands",rows(c,"SELECT brand_id id,name FROM item_brands ORDER BY name"));
             out.put("shelves",rows(c,"SELECT shelf_location_id id,name FROM shelf_locations WHERE location_id="+s.locationId+" ORDER BY name"));
             return out;
         }
@@ -190,6 +192,7 @@ public final class MobileItemWebServer implements AutoCloseable {
         """)){p.setObject(1,b.id);p.setString(2,LanSecurity.sha256(token));try(ResultSet r=p.executeQuery()){if(!r.next())throw new WebError(401,"SESSION_INVALID","Please log in again.");Instant now=Instant.now(),exp=r.getTimestamp(5).toInstant(),abs=r.getTimestamp(6).toInstant();if(!exp.isAfter(now)||!abs.isAfter(now))throw new WebError(401,"SESSION_EXPIRED","Please log in again.");if(csrf){String supplied=x.getRequestHeaders().getFirst("X-CSRF-Token");if(supplied==null||!LanSecurity.constantTimeEquals(LanSecurity.sha256(supplied),r.getString(4)))throw new WebError(403,"CSRF_INVALID","The form security token is invalid.");}UUID id=(UUID)r.getObject(1);Instant next=now.plus(IDLE).isBefore(abs)?now.plus(IDLE):abs;try(PreparedStatement q=c.prepareStatement("UPDATE mobile_item_web_sessions SET expires_at=?,last_seen_at=CURRENT_TIMESTAMP WHERE session_id=?")){q.setTimestamp(1,Timestamp.from(next));q.setObject(2,id);q.executeUpdate();}c.commit();return new Session(id,b.id,r.getInt(2),r.getInt(3));}}catch(Exception e){c.rollback();throw e;}}}
 
     private static List<Map<String,Object>> rows(Connection c,String sql)throws Exception{List<Map<String,Object>> out=new ArrayList<>();try(var p=c.prepareStatement(sql);var r=p.executeQuery()){while(r.next())out.add(Map.of("id",r.getObject(1),"name",r.getString(2)));}return out;}
+    private static List<Map<String,Object>> itemTypeRows(Connection c)throws Exception{List<Map<String,Object>> out=new ArrayList<>();try(var p=c.prepareStatement("SELECT item_type_id,category_id,name FROM item_types ORDER BY name");var r=p.executeQuery()){while(r.next())out.add(Map.of("id",r.getInt(1),"categoryId",r.getInt(2),"name",r.getString(3)));}return out;}
     private void audit(Connection c,String type,Integer userId,String details)throws Exception{try(PreparedStatement p=c.prepareStatement("INSERT INTO security_audit_events(event_type,device_id,actor_user_id,details) VALUES(?,?,?,?)")){p.setString(1,type);p.setObject(2,mobileDeviceId(c,DatabaseConfig.load().locationId()));if(userId==null)p.setNull(3,java.sql.Types.INTEGER);else p.setInt(3,userId);p.setString(4,details);p.executeUpdate();}}
     static UUID mobileDeviceId(Connection c,Integer locationId)throws Exception{
         String installationId="smartstock-mobile-item-web:"+DeviceUtils.collectDeviceInfo().getInstallationId();

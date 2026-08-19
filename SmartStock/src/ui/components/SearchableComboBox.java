@@ -113,10 +113,29 @@ public class SearchableComboBox extends JComboBox<String> {
             model.addElement("");
             for (String option : options) model.addElement(option);
             setModel(model);
-            getEditor().setItem(editorText == null ? "" : editorText);
+            String preservedText = editorText == null ? "" : editorText;
+            getEditor().setItem(preservedText);
+            collapseEditorSelection(preservedText);
         } finally {
             updating = false;
         }
+    }
+
+    private void collapseEditorSelection(String expectedText) {
+        JTextComponent editor = currentEditor();
+        if (editor == null) return;
+        moveCaretToEnd(editor, expectedText);
+        SwingUtilities.invokeLater(() -> {
+            JTextComponent current = currentEditor();
+            if (current != null) moveCaretToEnd(current, expectedText);
+        });
+    }
+
+    private static void moveCaretToEnd(JTextComponent editor, String expectedText) {
+        if (!editor.getText().equals(expectedText)) return;
+        int end = editor.getDocument().getLength();
+        editor.setCaretPosition(end);
+        editor.moveCaretPosition(end);
     }
 
     private void navigateOptions(int direction) {

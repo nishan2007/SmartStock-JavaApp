@@ -71,7 +71,7 @@ public class ItemDetailsSelector extends JPanel {
     }
 
     private void loadCommonLookups() {
-        CachedUiLoader.loadAfterDisplay(this,"reference:inventory-lookups:all",LanApiClient.InventoryLookups.class,
+        CachedUiLoader.loadAfterDisplay(brandBox,"reference:inventory-lookups:all",LanApiClient.InventoryLookups.class,
                 SessionDataCache.REFERENCE_TTL,loadingState,()->LanApiClient.loadInventoryLookups(null),lookups->{
                     String brand=selectedText(brandBox),shelf=selectedText(shelfBox),storage=selectedText(storageShelfBox);
                     brandBox.setOptions(lookups.brands());
@@ -83,7 +83,7 @@ public class ItemDetailsSelector extends JPanel {
 
     private void load(SearchableComboBox box, Integer categoryId, String kind) {
         String key="reference:inventory-lookups:"+(categoryId==null?"all":"category:"+categoryId);
-        CachedUiLoader.loadAfterDisplay(this,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
+        CachedUiLoader.loadAfterDisplay(box,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
                 loadingState,()->LanApiClient.loadInventoryLookups(categoryId),lookups->{
             String desired=selectedText(box);
             List<String> options = switch (kind) {

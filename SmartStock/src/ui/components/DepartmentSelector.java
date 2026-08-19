@@ -33,7 +33,7 @@ public class DepartmentSelector extends JPanel {
 
     public void loadDepartments() {
         String selectedText = getSelectedDepartmentName();
-        CachedUiLoader.loadAfterDisplay(this, "reference:inventory-lookups:all",
+        CachedUiLoader.loadAfterDisplay(departmentBox, "reference:inventory-lookups:all",
                 LanApiClient.InventoryLookups.class, SessionDataCache.REFERENCE_TTL, loadingState,
                 () -> LanApiClient.loadInventoryLookups(null),
                 lookups -> applyDepartments(lookups, selectedText));
