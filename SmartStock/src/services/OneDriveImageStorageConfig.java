@@ -47,6 +47,17 @@ public final class OneDriveImageStorageConfig {
             throw new IOException("OneDrive certificate could not be verified in "+SecureCredentialStore.backendLabel()+".");
     }
 
+    public static void savePublicIdentifiers(String tenantId,String clientId,String driveId)throws IOException{
+        require(tenantId,"Microsoft tenant ID");require(clientId,"Entra client ID");require(driveId,"OneDrive drive ID");
+        SecureCredentialStore.write(TENANT_KEY,tenantId.trim());
+        SecureCredentialStore.write(CLIENT_KEY,clientId.trim());
+        SecureCredentialStore.write(DRIVE_KEY,driveId.trim());
+        Settings saved=load();
+        if(!saved.tenantId().equals(tenantId.trim())||!saved.clientId().equals(clientId.trim())
+                ||!saved.driveId().equals(driveId.trim()))
+            throw new IOException("OneDrive public identifiers could not be verified in "+SecureCredentialStore.backendLabel()+".");
+    }
+
     public static boolean hasCertificate(){Settings s=load();return !s.certificatePem().isBlank()&&!s.privateKeyPem().isBlank();}
 
     public static void clear() {

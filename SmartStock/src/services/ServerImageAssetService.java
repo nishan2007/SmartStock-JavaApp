@@ -155,6 +155,7 @@ public final class ServerImageAssetService {
 
     public static SyncResult synchronize(Connection local, boolean forceInventoryScan) throws SQLException {
         ensureSchema(local);
+        hydrateOneDriveConfiguration(local);
         try {
             imageRoot();
         } catch (IOException ex) {
@@ -561,6 +562,7 @@ public final class ServerImageAssetService {
 
     public static Counts counts(Connection conn) throws SQLException {
         ensureSchema(conn);
+        hydrateOneDriveConfiguration(conn);
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT COUNT(*) FILTER (
                            WHERE local_status='PRESENT'
@@ -793,6 +795,7 @@ public final class ServerImageAssetService {
     }
 
     public static void beginOneDriveMigration(Connection conn)throws Exception{
+        hydrateOneDriveConfiguration(conn);
         if(!ONEDRIVE.configured())throw new SQLException("OneDrive image storage is not configured on this server.");
         probeOneDrive(conn);boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
             setPhase(conn,OneDrivePhase.MIGRATING);
@@ -830,6 +833,7 @@ public final class ServerImageAssetService {
     }
 
     public static ImageCloudProvider.ProbeResult probeOneDrive(Connection conn)throws Exception{
+        hydrateOneDriveConfiguration(conn);
         try{ImageCloudProvider.ProbeResult result=ONEDRIVE.probe();putSyncState(conn,ONEDRIVE_READINESS_STATE,"READY");return result;}
         catch(Exception ex){putSyncState(conn,ONEDRIVE_READINESS_STATE,"FAILED");throw ex;}
     }
@@ -845,6 +849,7 @@ public final class ServerImageAssetService {
 
     public static OneDriveSetup sharedOneDriveSetup(Connection conn)throws SQLException{
         ensureSchema(conn);
+        hydrateOneDriveConfiguration(conn);
         try(PreparedStatement ps=conn.prepareStatement("SELECT tenant_id,client_id,drive_id FROM image_cloud_configuration WHERE provider='ONEDRIVE'");ResultSet rs=ps.executeQuery()){
             if(rs.next())return new OneDriveSetup(rs.getString(1),rs.getString(2),rs.getString(3),OneDriveImageStorageConfig.hasCertificate());
         }
@@ -865,6 +870,23 @@ public final class ServerImageAssetService {
             if(userId==null)ps.setNull(4,java.sql.Types.INTEGER);else ps.setInt(4,userId);
             ps.setString(5,userName);ps.executeUpdate();
         }
+    }
+
+    private static boolean hydrateOneDriveConfiguration(Connection conn)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement(
+                "SELECT tenant_id,client_id,drive_id FROM image_cloud_configuration WHERE provider='ONEDRIVE'");
+            ResultSet rs=ps.executeQuery()){
+            if(!rs.next())return false;
+            String tenantId=rs.getString(1),clientId=rs.getString(2),driveId=rs.getString(3);
+            OneDriveImageStorageConfig.Settings current=OneDriveImageStorageConfig.load();
+            if(!tenantId.equals(current.tenantId())||!clientId.equals(current.clientId())
+                    ||!driveId.equals(current.driveId())){
+                OneDriveImageStorageConfig.savePublicIdentifiers(tenantId,clientId,driveId);
+                ONEDRIVE.reset();
+            }
+            return OneDriveImageStorageConfig.load().configured();
+        }catch(java.io.IOException ex){throw new SQLException(
+                "Synchronized OneDrive identifiers could not be saved on this server.",ex);}
     }
 
     public static OneDriveCertificateService.PublicCertificate generateOrLoadOneDriveCertificate()throws Exception{

@@ -24,6 +24,8 @@ class OneDriveImageBoundaryTest {
         String imageService=Files.readString(Path.of("src/services/ServerImageAssetService.java"));
         assertTrue(imageService.contains("migration_status NOT IN ('VERIFIED','RESOLVED')"));
         assertTrue(imageService.contains("image_cloud_configuration"));
+        assertTrue(imageService.contains("hydrateOneDriveConfiguration"));
+        assertTrue(imageService.contains("savePublicIdentifiers"));
         String referenceSync=Files.readString(Path.of("src/services/ReferenceDataSyncService.java"));
         assertTrue(referenceSync.contains("image_cloud_configuration"));
         assertFalse(referenceSync.contains("onedrive-image-private-key-pem"));
@@ -41,5 +43,9 @@ class OneDriveImageBoundaryTest {
         String localBaseline=Files.readString(Path.of("database/v1/local/001_schema.sql"));
         assertFalse(localBaseline.contains(
                 "GRANT ALL ON TABLE public.image_cloud_configuration TO service_role"));
+
+        String contract=Files.readString(Path.of("src/services/SchemaContractService.java"));
+        assertTrue(contract.contains(
+                "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql"));
     }
 }
