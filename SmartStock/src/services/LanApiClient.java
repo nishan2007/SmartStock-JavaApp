@@ -891,7 +891,8 @@ public final class LanApiClient {
         JsonObject data=post("/v1/images/list",new JsonObject(),true,true);
         ImageAssetRecord[] rows=GSON.fromJson(data.get("assets"),ImageAssetRecord[].class);
         ImageAssetCounts counts=GSON.fromJson(data.get("counts"),ImageAssetCounts.class);
-        return new ImageAssetState(rows==null?List.of():List.of(rows),counts);
+        OneDriveSetup setup=GSON.fromJson(data.get("oneDriveSetup"),OneDriveSetup.class);
+        return new ImageAssetState(rows==null?List.of():List.of(rows),counts,setup);
     }
     public static void reconcileImageAssets()throws Exception{post("/v1/images/reconcile",new JsonObject(),true,true);}
     public static void retainImageAsset(String assetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("assetId",assetId);post("/v1/images/retain",r,true,true);}
@@ -900,6 +901,7 @@ public final class LanApiClient {
     public static void activateOneDriveImages()throws Exception{post("/v1/images/onedrive/activate",new JsonObject(),true,true);}
     public static void rollbackOneDriveImages()throws Exception{post("/v1/images/onedrive/rollback",new JsonObject(),true,true);}
     public static void configureOneDriveImages(String tenantId,String clientId,String driveId,String certificatePem,String privateKeyPem)throws Exception{JsonObject r=new JsonObject();r.addProperty("tenantId",tenantId);r.addProperty("clientId",clientId);r.addProperty("driveId",driveId);r.addProperty("certificatePem",certificatePem);r.addProperty("privateKeyPem",privateKeyPem);post("/v1/images/onedrive/configure",r,true,true);}
+    public static OneDriveCertificate generateOrExportOneDriveCertificate()throws Exception{return GSON.fromJson(post("/v1/images/onedrive/certificate",new JsonObject(),true,true),OneDriveCertificate.class);}
     public static JsonObject companyCustomizationSave(String action,JsonElement settings,Integer locationId,String key)throws Exception{
         requireIdempotencyKey(key,"Configuration idempotency key is required.");JsonObject r=new JsonObject();r.addProperty("action",action);
         if(settings!=null)r.add("settings",settings);if(locationId!=null)r.addProperty("locationId",locationId);
@@ -1747,7 +1749,7 @@ public final class LanApiClient {
         public String code() { return code; }
         public boolean retryable() { return retryable; }
     }
-    public record ImageAssetState(List<ImageAssetRecord>assets,ImageAssetCounts counts) { }
+    public record ImageAssetState(List<ImageAssetRecord>assets,ImageAssetCounts counts,OneDriveSetup oneDriveSetup) { }
     public record ImageAssetRecord(String assetId,String category,String filename,long byteSize,String lifecycleStatus,
                                    String localStatus,String cloudStatus,long createdAtEpochMillis,long updatedAtEpochMillis,
                                    long unusedSinceEpochMillis,String lastError,int referenceCount,String cloudProvider,
@@ -1755,4 +1757,6 @@ public final class LanApiClient {
     public record ImageAssetCounts(int pendingUploads,int missingLocal,int missingCloud,int unused,int failedPurges,
                                    boolean cloudCredentialConfigured,boolean oneDriveConfigured,String oneDrivePhase,
                                    int migrationPending,boolean oneDriveReady) { }
+    public record OneDriveSetup(String tenantId,String clientId,String driveId,boolean localCertificateConfigured) { }
+    public record OneDriveCertificate(String certificatePem,String thumbprint,long expiresAtEpochMillis) { }
 }

@@ -41,7 +41,7 @@ public final class CloudRowMirrorService {
             "custom_order_print_materials", "custom_order_print_size_presets",
             "custom_order_design_placements", "employee_payroll_settings",
             "employee_schedule_holidays", "time_clock_auto_close_settings",
-            "image_assets", "image_asset_references", "maintenance_parts"
+            "image_cloud_configuration", "image_assets", "image_asset_references", "maintenance_parts"
     );
     private static final Map<String, String> DEPENDENT_LOCATION_PREDICATES = Map.ofEntries(
             Map.entry("sale_items", "EXISTS (SELECT 1 FROM sales p WHERE p.sale_id=t.sale_id AND p.location_id=?)"),

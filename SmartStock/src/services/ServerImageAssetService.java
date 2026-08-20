@@ -778,8 +778,44 @@ public final class ServerImageAssetService {
 
     public static void configureOneDrive(String tenantId,String clientId,String driveId,
                                          String certificatePem,String privateKeyPem)throws Exception{
+        OneDriveImageStorageConfig.Settings current=OneDriveImageStorageConfig.load();
+        if(certificatePem==null||certificatePem.isBlank())certificatePem=current.certificatePem();
+        if(privateKeyPem==null||privateKeyPem.isBlank())privateKeyPem=current.privateKeyPem();
         OneDriveImageStorageConfig.save(tenantId,clientId,driveId,certificatePem,privateKeyPem);
         ONEDRIVE.reset();
+    }
+
+    public static OneDriveSetup sharedOneDriveSetup(Connection conn)throws SQLException{
+        ensureSchema(conn);
+        try(PreparedStatement ps=conn.prepareStatement("SELECT tenant_id,client_id,drive_id FROM image_cloud_configuration WHERE provider='ONEDRIVE'");ResultSet rs=ps.executeQuery()){
+            if(rs.next())return new OneDriveSetup(rs.getString(1),rs.getString(2),rs.getString(3),OneDriveImageStorageConfig.hasCertificate());
+        }
+        OneDriveImageStorageConfig.Settings local=OneDriveImageStorageConfig.load();
+        return new OneDriveSetup(local.tenantId(),local.clientId(),local.driveId(),OneDriveImageStorageConfig.hasCertificate());
+    }
+
+    public static void publishOneDriveIdentifiers(Connection conn,String tenantId,String clientId,String driveId,
+                                                   Integer userId,String userName)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement("""
+                INSERT INTO image_cloud_configuration(provider,tenant_id,client_id,drive_id,updated_at,updated_by_user_id,updated_by_name)
+                VALUES('ONEDRIVE',?,?,?,CURRENT_TIMESTAMP,?,?)
+                ON CONFLICT(provider) DO UPDATE SET tenant_id=EXCLUDED.tenant_id,client_id=EXCLUDED.client_id,
+                  drive_id=EXCLUDED.drive_id,updated_at=CURRENT_TIMESTAMP,updated_by_user_id=EXCLUDED.updated_by_user_id,
+                  updated_by_name=EXCLUDED.updated_by_name
+                """)){
+            ps.setString(1,tenantId.trim());ps.setString(2,clientId.trim());ps.setString(3,driveId.trim());
+            if(userId==null)ps.setNull(4,java.sql.Types.INTEGER);else ps.setInt(4,userId);
+            ps.setString(5,userName);ps.executeUpdate();
+        }
+    }
+
+    public static OneDriveCertificateService.PublicCertificate generateOrLoadOneDriveCertificate()throws Exception{
+        OneDriveImageStorageConfig.Settings current=OneDriveImageStorageConfig.load();
+        if(!current.certificatePem().isBlank()&&!current.privateKeyPem().isBlank())
+            return OneDriveCertificateService.describe(current.certificatePem());
+        OneDriveCertificateService.GeneratedCertificate generated=OneDriveCertificateService.generate();
+        OneDriveImageStorageConfig.saveCertificate(generated.certificatePem(),generated.privateKeyPem());
+        return new OneDriveCertificateService.PublicCertificate(generated.certificatePem(),generated.thumbprint(),generated.expiresAtEpochMillis());
     }
 
     private static void setPhase(Connection conn,OneDrivePhase phase)throws SQLException{
@@ -970,5 +1006,6 @@ public final class ServerImageAssetService {
     public record Counts(int pendingUploads, int missingLocal, int missingCloud, int unused, int failedPurges,
                          boolean cloudCredentialConfigured,boolean oneDriveConfigured,String oneDrivePhase,
                          int migrationPending,boolean oneDriveReady) { }
+    public record OneDriveSetup(String tenantId,String clientId,String driveId,boolean localCertificateConfigured) { }
     public enum OneDrivePhase { DISABLED,MIGRATING,ACTIVE }
 }

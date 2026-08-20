@@ -20,7 +20,7 @@ public final class ProductionReadinessService {
     private static final Gson GSON = new Gson();
     private static final List<String> REQUIRED_RECOVERY_TABLES = List.of(
             "locations", "roles", "permissions", "users", "user_locations",
-            "products", "product_barcodes", "inventory", "vendors",
+            "products", "product_barcodes", "inventory", "vendors", "image_cloud_configuration",
             "customer_accounts", "sales", "sale_items", "sale_returns",
             "cash_drawers", "cash_drawer_sessions", "custom_orders",
             "quotations", "invoices", "employee_time_clock", "payroll_payments",

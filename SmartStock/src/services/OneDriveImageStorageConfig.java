@@ -38,6 +38,17 @@ public final class OneDriveImageStorageConfig {
             throw new IOException("OneDrive credentials could not be verified in "+SecureCredentialStore.backendLabel()+".");
     }
 
+    public static void saveCertificate(String certificatePem,String privateKeyPem)throws IOException{
+        require(certificatePem,"public certificate");require(privateKeyPem,"certificate private key");
+        SecureCredentialStore.write(CERT_KEY,encodePem(certificatePem));
+        SecureCredentialStore.write(PRIVATE_KEY,encodePem(privateKeyPem));
+        Settings saved=load();
+        if(!saved.certificatePem().equals(certificatePem.trim())||!saved.privateKeyPem().equals(privateKeyPem.trim()))
+            throw new IOException("OneDrive certificate could not be verified in "+SecureCredentialStore.backendLabel()+".");
+    }
+
+    public static boolean hasCertificate(){Settings s=load();return !s.certificatePem().isBlank()&&!s.privateKeyPem().isBlank();}
+
     public static void clear() {
         for(String key:new String[]{TENANT_KEY,CLIENT_KEY,DRIVE_KEY,CERT_KEY,PRIVATE_KEY}) SecureCredentialStore.delete(key);
     }

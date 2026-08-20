@@ -10,7 +10,7 @@ import java.util.List;
 public final class ProductionRecoveryDrillService {
     private static final List<String> RECOVERY_TABLES = List.of(
             "locations", "roles", "permissions", "role_permissions", "users", "user_locations",
-            "products", "product_barcodes", "inventory", "vendors", "customer_accounts",
+            "products", "product_barcodes", "inventory", "vendors", "image_cloud_configuration", "customer_accounts",
             "sales", "sale_items", "sale_returns", "sale_return_items",
             "cash_drawers", "cash_drawer_sessions", "custom_orders", "custom_order_lines",
             "quotations", "quotation_lines", "invoices", "invoice_lines",

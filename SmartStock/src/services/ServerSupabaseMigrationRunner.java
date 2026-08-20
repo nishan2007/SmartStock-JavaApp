@@ -208,7 +208,7 @@ public final class ServerSupabaseMigrationRunner {
                 "app_releases", "locations", "roles", "permissions",
                 "role_permissions", "mobile_permissions", "role_mobile_permissions",
                 "users", "user_locations", "devices", "device_sessions",
-                "email_outbox", "email_outbox_events", "image_assets",
+                "email_outbox", "email_outbox_events", "image_cloud_configuration", "image_assets",
                 "image_asset_references", "sync_outbox", "sync_applied_events",
                 "store_sync_status", "remote_admin_commands", "smartstock_store_rows",
                 "smartstock_store_mirror_status", "smartstock_store_snapshot_generations",

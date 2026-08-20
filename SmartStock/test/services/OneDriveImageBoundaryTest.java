@@ -23,6 +23,10 @@ class OneDriveImageBoundaryTest {
         assertFalse(provider.contains("GRAPH+\"/users/\""));
         String imageService=Files.readString(Path.of("src/services/ServerImageAssetService.java"));
         assertTrue(imageService.contains("migration_status NOT IN ('VERIFIED','RESOLVED')"));
+        assertTrue(imageService.contains("image_cloud_configuration"));
+        String referenceSync=Files.readString(Path.of("src/services/ReferenceDataSyncService.java"));
+        assertTrue(referenceSync.contains("image_cloud_configuration"));
+        assertFalse(referenceSync.contains("onedrive-image-private-key-pem"));
         assertTrue(imageService.contains("? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')"));
         String server=Files.readString(Path.of("src/services/LanApiServer.java"));
         assertTrue(server.contains("isLoopbackAddress()"));

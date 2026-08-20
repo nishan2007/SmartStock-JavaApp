@@ -156,11 +156,15 @@ public final class SchemaContractService {
     }
 
     private static void ensureOneDriveImageUpgrade(Connection connection)throws SQLException{
-        if(!tableExists(connection,"public","image_assets")
-                ||columnExists(connection,"public","image_assets","cloud_provider"))return;
+        if(!tableExists(connection,"public","image_assets"))return;
+        boolean providerUpgrade=!columnExists(connection,"public","image_assets","cloud_provider");
+        boolean sharedConfigurationUpgrade=!tableExists(connection,"public","image_cloud_configuration");
+        if(!providerUpgrade&&!sharedConfigurationUpgrade)return;
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
-            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
+            if(providerUpgrade)SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"));
+            if(sharedConfigurationUpgrade)SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql"));
             if(tableExists(connection,"public","smartstock_schema_metadata")){
                 String resource=resourceFingerprint(localContractResources());
                 String catalog=catalogFingerprint(connection,List.of("public"),false);

@@ -28,6 +28,7 @@ public final class ImageStoragePanel extends JPanel {
     private final JLabel preview = new JLabel("Select an image", SwingConstants.CENTER);
     private final JButton keepButton = new JButton("Keep");
     private final JButton purgeButton = new JButton("Permanently Delete");
+    private LanApiClient.OneDriveSetup oneDriveSetup=new LanApiClient.OneDriveSetup("","","",false);
 
     public ImageStoragePanel() {
         super(new BorderLayout(12, 12));
@@ -44,9 +45,10 @@ public final class ImageStoragePanel extends JPanel {
         JButton activateOneDrive = new JButton("Activate OneDrive");
         JButton rollback = new JButton("Rollback to Supabase");
         JButton setupOneDrive = new JButton("Set Up OneDrive");
+        JButton certificateButton = new JButton("Generate / Export Certificate");
         actions.add(refresh);
         actions.add(reconcile);
-        actions.add(setupOneDrive);actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
+        actions.add(certificateButton);actions.add(setupOneDrive);actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
         actions.add(keepButton);
         actions.add(purgeButton);
         heading.add(actions, BorderLayout.EAST);
@@ -74,7 +76,9 @@ public final class ImageStoragePanel extends JPanel {
         activateOneDrive.addActionListener(event->runAction("Activating OneDrive...",()->{LanApiClient.activateOneDriveImages();return null;},this::load));
         rollback.addActionListener(event->runAction("Rolling product images back to Supabase...",()->{LanApiClient.rollbackOneDriveImages();return null;},this::load));
         setupOneDrive.addActionListener(event->setupOneDrive());
+        certificateButton.addActionListener(event->generateOrExportCertificate());
         setupOneDrive.setEnabled(data.DatabaseConfig.load().mode()==data.DatabaseMode.SERVER);
+        certificateButton.setEnabled(data.DatabaseConfig.load().mode()==data.DatabaseMode.SERVER);
         setupOneDrive.setToolTipText(setupOneDrive.isEnabled()?"Import the server-only Microsoft certificate and test the Graph connection.":"Open Company Preferences on the store server computer to configure credentials.");
         keepButton.addActionListener(event -> {
             String id = selectedId();
@@ -107,6 +111,7 @@ public final class ImageStoragePanel extends JPanel {
     }
 
     private void apply(LanApiClient.ImageAssetState state) {
+        if(state.oneDriveSetup()!=null)oneDriveSetup=state.oneDriveSetup();
         model.setRowCount(0);
         for (LanApiClient.ImageAssetRecord row : state.assets()) {
             model.addRow(new Object[]{row.assetId(), row.category(), row.filename(), formatBytes(row.byteSize()),
@@ -182,6 +187,7 @@ public final class ImageStoragePanel extends JPanel {
 
     private void setupOneDrive(){
         JTextField tenant=new JTextField(),client=new JTextField(),drive=new JTextField();
+        tenant.setText(oneDriveSetup.tenantId());client.setText(oneDriveSetup.clientId());drive.setText(oneDriveSetup.driveId());
         JTextField certificate=new JTextField();certificate.setEditable(false);
         JTextField privateKey=new JTextField();privateKey.setEditable(false);
         JButton chooseCertificate=new JButton("Choose Certificate...");
@@ -196,14 +202,38 @@ public final class ImageStoragePanel extends JPanel {
         form.add(chooseCertificate);form.add(certificate);
         form.add(choosePrivateKey);form.add(privateKey);
         JPanel wrapper=new JPanel(new BorderLayout(8,8));
-        wrapper.add(new JLabel("<html>Configure this only on the store server. The Entra app needs the Microsoft Graph<br><b>application</b> permission Files.ReadWrite.AppFolder with administrator consent.</html>"),BorderLayout.NORTH);
+        wrapper.add(new JLabel("<html>Public IDs are synchronized between stores. Configure this only on the store server.<br>"
+                +(oneDriveSetup.localCertificateConfigured()?"A server-local certificate is ready; certificate file selection is optional.":"Generate/export a certificate first, or select an existing certificate and private key.")
+                +"<br>The Entra app needs the <b>application</b> permission Files.ReadWrite.AppFolder with administrator consent.</html>"),BorderLayout.NORTH);
         wrapper.add(form,BorderLayout.CENTER);
         if(JOptionPane.showConfirmDialog(this,wrapper,"Set Up OneDrive Image Storage",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
-        if(certificatePath[0]==null||privateKeyPath[0]==null){showError(new IllegalArgumentException("Select both the public certificate and PKCS#8 private key PEM files."));return;}
+        if((certificatePath[0]==null)!=(privateKeyPath[0]==null)){showError(new IllegalArgumentException("Select both PEM files, or leave both blank to use the certificate generated on this server."));return;}
+        if(certificatePath[0]==null&&!oneDriveSetup.localCertificateConfigured()){showError(new IllegalArgumentException("Generate this server's certificate first, or select both PEM files."));return;}
         runAction("Saving credentials and testing OneDrive...",()->{
             LanApiClient.configureOneDriveImages(tenant.getText().trim(),client.getText().trim(),drive.getText().trim(),
-                    Files.readString(certificatePath[0]),Files.readString(privateKeyPath[0]));return null;
+                    certificatePath[0]==null?"":Files.readString(certificatePath[0]),
+                    privateKeyPath[0]==null?"":Files.readString(privateKeyPath[0]));return null;
         },()->{JOptionPane.showMessageDialog(this,"OneDrive connection verified. You can now begin the copy.","OneDrive Image Storage",JOptionPane.INFORMATION_MESSAGE);load();});
+    }
+
+    private void generateOrExportCertificate(){
+        setBusy(true,"Preparing this server's public certificate...");
+        new SwingWorker<LanApiClient.OneDriveCertificate,Void>(){
+            @Override protected LanApiClient.OneDriveCertificate doInBackground()throws Exception{return LanApiClient.generateOrExportOneDriveCertificate();}
+            @Override protected void done(){try{
+                LanApiClient.OneDriveCertificate certificate=get();
+                JFileChooser chooser=new JFileChooser();chooser.setDialogTitle("Export public certificate for Microsoft Entra");
+                chooser.setSelectedFile(new java.io.File("smartstock-onedrive-cert.pem"));
+                if(chooser.showSaveDialog(ImageStoragePanel.this)==JFileChooser.APPROVE_OPTION){
+                    Files.writeString(chooser.getSelectedFile().toPath(),certificate.certificatePem());
+                    JOptionPane.showMessageDialog(ImageStoragePanel.this,"Public certificate exported.\n\nThumbprint: "+certificate.thumbprint()
+                            +"\nExpires: "+DATE.format(Instant.ofEpochMilli(certificate.expiresAtEpochMillis()))
+                            +"\n\nUpload this public PEM to the SmartStock Entra app. The private key remains secured on this server.",
+                            "OneDrive Certificate",JOptionPane.INFORMATION_MESSAGE);
+                }
+                oneDriveSetup=new LanApiClient.OneDriveSetup(oneDriveSetup.tenantId(),oneDriveSetup.clientId(),oneDriveSetup.driveId(),true);
+            }catch(Exception ex){showError(ex);}finally{setBusy(false,null);}}
+        }.execute();
     }
 
     private Path choosePem(String title){JFileChooser chooser=new JFileChooser();chooser.setDialogTitle(title);return chooser.showOpenDialog(this)==JFileChooser.APPROVE_OPTION?chooser.getSelectedFile().toPath():null;}

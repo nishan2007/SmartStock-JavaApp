@@ -307,6 +307,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/images/onedrive/activate", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ACTIVATE")));
         server.createContext("/v1/images/onedrive/rollback", exchange -> handle(exchange, c -> oneDriveImageAction(c,"ROLLBACK")));
         server.createContext("/v1/images/onedrive/configure", exchange -> handle(exchange, this::configureOneDriveImages));
+        server.createContext("/v1/images/onedrive/certificate", exchange -> handle(exchange, this::oneDriveCertificate));
         server.createContext("/v1/accounting/balance-sheet/read", exchange -> handle(exchange, this::balanceSheetRead));
         server.createContext("/v1/accounting/balance-sheet/update", exchange -> handle(exchange, this::balanceSheetMutation));
         server.createContext("/v1/email/queue", exchange -> handle(exchange, this::queueEmail));
@@ -495,7 +496,8 @@ public final class LanApiServer implements AutoCloseable {
         try (Connection connection = DB.getConnection()) {
             requireAnyPermission(connection, session.userId(), "COMPANY_PREFERENCES", "COMPANY_CUSTOMIZATION");
             return ApiResult.ok(Map.of("assets", ServerImageAssetService.list(connection),
-                    "counts", ServerImageAssetService.counts(connection)));
+                    "counts", ServerImageAssetService.counts(connection),
+                    "oneDriveSetup",ServerImageAssetService.sharedOneDriveSetup(connection)));
         }
     }
 
@@ -559,16 +561,33 @@ public final class LanApiServer implements AutoCloseable {
         try(Connection connection=DB.getConnection()){
             requireAnyPermission(connection,session.userId(),"COMPANY_PREFERENCES","COMPANY_CUSTOMIZATION");
             try{
-                ServerImageAssetService.configureOneDrive(required(context.body(),"tenantId",200),
-                        required(context.body(),"clientId",200),required(context.body(),"driveId",500),
-                        required(context.body(),"certificatePem",20000),required(context.body(),"privateKeyPem",30000));
+                String tenantId=required(context.body(),"tenantId",200),clientId=required(context.body(),"clientId",200),
+                        driveId=required(context.body(),"driveId",500);
+                ServerImageAssetService.configureOneDrive(tenantId,clientId,driveId,
+                        optional(context.body(),"certificatePem",20000),optional(context.body(),"privateKeyPem",30000));
                 ImageCloudProvider.ProbeResult probe=ServerImageAssetService.probeOneDrive(connection);
+                ServerImageAssetService.publishOneDriveIdentifiers(connection,tenantId,clientId,driveId,
+                        session.userId(),displayName(loadUser(connection,session.userId(),session.locationId())));
                 return ApiResult.ok(Map.of("configured",true,"ready",probe.ready(),"message",probe.message()));
             }catch(ApiException ex){throw ex;}
             catch(Exception ex){
                 String message=ex.getMessage()==null||ex.getMessage().isBlank()?"OneDrive setup failed on the server.":ex.getMessage();
                 throw new ApiException(400,"ONEDRIVE_SETUP_FAILED",message,false);
             }
+        }
+    }
+
+    private ApiResult oneDriveCertificate(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        if(context.exchange().getRemoteAddress()==null||context.exchange().getRemoteAddress().getAddress()==null
+                ||!context.exchange().getRemoteAddress().getAddress().isLoopbackAddress())
+            throw new ApiException(403,"SERVER_LOCAL_REQUIRED","OneDrive certificates can be generated only on the store server computer.",false);
+        try(Connection connection=DB.getConnection()){
+            requireAnyPermission(connection,session.userId(),"COMPANY_PREFERENCES","COMPANY_CUSTOMIZATION");
+            OneDriveCertificateService.PublicCertificate certificate=ServerImageAssetService.generateOrLoadOneDriveCertificate();
+            return ApiResult.ok(Map.of("certificatePem",certificate.certificatePem(),"thumbprint",certificate.thumbprint(),
+                    "expiresAtEpochMillis",certificate.expiresAtEpochMillis()));
         }
     }
 
