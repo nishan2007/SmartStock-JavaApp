@@ -131,6 +131,7 @@ public final class CloudRowMirrorService {
                 verifyMirror(locationId, matchingGeneration, tableCounts, activeRows);
                 synchronizeProtectedUserCredentials(local, locationId, matchingGeneration);
             }
+            pruneCompletedGenerations(locationId);
             return new MirrorResult(uploaded, unchanged, deleted, activeRows);
         } catch (SQLException ex) {
             generation.abandonQuietly(ex);
@@ -154,6 +155,34 @@ public final class CloudRowMirrorService {
             throw new SQLException("Supabase abandoned mirror cleanup was interrupted.", ex);
         } catch (IOException | RuntimeException ex) {
             throw new SQLException("Supabase abandoned mirror cleanup failed.", ex);
+        }
+    }
+
+    private static void pruneCompletedGenerations(int locationId) throws SQLException {
+        JsonObject body = new JsonObject();
+        body.addProperty("p_location_id", locationId);
+        body.addProperty("p_keep_complete", 2);
+        body.addProperty("p_max_delete", 25);
+        try {
+            SupabaseServerApi.Response response = SupabaseServerApi.postRpc(
+                    "smartstock_prune_store_mirror_generations", body);
+            if (!response.successful()) {
+                throw new SQLException(SupabaseServerApi.failureMessage(
+                        "Supabase completed mirror cleanup", response));
+            }
+            JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
+            if (!result.has("location_id")
+                    || result.get("location_id").getAsInt() != locationId
+                    || !result.has("deleted_generations")
+                    || !result.has("remaining_generations")
+                    || !result.has("remaining_rows")) {
+                throw new SQLException("Supabase did not confirm completed mirror cleanup.");
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Supabase completed mirror cleanup was interrupted.", ex);
+        } catch (IOException | RuntimeException ex) {
+            throw new SQLException("Supabase completed mirror cleanup failed.", ex);
         }
     }
 

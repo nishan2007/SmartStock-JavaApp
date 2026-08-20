@@ -53,7 +53,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811190000_add_register_transfers.sql",
             "database/migrations/v1_after/20260811190100_secure_cloud_register_transfers.sql",
             "database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql",
-            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"
+            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
+            "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
