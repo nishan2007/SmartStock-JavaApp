@@ -32,4 +32,14 @@ class OneDriveImageBoundaryTest {
         assertTrue(server.contains("isLoopbackAddress()"));
         assertTrue(server.contains("SERVER_LOCAL_REQUIRED"));
     }
+
+    @Test void sharedIdentifierSchemaDoesNotRequireSupabaseRolesLocally()throws Exception{
+        String migration=Files.readString(Path.of(
+                "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql"));
+        assertTrue(migration.contains("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')"));
+
+        String localBaseline=Files.readString(Path.of("database/v1/local/001_schema.sql"));
+        assertFalse(localBaseline.contains(
+                "GRANT ALL ON TABLE public.image_cloud_configuration TO service_role"));
+    }
 }
