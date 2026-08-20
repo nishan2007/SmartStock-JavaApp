@@ -161,17 +161,36 @@ public final class SchemaContractService {
         if(!tableExists(connection,"public","image_assets"))return;
         boolean providerUpgrade=!columnExists(connection,"public","image_assets","cloud_provider");
         boolean sharedConfigurationUpgrade=!tableExists(connection,"public","image_cloud_configuration");
-        if(!providerUpgrade&&!sharedConfigurationUpgrade)return;
+        String expectedResource;
+        try{expectedResource=resourceFingerprint(localContractResources());}
+        catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        String storedResource=null,storedCatalog=null;
+        if(tableExists(connection,"public","smartstock_schema_metadata")){
+            try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}
+            }
+        }
+        String actualBefore=catalogFingerprint(connection,List.of("public"),false);
+        if(storedCatalog!=null&&!actualBefore.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic OneDrive image installation is blocked.","55000");
+        if(!providerUpgrade&&!sharedConfigurationUpgrade){
+            if(storedResource!=null&&!expectedResource.equals(storedResource)){
+                try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=? AND catalog_fingerprint_sha256=?")){
+                    update.setString(1,expectedResource);update.setInt(2,BASELINE_VERSION);update.setString(3,storedResource);update.setString(4,actualBefore);
+                    if(update.executeUpdate()!=1)throw new SQLException("Local OneDrive schema metadata changed during normalization.");
+                }
+            }
+            return;
+        }
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
             if(providerUpgrade)SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"));
             if(sharedConfigurationUpgrade)SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql"));
             if(tableExists(connection,"public","smartstock_schema_metadata")){
-                String resource=resourceFingerprint(localContractResources());
                 String catalog=catalogFingerprint(connection,List.of("public"),false);
                 try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
-                    update.setString(1,resource);update.setString(2,catalog);update.setInt(3,BASELINE_VERSION);update.executeUpdate();
+                    update.setString(1,expectedResource);update.setString(2,catalog);update.setInt(3,BASELINE_VERSION);update.executeUpdate();
                 }
             }
             connection.commit();
