@@ -111,7 +111,7 @@ public final class SecureCredentialStore {
                 + "$s=Get-Content -Raw -LiteralPath $p | ConvertTo-SecureString;"
                 + "$b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);"
                 + "try {[Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)} finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)}";
-        return blankToNull(run(new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script), path.toString(), true));
+        return blankToNull(run(windowsPowerShell(script), path.toString(), true));
     }
 
     private static void writeWindows(String key, String value) throws Exception {
@@ -122,8 +122,24 @@ public final class SecureCredentialStore {
                 + "$s=ConvertTo-SecureString $v -AsPlainText -Force;"
                 + "$s | ConvertFrom-SecureString | Set-Content -NoNewline -LiteralPath '"
                 + path.toString().replace("'", "''") + "'";
-        run(new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script), value, true);
+        run(windowsPowerShell(script), value, true);
         SecureFilePermissions.restrictFileToOwner(path);
+    }
+
+    static ProcessBuilder windowsPowerShell(String script) {
+        ProcessBuilder builder = new ProcessBuilder(
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script);
+        sanitizeWindowsPowerShellEnvironment(builder);
+        return builder;
+    }
+
+    static void sanitizeWindowsPowerShellEnvironment(ProcessBuilder builder) {
+        // Launchers and development tools can inject a PowerShell Core module path.
+        // Windows PowerShell then sees Microsoft.PowerShell.Security but cannot load it,
+        // which makes valid DPAPI credentials look missing. With this variable absent,
+        // powershell.exe reconstructs its own compatible default module path.
+        builder.environment().keySet().removeIf(
+                key -> "PSModulePath".equalsIgnoreCase(key));
     }
 
     private static String readFallback(String key) throws IOException {

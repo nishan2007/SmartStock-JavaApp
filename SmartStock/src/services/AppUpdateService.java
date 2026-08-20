@@ -29,6 +29,8 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public final class AppUpdateService {
     private static final String RELEASE_BUCKET = "smartstock-releases";
@@ -196,7 +198,7 @@ public final class AppUpdateService {
         }
 
         Path updaterRunner = stagingDir.resolve("smartstock-updater-runner.jar");
-        Files.copy(appJar, updaterRunner, StandardCopyOption.REPLACE_EXISTING);
+        extractUpdaterRunner(zipPath, updaterRunner);
 
         Properties manifest = new Properties();
         manifest.setProperty("version", release.version());
@@ -223,6 +225,23 @@ public final class AppUpdateService {
             manifest.store(output, "SmartStock staged update");
         }
         return manifestPath;
+    }
+
+    static void extractUpdaterRunner(Path releaseZip, Path updaterRunner) throws IOException {
+        try (ZipFile archive = new ZipFile(releaseZip.toFile())) {
+            List<? extends ZipEntry> candidates = archive.stream()
+                    .filter(entry -> !entry.isDirectory())
+                    .filter(entry -> entry.getName().matches(
+                            "inventory-management-[^/\\\\]+\\.jar"))
+                    .toList();
+            if (candidates.size() != 1) {
+                throw new IOException("The verified release must contain exactly one root SmartStock application JAR.");
+            }
+            Files.createDirectories(updaterRunner.getParent());
+            try (InputStream input = archive.getInputStream(candidates.get(0))) {
+                Files.copy(input, updaterRunner, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
     }
 
     static Path rollbackDirectory() {

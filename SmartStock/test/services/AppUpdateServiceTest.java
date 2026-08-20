@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import managers.SupabaseSessionManager;
 
@@ -103,5 +105,36 @@ class AppUpdateServiceTest {
         assertTrue(Files.notExists(staged));
         assertTrue(Files.isDirectory(rollback));
         assertTrue(Files.isRegularFile(tempDir.resolve("updater.log")));
+    }
+
+    @Test
+    void stagesUpdaterRunnerFromVerifiedIncomingRelease(@TempDir Path tempDir) throws Exception {
+        Path release = tempDir.resolve("release.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(release))) {
+            zip.putNextEntry(new ZipEntry("inventory-management-1.0.79.jar"));
+            zip.write("incoming-updater".getBytes());
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("dependency/example.jar"));
+            zip.write("dependency".getBytes());
+            zip.closeEntry();
+        }
+        Path runner = tempDir.resolve("smartstock-updater-runner.jar");
+
+        AppUpdateService.extractUpdaterRunner(release, runner);
+
+        assertEquals("incoming-updater", Files.readString(runner));
+    }
+
+    @Test
+    void rejectsNestedOrAmbiguousUpdaterJars(@TempDir Path tempDir) throws Exception {
+        Path release = tempDir.resolve("release.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(release))) {
+            zip.putNextEntry(new ZipEntry("SmartStock/inventory-management-1.0.79.jar"));
+            zip.write("nested".getBytes());
+            zip.closeEntry();
+        }
+
+        assertThrows(IOException.class, () -> AppUpdateService.extractUpdaterRunner(
+                release, tempDir.resolve("runner.jar")));
     }
 }

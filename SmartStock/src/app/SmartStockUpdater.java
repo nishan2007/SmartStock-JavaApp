@@ -557,12 +557,26 @@ public final class SmartStockUpdater {
         if (Files.isDirectory(path)) {
             try (Stream<Path> stream = Files.walk(path)) {
                 for (Path child : stream.sorted(Comparator.reverseOrder()).toList()) {
-                    Files.deleteIfExists(child);
+                    deleteWithRetry(child);
                 }
             }
         } else {
-            Files.deleteIfExists(path);
+            deleteWithRetry(path);
         }
+    }
+
+    private static void deleteWithRetry(Path path) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 20; attempt++) {
+            try {
+                Files.deleteIfExists(path);
+                return;
+            } catch (IOException ex) {
+                last = ex;
+                sleepQuietly(250);
+            }
+        }
+        throw last == null ? new IOException("Could not delete " + path) : last;
     }
 
     private static void stopSyncService(Properties props) {
@@ -672,18 +686,40 @@ public final class SmartStockUpdater {
         String javaBinValue = props.getProperty("java.bin", "").trim();
         if (javaBinValue.isEmpty()) return;
         Path javaBin = Path.of(javaBinValue);
-        List<ProcessHandle> matches = ProcessHandle.allProcesses()
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        long quietSince = -1;
+        while (System.nanoTime() < deadline) {
+            List<ProcessHandle> matches = windowsSyncServiceProcesses(javaBin);
+            if (matches.isEmpty()) {
+                if (quietSince < 0) quietSince = System.nanoTime();
+                if (System.nanoTime() - quietSince >= TimeUnit.SECONDS.toNanos(2)) return;
+                sleepQuietly(100);
+                continue;
+            }
+            quietSince = -1;
+            matches.forEach(ProcessHandle::destroy);
+            waitForProcessExit(matches, 1_500);
+            matches.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+            waitForProcessExit(matches, 3_000);
+        }
+        if (!windowsSyncServiceProcesses(javaBin).isEmpty())
+            throw new IllegalStateException("The SmartStock background service did not stay stopped for the update.");
+    }
+
+    private static List<ProcessHandle> windowsSyncServiceProcesses(Path javaBin) {
+        return ProcessHandle.allProcesses()
                 .filter(process -> process.pid() != ProcessHandle.current().pid())
                 .filter(process -> isWindowsSyncServiceProcess(
                         process.info().command().orElse(null),
                         process.info().arguments().orElse(null), javaBin))
                 .toList();
-        matches.forEach(ProcessHandle::destroy);
-        waitForProcessExit(matches, 2_000);
-        matches.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
-        waitForProcessExit(matches, 10_000);
-        if (matches.stream().anyMatch(ProcessHandle::isAlive)) {
-            throw new IllegalStateException("The SmartStock background service did not stop for the update.");
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
         }
     }
 
