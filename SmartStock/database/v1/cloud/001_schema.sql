@@ -4742,4 +4742,6 @@ CREATE TABLE IF NOT EXISTS public.image_cloud_configuration (
 );
 ALTER TABLE public.image_cloud_configuration ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.image_cloud_configuration FROM PUBLIC;
+REVOKE ALL ON TABLE public.image_cloud_configuration FROM anon;
+REVOKE ALL ON TABLE public.image_cloud_configuration FROM authenticated;
 GRANT ALL ON TABLE public.image_cloud_configuration TO service_role;
