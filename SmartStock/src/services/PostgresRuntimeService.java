@@ -186,14 +186,21 @@ public final class PostgresRuntimeService {
                     }
                   }
                   Add-Type -AssemblyName System.Security
+                  $ServiceUser = (Get-CimInstance Win32_ComputerSystem).UserName
+                  if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
+                    throw 'The signed-in Windows user could not be identified for PostgreSQL credential storage.'
+                  }
                   $CredentialBytes = [Text.Encoding]::UTF8.GetBytes($SuperPassword)
                   try {
                     $Protected = [Security.Cryptography.ProtectedData]::Protect(
-                      $CredentialBytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+                      $CredentialBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)
                     if ($null -eq $Protected) { throw 'Windows DPAPI returned no PostgreSQL bootstrap credential.' }
                     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $BootstrapCredential) | Out-Null
                     Set-Content -LiteralPath $BootstrapCredential -Encoding ASCII `
-                      -Value ([Convert]::ToBase64String($Protected))
+                      -Value ('machine:' + [Convert]::ToBase64String($Protected))
+                    & icacls.exe $BootstrapCredential /inheritance:r `
+                      /grant:r "${ServiceUser}:(R,W)" 'SYSTEM:(F)' 'Administrators:(F)' | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw 'The PostgreSQL bootstrap credential ACL could not be secured.' }
                   } finally {
                     [Array]::Clear($CredentialBytes, 0, $CredentialBytes.Length)
                   }
@@ -475,7 +482,8 @@ public final class PostgresRuntimeService {
         Path appDir = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
-            return installWindowsSyncTask(appDir);
+            return installWindowsServer(SupabaseProjectConfig.load(),
+                    EnvironmentProfile.active(), SupabaseProjectConfig.loadLanSubnet());
         }
         return installMacSyncService(appDir);
     }
@@ -997,67 +1005,6 @@ public final class PostgresRuntimeService {
                 printf 'Installed SmartStock background sync LaunchAgent: %%s\\n' "$PLIST"
                 """.formatted(shellSingleQuoted(appDir.toString()));
         return runShell(script, Duration.ofMinutes(2));
-    }
-
-    private static CommandResult installWindowsSyncTask(Path appDir) throws Exception {
-        String script = """
-                $ErrorActionPreference = 'Stop'
-                $AppDir = %s
-                $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
-                $ServiceAppDir = Join-Path $ServiceDir 'app'
-                New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
-                $Jar = $null
-                foreach ($SearchDir in @((Join-Path $AppDir 'app'), (Join-Path $AppDir 'target'), $AppDir)) {
-                  if (-not (Test-Path -LiteralPath $SearchDir -PathType Container)) { continue }
-                  $Jar = Get-ChildItem -LiteralPath $SearchDir -Filter 'inventory-management-*.jar' |
-                    Sort-Object LastWriteTime -Descending |
-                    Select-Object -First 1
-                  if ($null -ne $Jar) { break }
-                }
-                if ($null -eq $Jar) {
-                  throw "No SmartStock jar found in $AppDir\\target. Run mvn package first."
-                }
-                Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
-                Copy-Item -Force $Jar.FullName $ServiceAppDir
-                $SourceDependency = Join-Path $Jar.DirectoryName 'dependency'
-                $TargetDependency = Join-Path $ServiceAppDir 'dependency'
-                if (Test-Path $SourceDependency) {
-                  Remove-Item -Recurse -Force $TargetDependency -ErrorAction SilentlyContinue
-                  Copy-Item -Recurse -Force $SourceDependency $TargetDependency
-                }
-                $Cmd = Join-Path $ServiceDir 'run-smartstock-sync-service.cmd'
-                $JarName = Split-Path -Leaf $Jar.FullName
-                Set-Content -Path $Cmd -Encoding ASCII -Value @(
-                  '@echo off',
-                  ('cd /d "' + $ServiceAppDir + '"'),
-                  ('java -jar "' + $JarName + '" --sync-service')
-                )
-                Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
-                  -Confirm:$false -ErrorAction SilentlyContinue
-                Unregister-ScheduledTask -TaskName SmartStockServerService `
-                  -Confirm:$false -ErrorAction SilentlyContinue
-                $BundledJava = Join-Path $AppDir 'runtime\\bin\\java.exe'
-                if (Test-Path -LiteralPath $BundledJava -PathType Leaf) {
-                  $Java = $BundledJava
-                } else {
-                  $Java = (Get-Command java -ErrorAction Stop).Source
-                }
-                $TaskAction = New-ScheduledTaskAction -Execute $Java `
-                  -Argument ('-jar "' + $JarName + '" --sync-service') `
-                  -WorkingDirectory $ServiceAppDir
-                $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-                $TaskPrincipal = New-ScheduledTaskPrincipal `
-                  -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-                  -LogonType Interactive -RunLevel Limited
-                Register-ScheduledTask -TaskName SmartStockServerService `
-                  -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `
-                  -Description 'SmartStock HTTPS LAN and synchronization service' `
-                  -Force -ErrorAction Stop | Out-Null
-                Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
-                Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop |
-                  Format-List TaskName,State
-                """.formatted(powerShellSingleQuoted(appDir.toString()));
-        return runPowerShell(script, Duration.ofMinutes(2));
     }
 
     private static CommandResult runShell(String script, Duration timeout) throws Exception {

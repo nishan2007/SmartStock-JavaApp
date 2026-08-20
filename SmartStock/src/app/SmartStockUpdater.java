@@ -388,11 +388,23 @@ public final class SmartStockUpdater {
 
     static List<String> windowsSyncTaskUpdateCommand(
             String taskName, Path javaBin, Path syncServiceAppDir, String jarName) {
-        String script = "$action=New-ScheduledTaskAction -Execute '"
-                + powerShellQuote(javaBin.toString()) + "' -Argument '-jar \""
-                + powerShellQuote(jarName) + "\" --sync-service' -WorkingDirectory '"
-                + powerShellQuote(syncServiceAppDir.toString())
-                + "'; Set-ScheduledTask -TaskName '" + powerShellQuote(taskName)
+        Path serviceDir = syncServiceAppDir.getParent();
+        Path smartstockDir = serviceDir == null ? null : serviceDir.getParent();
+        Path userHome = smartstockDir == null ? null : smartstockDir.getParent();
+        if (serviceDir == null || userHome == null) {
+            throw new IllegalArgumentException("The SmartStock service profile path is invalid.");
+        }
+        Path shortcut = serviceDir.resolve("SmartStockServer.lnk");
+        String script = "$shell=New-Object -ComObject WScript.Shell;"
+                + "$shortcut=$shell.CreateShortcut('" + powerShellQuote(shortcut.toString()) + "');"
+                + "$shortcut.TargetPath='" + powerShellQuote(javaBin.toString()) + "';"
+                + "$shortcut.Arguments='-Duser.home=\"" + powerShellQuote(userHome.toString())
+                + "\" -jar \"" + powerShellQuote(jarName) + "\" --sync-service';"
+                + "$shortcut.WorkingDirectory='" + powerShellQuote(syncServiceAppDir.toString()) + "';"
+                + "$shortcut.WindowStyle=7;$shortcut.Save();"
+                + "$action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'explorer.exe') "
+                + "-Argument ('\"' + '" + powerShellQuote(shortcut.toString()) + "' + '\"');"
+                + "Set-ScheduledTask -TaskName '" + powerShellQuote(taskName)
                 + "' -Action $action -ErrorAction Stop | Out-Null";
         return List.of("powershell.exe", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", script);

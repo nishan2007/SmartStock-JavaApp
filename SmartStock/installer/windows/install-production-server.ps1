@@ -21,8 +21,7 @@ if ($null -eq $developmentProjectLine) {
 }
 $developmentProject = ($developmentProjectLine -split '=', 2)[1].Trim()
 
-if (-not ([Security.Principal.WindowsPrincipal]
-        [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Run this production installer from an elevated PowerShell window."
 }
@@ -50,7 +49,16 @@ $jar = Get-ChildItem -Path (Join-Path $AppDir "target") -Filter "inventory-manag
 if ($null -eq $jar) {
     throw "Build SmartStock before installing the production service."
 }
-$configPath = Join-Path $env:USERPROFILE ".smartstock\database.properties"
+$serviceUser = (Get-CimInstance Win32_ComputerSystem).UserName
+if ([string]::IsNullOrWhiteSpace($serviceUser)) {
+    throw "The signed-in Windows user could not be identified."
+}
+$serviceSid = (New-Object Security.Principal.NTAccount($serviceUser)).Translate(
+    [Security.Principal.SecurityIdentifier]).Value
+$profileKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$serviceSid"
+$serviceHome = [Environment]::ExpandEnvironmentVariables(
+    (Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath -ErrorAction Stop).ProfileImagePath)
+$configPath = Join-Path $serviceHome ".smartstock\profiles\production\database.properties"
 if (-not (Test-Path $configPath)) {
     throw "Provision SERVER mode through SmartStock Database Setup before installing the service."
 }
@@ -65,7 +73,7 @@ if ($configText -notmatch '(?m)^jdbc\.url=jdbc\\:postgresql\\://(127\.0\.0\.1|lo
 $serviceInstaller = Join-Path $PSScriptRoot "install-sync-service.ps1"
 & $serviceInstaller -AppDir $AppDir -TaskName "SmartStockServerService" `
     -Environment "production" -SupabaseUrl $SupabaseUrl.TrimEnd("/") `
-    -SupabasePublishableKey $SupabasePublishableKey
+    -SupabasePublishableKey $SupabasePublishableKey -ServiceUser $serviceUser
 
 $ruleName = "SmartStock LAN API 8443"
 $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue

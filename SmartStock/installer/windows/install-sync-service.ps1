@@ -4,14 +4,38 @@ param(
     [ValidateSet("development", "test", "production")]
     [string]$Environment = "development",
     [string]$SupabaseUrl = "",
-    [string]$SupabasePublishableKey = ""
+    [string]$SupabasePublishableKey = "",
+    [string]$ServiceUser = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$serviceDir = Join-Path $env:USERPROFILE ".smartstock\sync-service"
+if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
+    $ServiceUser = (Get-CimInstance Win32_ComputerSystem).UserName
+}
+if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
+    throw "The signed-in Windows user could not be identified."
+}
+$serviceSid = (New-Object Security.Principal.NTAccount($ServiceUser)).Translate(
+    [Security.Principal.SecurityIdentifier]).Value
+$profileKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$serviceSid"
+$serviceHome = [Environment]::ExpandEnvironmentVariables(
+    (Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath -ErrorAction Stop).ProfileImagePath)
+if ([string]::IsNullOrWhiteSpace($serviceHome) -or -not (Test-Path -LiteralPath $serviceHome)) {
+    throw "The signed-in Windows user profile could not be resolved."
+}
+$serviceDir = Join-Path $serviceHome ".smartstock\sync-service"
 $serviceAppDir = Join-Path $serviceDir "app"
 New-Item -ItemType Directory -Force -Path $serviceAppDir | Out-Null
+
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existingTask) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
+}
+Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
+    -Confirm:$false -ErrorAction SilentlyContinue
 
 $jar = Get-ChildItem -Path (Join-Path $AppDir "target") -Filter "inventory-management-*.jar" |
     Sort-Object LastWriteTime -Descending |
@@ -19,36 +43,46 @@ $jar = Get-ChildItem -Path (Join-Path $AppDir "target") -Filter "inventory-manag
 if ($null -eq $jar) {
     throw "No SmartStock jar found in $AppDir\target. Run mvn package first."
 }
-Copy-Item -Force $jar.FullName $serviceAppDir
+Get-ChildItem $serviceAppDir -Filter "inventory-management-*.jar" -ErrorAction SilentlyContinue |
+    Remove-Item -Force
+Copy-Item -LiteralPath $jar.FullName -Destination $serviceAppDir -Force
 $sourceDependency = Join-Path $AppDir "target\dependency"
 $targetDependency = Join-Path $serviceAppDir "dependency"
 if (Test-Path $sourceDependency) {
     Remove-Item -Recurse -Force $targetDependency -ErrorAction SilentlyContinue
-    Copy-Item -Recurse -Force $sourceDependency $targetDependency
+    New-Item -ItemType Directory -Force -Path $targetDependency | Out-Null
+    Copy-Item -Path (Join-Path $sourceDependency "*") `
+        -Destination $targetDependency -Recurse -Force
 }
 
-$runner = Join-Path $serviceDir "run-smartstock-sync-service.cmd"
 $jarName = Split-Path -Leaf $jar.FullName
-$runnerLines = @(
-    "@echo off",
-    "set `"SMARTSTOCK_ENVIRONMENT=$Environment`""
-)
-if (-not [string]::IsNullOrWhiteSpace($SupabaseUrl)) {
-    $runnerLines += "set `"SUPABASE_URL=$SupabaseUrl`""
+$bundledJava = Join-Path $AppDir "runtime\bin\javaw.exe"
+$java = if (Test-Path -LiteralPath $bundledJava -PathType Leaf) {
+    $bundledJava
+} else {
+    (Get-Command javaw -ErrorAction Stop).Source
 }
-if (-not [string]::IsNullOrWhiteSpace($SupabasePublishableKey)) {
-    $runnerLines += "set `"SUPABASE_PUBLISHABLE_KEY=$SupabasePublishableKey`""
-}
-$runnerLines += @(
-    "cd /d `"$serviceAppDir`"",
-    "java -jar $jarName --sync-service"
-)
-Set-Content -Path $runner -Encoding ASCII -Value $runnerLines
+$serviceArguments = "-Duser.home=`"$serviceHome`" -jar `"$jarName`" --sync-service"
+$serviceShortcut = Join-Path $serviceDir "SmartStockServer.lnk"
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($serviceShortcut)
+$shortcut.TargetPath = $java
+$shortcut.Arguments = $serviceArguments
+$shortcut.WorkingDirectory = $serviceAppDir
+$shortcut.WindowStyle = 7
+$shortcut.Save()
 
-schtasks /Create /TN $TaskName /TR "`"$runner`"" /SC ONSTART /RL LIMITED /F | Out-Host
-schtasks /Run /TN $TaskName | Out-Host
-schtasks /Query /TN $TaskName /FO LIST | Out-Host
+$taskAction = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR "explorer.exe") `
+    -Argument ("`"$serviceShortcut`"")
+$taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $ServiceUser
+$taskPrincipal = New-ScheduledTaskPrincipal -UserId $ServiceUser `
+    -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $taskTrigger `
+    -Principal $taskPrincipal -Description "SmartStock HTTPS LAN and synchronization service" `
+    -Force -ErrorAction Stop | Out-Null
+Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop | Format-List TaskName,State
 
 Write-Host "SmartStock Server Service task installed: $TaskName"
 Write-Host "The service provides the HTTPS LAN API on port 8443 and background cloud sync."
-Write-Host "Runner: $runner"
+Write-Host "Service user: $ServiceUser"

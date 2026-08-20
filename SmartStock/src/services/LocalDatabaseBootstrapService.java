@@ -81,11 +81,15 @@ public final class LocalDatabaseBootstrapService {
     private static char[] readGeneratedAdministratorCredential() throws IOException {
         String encrypted = Files.readString(
                 windowsBootstrapCredentialPath(), StandardCharsets.US_ASCII).trim();
+        boolean machineScope = encrypted.startsWith("machine:");
+        if (machineScope) encrypted = encrypted.substring("machine:".length());
         String script = "Add-Type -AssemblyName System.Security;"
                 + "$ErrorActionPreference='Stop';"
                 + "$encoded=[Console]::In.ReadToEnd();"
                 + "$protected=[Convert]::FromBase64String($encoded);"
-                + "$data=[Security.Cryptography.ProtectedData]::Unprotect($protected,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
+                + "$scope=[Security.Cryptography.DataProtectionScope]::"
+                + (machineScope ? "LocalMachine;" : "CurrentUser;")
+                + "$data=[Security.Cryptography.ProtectedData]::Unprotect($protected,$null,$scope);"
                 + "if($null -eq $data){throw 'Windows DPAPI returned no PostgreSQL bootstrap credential.'};"
                 + "[Console]::Out.Write([Text.Encoding]::UTF8.GetString($data))";
         Process process = new ProcessBuilder("powershell.exe", "-NoLogo", "-NoProfile",

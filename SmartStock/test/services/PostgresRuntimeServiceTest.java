@@ -25,6 +25,9 @@ class PostgresRuntimeServiceTest {
         assertTrue(source.contains("superpassword="));
         assertTrue(source.contains("--optionfile"));
         assertTrue(source.contains("ProtectedData]::Protect"));
+        assertTrue(source.contains("DataProtectionScope]::LocalMachine"));
+        assertTrue(source.contains("'machine:'"));
+        assertTrue(source.contains("icacls.exe $BootstrapCredential /inheritance:r"));
         assertTrue(source.contains("ALTER ROLE postgres WITH PASSWORD"));
     }
 
@@ -132,6 +135,28 @@ class PostgresRuntimeServiceTest {
     }
 
     @Test
+    void standaloneWindowsInstallersPreserveInteractiveUserAndDpapiContext() throws Exception {
+        String service = Files.readString(Path.of(
+                "installer/windows/install-sync-service.ps1"));
+        String production = Files.readString(Path.of(
+                "installer/windows/install-production-server.ps1"));
+
+        assertTrue(service.contains("Get-CimInstance Win32_ComputerSystem"));
+        assertTrue(service.contains("ProfileImagePath"));
+        assertTrue(service.contains("CreateShortcut($serviceShortcut)"));
+        assertTrue(service.contains("explorer.exe"));
+        assertTrue(service.contains("New-ScheduledTaskTrigger -AtLogOn"));
+        assertTrue(service.contains("-Duser.home="));
+        assertFalse(service.contains("$env:USERPROFILE"));
+        assertFalse(service.contains("schtasks /Create"));
+        assertFalse(service.contains("/SC ONSTART"));
+        assertFalse(service.contains("SUPABASE_PUBLISHABLE_KEY="));
+        assertTrue(production.contains(
+                ".smartstock\\profiles\\production\\database.properties"));
+        assertFalse(production.contains("$env:USERPROFILE"));
+    }
+
+    @Test
     void packagedWindowsServiceScriptParsesInPowerShell() throws Exception {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
         String script = PostgresRuntimeService.windowsProductionInstallScript(
@@ -164,14 +189,14 @@ class PostgresRuntimeServiceTest {
         String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
 
         assertTrue(source.contains("return installWindowsServer(SupabaseProjectConfig.load(),"));
-        assertTrue(source.contains("Join-Path $AppDir 'app'"));
-        assertTrue(source.contains("$SourceDependency = Join-Path $Jar.DirectoryName 'dependency'"));
+        assertTrue(source.contains("$TargetDependencies = Join-Path $ServiceAppDir 'dependency'"));
+        assertTrue(source.contains("Copy-Item -Path (Join-Path $Dependencies '*')"));
         assertTrue(source.contains("Files.mismatch(currentJar, serviceJar)"));
         assertTrue(source.contains("StandardCopyOption.REPLACE_EXISTING"));
         assertTrue(source.contains("!isSyncServiceRunning(status.output())"));
         assertFalse(source.contains("schtasks /Create"));
-        assertTrue(source.contains("$BundledJava = Join-Path $AppDir 'runtime\\\\bin\\\\java.exe'"));
-        assertTrue(source.contains("New-ScheduledTaskAction -Execute $Java"));
+        assertFalse(source.contains("private static CommandResult installWindowsSyncTask"));
+        assertTrue(source.contains("CreateShortcut($ServiceShortcut)"));
         assertTrue(source.contains("public static CommandResult refreshSyncServiceInstallation()"));
         assertTrue(source.contains("return installWindowsServer(SupabaseProjectConfig.load(),"));
         assertTrue(source.contains("$Psql = (Get-Command psql -ErrorAction SilentlyContinue).Source"));

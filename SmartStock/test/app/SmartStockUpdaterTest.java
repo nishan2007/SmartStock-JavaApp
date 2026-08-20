@@ -135,6 +135,9 @@ class SmartStockUpdaterTest {
                 "-ExecutionPolicy", "Bypass", "-Command"), command.subList(0, 6));
         String script = command.get(6);
         assertTrue(script.contains("New-ScheduledTaskAction"));
+        assertTrue(script.contains("CreateShortcut"));
+        assertTrue(script.contains("explorer.exe"));
+        assertTrue(script.contains("-Duser.home=\"C:\\Users\\test\""));
         assertTrue(script.contains("inventory-management-1.0.52.jar"));
         assertTrue(script.contains("C:\\Users\\test\\.smartstock\\sync-service\\app"));
         assertTrue(script.contains("Set-ScheduledTask -TaskName 'SmartStockServerService'"));
