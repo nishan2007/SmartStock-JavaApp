@@ -168,13 +168,15 @@ public final class ServerImageAssetService {
         int uploaded = 0;
         int repaired = 0;
         OneDrivePhase currentPhase=phase(local);
+        if(currentPhase!=OneDrivePhase.DISABLED)markLegacyOneDriveNamesPending(local);
         try (PreparedStatement ps = local.prepareStatement("""
                 SELECT asset_id FROM image_assets
                 WHERE lifecycle_status <> 'DELETED'
                   AND (cloud_status IN ('PENDING','FAILED','MISSING') OR local_status <> 'PRESENT'
                        OR sha256='' OR byte_size=0
                        OR (? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
-                           AND migration_status NOT IN ('VERIFIED','RESOLVED')))
+                           AND (migration_status NOT IN ('VERIFIED','RESOLVED')
+                                OR remote_path !~ '-product-image-[0-9]{13}\\.[a-z0-9]+$')))
                 ORDER BY created_at
                 """)) {
             ps.setString(1,currentPhase.name());
@@ -226,6 +228,15 @@ public final class ServerImageAssetService {
             }
         }
         return new SyncResult(discovered, uploaded, repaired);
+    }
+
+    private static void markLegacyOneDriveNamesPending(Connection conn)throws SQLException{
+        try(PreparedStatement ps=conn.prepareStatement("""
+                UPDATE image_assets SET migration_status='PENDING'
+                WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                  AND remote_path !~ '-product-image-[0-9]{13}\\.[a-z0-9]+$'
+                  AND migration_status='VERIFIED'
+                """)){ps.executeUpdate();}
     }
 
     private static boolean discoverCloudObjects(Connection conn) {
@@ -695,20 +706,67 @@ public final class ServerImageAssetService {
         if(!isOneDriveCategory(row.category())||phase==OneDrivePhase.DISABLED){uploadSupabase(row,bytes);return;}
         if(phase==OneDrivePhase.MIGRATING&&(!"PRESENT".equals(row.cloudStatus())||"ONEDRIVE".equals(row.cloudProvider())))
             uploadSupabase(row,bytes);
-        ImageCloudProvider.RemoteObject remote=ONEDRIVE.upload(row.id(),row.category(),row.objectPath(),row.contentType(),bytes);
-        byte[] verified=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),remote.itemId(),remote.path());
+        String sourcePath=desiredProductImagePath(conn,row);
+        ImageCloudProvider.RemoteObject remote=ONEDRIVE.upload(row.id(),row.category(),sourcePath,row.contentType(),bytes);
+        byte[] verified=ONEDRIVE.download(row.id(),row.category(),sourcePath,remote.itemId(),remote.path());
         if(verified==null||verified.length!=bytes.length||!sha256(verified).equals(sha256(bytes)))
             throw new IOException("OneDrive image verification failed.");
         try(PreparedStatement ps=conn.prepareStatement("""
-                UPDATE image_assets SET remote_drive_id=?,remote_item_id=?,remote_path=?,cloud_etag=?,
+                UPDATE image_assets SET remote_drive_id=?,remote_item_id=?,remote_path=?,cloud_etag=?,original_filename=?,
                     migration_status='VERIFIED',cloud_verified_at=CURRENT_TIMESTAMP,
                     cloud_provider=?,last_error=NULL WHERE asset_id=?
                 """)){
             ps.setString(1,remote.driveId());ps.setString(2,remote.itemId());ps.setString(3,remote.path());
-            ps.setString(4,remote.eTag());ps.setString(5,phase==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");
-            ps.setObject(6,row.id());ps.executeUpdate();
+            ps.setString(4,remote.eTag());ps.setString(5,filename(sourcePath));
+            ps.setString(6,phase==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");ps.setObject(7,row.id());ps.executeUpdate();
         }
+        if(!blank(row.remoteItemId())&&!row.remoteItemId().equals(remote.itemId())&&!blank(row.remotePath())
+                &&!row.remotePath().equals(remote.path()))
+            ONEDRIVE.delete(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
     }
+
+    private static String desiredProductImagePath(Connection conn,AssetRow row)throws SQLException{
+        String sql=switch(row.category().toUpperCase(Locale.ROOT)){
+            case "PRODUCT"->"""
+                    SELECT p.name,COALESCE(b.name,''),COALESCE(t.name,''),COALESCE(p.size,''),'',a.original_filename,a.created_at
+                    FROM image_assets a JOIN image_asset_references r ON r.asset_id=a.asset_id AND r.active
+                    JOIN products p ON r.source_table='products' AND r.source_key=p.product_id::text
+                    LEFT JOIN item_brands b ON b.brand_id=p.brand_id LEFT JOIN item_types t ON t.item_type_id=p.item_type_id
+                    WHERE a.asset_id=? LIMIT 1""";
+            case "CUSTOM_ITEM"->"""
+                    SELECT i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),'','',a.original_filename,a.created_at
+                    FROM image_assets a JOIN image_asset_references r ON r.asset_id=a.asset_id AND r.active
+                    JOIN custom_order_items i ON r.source_table='custom_order_items' AND r.source_key=i.custom_item_id::text
+                    LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id
+                    WHERE a.asset_id=? LIMIT 1""";
+            case "CUSTOM_VARIANT"->"""
+                    SELECT i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),'',v.variant_name,a.original_filename,a.created_at
+                    FROM image_assets a JOIN image_asset_references r ON r.asset_id=a.asset_id AND r.active
+                    JOIN custom_order_item_variants v ON r.source_table='custom_order_item_variants' AND r.source_key=v.custom_variant_id::text
+                    JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id
+                    LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id
+                    WHERE a.asset_id=? LIMIT 1""";
+            default->null;
+        };
+        if(sql==null)return row.objectPath();
+        try(PreparedStatement ps=conn.prepareStatement(sql)){ps.setObject(1,row.id());try(ResultSet rs=ps.executeQuery()){
+            if(!rs.next())return fallbackProductImagePath(row);
+            String original=rs.getString(6);java.sql.Timestamp created=rs.getTimestamp(7);
+            java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original==null?"":original);
+            String token=matcher.find()?matcher.group(1):Long.toString(created==null?System.currentTimeMillis():created.toInstant().toEpochMilli());
+            return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,
+                    rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5));
+        }}
+    }
+
+    private static String fallbackProductImagePath(AssetRow row){
+        String original=filename(row.objectPath());
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original);
+        String token=matcher.find()?matcher.group(1):Long.toString(System.currentTimeMillis());
+        return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,"","","","","");
+    }
+
+    private static boolean blank(String value){return value==null||value.isBlank();}
 
     private static byte[] downloadCloud(AssetRow row)throws Exception{
         if(isOneDriveCategory(row.category())&&"ONEDRIVE".equals(row.cloudProvider())){

@@ -95,7 +95,7 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     static String remotePath(UUID id,String category,String sourcePath){
         String folder=switch(category==null?"":category.toUpperCase(Locale.ROOT)){
             case "CUSTOM_ITEM"->"custom-items"; case "CUSTOM_VARIANT"->"custom-variants"; default->"products";};
-        return folder+"/"+id+"."+extension(sourcePath);
+        return folder+"/"+filename(sourcePath);
     }
 
     private String path(UUID id,String category,String sourcePath,String remotePath){return blank(remotePath)?remotePath(id,category,sourcePath):remotePath;}
@@ -151,6 +151,7 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     private static void require(int status,String body,String operation)throws IOException{if(status<200||status>=300)throw new IOException("OneDrive image "+operation+" failed with HTTP "+status+": "+trim(body));}
     private static String text(JsonObject o,String key)throws IOException{if(o==null||!o.has(key)||o.get(key).isJsonNull()||o.get(key).getAsString().isBlank())throw new IOException("Microsoft Graph response omitted "+key+".");return o.get(key).getAsString();}
     private static String extension(String path){String name=path==null?"":path;int dot=name.lastIndexOf('.');String ext=dot<0?"img":name.substring(dot+1).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]","");return ext.isBlank()||ext.length()>5?"img":ext;}
+    private static String filename(String path){String value=path==null?"":path.replace('\\','/');int slash=value.lastIndexOf('/');value=slash<0?value:value.substring(slash+1);String safe=StorageObjectNameBuilder.slug(value.replaceFirst("\\.[^.]+$",""));return (safe.isBlank()?"product-image":safe)+"."+extension(value);}
     private static String encode(String s){return URLEncoder.encode(s,StandardCharsets.UTF_8).replace("+","%20");}
     private static String encodePath(String s){return java.util.Arrays.stream(s.split("/")).map(OneDriveImageCloudProvider::encode).reduce((a,b)->a+"/"+b).orElse("");}
     private static String form(String s){return URLEncoder.encode(s,StandardCharsets.UTF_8);}

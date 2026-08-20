@@ -12,15 +12,14 @@ class OneDriveImageCloudProviderTest {
     private static final UUID ID=UUID.fromString("11111111-2222-3333-4444-555555555555");
 
     @Test void createsStableProviderPathsForEachManagedCategory(){
-        assertEquals("products/"+ID+".jpg",OneDriveImageCloudProvider.remotePath(ID,"PRODUCT","products/a.JPG"));
-        assertEquals("custom-items/"+ID+".png",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_ITEM","products/a.png"));
-        assertEquals("custom-variants/"+ID+".webp",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_VARIANT","products/a.webp"));
+        assertEquals("products/a.jpg",OneDriveImageCloudProvider.remotePath(ID,"PRODUCT","products/a.JPG"));
+        assertEquals("custom-items/a.png",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_ITEM","products/a.png"));
+        assertEquals("custom-variants/a.webp",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_VARIANT","products/a.webp"));
     }
 
-    @Test void doesNotLeakOriginalNamesAndSanitizesUnknownExtensions(){
+    @Test void keepsReadableSafeNamesAndSanitizesUnknownExtensions(){
         String path=OneDriveImageCloudProvider.remotePath(ID,"PRODUCT","products/customer name.secret.exe-long");
-        assertEquals("products/"+ID+".img",path);
-        assertFalse(path.contains("customer"));
+        assertEquals("products/customer-name-secret.img",path);
     }
 
     @Test void retriesOnlyTransientGraphStatuses(){
