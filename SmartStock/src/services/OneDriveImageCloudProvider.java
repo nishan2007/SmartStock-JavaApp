@@ -51,11 +51,27 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     @Override public byte[] download(UUID id,String category,String sourcePath,String remoteItemId,String remotePath)throws Exception{
         String endpoint=!blank(remoteItemId)?graphDrive()+"/items/"+encode(remoteItemId)+"/content"
                 :graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath))+":/content";
-        HttpResponse<byte[]> response=sendAllowNotFound(authorized(endpoint).timeout(Duration.ofSeconds(90)).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray(),"download");
+        HttpRequest graphRequest=authorized(endpoint).timeout(Duration.ofSeconds(90)).GET().build();
+        HttpResponse<byte[]> response=sendAllowNotFound(graphRequest,HttpResponse.BodyHandlers.ofByteArray(),"download");
         if(response.statusCode()==404)return null;
+        if(response.statusCode()>=300&&response.statusCode()<400){
+            URI redirect=downloadRedirect(graphRequest.uri(),response.headers().firstValue("Location")
+                    .orElseThrow(()->new IOException("OneDrive image download redirect omitted Location.")));
+            // Graph returns a preauthenticated short-lived URL. Do not forward its bearer token to that host.
+            HttpRequest redirected=HttpRequest.newBuilder(redirect).timeout(Duration.ofSeconds(90)).GET().build();
+            response=sendAllowNotFound(redirected,HttpResponse.BodyHandlers.ofByteArray(),"download redirect");
+        }
         require(response.statusCode(),response.body()==null?"":new String(response.body(),StandardCharsets.UTF_8),"download");
         return response.body();
+    }
+
+    static URI downloadRedirect(URI requestUri,String location)throws IOException{
+        URI redirect;
+        try{redirect=requestUri.resolve(location);}
+        catch(IllegalArgumentException ex){throw new IOException("OneDrive image download redirect was invalid.",ex);}
+        if(!"https".equalsIgnoreCase(redirect.getScheme())||redirect.getHost()==null||redirect.getUserInfo()!=null)
+            throw new IOException("OneDrive image download redirect must use HTTPS.");
+        return redirect;
     }
 
     @Override public void delete(UUID id,String category,String sourcePath,String remoteItemId,String remotePath)throws Exception{

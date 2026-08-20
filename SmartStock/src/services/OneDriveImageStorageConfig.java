@@ -3,6 +3,8 @@ package services;
 import utils.SecureCredentialStore;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 /** Server-only OneDrive settings. Public identifiers are properties; key material stays in secure storage. */
 public final class OneDriveImageStorageConfig {
@@ -16,7 +18,7 @@ public final class OneDriveImageStorageConfig {
         return new Settings(value("smartstock.onedrive.tenant",TENANT_KEY),
                 value("smartstock.onedrive.client",CLIENT_KEY),
                 value("smartstock.onedrive.drive",DRIVE_KEY),
-                secret(CERT_KEY),secret(PRIVATE_KEY));
+                pemSecret(CERT_KEY),pemSecret(PRIVATE_KEY));
     }
 
     public static void save(String tenantId,String clientId,String driveId,String certificatePem,String privateKeyPem)
@@ -27,8 +29,13 @@ public final class OneDriveImageStorageConfig {
         SecureCredentialStore.write(TENANT_KEY,tenantId.trim());
         SecureCredentialStore.write(CLIENT_KEY,clientId.trim());
         SecureCredentialStore.write(DRIVE_KEY,driveId.trim());
-        SecureCredentialStore.write(CERT_KEY,certificatePem.trim());
-        SecureCredentialStore.write(PRIVATE_KEY,privateKeyPem.trim());
+        SecureCredentialStore.write(CERT_KEY,encodePem(certificatePem));
+        SecureCredentialStore.write(PRIVATE_KEY,encodePem(privateKeyPem));
+        Settings saved=load();
+        if(!saved.tenantId().equals(tenantId.trim())||!saved.clientId().equals(clientId.trim())
+                ||!saved.driveId().equals(driveId.trim())||!saved.certificatePem().equals(certificatePem.trim())
+                ||!saved.privateKeyPem().equals(privateKeyPem.trim()))
+            throw new IOException("OneDrive credentials could not be verified in "+SecureCredentialStore.backendLabel()+".");
     }
 
     public static void clear() {
@@ -41,6 +48,12 @@ public final class OneDriveImageStorageConfig {
         return value==null?"":value.trim();
     }
     private static String secret(String key){String value=SecureCredentialStore.read(key);return value==null?"":value.trim();}
+    private static String pemSecret(String key){
+        String value=secret(key);if(!value.startsWith("pem-v1:"))return value;
+        try{return new String(Base64.getDecoder().decode(value.substring(7)),StandardCharsets.UTF_8).trim();}
+        catch(IllegalArgumentException ex){return "";}
+    }
+    private static String encodePem(String value){return "pem-v1:"+Base64.getEncoder().encodeToString(value.trim().getBytes(StandardCharsets.UTF_8));}
     private static void require(String value,String label) {
         if(value==null||value.isBlank()) throw new IllegalArgumentException(label+" is required.");
     }

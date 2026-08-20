@@ -2,6 +2,8 @@ package services;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.URI;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,5 +28,13 @@ class OneDriveImageCloudProviderTest {
         assertTrue(OneDriveImageCloudProvider.isRetryableStatus(503));
         assertFalse(OneDriveImageCloudProvider.isRetryableStatus(401));
         assertFalse(OneDriveImageCloudProvider.isRetryableStatus(404));
+    }
+
+    @Test void acceptsOnlySafeHttpsContentRedirects()throws Exception{
+        URI graph=URI.create("https://graph.microsoft.com/v1.0/drives/drive/items/item/content");
+        assertEquals("https://files.example.microsoft/test",OneDriveImageCloudProvider.downloadRedirect(
+                graph,"https://files.example.microsoft/test").toString());
+        assertThrows(IOException.class,()->OneDriveImageCloudProvider.downloadRedirect(graph,"http://files.example/test"));
+        assertThrows(IOException.class,()->OneDriveImageCloudProvider.downloadRedirect(graph,"https://user@files.example/test"));
     }
 }

@@ -558,11 +558,17 @@ public final class LanApiServer implements AutoCloseable {
             throw new ApiException(403,"SERVER_LOCAL_REQUIRED","OneDrive credentials can be configured only from Company Preferences on the store server computer.",false);
         try(Connection connection=DB.getConnection()){
             requireAnyPermission(connection,session.userId(),"COMPANY_PREFERENCES","COMPANY_CUSTOMIZATION");
-            ServerImageAssetService.configureOneDrive(required(context.body(),"tenantId",200),
-                    required(context.body(),"clientId",200),required(context.body(),"driveId",500),
-                    required(context.body(),"certificatePem",20000),required(context.body(),"privateKeyPem",30000));
-            ImageCloudProvider.ProbeResult probe=ServerImageAssetService.probeOneDrive(connection);
-            return ApiResult.ok(Map.of("configured",true,"ready",probe.ready(),"message",probe.message()));
+            try{
+                ServerImageAssetService.configureOneDrive(required(context.body(),"tenantId",200),
+                        required(context.body(),"clientId",200),required(context.body(),"driveId",500),
+                        required(context.body(),"certificatePem",20000),required(context.body(),"privateKeyPem",30000));
+                ImageCloudProvider.ProbeResult probe=ServerImageAssetService.probeOneDrive(connection);
+                return ApiResult.ok(Map.of("configured",true,"ready",probe.ready(),"message",probe.message()));
+            }catch(ApiException ex){throw ex;}
+            catch(Exception ex){
+                String message=ex.getMessage()==null||ex.getMessage().isBlank()?"OneDrive setup failed on the server.":ex.getMessage();
+                throw new ApiException(400,"ONEDRIVE_SETUP_FAILED",message,false);
+            }
         }
     }
 

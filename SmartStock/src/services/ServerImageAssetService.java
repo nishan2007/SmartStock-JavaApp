@@ -167,14 +167,18 @@ public final class ServerImageAssetService {
         }
         int uploaded = 0;
         int repaired = 0;
+        OneDrivePhase currentPhase=phase(local);
         try (PreparedStatement ps = local.prepareStatement("""
                 SELECT asset_id FROM image_assets
                 WHERE lifecycle_status <> 'DELETED'
                   AND (cloud_status IN ('PENDING','FAILED','MISSING') OR local_status <> 'PRESENT'
-                       OR sha256='' OR byte_size=0)
+                       OR sha256='' OR byte_size=0
+                       OR (? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                           AND migration_status NOT IN ('VERIFIED','RESOLVED')))
                 ORDER BY created_at
-                """);
-             ResultSet rs = ps.executeQuery()) {
+                """)) {
+            ps.setString(1,currentPhase.name());
+            try(ResultSet rs = ps.executeQuery()) {
             List<UUID> ids = new ArrayList<>();
             while (rs.next()) ids.add(rs.getObject(1, UUID.class));
             for (UUID id : ids) {
@@ -195,8 +199,8 @@ public final class ServerImageAssetService {
                     if (Files.isRegularFile(path)) {
                         recordLocalBytes(local, id, Files.readAllBytes(path));
                     }
-                    if (Files.isRegularFile(path) && needsCloudWork(row,phase(local))) {
-                        synchronizeCloud(local,row,Files.readAllBytes(path),phase(local));
+                    if (Files.isRegularFile(path) && needsCloudWork(row,currentPhase)) {
+                        synchronizeCloud(local,row,Files.readAllBytes(path),currentPhase);
                         try (PreparedStatement update = local.prepareStatement("""
                                 UPDATE image_assets SET cloud_status='PRESENT',last_verified_at=CURRENT_TIMESTAMP,
                                     last_error=NULL WHERE asset_id=?
@@ -218,6 +222,7 @@ public final class ServerImageAssetService {
                         update.executeUpdate();
                     }
                 }
+            }
             }
         }
         return new SyncResult(discovered, uploaded, repaired);
