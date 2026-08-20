@@ -18,12 +18,18 @@ class ImageUploadNamingArchitectureTest {
         String productHelper = source("src/ui/helpers/ProductImageHelper.java");
         String photoService = source("src/services/EmployeePhotoService.java");
         String documentService = source("src/services/EmployeeDocumentService.java");
+        String mobileServer = source("src/services/MobileItemWebServer.java");
+        String mobileClient = source("src/mobile-web/app.js");
 
         assertTrue(newItem.contains("new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),\"\")"));
         assertTrue(editItem.contains("new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,\"\")"));
         assertTrue(customItems.contains("parentItem.itemType(),\"\",variantName"));
         assertTrue(employees.contains("requestedEmployeeName=fullName"));
-        assertTrue(productHelper.contains("safeNaming.variantName(), \"product-image\""));
+        assertTrue(productHelper.contains("StorageObjectNameBuilder.productImageFilename"));
+        assertTrue(productHelper.contains("safeNaming.variantName())"));
+        assertTrue(mobileServer.contains("StorageObjectNameBuilder.productImageFilename"));
+        assertTrue(mobileClient.contains("productName:"));
+        assertTrue(mobileClient.contains("brand:"));
         assertTrue(photoService.contains("employeeName, \"employee-photo\""));
         assertTrue(documentService.contains("employeeName, \"id-card-document\""));
         assertFalse(productHelper.contains("products/\" + System.currentTimeMillis()"));

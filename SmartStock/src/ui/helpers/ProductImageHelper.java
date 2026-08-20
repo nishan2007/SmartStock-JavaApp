@@ -240,10 +240,10 @@ public final class ProductImageHelper {
                 false
         )) {
             ProductImageNaming safeNaming = naming == null ? ProductImageNaming.empty() : naming;
-            String filename = StorageObjectNameBuilder.filename(
-                    optimizedImage.filename(), "jpg", Long.toString(System.currentTimeMillis()),
+            String filename = StorageObjectNameBuilder.productImageFilename(
+                    optimizedImage.filename(), Long.toString(System.currentTimeMillis()),
                     safeNaming.productName(), safeNaming.brand(), safeNaming.type(), safeNaming.size(),
-                    safeNaming.variantName(), "product-image");
+                    safeNaming.variantName());
             String objectPath = "products/" + filename;
             String publicUrl = services.LanApiClient.uploadManagedImage(category,
                     PRODUCT_IMAGE_BUCKET, objectPath, optimizedImage.contentType(),

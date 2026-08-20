@@ -32,6 +32,24 @@ public final class StorageObjectNameBuilder {
         return base + "-" + unique + "." + extension(extensionSource, fallbackExtension);
     }
 
+    public static String productImageFilename(String extensionSource, String uniqueToken,
+                                              String product, String brand, String type,
+                                              String size, String variant) {
+        String base=String.join("-", segment(product,"product",72),segment(brand,"unbranded",28),
+                segment(type,"item",24),segment(size,"standard",20),segment(variant,"standard",24),"product-image");
+        String unique=slug(uniqueToken);if(unique.isBlank())unique=Long.toString(System.currentTimeMillis());
+        return base+"-"+unique+"."+extension(extensionSource,"jpg");
+    }
+
+    private static String fallback(String value, String fallback) {
+        return slug(value).isBlank() ? fallback : value;
+    }
+
+    private static String segment(String value,String fallback,int maximum){
+        String result=slug(fallback(value,fallback));
+        return result.length()<=maximum?result:result.substring(0,maximum).replaceFirst("-+$","");
+    }
+
     public static String slug(String value) {
         String slug = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         slug = Normalizer.normalize(slug, Normalizer.Form.NFD).replaceAll("\\p{M}+", "");

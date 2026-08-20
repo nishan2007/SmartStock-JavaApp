@@ -15,6 +15,12 @@ class StorageObjectNameBuilderTest {
                         "Classic Tee", "Nike", "Shirt", "Large", "Red", "product image"));
     }
 
+    @Test void productNamesAlwaysContainEveryRequiredSegment() {
+        assertEquals("water-unbranded-item-standard-standard-product-image-1700000000000.jpg",
+                StorageObjectNameBuilder.productImageFilename("photo.jpg", "1700000000000",
+                        "Water", "", "", "", ""));
+    }
+
     @Test
     void buildsEmployeePhotoAndDocumentNames() {
         assertEquals(
