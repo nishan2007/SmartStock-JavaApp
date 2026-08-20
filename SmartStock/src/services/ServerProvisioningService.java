@@ -56,8 +56,8 @@ public final class ServerProvisioningService {
                         ? "Installed the canonical local PostgreSQL v1 baseline."
                         : "Installed the canonical local PostgreSQL v1 baseline in the existing empty database.");
             }
-            SchemaContractService.Readiness readiness =
-                    SchemaContractService.validateLocal(local);
+            SchemaContractService.requireLocalReady(local);
+            SchemaContractService.Readiness readiness = SchemaContractService.validateLocal(local);
             if (!readiness.ready()) {
                 throw new SQLException(readiness.message());
             }

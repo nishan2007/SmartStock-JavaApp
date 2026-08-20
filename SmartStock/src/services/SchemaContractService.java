@@ -45,7 +45,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql",
             "database/migrations/v1_after/20260818120000_mobile_item_web.sql",
             "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
-            "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql"
+            "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql",
+            "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -57,10 +58,18 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
             "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql",
             "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql",
-            "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql"
+            "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql",
+            "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
+    private static final Set<String> REQUIRED_BUILTIN_PERMISSION_KEYS = Set.of(
+            "MAKE_SALE", "VIEW_SALES", "VIEW_INVENTORY", "NEW_ITEM", "EDIT_ITEM",
+            "RECEIVING_INVENTORY", "VIEW_RECEIVING_HISTORY", "CUSTOMER_ACCOUNTS",
+            "SET_CREDIT_LIMIT", "EDIT_ACCOUNT_NUMBER", "VIEW_ITEM_DETAILS",
+            "EMPLOYEE_MANAGEMENT", "ROLE_MANAGEMENT", "VIEW_REPORTS", "CHANGE_STORE",
+            "COMPANY_CUSTOMIZATION", "LOCAL_DEVICE_SETTINGS", "CUSTOM_ORDER_PRICE_OVERRIDE",
+            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS");
 
     private SchemaContractService() {
     }
@@ -155,9 +164,108 @@ public final class SchemaContractService {
         upgradeCrossStoreTimeClockIdentity(connection);
         ensureMobileItemWebUpgrade(connection);
         ensureOneDriveImageUpgrade(connection);
+        ensureBuiltinPermissionsUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    /** Repairs the incomplete v1 permission seed and advances existing local metadata. */
+    private static void ensureBuiltinPermissionsUpgrade(Connection connection)
+            throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")
+                || !tableExists(connection, "public", "permissions")
+                || !tableExists(connection, "public", "roles")
+                || !tableExists(connection, "public", "role_permissions")) return;
+        String storedResource;
+        String storedCatalog;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256
+                FROM public.smartstock_schema_metadata
+                WHERE schema_scope='LOCAL' AND baseline_version=?
+                """)) {
+            statement.setInt(1, BASELINE_VERSION);
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) return;
+                storedResource = rows.getString(1);
+                storedCatalog = rows.getString(2);
+            }
+        }
+        String actualCatalog = catalogFingerprint(connection, List.of("public"), false);
+        if (!actualCatalog.equals(storedCatalog)) {
+            throw new SQLException("The local schema has drifted; automatic built-in permission repair is blocked.", "55000");
+        }
+        String expectedResource;
+        try {
+            expectedResource = resourceFingerprint(localContractResources());
+        } catch (Exception ex) {
+            throw new SQLException("The packaged local schema is unreadable.", ex);
+        }
+        if (expectedResource.equals(storedResource) && builtinAdminPermissionsComplete(connection)) {
+            return;
+        }
+        boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"));
+            try (PreparedStatement update = connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=?
+                      AND resource_fingerprint_sha256=? AND catalog_fingerprint_sha256=?
+                    """)) {
+                update.setString(1, expectedResource);
+                update.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                update.setInt(3, BASELINE_VERSION);
+                update.setString(4, storedResource);
+                update.setString(5, storedCatalog);
+                if (update.executeUpdate() != 1) {
+                    throw new SQLException("Local schema metadata changed during built-in permission repair.");
+                }
+            }
+            if (!builtinAdminPermissionsComplete(connection)) {
+                throw new SQLException("The built-in ADMIN permission repair did not complete.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The built-in permissions could not be repaired.", ex);
+        } finally {
+            connection.setAutoCommit(autoCommit);
+        }
+    }
+
+    private static boolean builtinAdminPermissionsComplete(Connection connection)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT EXISTS (
+                    SELECT 1 FROM public.permissions
+                    WHERE UPPER(permission_key)=?
+                )
+                """)) {
+            for (String permissionKey : REQUIRED_BUILTIN_PERMISSION_KEYS) {
+                statement.setString(1, permissionKey);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next() || !rows.getBoolean(1)) return false;
+                }
+            }
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT COUNT(*) = 0
+                FROM public.permissions permission
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM public.roles role
+                    JOIN public.role_permissions assignment
+                      ON assignment.role_id=role.role_id
+                    WHERE UPPER(role.role_name)='ADMIN'
+                      AND assignment.permission_id=permission.permission_id
+                )
+                """); ResultSet rows = statement.executeQuery()) {
+            return rows.next() && rows.getBoolean(1);
+        }
     }
 
     private static void ensureFirstAdminSetupUpgrade(Connection connection) throws SQLException {

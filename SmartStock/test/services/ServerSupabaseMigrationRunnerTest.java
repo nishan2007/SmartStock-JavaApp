@@ -51,7 +51,7 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(13, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(14, ServerSupabaseMigrationRunner.migrationResources().size());
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }
@@ -89,5 +89,8 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(12));
+        assertEquals(
+                "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(13));
     }
 }
