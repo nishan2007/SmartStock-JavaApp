@@ -51,7 +51,7 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(11, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(12, ServerSupabaseMigrationRunner.migrationResources().size());
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }
@@ -83,5 +83,8 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(10));
+        assertEquals(
+                "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(11));
     }
 }
