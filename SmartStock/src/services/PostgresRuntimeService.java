@@ -518,7 +518,8 @@ public final class PostgresRuntimeService {
                 $action=$task.Actions | Select-Object -First 1
                 if($action.Execute -and
                    (($action.Execute -match '(?i)SmartStock\\\\runtime\\\\bin\\\\javaw?\\.exe$' -and $action.Arguments -match '(?i)-jar.+--sync-service') -or
-                    ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)'))) { exit 0 }
+                    ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)') -or
+                    ($action.Execute -match '(?i)\\\\explorer\\.exe$' -and $action.Arguments -match '(?i)SmartStockServer\\.lnk'))) { exit 0 }
                 exit 1
                 """,Duration.ofSeconds(30));
         return result.success();
@@ -642,28 +643,62 @@ public final class PostgresRuntimeService {
                   $Jar = %s
                   $Dependencies = %s
                   $ServiceExecutable = %s
-                  $ServiceDir = Join-Path $env:USERPROFILE '.smartstock\\sync-service'
+                  $ServiceUser = (Get-CimInstance Win32_ComputerSystem).UserName
+                  if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
+                    throw 'The signed-in Windows user could not be identified.'
+                  }
+                  $ServiceSid = (New-Object Security.Principal.NTAccount($ServiceUser)).Translate(
+                    [Security.Principal.SecurityIdentifier]).Value
+                  $ProfileKey = 'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\' + $ServiceSid
+                  $ServiceHome = [Environment]::ExpandEnvironmentVariables(
+                    (Get-ItemProperty -LiteralPath $ProfileKey -Name ProfileImagePath -ErrorAction Stop).ProfileImagePath)
+                  if ([string]::IsNullOrWhiteSpace($ServiceHome) -or -not (Test-Path -LiteralPath $ServiceHome)) {
+                    throw 'The signed-in Windows user profile could not be resolved.'
+                  }
+                  $ServiceDir = Join-Path $ServiceHome '.smartstock\\sync-service'
                   $ServiceAppDir = Join-Path $ServiceDir 'app'
                   New-Item -ItemType Directory -Force -Path $ServiceAppDir | Out-Null
+                  $ExistingTask = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                  if ($ExistingTask) {
+                    Stop-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                    $Deadline = (Get-Date).AddSeconds(15)
+                    do {
+                      Start-Sleep -Milliseconds 250
+                      $ExistingTask = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                    } while ($ExistingTask -and $ExistingTask.State -eq 'Running' -and (Get-Date) -lt $Deadline)
+                    if ($ExistingTask -and $ExistingTask.State -eq 'Running') {
+                      throw 'The existing SmartStock server service did not stop before update.'
+                    }
+                    Unregister-ScheduledTask -TaskName SmartStockServerService -Confirm:$false -ErrorAction Stop
+                  }
+                  Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
+                    -Confirm:$false -ErrorAction SilentlyContinue
                   Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
                   Copy-Item -LiteralPath $Jar -Destination $ServiceAppDir -Force
                   $TargetDependencies = Join-Path $ServiceAppDir 'dependency'
                   Remove-Item -Recurse -Force $TargetDependencies -ErrorAction SilentlyContinue
-                  Copy-Item -LiteralPath $Dependencies -Destination $TargetDependencies -Recurse -Force
+                  New-Item -ItemType Directory -Force -Path $TargetDependencies | Out-Null
+                  Copy-Item -Path (Join-Path $Dependencies '*') -Destination $TargetDependencies -Recurse -Force
                   $JarName = Split-Path -Leaf $Jar
-                  Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
-                    -Confirm:$false -ErrorAction SilentlyContinue
                   $ServiceArguments = %s
-                  if ([string]::IsNullOrWhiteSpace($ServiceArguments)) {
-                    $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
-                      -WorkingDirectory $ServiceAppDir
-                  } else {
-                    $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
-                      -Argument $ServiceArguments -WorkingDirectory $ServiceAppDir
+                  if (-not [string]::IsNullOrWhiteSpace($ServiceArguments) -and
+                      [IO.Path]::GetFileName($ServiceExecutable) -match '^javaw?\\.exe$') {
+                    $ServiceArguments = '-Duser.home="' + $ServiceHome + '" ' + $ServiceArguments
                   }
-                  $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                  $ServiceShortcut = Join-Path $ServiceDir 'SmartStockServer.lnk'
+                  $Shell = New-Object -ComObject WScript.Shell
+                  $Shortcut = $Shell.CreateShortcut($ServiceShortcut)
+                  $Shortcut.TargetPath = $ServiceExecutable
+                  $Shortcut.Arguments = $ServiceArguments
+                  $Shortcut.WorkingDirectory = $ServiceAppDir
+                  $Shortcut.WindowStyle = 7
+                  $Shortcut.Save()
+                  $TaskAction = New-ScheduledTaskAction `
+                    -Execute (Join-Path $env:WINDIR 'explorer.exe') `
+                    -Argument ('"' + $ServiceShortcut + '"')
+                  $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $ServiceUser
                   $TaskPrincipal = New-ScheduledTaskPrincipal `
-                    -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+                    -UserId $ServiceUser `
                     -LogonType Interactive -RunLevel Limited
                   Register-ScheduledTask -TaskName SmartStockServerService `
                     -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal `

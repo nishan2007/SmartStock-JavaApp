@@ -44,7 +44,12 @@ class InitialSetupWizardArchitectureTest {
         assertTrue(source.contains("ServerStoreSetupService.create"));
         assertTrue(source.contains("ServerStoreSetupService.listCloud"));
         assertTrue(source.contains("ServerStoreSetupService.restoreFromCloud"));
-        assertTrue(source.contains("DeviceCredentialService.assignLocalInstallationToStore"));
+        assertTrue(source.contains("ServerStoreSetupService.find(String.valueOf(selected.locationId()))"));
+        assertTrue(source.contains("local == null"));
+        assertTrue(source.contains("new JComboBox<>(zones.toArray(String[]::new))"));
+        assertTrue(source.contains("ZoneId.systemDefault().getId()"));
+        assertFalse(source.contains("\"Address (optional)\""));
+        assertTrue(source.contains("DeviceCredentialService.assignLocalInstallationToStoreIfApproved"));
         assertTrue(source.contains("current.save()"));
         assertTrue(source.contains("Loading existing stores from this environment"));
         assertTrue(source.contains("FirstAdministratorSetupDialog"));

@@ -27,7 +27,9 @@ class ServerSupabaseCredentialsTest {
     void acceptsOnlyConfiguredProjectServiceRoleJwt() {
         String oldUrl = System.getProperty("SUPABASE_URL");
         String oldKey = System.getProperty("SUPABASE_PUBLISHABLE_KEY");
+        String oldEnvironment = System.getProperty("SMARTSTOCK_ENVIRONMENT");
         try {
+            System.setProperty("SMARTSTOCK_ENVIRONMENT", "development");
             System.setProperty("SUPABASE_URL", SupabaseProjectConfig.DEVELOPMENT_URL);
             System.setProperty("SUPABASE_PUBLISHABLE_KEY",
                     SupabaseProjectConfig.DEVELOPMENT_PUBLISHABLE_KEY);
@@ -47,6 +49,7 @@ class ServerSupabaseCredentialsTest {
         } finally {
             restoreProperty("SUPABASE_URL", oldUrl);
             restoreProperty("SUPABASE_PUBLISHABLE_KEY", oldKey);
+            restoreProperty("SMARTSTOCK_ENVIRONMENT", oldEnvironment);
         }
     }
 

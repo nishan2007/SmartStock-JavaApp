@@ -101,7 +101,36 @@ public final class ServerFirstAdministratorService {
         if (user == null || password == null) {
             throw new SQLException("The Development profile does not have saved local database credentials.");
         }
-        return DriverManager.getConnection(jdbc, user, password);
+        try {
+            return DriverManager.getConnection(jdbc, user, password);
+        } catch (SQLException developmentFailure) {
+            if (!"28P01".equals(developmentFailure.getSQLState())) throw developmentFailure;
+            EnvironmentProfile production = EnvironmentProfile.PRODUCTION;
+            String currentUser = SecureCredentialStore.read(
+                    production.secretKey("primary-db-user"));
+            String currentPassword = SecureCredentialStore.read(
+                    production.secretKey("primary-db-password"));
+            if (currentUser == null || currentPassword == null
+                    || !user.equals(currentUser)) throw developmentFailure;
+            return DriverManager.getConnection(jdbc, currentUser, currentPassword);
+        }
+    }
+
+    public static DevelopmentSource developmentSource() {
+        EnvironmentProfile profile = EnvironmentProfile.DEVELOPMENT;
+        Properties properties = new Properties();
+        if (Files.isRegularFile(profile.file("database.properties"))) {
+            try (InputStream input = Files.newInputStream(profile.file("database.properties"))) {
+                properties.load(input);
+            } catch (Exception ignored) {
+            }
+        }
+        String jdbc = firstNonBlank(properties.getProperty("jdbc.url"),
+                "jdbc:postgresql://127.0.0.1:5432/smartstock_dev");
+        String user = firstNonBlank(
+                SecureCredentialStore.read(profile.secretKey("primary-db-user")),
+                readCredentialFile(profile, "SMARTSTOCK_DB_USER"));
+        return new DevelopmentSource(jdbc, user == null ? "" : user);
     }
 
     public static Connection openTemporarySource(String jdbcUrl, String user, char[] password)
@@ -218,8 +247,8 @@ public final class ServerFirstAdministratorService {
         SupabaseServerApi.Response response =
                 SupabaseServerApi.postRpc("smartstock_bootstrap_first_admin", request);
         if (!response.successful()) {
-            throw new SQLException("Hosted first-administrator bootstrap failed (HTTP "
-                    + response.statusCode() + ").");
+            throw new SQLException(SupabaseServerApi.failureMessage(
+                    "Hosted first-administrator bootstrap", response));
         }
         JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
         if (!result.has("user_id")) {
@@ -451,6 +480,9 @@ public final class ServerFirstAdministratorService {
 
     public record BootstrapResult(int userId, UUID authUserId, boolean transferred,
                                   String message) {
+    }
+
+    public record DevelopmentSource(String jdbcUrl, String user) {
     }
 
     private record Store(int locationId, String name, String code, String timezone,

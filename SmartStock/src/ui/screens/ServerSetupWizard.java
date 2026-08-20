@@ -22,7 +22,10 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,8 +72,7 @@ public final class ServerSetupWizard extends JFrame {
     private final JLabel existingStoreLabel = new JLabel("Existing Store");
     private final JTextField storeName = new JTextField();
     private final JTextField storeCode = new JTextField();
-    private final JTextField storeTimezone = new JTextField("America/New_York");
-    private final JTextField storeAddress = new JTextField();
+    private final JComboBox<String> storeTimezone = timezoneSelector();
     private final JRadioButton selectStore = new JRadioButton("Use an existing store", true);
     private final JRadioButton createStore = new JRadioButton("Create a new store");
 
@@ -226,8 +228,7 @@ public final class ServerSetupWizard extends JFrame {
         form.add(createStore, full);
         row = addRow(form, row, "Store Name", storeName);
         row = addRow(form, row, "Four-digit Store Number / Code", storeCode);
-        row = addRow(form, row, "Timezone", storeTimezone);
-        addRow(form, row, "Address (optional)", storeAddress);
+        addRow(form, row, "Timezone", storeTimezone);
         page.add(note("Choose a store already restored into this local database, or create "
                 + "the first store. SmartStock assigns the numeric database ID automatically."),
                 BorderLayout.NORTH);
@@ -630,12 +631,16 @@ public final class ServerSetupWizard extends JFrame {
             ServerStoreSetupService.Store selected;
             if (createStore.isSelected()) {
                 selected = ServerStoreSetupService.create(storeName.getText(),
-                        storeCode.getText(), storeTimezone.getText(), storeAddress.getText());
+                        storeCode.getText(), selectedTimezone(storeTimezone), "");
             } else {
                 selected = (ServerStoreSetupService.Store) stores.getSelectedItem();
                 if (selected == null) throw new IllegalArgumentException(
                         "Select an existing store or choose Create a new store.");
-                selected = ServerStoreSetupService.restoreFromCloud(selected);
+                ServerStoreSetupService.Store local =
+                        ServerStoreSetupService.find(String.valueOf(selected.locationId()));
+                selected = local == null
+                        ? ServerStoreSetupService.restoreFromCloud(selected)
+                        : local;
             }
             DatabaseConfig current = DatabaseConfig.load();
             services.ServerStoreSwitchService.Preflight switchPreflight=null;
@@ -699,7 +704,7 @@ public final class ServerSetupWizard extends JFrame {
                             moved=services.ServerStoreSwitchService.switchPairedRegisters(
                                     connection,current.locationId(),selected.locationId());
                         }
-                        services.DeviceCredentialService.assignLocalInstallationToStore(
+                        services.DeviceCredentialService.assignLocalInstallationToStoreIfApproved(
                                 connection, selected.locationId());
                         connection.commit();
                         if(moved>0)statusLabel.setText("Store "+selected.name()+" assigned; "
@@ -731,9 +736,23 @@ public final class ServerSetupWizard extends JFrame {
         storeName.setEnabled(creating);
         storeCode.setEnabled(creating);
         storeTimezone.setEnabled(creating);
-        storeAddress.setEnabled(creating);
         cardHost.revalidate();
         cardHost.repaint();
+    }
+
+    private static JComboBox<String> timezoneSelector() {
+        List<String> zones = new ArrayList<>(ZoneId.getAvailableZoneIds());
+        Collections.sort(zones);
+        JComboBox<String> selector = new JComboBox<>(zones.toArray(String[]::new));
+        selector.setEditable(true);
+        selector.setSelectedItem(ZoneId.systemDefault().getId());
+        selector.setPrototypeDisplayValue("America/Argentina/Buenos_Aires");
+        return selector;
+    }
+
+    private static String selectedTimezone(JComboBox<String> selector) {
+        Object value = selector.getEditor().getItem();
+        return value == null ? "" : value.toString().trim();
     }
 
     private void refreshAdministratorState() {

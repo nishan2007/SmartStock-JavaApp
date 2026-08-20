@@ -89,7 +89,16 @@ public final class DeviceCredentialService {
     }
 
     /** Keeps an already-paired server installation aligned with its selected store. */
-    public static void assignLocalInstallationToStore(Connection conn, int locationId) throws SQLException {
+    public static void assignLocalInstallationToStore(Connection conn, int locationId)
+            throws SQLException {
+        if (!assignLocalInstallationToStoreIfApproved(conn, locationId)) {
+            throw new SQLException("The approved device record for this server installation was not found.");
+        }
+    }
+
+    /** First-server setup may run before the loopback-only server device claim. */
+    public static boolean assignLocalInstallationToStoreIfApproved(Connection conn, int locationId)
+            throws SQLException {
         String installationId = DeviceUtils.collectDeviceInfo().getInstallationId();
         String deviceId;
         try (PreparedStatement ps = conn.prepareStatement("""
@@ -102,7 +111,9 @@ public final class DeviceCredentialService {
             ps.setString(2, installationId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
-                    throw new SQLException("The approved device record for this server installation was not found.");
+                    // First-server setup claims its device credential later through the
+                    // physical-server loopback endpoint. Step 4 must remain resumable.
+                    return false;
                 }
                 deviceId = rs.getString(1);
             }
@@ -118,6 +129,7 @@ public final class DeviceCredentialService {
         }
         audit(conn, "DEVICE_STORE_REASSIGNED", deviceId, null,
                 "Server installation assigned to store " + locationId);
+        return true;
     }
 
     private static String decrypt(String envelope) throws Exception {

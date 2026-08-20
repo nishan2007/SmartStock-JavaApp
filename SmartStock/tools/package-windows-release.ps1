@@ -133,7 +133,9 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $Archive = [System.IO.Compression.ZipFile]::OpenRead($Zip)
     try {
-        $ArchiveNames = @($Archive.Entries | ForEach-Object FullName)
+        # Compress-Archive may emit Windows separators in entry names. Normalize
+        # before checking the updater's platform-independent archive contract.
+        $ArchiveNames = @($Archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         if ($ArchiveNames -notcontains $Jar.Name) {
             throw "The Windows updater archive does not contain $($Jar.Name) at its root."
         }

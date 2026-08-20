@@ -59,11 +59,18 @@ public final class ServerSupabaseMigrationRunner {
                         throw new SQLException("This project already contains SmartStock tables but has no v1 contract. Automatic adoption is blocked.");
                     }
                     SchemaContractService.installCloudBaseline(connection);
+                    setMigrationSearchPath(connection);
                     applied++;
                 } else {
+                    List<String> appliedResources = appliedContractResources(connection);
                     SchemaContractService.Readiness readiness =
                             SchemaContractService.validateCloudApplied(connection,
-                                    appliedContractResources(connection));
+                                    appliedResources);
+                    if (!readiness.ready()
+                            && repairInterruptedCheckpoint(connection, appliedResources)) {
+                        readiness = SchemaContractService.validateCloudApplied(connection,
+                                appliedResources);
+                    }
                     if (!readiness.ready()) throw new SQLException(readiness.message());
                 }
 
@@ -159,10 +166,59 @@ public final class ServerSupabaseMigrationRunner {
             throws SQLException {
         List<String> resources = new ArrayList<>(
                 SchemaContractService.cloudBaselineResources());
+        boolean missing = false;
+        int postV1Count = 0;
         for (String resource : SchemaContractService.cloudPostV1MigrationResources()) {
-            if (appliedChecksum(connection, resource) != null) resources.add(resource);
+            String checksum = appliedChecksum(connection, resource);
+            if (checksum == null) {
+                missing = true;
+                continue;
+            }
+            if (missing) {
+                throw new SQLException("The Supabase migration history is not an ordered prefix.");
+            }
+            String expected;
+            try {
+                expected = sha256(SqlScriptRunner.readResource(resource));
+            } catch (Exception ex) {
+                throw new SQLException("Packaged migration is unreadable: " + resource, ex);
+            }
+            if (!expected.equals(checksum)) {
+                throw new SQLException("Applied migration is immutable but its packaged checksum changed: "
+                        + resource);
+            }
+            resources.add(resource);
+            postV1Count++;
+        }
+        if (appliedCount(connection) != postV1Count + 1) {
+            throw new SQLException("The Supabase migration history contains an unknown entry.");
         }
         return List.copyOf(resources);
+    }
+
+    private static boolean repairInterruptedCheckpoint(Connection connection,
+                                                       List<String> resources)
+            throws Exception {
+        boolean originalAutoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            boolean repaired = SchemaContractService.repairKnownInterruptedCloudCheckpoint(
+                    connection, resources);
+            connection.commit();
+            return repaired;
+        } catch (Exception ex) {
+            connection.rollback();
+            throw ex;
+        } finally {
+            connection.setAutoCommit(originalAutoCommit);
+        }
+    }
+
+    private static void setMigrationSearchPath(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT pg_catalog.set_config('search_path', 'public', false)")) {
+            statement.execute();
+        }
     }
 
     private static String appliedChecksum(Connection connection, String resource)
@@ -194,6 +250,8 @@ public final class ServerSupabaseMigrationRunner {
                 statement.setString(3, appVersion());
                 statement.executeUpdate();
             }
+            SchemaContractService.refreshCloudContract(connection,
+                    appliedContractResources(connection));
             connection.commit();
         } catch (Exception ex) {
             connection.rollback();

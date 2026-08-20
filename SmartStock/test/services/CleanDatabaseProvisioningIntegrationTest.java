@@ -1,6 +1,7 @@
 package services;
 
 import com.google.gson.JsonParser;
+import data.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
@@ -19,8 +20,14 @@ class CleanDatabaseProvisioningIntegrationTest {
         String jdbcUrl = System.getProperty("smartstock.test.jdbc", "");
         String user = System.getProperty("smartstock.test.dbUser", "");
         String password = System.getProperty("smartstock.test.dbPassword", "");
+        if (Boolean.getBoolean("smartstock.test.useConfiguredProduction")) {
+            DatabaseConfig configured = DatabaseConfig.load();
+            jdbcUrl = configured.jdbcUrl();
+            user = configured.dbUser();
+            password = configured.dbPassword();
+        }
         assumeTrue(!jdbcUrl.isBlank() && !user.isBlank(),
-                "Set the isolated PostgreSQL integration-test properties to run this test.");
+                "Set the isolated PostgreSQL integration-test properties, or explicitly enable the configured production profile.");
 
         try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password)) {
             SchemaContractService.installLocalBaseline(connection);

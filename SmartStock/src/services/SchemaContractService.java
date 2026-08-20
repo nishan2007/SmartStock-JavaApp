@@ -44,7 +44,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811233000_add_store_transfer_uuid.sql",
             "database/migrations/v1_after/20260811233200_add_cross_store_time_clock_identity.sql",
             "database/migrations/v1_after/20260818120000_mobile_item_web.sql",
-            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"
+            "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
+            "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -55,7 +56,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260811233100_route_store_transfer_receipts.sql",
             "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
             "database/migrations/v1_after/20260819230000_onedrive_shared_identifiers.sql",
-            "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql"
+            "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql",
+            "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -139,6 +141,7 @@ public final class SchemaContractService {
 
     /** Blocks database-dependent work unless this database matches the packaged v1 baseline. */
     public static void requireLocalReady(Connection connection) throws SQLException {
+        ensureFirstAdminSetupUpgrade(connection);
         String key = connection.getMetaData().getURL() + "|" + connection.getMetaData().getUserName();
         if (VALIDATED_LOCAL_DATABASES.contains(key)) return;
         upgradePreReturnReceiptBaseline(connection);
@@ -155,6 +158,64 @@ public final class SchemaContractService {
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    private static void ensureFirstAdminSetupUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")
+                || tableExists(connection, "public", "smartstock_first_admin_setup")) return;
+        String storedResource;
+        String storedCatalog;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256
+                FROM public.smartstock_schema_metadata
+                WHERE schema_scope='LOCAL' AND baseline_version=?
+                """)) {
+            ps.setInt(1, BASELINE_VERSION);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return;
+                storedResource = rs.getString(1);
+                storedCatalog = rs.getString(2);
+            }
+        }
+        String actualCatalog = catalogFingerprint(connection, List.of("public"), false);
+        if (!actualCatalog.equals(storedCatalog)) {
+            throw new SQLException("The local schema has drifted; automatic first-administrator setup installation is blocked.", "55000");
+        }
+        String expectedResource;
+        try {
+            expectedResource = resourceFingerprint(localContractResources());
+        } catch (Exception ex) {
+            throw new SQLException("The packaged local schema is unreadable.", ex);
+        }
+        boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql"));
+            String nextCatalog = catalogFingerprint(connection, List.of("public"), false);
+            try (PreparedStatement update = connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=?
+                      AND resource_fingerprint_sha256=? AND catalog_fingerprint_sha256=?
+                    """)) {
+                update.setString(1, expectedResource);
+                update.setString(2, nextCatalog);
+                update.setInt(3, BASELINE_VERSION);
+                update.setString(4, storedResource);
+                update.setString(5, storedCatalog);
+                if (update.executeUpdate() != 1) {
+                    throw new SQLException("Local first-administrator setup metadata changed during upgrade.");
+                }
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The first-administrator setup state could not be installed.", ex);
+        } finally {
+            connection.setAutoCommit(autoCommit);
+        }
     }
 
     private static void ensureOneDriveImageUpgrade(Connection connection)throws SQLException{
@@ -424,9 +485,15 @@ public final class SchemaContractService {
     }
 
     static void refreshCloudContract(Connection connection) throws Exception {
-        String resourceFingerprint = resourceFingerprint(cloudContractResources());
+        refreshCloudContract(connection, cloudContractResources());
+    }
+
+    static void refreshCloudContract(Connection connection, List<String> resources)
+            throws Exception {
+        String resourceFingerprint = resourceFingerprint(resources);
         String catalogFingerprint = catalogFingerprint(connection,
-                List.of("public", "smartstock_private"), true);
+                List.of("public", "smartstock_private"), resources.contains(
+                        "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql"));
         try (PreparedStatement statement = connection.prepareStatement("""
                 UPDATE smartstock_private.smartstock_schema_metadata
                 SET resource_fingerprint_sha256=?, catalog_fingerprint_sha256=?
@@ -439,6 +506,29 @@ public final class SchemaContractService {
                 throw new SQLException("Cloud schema metadata could not be refreshed.");
             }
         }
+    }
+
+    static boolean repairKnownInterruptedCloudCheckpoint(Connection connection,
+                                                          List<String> resources)
+            throws Exception {
+        List<String> interrupted = new ArrayList<>(CLOUD_BASELINE);
+        interrupted.addAll(CLOUD_POST_V1.subList(0, 3));
+        if (!resources.equals(interrupted)) return false;
+        String baselineFingerprint = resourceFingerprint(CLOUD_BASELINE);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT resource_fingerprint_sha256
+                FROM smartstock_private.smartstock_schema_metadata
+                WHERE schema_scope='CLOUD' AND baseline_version=?
+                """)) {
+            statement.setInt(1, BASELINE_VERSION);
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next() || !baselineFingerprint.equals(rows.getString(1))) {
+                    return false;
+                }
+            }
+        }
+        refreshCloudContract(connection, resources);
+        return true;
     }
 
     private static void installBaseline(Connection connection, List<String> resources,

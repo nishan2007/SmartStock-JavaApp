@@ -59,6 +59,9 @@ final class FirstAdministratorSetupDialog extends JDialog {
         root.add(choices, BorderLayout.CENTER);
         root.add(footer, BorderLayout.SOUTH);
         setContentPane(root);
+        var development = ServerFirstAdministratorService.developmentSource();
+        sourceUrl.setText(development.jdbcUrl());
+        sourceUser.setText(development.user());
         refreshSourceFields();
         ThemeManager.applyToWindow(this);
     }

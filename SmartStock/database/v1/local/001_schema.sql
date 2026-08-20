@@ -5095,7 +5095,7 @@ CREATE TABLE public.quotation_lines (
 
 CREATE TABLE public.quotation_line_print_addons (
     quotation_line_print_addon_id bigserial PRIMARY KEY,
-    quotation_line_id bigint NOT NULL REFERENCES public.quotation_lines(quotation_line_id) ON DELETE CASCADE,
+    quotation_line_id bigint NOT NULL,
     print_material_id bigint, material_name text NOT NULL, print_size_preset_id bigint,
     print_size_name text, pricing_mode text NOT NULL, print_description text,
     print_line_count integer DEFAULT 1 NOT NULL, print_charge numeric(12,2) DEFAULT 0 NOT NULL,
@@ -5104,8 +5104,8 @@ CREATE TABLE public.quotation_line_print_addons (
 
 CREATE TABLE public.invoice_line_print_addons (
     invoice_line_print_addon_id bigserial PRIMARY KEY,
-    invoice_line_id bigint NOT NULL REFERENCES public.invoice_lines(invoice_line_id) ON DELETE CASCADE,
-    quotation_line_print_addon_id bigint REFERENCES public.quotation_line_print_addons(quotation_line_print_addon_id),
+    invoice_line_id bigint NOT NULL,
+    quotation_line_print_addon_id bigint,
     print_material_id bigint, material_name text NOT NULL, print_size_preset_id bigint,
     print_size_name text, pricing_mode text NOT NULL, print_description text,
     print_line_count integer DEFAULT 1 NOT NULL, print_charge numeric(12,2) DEFAULT 0 NOT NULL,
@@ -10903,6 +10903,30 @@ CREATE TRIGGER user_locations_set_updated_at BEFORE INSERT OR UPDATE ON public.u
 --
 
 CREATE TRIGGER users_set_updated_at BEFORE INSERT OR UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.set_users_updated_at();
+
+
+--
+-- Name: quotation_line_print_addons quotation_line_print_addons_quotation_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quotation_line_print_addons
+    ADD CONSTRAINT quotation_line_print_addons_quotation_line_id_fkey FOREIGN KEY (quotation_line_id) REFERENCES public.quotation_lines(quotation_line_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice_line_print_addons invoice_line_print_addons_invoice_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_line_print_addons
+    ADD CONSTRAINT invoice_line_print_addons_invoice_line_id_fkey FOREIGN KEY (invoice_line_id) REFERENCES public.invoice_lines(invoice_line_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice_line_print_addons invoice_line_print_addons_quotation_line_print_addon_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_line_print_addons
+    ADD CONSTRAINT invoice_line_print_addons_quotation_line_print_addon_id_fkey FOREIGN KEY (quotation_line_print_addon_id) REFERENCES public.quotation_line_print_addons(quotation_line_print_addon_id);
 
 
 --

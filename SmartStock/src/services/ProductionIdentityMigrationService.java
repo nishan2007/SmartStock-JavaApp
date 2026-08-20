@@ -168,10 +168,6 @@ public final class ProductionIdentityMigrationService {
                         && !(blank(result.badgeSecretSalt()) && blank(result.badgeSecretHash()))) {
                     throw new SQLException("Source badge verifier is incomplete for " + username + ".");
                 }
-                if (!blank(result.badgeSecretHash()) && result.dateOfBirth() == null) {
-                    throw new SQLException("Date of birth is required to preserve the badge verifier for "
-                            + username + ".");
-                }
                 return result;
             }
         }

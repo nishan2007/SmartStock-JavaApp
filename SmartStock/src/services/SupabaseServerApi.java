@@ -66,7 +66,24 @@ final class SupabaseServerApi {
     }
 
     static String failureMessage(String operation, Response response) {
-        return operation + " returned HTTP " + response.statusCode() + ".";
+        String detail = "";
+        try {
+            JsonObject body = GSON.fromJson(response.body(), JsonObject.class);
+            if (body != null) {
+                for (String key : new String[]{"message", "details", "hint"}) {
+                    if (body.has(key) && !body.get(key).isJsonNull()) {
+                        String value = body.get(key).getAsString().replaceAll("[\\r\\n]+", " ").trim();
+                        if (!value.isBlank()) {
+                            detail = " " + value.substring(0, Math.min(value.length(), 500));
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Never expose an unstructured proxy response or credentials in an error dialog.
+        }
+        return operation + " returned HTTP " + response.statusCode() + "." + detail;
     }
 
     record Response(int statusCode, String body) {

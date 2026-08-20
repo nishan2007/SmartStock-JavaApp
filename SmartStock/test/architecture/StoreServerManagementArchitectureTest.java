@@ -51,7 +51,11 @@ class StoreServerManagementArchitectureTest {
         String gateway=source("src/app/RemoteGatewayMain.java");
         String admin=source("src/services/LanServerAdminService.java");
         String managementClient=source("src/services/ServerManagementClient.java");
+        String credentials=source("src/services/DeviceCredentialService.java");
         assertTrue(server.contains("access_mode='SERVER'"));
+        assertTrue(server.contains("isLoopbackAddress()"));
+        assertTrue(credentials.contains("assignLocalInstallationToStoreIfApproved"));
+        assertTrue(credentials.contains("First-server setup claims its device credential later"));
         assertTrue(server.contains("/v1/security/servers/list"));
         for(String route:new String[]{"prepare-standby","begin-handoff","handoff-status","emergency-takeover","retire"})
             assertTrue(server.contains("/v1/security/servers/"+route),route);

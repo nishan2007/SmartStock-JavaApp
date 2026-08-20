@@ -50,9 +50,11 @@ public final class ServerProvisioningService {
         boolean created = createDatabaseIfMissing(
                 localParts, config.dbUser(), config.dbPassword(), steps);
         try (Connection local = DriverManager.getConnection(config.jdbcUrl(), config.dbUser(), config.dbPassword())) {
-            if (created) {
+            if (created || isEmptyLocalDatabase(local)) {
                 SchemaContractService.installLocalBaseline(local);
-                steps.add("Installed the canonical local PostgreSQL v1 baseline.");
+                steps.add(created
+                        ? "Installed the canonical local PostgreSQL v1 baseline."
+                        : "Installed the canonical local PostgreSQL v1 baseline in the existing empty database.");
             }
             SchemaContractService.Readiness readiness =
                     SchemaContractService.validateLocal(local);
@@ -140,6 +142,18 @@ public final class ServerProvisioningService {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
+        }
+    }
+
+    private static boolean isEmptyLocalDatabase(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_class c
+                    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                    WHERE n.nspname='public' AND c.relkind IN ('r','p')
+                ) AND to_regclass('public.smartstock_schema_metadata') IS NULL
+                """); ResultSet rows = statement.executeQuery()) {
+            return rows.next() && rows.getBoolean(1);
         }
     }
 

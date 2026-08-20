@@ -39,6 +39,22 @@ class SqlScriptRunnerPackagingTest {
         }
     }
 
+    @Test
+    void printAddonForeignKeysAreDeferredUntilReferencedPrimaryKeysExist() throws Exception {
+        String schema = SqlScriptRunner.readResource("database/v1/local/001_schema.sql");
+        int quotationPrimaryKey = schema.indexOf("ADD CONSTRAINT quotation_lines_pkey PRIMARY KEY");
+        int invoicePrimaryKey = schema.indexOf("ADD CONSTRAINT invoice_lines_pkey PRIMARY KEY");
+        int quotationAddonForeignKey = schema.indexOf(
+                "ADD CONSTRAINT quotation_line_print_addons_quotation_line_id_fkey FOREIGN KEY");
+        int invoiceAddonForeignKey = schema.indexOf(
+                "ADD CONSTRAINT invoice_line_print_addons_invoice_line_id_fkey FOREIGN KEY");
+
+        assertTrue(quotationPrimaryKey >= 0);
+        assertTrue(invoicePrimaryKey >= 0);
+        assertTrue(quotationAddonForeignKey > quotationPrimaryKey);
+        assertTrue(invoiceAddonForeignKey > invoicePrimaryKey);
+    }
+
     private static boolean assertPackaged(String resource) {
         try {
             return !SqlScriptRunner.readResource(resource).isBlank();

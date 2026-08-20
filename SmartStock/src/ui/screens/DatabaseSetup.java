@@ -18,7 +18,9 @@ import ui.helpers.ResponsiveTask;
 
 import javax.swing.*;
 import java.awt.*;
+import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class DatabaseSetup extends JFrame {
@@ -505,8 +507,7 @@ public class DatabaseSetup extends JFrame {
 
         JTextField nameField = new JTextField();
         JTextField codeField = new JTextField(identifier.matches("[0-9]{4}") ? identifier : "");
-        JTextField timezoneField = new JTextField("America/New_York");
-        JTextField addressField = new JTextField();
+        JComboBox<String> timezoneField = timezoneSelector();
         JPanel form = new JPanel(new GridLayout(0, 2, 8, 8));
         form.add(new JLabel("Store Name:"));
         form.add(nameField);
@@ -514,8 +515,6 @@ public class DatabaseSetup extends JFrame {
         form.add(codeField);
         form.add(new JLabel("Timezone:"));
         form.add(timezoneField);
-        form.add(new JLabel("Address (optional):"));
-        form.add(addressField);
         if (JOptionPane.showConfirmDialog(this, form, "Create First Store",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
             return;
@@ -524,7 +523,7 @@ public class DatabaseSetup extends JFrame {
         try {
             ServerStoreSetupService.Store created = ResponsiveTask.await(this, "Creating store...",
                     () -> ServerStoreSetupService.create(nameField.getText(), codeField.getText(),
-                            timezoneField.getText(), addressField.getText()));
+                            selectedTimezone(timezoneField), ""));
             if (created != null) {
                 assignStore(created, onReady);
                 JOptionPane.showMessageDialog(this,
@@ -537,6 +536,21 @@ public class DatabaseSetup extends JFrame {
             JOptionPane.showMessageDialog(this, rootCauseMessage(ex),
                     "Create Store", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static JComboBox<String> timezoneSelector() {
+        List<String> zones = new ArrayList<>(ZoneId.getAvailableZoneIds());
+        Collections.sort(zones);
+        JComboBox<String> selector = new JComboBox<>(zones.toArray(String[]::new));
+        selector.setEditable(true);
+        selector.setSelectedItem(ZoneId.systemDefault().getId());
+        selector.setPrototypeDisplayValue("America/Argentina/Buenos_Aires");
+        return selector;
+    }
+
+    private static String selectedTimezone(JComboBox<String> selector) {
+        Object value = selector.getEditor().getItem();
+        return value == null ? "" : value.toString().trim();
     }
 
     private void assignStore(ServerStoreSetupService.Store store) {

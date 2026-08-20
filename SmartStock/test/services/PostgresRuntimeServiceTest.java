@@ -84,14 +84,19 @@ class PostgresRuntimeServiceTest {
                 Path.of("C:\\Users\\test\\.smartstock\\setup\\result.log"));
         assertTrue(script.contains("SmartStock.exe"));
         assertTrue(script.contains("--sync-service"));
-        assertTrue(script.contains("New-ScheduledTaskAction -Execute $ServiceExecutable"));
+        assertTrue(script.contains("CreateShortcut($ServiceShortcut)"));
+        assertTrue(script.contains("explorer.exe"));
         assertTrue(script.contains("$ServiceArguments = '--sync-service'"));
-        assertTrue(script.contains("-Argument $ServiceArguments -WorkingDirectory $ServiceAppDir"));
+        assertTrue(script.contains("$Shortcut.Arguments = $ServiceArguments"));
         assertTrue(script.contains("Unregister-ScheduledTask"));
         assertTrue(script.contains("Register-ScheduledTask"));
         assertFalse(script.contains("System32\\cmd.exe"));
         assertFalse(script.contains("run-smartstock-sync-service.cmd"));
         assertTrue(script.contains("New-ScheduledTaskTrigger -AtLogOn"));
+        assertTrue(script.contains("Get-CimInstance Win32_ComputerSystem"));
+        assertTrue(script.contains("ProfileImagePath"));
+        assertTrue(script.contains("-Duser.home=\""));
+        assertTrue(script.contains("-UserId $ServiceUser"));
         assertTrue(script.contains("-RunLevel Limited"));
         assertFalse(script.contains("-RunLevel Highest"));
         assertFalse(script.contains("schtasks /Run"));
@@ -110,9 +115,9 @@ class PostgresRuntimeServiceTest {
                 Path.of("C:\\Users\\test\\.smartstock\\setup\\result.log"));
 
         assertTrue(script.contains("$ServiceArguments = ''"));
-        assertTrue(script.contains("if ([string]::IsNullOrWhiteSpace($ServiceArguments))"));
-        assertTrue(script.contains("New-ScheduledTaskAction -Execute $ServiceExecutable"));
-        assertTrue(script.contains("-WorkingDirectory $ServiceAppDir"));
+        assertTrue(script.contains("CreateShortcut($ServiceShortcut)"));
+        assertTrue(script.contains("$Shortcut.Arguments = $ServiceArguments"));
+        assertTrue(script.contains("$Shortcut.WorkingDirectory = $ServiceAppDir"));
     }
 
     @Test

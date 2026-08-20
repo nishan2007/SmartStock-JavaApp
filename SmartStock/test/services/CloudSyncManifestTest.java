@@ -31,4 +31,12 @@ class CloudSyncManifestTest {
                 {"tables":[{"name":"users;drop table users","row_count":1,"columns":[]}]}
                 """));
     }
+
+    @Test
+    void reportsMissingSnapshotManifestWithoutLeakingJsonParserErrors() {
+        IOException failure = assertThrows(IOException.class,
+                () -> CloudSyncManifest.parse("null"));
+
+        assertTrue(failure.getMessage().contains("completed store snapshot"));
+    }
 }

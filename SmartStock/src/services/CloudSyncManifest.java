@@ -77,7 +77,11 @@ public record CloudSyncManifest(Map<String, TableInfo> tables,
 
     static CloudSyncManifest parse(String body) throws IOException {
         try {
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            JsonElement parsed = JsonParser.parseString(body);
+            if (!parsed.isJsonObject()) {
+                throw new IOException("Supabase did not return a recovery manifest. A completed store snapshot may not exist yet.");
+            }
+            JsonObject root = parsed.getAsJsonObject();
             JsonArray tableArray = root.has("tables") && root.get("tables").isJsonArray()
                     ? root.getAsJsonArray("tables") : new JsonArray();
             Map<String, TableInfo> tables = new LinkedHashMap<>();
