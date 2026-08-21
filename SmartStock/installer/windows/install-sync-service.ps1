@@ -34,6 +34,28 @@ if ($existingTask) {
     Start-Sleep -Seconds 1
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
 }
+$installRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramFiles "SmartStock"))
+$existingServers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Name -match '^javaw?\.exe$' -and
+        $_.CommandLine -match '(?i)(^|\s)--sync-service(\s|$)' -and
+        $_.ExecutablePath -and
+        [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+            $installRoot, [StringComparison]::OrdinalIgnoreCase)
+    })
+foreach ($server in $existingServers) {
+    Invoke-CimMethod -InputObject $server -MethodName Terminate | Out-Null
+}
+$serverDeadline = (Get-Date).AddSeconds(15)
+do {
+    Start-Sleep -Milliseconds 250
+    $remainingServers = @($existingServers | Where-Object {
+        Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    })
+} while ($remainingServers.Count -gt 0 -and (Get-Date) -lt $serverDeadline)
+if ($remainingServers.Count -gt 0) {
+    throw "The existing SmartStock server process did not stop before update."
+}
 Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
     -Confirm:$false -ErrorAction SilentlyContinue
 

@@ -147,6 +147,8 @@ class PostgresRuntimeServiceTest {
         assertTrue(service.contains("explorer.exe"));
         assertTrue(service.contains("New-ScheduledTaskTrigger -AtLogOn"));
         assertTrue(service.contains("-Duser.home="));
+        assertTrue(service.contains("Invoke-CimMethod -InputObject $server -MethodName Terminate"));
+        assertTrue(service.contains("existing SmartStock server process did not stop before update"));
         assertFalse(service.contains("$env:USERPROFILE"));
         assertFalse(service.contains("schtasks /Create"));
         assertFalse(service.contains("/SC ONSTART"));
@@ -228,6 +230,18 @@ class PostgresRuntimeServiceTest {
         assertTrue(body.indexOf("Invoke-CimMethod -InputObject $server -MethodName Terminate")
                 < body.indexOf("%s"));
         assertTrue(body.contains("if (!startSelectedServer)"));
+    }
+
+    @Test
+    void windowsServiceRepairStopsTheExplorerHandedOffJvmBeforeReplacingJar() throws Exception {
+        String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
+        int method = source.indexOf("private static String windowsProductionInstallScript");
+        String body = source.substring(method, source.indexOf("private static", method + 20));
+
+        assertTrue(body.contains("Invoke-CimMethod -InputObject $Server -MethodName Terminate"));
+        assertTrue(body.contains("existing SmartStock server process did not stop before update"));
+        assertTrue(body.indexOf("Invoke-CimMethod -InputObject $Server -MethodName Terminate")
+                < body.indexOf("Remove-Item -Force"));
     }
 
     @Test

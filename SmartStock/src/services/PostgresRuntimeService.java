@@ -752,6 +752,28 @@ public final class PostgresRuntimeService {
                     }
                     Unregister-ScheduledTask -TaskName SmartStockServerService -Confirm:$false -ErrorAction Stop
                   }
+                  $InstallRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramFiles 'SmartStock'))
+                  $ExistingServers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                    Where-Object {
+                      $_.Name -match '^javaw?\\.exe$' -and
+                      $_.CommandLine -match '(?i)(^|\\s)--sync-service(\\s|$)' -and
+                      $_.ExecutablePath -and
+                      [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+                        $InstallRoot,[StringComparison]::OrdinalIgnoreCase)
+                    })
+                  foreach ($Server in $ExistingServers) {
+                    Invoke-CimMethod -InputObject $Server -MethodName Terminate | Out-Null
+                  }
+                  $ServerDeadline = (Get-Date).AddSeconds(15)
+                  do {
+                    Start-Sleep -Milliseconds 250
+                    $RemainingServers = @($ExistingServers | Where-Object {
+                      Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+                    })
+                  } while ($RemainingServers.Count -gt 0 -and (Get-Date) -lt $ServerDeadline)
+                  if ($RemainingServers.Count -gt 0) {
+                    throw 'The existing SmartStock server process did not stop before update.'
+                  }
                   Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
                     -Confirm:$false -ErrorAction SilentlyContinue
                   Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
