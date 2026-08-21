@@ -16,7 +16,9 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import utils.SecureCredentialStore;
 
 /** Creates SmartStock's local server role without exposing technical fields in normal setup. */
 public final class LocalDatabaseBootstrapService {
@@ -37,8 +39,7 @@ public final class LocalDatabaseBootstrapService {
             throws Exception {
         DatabaseConfig existing = DatabaseConfig.load().withMode(DatabaseMode.SERVER);
         if (existing.hasPrimaryConnection() && !existing.hasUnresolvedCredentialPlaceholders()) {
-            existing.save();
-            return existing;
+            return reconcileConfiguredCredential(existing);
         }
 
         char[] supplied = postgresAdministratorPassword == null
@@ -46,15 +47,17 @@ public final class LocalDatabaseBootstrapService {
         if (supplied.length == 0 && hasGeneratedAdministratorCredential()) {
             supplied = readGeneratedAdministratorCredential();
         }
-        String applicationPassword = generatedPassword();
+        LocalServerCredential sibling = siblingProfileCredential();
+        String applicationUser = sibling == null ? "smartstock_server" : sibling.user();
+        String applicationPassword = sibling == null ? generatedPassword() : sibling.password();
         String database = EnvironmentProfile.active() == EnvironmentProfile.PRODUCTION
                 ? "smartstock" : "smartstock_dev";
         String adminUrl = "jdbc:postgresql://127.0.0.1:5432/postgres";
         try {
             try (Connection admin = openAdministrator(adminUrl, supplied)) {
                 admin.setAutoCommit(true);
-                ensureRole(admin, "smartstock_server", applicationPassword);
-                ensureDatabase(admin, database, "smartstock_server");
+                ensureRole(admin, applicationUser, applicationPassword);
+                ensureDatabase(admin, database, applicationUser);
                 // The local database is never a register endpoint.
                 try (Statement statement = admin.createStatement()) {
                     statement.execute("ALTER SYSTEM SET listen_addresses = 'localhost'");
@@ -63,7 +66,7 @@ public final class LocalDatabaseBootstrapService {
             DatabaseConfig configured = new DatabaseConfig(
                     DatabaseMode.SERVER,
                     "jdbc:postgresql://127.0.0.1:5432/" + database,
-                    "smartstock_server",
+                    applicationUser,
                     applicationPassword,
                     "127.0.0.1",
                     5432,
@@ -77,6 +80,67 @@ public final class LocalDatabaseBootstrapService {
             applicationPassword = null;
         }
     }
+
+    /**
+     * PostgreSQL roles are cluster-wide, so rotating smartstock_server while
+     * preparing a second profile invalidates the first profile's saved secret.
+     * Both isolated local databases deliberately reuse the same machine-local
+     * service credential while retaining separate URLs, cloud projects, data,
+     * sessions, and device identities.
+     */
+    public static DatabaseConfig reconcileConfiguredCredential() throws Exception {
+        return reconcileConfiguredCredential(DatabaseConfig.load().withMode(DatabaseMode.SERVER));
+    }
+
+    private static DatabaseConfig reconcileConfiguredCredential(DatabaseConfig existing)
+            throws Exception {
+        Exception currentFailure;
+        try (Connection ignored = DriverManager.getConnection(existing.jdbcUrl(),
+                existing.dbUser(), existing.dbPassword())) {
+            existing.save();
+            return existing;
+        } catch (Exception ex) {
+            currentFailure = ex;
+        }
+        LocalServerCredential sibling = siblingProfileCredential();
+        if (sibling == null || (sibling.user().equals(existing.dbUser())
+                && sibling.password().equals(existing.dbPassword()))) {
+            throw currentFailure;
+        }
+        try (Connection ignored = DriverManager.getConnection(existing.jdbcUrl(),
+                sibling.user(), sibling.password())) {
+            DatabaseConfig repaired = new DatabaseConfig(existing.mode(), existing.jdbcUrl(),
+                    sibling.user(), sibling.password(), existing.serverHost(), existing.serverPort(),
+                    existing.locationId(), existing.syncIntervalSeconds());
+            repaired.save();
+            return repaired;
+        } catch (Exception siblingFailure) {
+            currentFailure.addSuppressed(siblingFailure);
+            throw currentFailure;
+        }
+    }
+
+    private static LocalServerCredential siblingProfileCredential() {
+        EnvironmentProfile sibling = EnvironmentProfile.active() == EnvironmentProfile.PRODUCTION
+                ? EnvironmentProfile.DEVELOPMENT : EnvironmentProfile.PRODUCTION;
+        Path path = sibling.file("database.properties");
+        if (!Files.isRegularFile(path)) return null;
+        Properties properties = new Properties();
+        try (var input = Files.newInputStream(path)) {
+            properties.load(input);
+            if (!"SERVER".equalsIgnoreCase(properties.getProperty("mode", ""))) return null;
+        } catch (Exception ex) {
+            return null;
+        }
+        String user = SecureCredentialStore.read(sibling.secretKey(
+                DatabaseConfig.PRIMARY_DB_USER_SECRET));
+        String password = SecureCredentialStore.read(sibling.secretKey(
+                DatabaseConfig.PRIMARY_DB_PASSWORD_SECRET));
+        return user == null || user.isBlank() || password == null || password.isBlank()
+                ? null : new LocalServerCredential(user.trim(), password.trim());
+    }
+
+    private record LocalServerCredential(String user, String password) { }
 
     private static char[] readGeneratedAdministratorCredential() throws IOException {
         String encrypted = Files.readString(

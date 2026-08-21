@@ -214,6 +214,23 @@ class PostgresRuntimeServiceTest {
     }
 
     @Test
+    void environmentSwitchStopsTheExplorerHandedOffJvmBeforeRestart() throws Exception {
+        String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
+        int method = source.indexOf("switchLanServiceEnvironment(boolean startSelectedServer)");
+        String body = source.substring(method, source.indexOf(
+                "public static CommandResult ensureServiceOnlyDatabaseAccess", method));
+
+        assertTrue(body.contains("Stop-ScheduledTask"));
+        assertTrue(body.contains("--sync-service"));
+        assertTrue(body.contains("Invoke-CimMethod -InputObject $server -MethodName Terminate"));
+        assertTrue(body.contains(
+                "Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop"));
+        assertTrue(body.indexOf("Invoke-CimMethod -InputObject $server -MethodName Terminate")
+                < body.indexOf("%s"));
+        assertTrue(body.contains("if (!startSelectedServer)"));
+    }
+
+    @Test
     void parsesSupportedPostgresVersions() {
         assertEquals(17, PostgresRuntimeService.parsePostgresMajorVersion("psql (PostgreSQL) 17.5"));
         assertEquals(15, PostgresRuntimeService.parsePostgresMajorVersion("psql (PostgreSQL) 15.12"));

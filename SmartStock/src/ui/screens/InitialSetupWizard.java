@@ -3,6 +3,7 @@ package ui.screens;
 import data.DatabaseMode;
 import data.EnvironmentProfile;
 import services.PostgresRuntimeService;
+import services.ServerSupabaseCredentials;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
 import ui.helpers.ThemeManager;
@@ -88,12 +89,27 @@ public final class InitialSetupWizard extends JFrame {
                 EnvironmentProfile previous = EnvironmentProfile.active();
                 EnvironmentProfile.activate(profile);
                 if (previous != profile) {
+                    data.DatabaseConfig selected = data.DatabaseConfig.load();
+                    boolean startSelectedServer = data.DatabaseConfig.hasConfigFile()
+                            && selected.mode() == DatabaseMode.SERVER
+                            && selected.hasPrimaryConnection()
+                            && !selected.hasUnresolvedCredentialPlaceholders()
+                            && ServerSupabaseCredentials.isConfigured();
+                    PostgresRuntimeService.CommandResult handoff =
+                            PostgresRuntimeService.switchLanServiceEnvironment(startSelectedServer);
+                    String handoffMessage = handoff.success()
+                            ? ""
+                            : "\n\nThe previous service was stopped, but the selected environment service "
+                            + "needs attention:\n" + handoff.output();
                     JOptionPane.showMessageDialog(this,
                             "SmartStock is now set to " + profile.displayName() + ".\n\n"
-                                    + "The app will close so database connections, sessions, device pairing,\n"
-                                    + "and background services cannot carry over from "
+                                    + (startSelectedServer
+                                    ? "The LAN service now uses this environment's saved local database.\n"
+                                    : "This environment has not been set up, so its LAN service remains stopped.\n")
+                                    + "The app will close so sessions and device pairing cannot carry over from "
                                     + previous.displayName() + ".\n\n"
-                                    + "Reopen SmartStock to continue setup.",
+                                    + "Reopen SmartStock to continue setup."
+                                    + handoffMessage,
                             "Environment Switched", JOptionPane.INFORMATION_MESSAGE);
                     for (Window window : Window.getWindows()) {
                         if (window.isDisplayable()) window.dispose();

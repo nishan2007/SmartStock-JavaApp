@@ -369,6 +369,79 @@ public final class PostgresRuntimeService {
                 """, Duration.ofSeconds(30));
     }
 
+    /**
+     * Hands the single local LAN endpoint to the newly active environment.
+     * The Windows task launches through Explorer and therefore reaches Ready
+     * before its child JVM exits; stopping only the task leaves the previous
+     * profile serving port 8443. Terminate only SmartStock sync-service JVMs,
+     * then start one replacement when the selected profile is configured as a
+     * server. PostgreSQL itself remains running and can host both isolated
+     * databases concurrently.
+     */
+    public static CommandResult switchLanServiceEnvironment(boolean startSelectedServer)
+            throws Exception {
+        if (isWindows()) {
+            String start = startSelectedServer
+                    ? "Start-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop"
+                    : "Write-Output 'Selected environment has no configured local server.'";
+            return runPowerShell("""
+                    $ErrorActionPreference = 'Stop'
+                    $task = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
+                    if ($task) {
+                      Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
+                    }
+                    $installRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramFiles 'SmartStock'))
+                    $profileService = [IO.Path]::GetFullPath(
+                      (Join-Path $env:USERPROFILE '.smartstock\\sync-service\\app'))
+                    $servers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                      Where-Object {
+                        $_.Name -match '^javaw?\\.exe$' -and
+                        $_.CommandLine -match '(?i)(^|\\s)--sync-service(\\s|$)' -and
+                        (($_.ExecutablePath -and
+                          [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+                            $installRoot,[StringComparison]::OrdinalIgnoreCase)) -or
+                         $_.CommandLine.IndexOf($profileService,
+                           [StringComparison]::OrdinalIgnoreCase) -ge 0)
+                      })
+                    foreach ($server in $servers) {
+                      Invoke-CimMethod -InputObject $server -MethodName Terminate | Out-Null
+                    }
+                    $deadline = (Get-Date).AddSeconds(15)
+                    do {
+                      Start-Sleep -Milliseconds 250
+                      $remaining = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                        Where-Object {
+                          $_.Name -match '^javaw?\\.exe$' -and
+                          $_.CommandLine -match '(?i)(^|\\s)--sync-service(\\s|$)' -and
+                          (($_.ExecutablePath -and
+                            [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+                              $installRoot,[StringComparison]::OrdinalIgnoreCase)) -or
+                           $_.CommandLine.IndexOf($profileService,
+                             [StringComparison]::OrdinalIgnoreCase) -ge 0)
+                        })
+                    } while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline)
+                    if ($remaining.Count -gt 0) {
+                      throw 'The previous SmartStock environment service did not stop.'
+                    }
+                    %s
+                    Write-Output 'SmartStock environment service handoff completed.'
+                    """.formatted(start), Duration.ofSeconds(45));
+        }
+        String stop = """
+                plist="$HOME/Library/LaunchAgents/com.smartstock.sync.plist"
+                launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+                """;
+        if (!startSelectedServer) {
+            return runShell(stop + "echo 'Selected environment has no configured local server.'\n",
+                    Duration.ofSeconds(30));
+        }
+        return runShell(stop + """
+                launchctl bootstrap "gui/$(id -u)" "$plist"
+                launchctl kickstart -k "gui/$(id -u)/com.smartstock.sync"
+                echo 'SmartStock environment service handoff completed.'
+                """, Duration.ofSeconds(45));
+    }
+
     public static CommandResult ensureServiceOnlyDatabaseAccess(DatabaseConfig config) throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {

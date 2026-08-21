@@ -27,6 +27,14 @@ public final class SyncServiceMain {
         }, "smartstock-sync-shutdown"));
 
         System.out.println("Starting SmartStock background sync service.");
+        try {
+            if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
+                services.LocalDatabaseBootstrapService.reconcileConfiguredCredential();
+            }
+        } catch (Exception ex) {
+            System.err.println("Saved local server credential reconciliation will retry during setup: "
+                    + ex.getMessage());
+        }
         SyncServiceStatusService.mark("Starting", "SmartStock background sync is starting.");
         while (running) {
             DatabaseConfig config = DatabaseConfig.load();

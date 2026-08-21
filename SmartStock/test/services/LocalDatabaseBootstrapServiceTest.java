@@ -15,6 +15,9 @@ class LocalDatabaseBootstrapServiceTest {
 
         assertTrue(source.contains("SecureRandom"));
         assertTrue(source.contains("smartstock_server"));
+        assertTrue(source.contains("siblingProfileCredential()"));
+        assertTrue(source.contains("reconcileConfiguredCredential()"));
+        assertTrue(source.contains("PostgreSQL roles are cluster-wide"));
         assertTrue(source.contains("jdbc:postgresql://127.0.0.1:5432/"));
         assertTrue(source.contains("postgres-bootstrap-admin.dpapi"));
         assertTrue(source.contains("readGeneratedAdministratorCredential"));

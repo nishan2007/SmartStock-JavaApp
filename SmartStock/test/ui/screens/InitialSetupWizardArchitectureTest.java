@@ -19,6 +19,8 @@ class InitialSetupWizardArchitectureTest {
         assertTrue(source.contains("\"Developer / Test\""));
         assertTrue(source.contains("\"Production\""));
         assertTrue(source.contains("EnvironmentProfile.activate(profile)"));
+        assertTrue(source.contains("switchLanServiceEnvironment(startSelectedServer)"));
+        assertTrue(source.contains("ServerSupabaseCredentials.isConfigured()"));
         assertTrue(source.contains("new ServerSetupWizard(owner == null ? this : owner)"));
         assertTrue(source.contains("new DatabaseSetup(owner == null ? this : owner, selectedMode)"));
         assertTrue(source.contains("PostgreSQL and Maven are not installed"));
