@@ -34,6 +34,12 @@ public final class SmartStockUpdater {
         } catch (Exception ex) {
             log("Updater failed: " + rootMessage(ex));
             ex.printStackTrace();
+            try {
+                relaunchAfterFailure(Path.of(args[0]));
+            } catch (Exception relaunchError) {
+                log("Updater recovery relaunch failed: " + rootMessage(relaunchError));
+                relaunchError.printStackTrace();
+            }
             System.exit(1);
         }
     }
@@ -87,7 +93,11 @@ public final class SmartStockUpdater {
             try {
                 replaceApp(appDir, payloadDir);
                 updateNativeLauncherConfigs(appDir, newJar.getFileName().toString());
-                updateSyncServiceCopy(appDir, props);
+                try {
+                    updateSyncServiceCopy(appDir, props);
+                } catch (IOException syncError) {
+                    log("Background service update deferred: " + rootMessage(syncError));
+                }
             } catch (Exception ex) {
                 restoreBackup(appDir, backupDir);
                 try {
@@ -112,6 +122,23 @@ public final class SmartStockUpdater {
                         .start();
             }
         }
+    }
+
+    static void relaunchAfterFailure(Path manifestPath) throws IOException {
+        Properties props = new Properties();
+        try (InputStream input = Files.newInputStream(manifestPath)) {
+            props.load(input);
+        }
+        Path appDir = Path.of(required(props, "app.dir"));
+        Path javaBin = Path.of(required(props, "java.bin"));
+        Path launchTarget = findReleaseJar(appDir);
+        if (launchTarget == null) {
+            launchTarget = appDir.resolve(required(props, "current.jar"));
+        }
+        new ProcessBuilder(relaunchCommand(props, javaBin, launchTarget))
+                .directory(appDir.toFile())
+                .start();
+        log("Relaunched SmartStock after updater failure.");
     }
 
     private static void backupMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
@@ -339,7 +366,7 @@ public final class SmartStockUpdater {
         }
     }
 
-    private static void updateSyncServiceCopy(Path appDir, Properties props) throws IOException {
+    static void updateSyncServiceCopy(Path appDir, Properties props) throws IOException {
         String syncServiceAppDirValue = props.getProperty("sync.service.app.dir");
         if (syncServiceAppDirValue == null || syncServiceAppDirValue.isBlank()) {
             return;
@@ -348,27 +375,43 @@ public final class SmartStockUpdater {
         if (!Files.exists(syncServiceAppDir)) {
             return;
         }
-        Files.createDirectories(syncServiceAppDir);
-        try (Stream<Path> stream = Files.list(syncServiceAppDir)) {
-            for (Path target : stream.toList()) {
-                String name = target.getFileName().toString();
-                if (isAppJar(name) || "dependency".equals(name)) {
-                    deleteRecursively(target);
-                }
-            }
-        }
+        Path parent = syncServiceAppDir.getParent();
+        if (parent == null) return;
+        Path staged = parent.resolve(".app-update-" + UUID.randomUUID());
+        Path previous = parent.resolve(".app-previous-" + UUID.randomUUID());
+        Files.createDirectories(staged);
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path source : stream.toList()) {
                 String name = source.getFileName().toString();
                 if (isAppJar(name) || "dependency".equals(name)) {
-                    copyRecursively(source, syncServiceAppDir.resolve(name));
+                    copyRecursively(source, staged.resolve(name));
                 }
             }
+        }
+        try {
+            Files.move(syncServiceAppDir, previous);
+            try {
+                Files.move(staged, syncServiceAppDir);
+            } catch (IOException installError) {
+                Files.move(previous, syncServiceAppDir);
+                throw installError;
+            }
+        } finally {
+            deleteRecursivelyQuietly(staged);
         }
         Path serviceJar = findReleaseJar(syncServiceAppDir);
         if (serviceJar != null) {
             updateSyncServiceLauncher(syncServiceAppDir, serviceJar.getFileName().toString());
             updateWindowsSyncServiceTask(props, syncServiceAppDir, serviceJar.getFileName().toString());
+        }
+        deleteRecursivelyQuietly(previous);
+    }
+
+    private static void deleteRecursivelyQuietly(Path path) {
+        try {
+            deleteRecursively(path);
+        } catch (IOException ex) {
+            log("Deferred cleanup for " + path + ": " + rootMessage(ex));
         }
     }
 

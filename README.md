@@ -77,7 +77,7 @@ merge it with the main development work.
 
 ## Platform packaging
 
-- Current source release version: `1.0.82`
+- Current source release version: `1.0.83`
 - Version source of truth: `SmartStock/pom.xml`
 - Windows: `SmartStock/tools/package-windows-release.ps1`
 - macOS: `SmartStock/tools/package-macos-release.sh`

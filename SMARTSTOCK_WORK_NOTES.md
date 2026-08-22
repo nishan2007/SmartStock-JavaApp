@@ -132,6 +132,16 @@ Confirmed findings:
   - Supabase `app_releases` readback returned exactly one published row matching version, build, platform, bucket, object path, size, and SHA-256.
 - No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
 
+## 2026-08-22 updater recovery release 1.0.83
+
+- Diagnosed the failed 1.0.82 in-app update from `~/.smartstock/updates/updater.log`: the background sync-service copy still held `xchart-3.8.8.jar`, causing the updater to roll back and exit before relaunching SmartStock.
+- The updater now stages and swaps the sync-service app directory as a complete unit. A locked live service directory is left intact and its update is deferred instead of aborting the desktop update.
+- Any updater failure now explicitly relaunches the installed SmartStock application after rollback.
+- Validation passed before the version-only bump: 363 tests, 0 failures, 0 errors, 10 skipped; repository security, LAN API cutover, and diff checks passed.
+- Windows 1.0.83 packaging passed. Exact artifacts:
+  - `smartstock-windows-1.0.83.zip`: 34,152,830 bytes, SHA-256 `67481566409868FB5EAAE6A8A88C1BC6B0004316B09B47A5C08DA8EE02372079`
+  - `smartstock-windows-setup-1.0.83.exe`: 52,398,125 bytes, SHA-256 `41C575B80C1CAE39549C419E85B4403070C026DB0A951AFF4563AD704EA4FECF`
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

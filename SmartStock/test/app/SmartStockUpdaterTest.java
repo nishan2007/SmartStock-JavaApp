@@ -62,6 +62,30 @@ class SmartStockUpdaterTest {
     }
 
     @Test
+    void replacesTheBackgroundServiceCopyAsACompleteDirectory(@TempDir Path tempDir) throws Exception {
+        Path appDir = tempDir.resolve("installed-app");
+        Path dependency = appDir.resolve("dependency");
+        Files.createDirectories(dependency);
+        Files.writeString(appDir.resolve("inventory-management-1.0.82.jar"), "new-app");
+        Files.writeString(dependency.resolve("library.jar"), "new-library");
+
+        Path syncAppDir = tempDir.resolve("sync-service").resolve("app");
+        Files.createDirectories(syncAppDir.resolve("dependency"));
+        Files.writeString(syncAppDir.resolve("inventory-management-1.0.81.jar"), "old-app");
+        Files.writeString(syncAppDir.resolve("dependency").resolve("library.jar"), "old-library");
+
+        Properties properties = new Properties();
+        properties.setProperty("sync.service.app.dir", syncAppDir.toString());
+        SmartStockUpdater.updateSyncServiceCopy(appDir, properties);
+
+        assertFalse(Files.exists(syncAppDir.resolve("inventory-management-1.0.81.jar")));
+        assertEquals("new-app", Files.readString(
+                syncAppDir.resolve("inventory-management-1.0.82.jar")));
+        assertEquals("new-library", Files.readString(
+                syncAppDir.resolve("dependency").resolve("library.jar")));
+    }
+
+    @Test
     void eachUpdateReplacesThePreviousRollback(@TempDir Path tempDir) throws Exception {
         Path rollback = tempDir.resolve("rollback");
         Files.createDirectories(rollback);
