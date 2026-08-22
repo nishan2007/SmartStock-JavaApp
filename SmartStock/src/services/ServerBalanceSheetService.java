@@ -20,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
@@ -1615,29 +1616,33 @@ public final class ServerBalanceSheetService {
                              COALESCE(closed_at, opened_at) DESC,
                              cash_drawer_session_id DESC
                     """;
-            List<DrawSessionRange> ranges = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, storeZoneId);
-                ps.setString(2, storeZoneId);
-                setNullableInteger(ps, 3, locationId);
-                setNullableInteger(ps, 4, locationId);
-                ps.setString(5, storeZoneId);
-                ps.setDate(6, Date.valueOf(to));
-                ps.setString(7, storeZoneId);
-                ps.setDate(8, Date.valueOf(from));
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        ranges.add(new DrawSessionRange(
-                                rs.getLong("cash_drawer_session_id"),
-                                rs.getDate("opened_date").toLocalDate(),
-                                rs.getDate("closed_date").toLocalDate(),
-                                rs.getString("device_label") + " / " + rs.getString("drawer_label"),
-                                rs.getString("status")
-                        ));
+            Map<Long,DrawSessionRange> ranges = new LinkedHashMap<>();
+            LocalDate expandedFrom=from, expandedTo=to;
+            boolean changed;
+            do {
+                changed=false;
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, storeZoneId);
+                    ps.setString(2, storeZoneId);
+                    setNullableInteger(ps, 3, locationId);
+                    setNullableInteger(ps, 4, locationId);
+                    ps.setString(5, storeZoneId);
+                    ps.setDate(6, Date.valueOf(expandedTo));
+                    ps.setString(7, storeZoneId);
+                    ps.setDate(8, Date.valueOf(expandedFrom));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            DrawSessionRange range=new DrawSessionRange(rs.getLong("cash_drawer_session_id"),
+                                    rs.getDate("opened_date").toLocalDate(),rs.getDate("closed_date").toLocalDate(),
+                                    rs.getString("device_label")+" / "+rs.getString("drawer_label"),rs.getString("status"));
+                            ranges.putIfAbsent(range.sessionId(),range);
+                            if(range.openedDate().isBefore(expandedFrom)){expandedFrom=range.openedDate();changed=true;}
+                            if(range.closedDate().isAfter(expandedTo)){expandedTo=range.closedDate();changed=true;}
+                        }
                     }
                 }
-            }
-            return ranges;
+            } while(changed);
+            return new ArrayList<>(ranges.values());
         }
     }
 
@@ -1819,7 +1824,8 @@ public final class ServerBalanceSheetService {
         }
 
         String salesSql = """
-                SELECT COALESCE(NULLIF(TRIM(receipt_device_id), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
+                SELECT sale_id, receipt_number, created_at, cash_drawer_session_id,
+                       COALESCE(NULLIF(TRIM(receipt_device_id), ''), NULLIF(TRIM(device_name), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
                        COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'No Drawer') AS drawer_label,
                        COALESCE(amount_paid, 0) AS amount
                 FROM sales
@@ -1840,7 +1846,9 @@ public final class ServerBalanceSheetService {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     lines.add(new SheetLine(
-                            "Cash sale outside matched draw - " + rs.getString("device_label") + " / " + rs.getString("drawer_label"),
+                            "Cash sale " + rs.getString("receipt_number") + " at " + rs.getTimestamp("created_at")
+                                    + " - " + rs.getString("device_label") + " / " + rs.getString("drawer_label") + " - "
+                                    + sessionMismatchLabel(rs, "cash_drawer_session_id"),
                             defaultZero(rs.getBigDecimal("amount"))
                     ));
                 }
@@ -1848,7 +1856,8 @@ public final class ServerBalanceSheetService {
         }
 
         String orderSql = """
-                SELECT COALESCE(NULLIF(TRIM(device_name), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
+                SELECT p.custom_order_payment_id, co.order_number, p.created_at, p.cash_drawer_session_id,
+                       COALESCE(NULLIF(TRIM(p.device_name), ''), NULLIF(TRIM(p.device_id), ''), 'Unassigned Device') AS device_label,
                        COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'No Drawer') AS drawer_label,
                        CASE
                             WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
@@ -1856,11 +1865,8 @@ public final class ServerBalanceSheetService {
                             ELSE 0
                        END AS amount
                 FROM custom_order_payments p
-                WHERE (? IS NULL OR EXISTS (
-                    SELECT 1 FROM custom_orders co
-                    WHERE co.custom_order_id = p.custom_order_id
-                      AND co.location_id = ?
-                ))
+                JOIN custom_orders co ON co.custom_order_id=p.custom_order_id
+                WHERE (? IS NULL OR co.location_id = ?)
                   AND UPPER(COALESCE(payment_method, '')) = 'CASH'
                   AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + notInSessionFilterSql(cashDrawerSessionIds, "cash_drawer_session_id") + """
@@ -1877,7 +1883,9 @@ public final class ServerBalanceSheetService {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     lines.add(new SheetLine(
-                            "Cash order outside matched draw - " + rs.getString("device_label") + " / " + rs.getString("drawer_label"),
+                            "Cash order " + rs.getString("order_number") + " at " + rs.getTimestamp("created_at")
+                                    + " - " + rs.getString("device_label") + " / " + rs.getString("drawer_label") + " - "
+                                    + sessionMismatchLabel(rs, "cash_drawer_session_id"),
                             defaultZero(rs.getBigDecimal("amount"))
                     ));
                 }
@@ -1889,6 +1897,61 @@ public final class ServerBalanceSheetService {
         }
         return lines;
     }
+
+    private static String sessionMismatchLabel(ResultSet rs,String column)throws SQLException{
+        long id=rs.getLong(column);return rs.wasNull()?"session unassigned":"unselected session "+id;
+    }
+
+    public static LegacyCashRecovery recoverLegacyCash(Connection conn,String sourceType,long sourceId,String reason)throws SQLException{
+        String why=reason==null?"":reason.trim();
+        if(why.length()<10)throw new SQLException("An audit reason of at least 10 characters is required.");
+        LegacyCashSource source=LegacyCashSource.from(sourceType);
+        String deviceId=ServerRequestIdentity.deviceId();
+        Integer locationId=ServerRequestIdentity.locationId(),userId=ServerRequestIdentity.userId();
+        if(deviceId==null||locationId==null||userId==null)throw new SQLException("Authenticated register identity is required.");
+        long sessionId,drawerId;String drawerName;
+        try(PreparedStatement ps=conn.prepareStatement("SELECT cash_drawer_session_id,cash_drawer_id,drawer_name FROM cash_drawer_sessions WHERE device_id=?::uuid AND location_id=? AND status='OPEN' FOR UPDATE")){
+            ps.setString(1,deviceId);ps.setInt(2,locationId);try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())throw new SQLException("This register does not have an open cash drawer session.");
+                sessionId=rs.getLong(1);drawerId=rs.getLong(2);drawerName=rs.getString(3);
+                if(rs.next())throw new SQLException("This register has more than one open drawer session.");
+            }
+        }
+        Long originalDrawerId;String paymentMethod,originalDrawerName;
+        String select="SELECT t.payment_method,t.cash_drawer_id,t.cash_drawer_name,t.cash_drawer_session_id,"+source.locationExpression
+                +" FROM "+source.fromSql+" WHERE t."+source.idColumn+"=? FOR UPDATE OF t";
+        try(PreparedStatement ps=conn.prepareStatement(select)){ps.setLong(1,sourceId);try(ResultSet rs=ps.executeQuery()){
+            if(!rs.next())throw new SQLException("The legacy cash row was not found.");
+            paymentMethod=rs.getString(1);long value=rs.getLong(2);originalDrawerId=rs.wasNull()?null:value;originalDrawerName=rs.getString(3);
+            rs.getLong(4);if(!rs.wasNull())throw new SQLException("This row already belongs to a drawer session and cannot be reassigned.");
+            if(rs.getInt(5)!=locationId)throw new SQLException("The row belongs to a different store location.");
+        }}
+        if(!"CASH".equalsIgnoreCase(paymentMethod))throw new SQLException("Only cash rows can be recovered to a drawer session.");
+        if(originalDrawerId!=null&&originalDrawerId.longValue()!=drawerId)throw new SQLException("The row belongs to a different cash drawer.");
+        String details="source="+source.apiName+", primary_id="+sourceId+", before_session=NULL, after_session="+sessionId
+                +", original_drawer_id="+originalDrawerId+", original_drawer_name="+originalDrawerName+", target_drawer_id="+drawerId
+                +", target_drawer_name="+drawerName+", reason="+why;
+        try(PreparedStatement ps=conn.prepareStatement("INSERT INTO security_audit_events(event_type,device_id,actor_user_id,details) VALUES('LEGACY_CASH_SESSION_RECOVERED',?::uuid,?,?)")){
+            ps.setString(1,deviceId);ps.setInt(2,userId);ps.setString(3,details);ps.executeUpdate();
+        }
+        try(PreparedStatement ps=conn.prepareStatement("UPDATE "+source.table+" SET cash_drawer_session_id=? WHERE "+source.idColumn+"=? AND cash_drawer_session_id IS NULL")){
+            ps.setLong(1,sessionId);ps.setLong(2,sourceId);if(ps.executeUpdate()!=1)throw new SQLException("The row changed before recovery; no update was made.");
+        }
+        SyncOutboxService.recordEvent(conn,"LEGACY_CASH_SESSION_RECOVERED",Map.of("source_type",source.apiName,"source_id",sourceId,"cash_drawer_session_id",sessionId,"reason",why));
+        return new LegacyCashRecovery(source.apiName,sourceId,null,sessionId,drawerId,drawerName);
+    }
+
+    private enum LegacyCashSource{
+        SALES("SALES","sales","sale_id","sales t","t.location_id"),
+        CUSTOM_ORDER_PAYMENT("CUSTOM_ORDER_PAYMENT","custom_order_payments","custom_order_payment_id","custom_order_payments t JOIN custom_orders owner ON owner.custom_order_id=t.custom_order_id","owner.location_id"),
+        INVOICE_PAYMENT("INVOICE_PAYMENT","invoice_payments","invoice_payment_id","invoice_payments t","t.location_id"),
+        CUSTOMER_ACCOUNT_TRANSACTION("CUSTOMER_ACCOUNT_TRANSACTION","customer_account_transactions","transaction_id","customer_account_transactions t","t.location_id");
+        final String apiName,table,idColumn,fromSql,locationExpression;
+        LegacyCashSource(String apiName,String table,String idColumn,String fromSql,String locationExpression){this.apiName=apiName;this.table=table;this.idColumn=idColumn;this.fromSql=fromSql;this.locationExpression=locationExpression;}
+        static LegacyCashSource from(String value)throws SQLException{try{return valueOf(value==null?"":value.trim().toUpperCase(Locale.ROOT));}catch(Exception ex){throw new SQLException("Unsupported legacy cash source.");}}
+    }
+
+    public record LegacyCashRecovery(String sourceType,long sourceId,Long beforeSessionId,long afterSessionId,long drawerId,String drawerName){}
 
     private static BigDecimal loadPreviousBalanceCf(Connection conn, LocalDate periodStart, Integer locationId) throws SQLException {
         String sql = """

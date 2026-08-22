@@ -107,6 +107,12 @@ public final class BalanceSheetService {
         mutate("SET_BALANCE_BF",body);
     }
 
+    public static LegacyCashRecovery recoverLegacyCash(String sourceType,long sourceId,String reason,String idempotencyKey)throws SQLException{
+        JsonObject body=new JsonObject();body.addProperty("sourceType",sourceType);body.addProperty("sourceId",sourceId);body.addProperty("reason",reason);
+        try{return GSON.fromJson(LanApiClient.balanceSheetMutation("RECOVER_LEGACY_CASH",body,idempotencyKey).get("recovery"),LegacyCashRecovery.class);}
+        catch(Exception e){throw sql(e);}
+    }
+
     public static DrawSessionRange findDrawSessionRange(String storeZoneId, LocalDate selectedDate) throws SQLException {
         List<DrawSessionRange> ranges=findDrawSessionRanges(storeZoneId,selectedDate,selectedDate);return ranges.isEmpty()?null:ranges.get(0);
     }
@@ -140,6 +146,7 @@ public final class BalanceSheetService {
     public record SheetLine(String label,BigDecimal amount){}
     public record BankTransactionLine(String transaction,String direction,BigDecimal amount){}
     public record DrawSessionRange(long sessionId,LocalDate openedDate,LocalDate closedDate,String label,String status){}
+    public record LegacyCashRecovery(String sourceType,long sourceId,Long beforeSessionId,long afterSessionId,long drawerId,String drawerName){}
     public record SubmissionOption(long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,BigDecimal balanceCf,int revisionNo,LocalDateTime lastEditedAt,String lastEditedByName,LocalDateTime editExpiresAt,boolean latestWithinWindow){public String toString(){return periodStart+" to "+periodEnd+" - "+text(submittedByName)+" - CF "+zero(balanceCf).toPlainString()+(revisionNo>0?" - Rev "+revisionNo:"");}}
     public record BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf){}
 }

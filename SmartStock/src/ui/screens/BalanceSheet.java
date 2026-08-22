@@ -43,6 +43,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 public class BalanceSheet extends JFrame {
     private static final int[] CF_DENOMINATIONS = {5000, 2000, 1000, 500, 100, 50, 20};
@@ -118,6 +119,7 @@ public class BalanceSheet extends JFrame {
         JButton addExpenseButton = new JButton("Log Expense");
         JButton submitButton = new JButton("Submit Balance Sheet");
         JButton matchDrawButton = new JButton("Match Draw Session");
+        JButton recoverLegacyCashButton = new JButton("Recover Legacy Cash");
         JButton openSavedButton = new JButton("Open Saved");
         JButton editSavedButton = new JButton("Edit Latest Submission");
         JButton auditButton = new JButton("Revision History");
@@ -139,6 +141,7 @@ public class BalanceSheet extends JFrame {
             filters.add(editBalanceBfButton);
         }
         filters.add(matchDrawButton);
+        if("ADMIN".equalsIgnoreCase(PermissionManager.getCurrentRole())&&PermissionManager.hasPermission("BALANCE_SHEET")&&PermissionManager.hasPermission("BALANCE_DRAWER"))filters.add(recoverLegacyCashButton);
         filters.add(submitButton);
         filters.add(addExpenseButton);
         filters.add(exportButton);
@@ -209,6 +212,7 @@ public class BalanceSheet extends JFrame {
         exportButton.addActionListener(e -> printOrExportSheet());
         submitButton.addActionListener(e -> submitSheet());
         matchDrawButton.addActionListener(e -> matchDrawSessionRange(true));
+        recoverLegacyCashButton.addActionListener(e -> showLegacyCashRecoveryDialog());
         openSavedButton.addActionListener(e -> loadSelectedSubmission());
         editSavedButton.addActionListener(e -> editSelectedSubmission());
         auditButton.addActionListener(e -> showSelectedRevisionHistory());
@@ -236,6 +240,24 @@ public class BalanceSheet extends JFrame {
             loadSubmissionHistory();
         });
     }
+
+    private void showLegacyCashRecoveryDialog(){
+        JComboBox<String> source=new JComboBox<>(new String[]{"SALES","CUSTOM_ORDER_PAYMENT","INVOICE_PAYMENT","CUSTOMER_ACCOUNT_TRANSACTION"});
+        JTextField id=new JTextField(14),reason=new JTextField(30);JPanel form=new JPanel(new GridLayout(0,2,8,8));
+        form.add(new JLabel("Source table:"));form.add(source);form.add(new JLabel("Primary ID:"));form.add(id);
+        form.add(new JLabel("Audit reason:"));form.add(reason);
+        int answer=JOptionPane.showConfirmDialog(this,form,"Attach NULL-session legacy cash to this register's open drawer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+        if(answer!=JOptionPane.OK_OPTION)return;
+        long sourceId;try{sourceId=Long.parseLong(id.getText().trim());}catch(Exception ex){JOptionPane.showMessageDialog(this,"Enter a valid primary ID.","Recovery",JOptionPane.ERROR_MESSAGE);return;}
+        String why=reason.getText().trim();if(why.length()<10){JOptionPane.showMessageDialog(this,"Enter an audit reason of at least 10 characters.","Recovery",JOptionPane.ERROR_MESSAGE);return;}
+        String key=UUID.randomUUID().toString(),sourceType=(String)source.getSelectedItem();
+        new SwingWorker<services.BalanceSheetService.LegacyCashRecovery,Void>(){
+            protected services.BalanceSheetService.LegacyCashRecovery doInBackground()throws Exception{return BalanceSheetService.recoverLegacyCash(sourceType,sourceId,why,key);}
+            protected void done(){try{var r=get();JOptionPane.showMessageDialog(BalanceSheet.this,"Attached "+r.sourceType()+" #"+r.sourceId()+" to open session "+r.afterSessionId()+" ("+r.drawerName()+"). The session remains open.","Recovery complete",JOptionPane.INFORMATION_MESSAGE);loadSheet();}catch(Exception ex){JOptionPane.showMessageDialog(BalanceSheet.this,"Recovery was not applied: "+rootMessage(ex),"Recovery",JOptionPane.ERROR_MESSAGE);}}
+        }.execute();
+    }
+
+    private static String rootMessage(Throwable value){Throwable current=value;while(current.getCause()!=null)current=current.getCause();return current.getMessage()==null?current.toString():current.getMessage();}
 
     private void printOrExportSheet() {
         if (currentSheet == null) {

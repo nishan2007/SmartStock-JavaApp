@@ -300,7 +300,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 th { background: #d7d7d7; font-weight: bold; text-align: center; }
                 .top td { border: 0; }
                 .logo { font-size: 34px; color: #f05a00; font-weight: bold; font-style: italic; text-align: center; min-height: 96px; }
-                .logo img { max-height: 96px; max-width: 390px; }
+                .logo img { width: 100%; height: auto; max-height: 96px; max-width: 390px; }
                 .motto { font-size: 12px; font-weight: bold; font-style: italic; text-align: center; padding-top: 6px; padding-bottom: 4px; line-height: 1.12; }
                 .tagline { font-size: 12px; font-weight: bold; font-style: italic; text-align: center; padding-top: 2px; }
                 .doctype { font-size: 18px; color: #777; font-weight: bold; text-align: right; line-height: 1.05; }

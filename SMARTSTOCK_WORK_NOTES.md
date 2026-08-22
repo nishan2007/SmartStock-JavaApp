@@ -146,6 +146,21 @@ Confirmed findings:
   - Pre-publication and post-publication downloads matched the expected size and SHA-256.
   - Supabase readback returned exactly one matching published release row.
 
+## 2026-08-22 drawer reconciliation release 1.0.84
+
+- Reconciled the reported $21,970 Drawer Match Checks total against live local PostgreSQL. All eight sales already referenced valid historical Draw 1 sessions and occurred before those sessions closed; no live transaction or session row was changed.
+- Fixed Balance Sheet drawer matching to include intervening sessions after the matched range expands, and added receipt/order, timestamp, device, drawer, and explicit unassigned/unselected-session details.
+- Added an administrator-only, audited, idempotent recovery path that can attach only NULL-session legacy cash rows to the compatible current open drawer; it never reassigns a non-NULL session and never closes the session automatically.
+- Verified current POS sales, order payments/refunds, invoice payments/refunds, and customer-account cash paths require and preserve an active drawer session.
+- Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, and `git diff --check` passed.
+- Windows 1.0.84 artifacts:
+  - `smartstock-windows-1.0.84.zip`: 34,164,998 bytes, SHA-256 `030FC6F3E6616F26FA131E4A9F111435B885CF0A45E28E627D9947FD323F1B54`
+  - `smartstock-windows-setup-1.0.84.exe`: 52,406,587 bytes, SHA-256 `34CC4BBC3D52268CB8A81A80DF688459B8A22CC13F40780259BE1678C9E5676D`
+- Published SmartStock 1.0.84 build 10084 to the development update channel (Supabase release ID 88).
+  - R2 object: `windows/1.0.84/smartstock-windows-1.0.84.zip`
+  - The post-upload R2 download matched the expected byte size and SHA-256.
+  - Supabase readback returned exactly one matching published release row.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

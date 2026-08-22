@@ -125,6 +125,27 @@ class SmartStockUpdaterTest {
     }
 
     @Test
+    void rollbackRestoresNativeLauncherConfigsWithTheApplication(@TempDir Path tempDir) throws Exception {
+        Path appDir = tempDir.resolve("app");
+        Path backupDir = tempDir.resolve("rollback");
+        Files.createDirectories(appDir.resolve("dependency"));
+        Files.writeString(appDir.resolve("inventory-management-1.0.81.jar"), "old-app");
+        Files.writeString(appDir.resolve("dependency").resolve("library.jar"), "old-library");
+        Files.writeString(appDir.resolve("SmartStock.cfg"), "inventory-management-1.0.81.jar");
+        Files.writeString(appDir.resolve("SmartStockServer.cfg"), "inventory-management-1.0.81.jar");
+
+        SmartStockUpdater.backupCurrentApp(appDir, backupDir);
+        Files.writeString(appDir.resolve("SmartStock.cfg"), "inventory-management-1.0.82.jar");
+        Files.writeString(appDir.resolve("SmartStockServer.cfg"), "inventory-management-1.0.82.jar");
+        SmartStockUpdater.restoreBackup(appDir, backupDir);
+
+        assertEquals("inventory-management-1.0.81.jar",
+                Files.readString(appDir.resolve("SmartStock.cfg")));
+        assertEquals("inventory-management-1.0.81.jar",
+                Files.readString(appDir.resolve("SmartStockServer.cfg")));
+    }
+
+    @Test
     void terminatesTheCompleteWindowsServerProcessTree() {
         assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe"),
                 SmartStockUpdater.windowsServerTerminationCommand());

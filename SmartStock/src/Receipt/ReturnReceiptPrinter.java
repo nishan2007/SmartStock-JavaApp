@@ -5,7 +5,10 @@ import managers.HardwareSettingsManager;
 
 import javax.print.*;
 import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.awt.print.*;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class ReturnReceiptPrinter {
@@ -22,9 +25,13 @@ public final class ReturnReceiptPrinter {
             printLetter(receipt, service, settings);
             return;
         }
-        byte[] body = ("\u001b@" + ReturnReceiptFormatter.formatText(receipt, settings) + "\n\n\n\u001dVB\0")
-                .getBytes(StandardCharsets.US_ASCII);
-        service.createPrintJob().print(new SimpleDoc(body, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes("\u001b@".getBytes(StandardCharsets.US_ASCII));
+        body.writeBytes(ReceiptLogoSupport.escPosLogo(
+                CompanyCustomizationManager.loadReceiptLogo(settings)));
+        body.writeBytes((ReturnReceiptFormatter.formatText(receipt, settings) + "\n\n\n\u001dVB\0")
+                .getBytes(StandardCharsets.US_ASCII));
+        service.createPrintJob().print(new SimpleDoc(body.toByteArray(), DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
     }
 
     private static void printLetter(ReturnReceiptData receipt, PrintService service,
@@ -32,7 +39,8 @@ public final class ReturnReceiptPrinter {
         PrinterJob job=PrinterJob.getPrinterJob();
         try { job.setPrintService(service); } catch (PrinterException ex) { throw new PrintException(ex); }
         String[] lines=ReturnReceiptFormatter.formatLetterText(receipt,settings).split("\\R",-1);
-        job.setPrintable((graphics,page,pageIndex)->{if(pageIndex>0)return Printable.NO_SUCH_PAGE;graphics.setFont(new Font(Font.MONOSPACED,Font.PLAIN,10));int x=(int)page.getImageableX(),y=(int)page.getImageableY()+14;for(String line:lines){graphics.drawString(line,x,y);y+=14;}return Printable.PAGE_EXISTS;});
+        BufferedImage logo=CompanyCustomizationManager.loadReceiptLogo(settings);
+        job.setPrintable((graphics,page,pageIndex)->{if(pageIndex>0)return Printable.NO_SUCH_PAGE;graphics.setFont(new Font(Font.MONOSPACED,Font.PLAIN,10));int x=(int)page.getImageableX(),y=(int)page.getImageableY()+14;y+=ReceiptLogoSupport.drawLetterLogo((Graphics2D)graphics,page,logo);for(String line:lines){graphics.drawString(line,x,y);y+=14;}return Printable.PAGE_EXISTS;});
         try { job.print(); } catch (PrinterException ex) { throw new PrintException(ex); }
     }
 }

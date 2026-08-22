@@ -2313,10 +2313,11 @@ public final class LanApiServer implements AutoCloseable {
                 if(approval==null){approval=consumeApproval(c,d,s,token,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override",reason);approvals.put(cacheKey,approval);}
                 priceBy=approval.approverUserId();priceName=approval.approverName();
             }
-            total=total.add(line.unitPrice());
+            BigDecimal roundedUnitPrice=utils.CurrencyFormatter.roundToNearestTwenty(line.unitPrice());
+            total=total.add(roundedUnitPrice);
             lines.add(new ServerCustomOrderDataService.OrderLineRequest(
                     line.customItemId(),line.customVariantId(),line.itemName(),line.variantName(),line.pricingType(),
-                    line.unitPrice(),line.customizationDetails(),line.orderInstructions(),line.widthValue(),line.lengthValue(),
+                    roundedUnitPrice,line.customizationDetails(),line.orderInstructions(),line.widthValue(),line.lengthValue(),
                     line.dimensionUnit(),line.areaValue(),line.areaUnit(),line.areaPrice(),line.baseItemPrice(),
                     line.printMaterialId(),line.printMaterialName(),line.printSizePresetId(),line.printSizeName(),
                     line.printCharge(),line.printLineCount(),line.originalLineTotal(),line.lineDiscountPercent(),
@@ -2804,6 +2805,12 @@ public final class LanApiServer implements AutoCloseable {
                                 throw new ApiException(400,"VALIDATION_ERROR","A valid Balance B/F amount is required.",false);
                             }
                             ServerBalanceSheetService.setBalanceBf(connection,date(x.body(),"periodStart"),amount);
+                        }
+                        case "RECOVER_LEGACY_CASH" -> {
+                            requireAnyPermission(connection,session.userId(),"BALANCE_DRAWER");
+                            if(!"ADMIN".equalsIgnoreCase(user.role()))throw new ApiException(403,"ADMIN_REQUIRED","Only an administrator can recover legacy cash rows.",false);
+                            result.put("recovery",ServerBalanceSheetService.recoverLegacyCash(connection,
+                                    required(x.body(),"sourceType",60),requiredLong(x.body(),"sourceId"),required(x.body(),"reason",1000)));
                         }
                         default -> throw new ApiException(400,"VALIDATION_ERROR","The balance-sheet change is invalid.",false);
                     }

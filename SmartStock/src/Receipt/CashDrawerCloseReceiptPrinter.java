@@ -14,11 +14,14 @@ import javax.print.PrintServiceLookup;
 import javax.print.SimpleDoc;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.awt.print.PageFormat;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
 import java.math.BigDecimal;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
@@ -47,30 +50,34 @@ public final class CashDrawerCloseReceiptPrinter {
         HardwareSettingsManager.PrintFormat format = printer == null
                 ? HardwareSettingsManager.PrintFormat.RECEIPT_40
                 : printer.printFormat();
-        String text = formatText(session, cashInHand, floatCash, breakdown, cashHandlers);
+        CompanyCustomizationManager.ReceiptSettings settings = loadReceiptSettings();
+        String text = formatText(session, cashInHand, floatCash, breakdown, cashHandlers, settings);
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
-            printLetter(service, text);
+            printLetter(service, text, settings == null ? null
+                    : CompanyCustomizationManager.loadReceiptLogo(settings));
             return;
         }
-        byte[] content = ("\u001b@" + text + "\n\n\n\u001dVB\0")
-                .getBytes(StandardCharsets.US_ASCII);
+        ByteArrayOutputStream content = new ByteArrayOutputStream();
+        content.writeBytes("\u001b@".getBytes(StandardCharsets.US_ASCII));
+        content.writeBytes(ReceiptLogoSupport.escPosLogo(settings == null ? null
+                : CompanyCustomizationManager.loadReceiptLogo(settings)));
+        content.writeBytes((text + "\n\n\n\u001dVB\0").getBytes(StandardCharsets.US_ASCII));
         DocPrintJob job = service.createPrintJob();
-        job.print(new SimpleDoc(content, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+        job.print(new SimpleDoc(content.toByteArray(), DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
     }
 
     public static String formatText(CashDrawerSession session, BigDecimal cashInHand,
                                     BigDecimal floatCash, List<BreakdownLine> breakdown,
                                     List<String> cashHandlers) {
-        String companyName = "SmartStock";
-        String footerLine = "";
-        try {
-            CompanyCustomizationManager.ReceiptSettings settings =
-                    CompanyCustomizationManager.loadReceiptSettings();
-            companyName = settings.companyName();
-            footerLine = settings.footerLine();
-        } catch (RuntimeException ignored) {
-            // Closing figures must remain printable if branding settings are unavailable.
-        }
+        return formatText(session, cashInHand, floatCash, breakdown, cashHandlers, loadReceiptSettings());
+    }
+
+    private static String formatText(CashDrawerSession session, BigDecimal cashInHand,
+                                     BigDecimal floatCash, List<BreakdownLine> breakdown,
+                                     List<String> cashHandlers,
+                                     CompanyCustomizationManager.ReceiptSettings settings) {
+        String companyName = settings == null ? "SmartStock" : settings.companyName();
+        String footerLine = settings == null ? "" : settings.footerLine();
         StringBuilder receipt = new StringBuilder();
         center(receipt, companyName, 40);
         center(receipt, "DRAW CLOSE RECEIPT", 40);
@@ -108,7 +115,7 @@ public final class CashDrawerCloseReceiptPrinter {
         return receipt.toString();
     }
 
-    private static void printLetter(PrintService service, String text) throws PrintException {
+    private static void printLetter(PrintService service, String text, BufferedImage logo) throws PrintException {
         PrinterJob job = PrinterJob.getPrinterJob();
         try {
             job.setPrintService(service);
@@ -118,7 +125,8 @@ public final class CashDrawerCloseReceiptPrinter {
                 graphics.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
                 int lineHeight = graphics.getFontMetrics().getHeight();
                 int x = (int) page.getImageableX();
-                int y = (int) page.getImageableY() + lineHeight;
+                int y = (int) page.getImageableY() + lineHeight
+                        + ReceiptLogoSupport.drawLetterLogo((Graphics2D) graphics, page, logo);
                 for (String line : lines) {
                     graphics.drawString(line, x, y);
                     y += lineHeight;
@@ -129,6 +137,14 @@ public final class CashDrawerCloseReceiptPrinter {
             job.print();
         } catch (PrinterException ex) {
             throw new PrintException(ex);
+        }
+    }
+
+    private static CompanyCustomizationManager.ReceiptSettings loadReceiptSettings() {
+        try {
+            return CompanyCustomizationManager.loadReceiptSettings();
+        } catch (RuntimeException ignored) {
+            return null;
         }
     }
 

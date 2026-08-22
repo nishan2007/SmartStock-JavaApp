@@ -288,12 +288,12 @@ public final class SmartStockUpdater {
         }
     }
 
-    private static void backupCurrentApp(Path appDir, Path backupDir) throws IOException {
+    static void backupCurrentApp(Path appDir, Path backupDir) throws IOException {
         prepareSingleRollbackDirectory(backupDir);
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path source : stream.toList()) {
                 String name = source.getFileName().toString();
-                if (isAppJar(name) || "dependency".equals(name)) {
+                if (isRollbackArtifact(name)) {
                     copyRecursively(source, backupDir.resolve(name));
                 }
             }
@@ -326,7 +326,7 @@ public final class SmartStockUpdater {
         }
     }
 
-    private static void restoreBackup(Path appDir, Path backupDir) throws IOException {
+    static void restoreBackup(Path appDir, Path backupDir) throws IOException {
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path target : stream.toList()) {
                 String name = target.getFileName().toString();
@@ -567,6 +567,12 @@ public final class SmartStockUpdater {
     private static boolean isAppJar(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.startsWith("inventory-management-") && lower.endsWith(".jar");
+    }
+
+    private static boolean isRollbackArtifact(String name) {
+        return isAppJar(name) || "dependency".equals(name)
+                || "SmartStock.cfg".equals(name)
+                || "SmartStockServer.cfg".equals(name);
     }
 
     private static Path findMacAppBundle(Path dir) throws IOException {

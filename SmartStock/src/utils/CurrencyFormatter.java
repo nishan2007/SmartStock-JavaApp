@@ -17,6 +17,25 @@ public final class CurrencyFormatter {
         return (value == null ? BigDecimal.ZERO : value).setScale(0, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Rounds a non-negative monetary value to the nearest positive whole-currency increment.
+     * Values exactly halfway between increments round upward.
+     */
+    public static BigDecimal roundToIncrement(BigDecimal value, BigDecimal increment) {
+        BigDecimal amount = value == null ? BigDecimal.ZERO : value;
+        if (amount.signum() < 0) {
+            throw new IllegalArgumentException("Monetary value must not be negative.");
+        }
+        if (increment == null || increment.signum() <= 0 || increment.stripTrailingZeros().scale() > 0) {
+            throw new IllegalArgumentException("Rounding increment must be a positive whole-currency amount.");
+        }
+        return amount.divide(increment, 0, RoundingMode.HALF_UP).multiply(increment).setScale(0);
+    }
+
+    public static BigDecimal roundToNearestTwenty(BigDecimal value) {
+        return roundToIncrement(value, BigDecimal.valueOf(20));
+    }
+
     public static String format(BigDecimal value) {
         return create().format(normalize(value));
     }

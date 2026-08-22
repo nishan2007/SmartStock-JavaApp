@@ -28,8 +28,9 @@ class QuotationInvoiceDocumentLogoTest {
         assertTrue(QuotationInvoiceDocumentBuilder.buildSampleDelivery(receipt, print).contains(expected),
                 "Delivery bill logo must retain its LAN image reference");
         String quotation = QuotationInvoiceDocumentBuilder.buildSampleQuotation(receipt, print);
-        assertTrue(quotation.contains("max-height: 96px"));
-        assertTrue(quotation.contains("max-width: 390px"));
+        assertTrue(quotation.contains(
+                ".logo img { width: 100%; height: auto; max-height: 96px; max-width: 390px; }"),
+                "Quotation logos must grow to fill the available header width without changing aspect ratio");
     }
 
     @Test
