@@ -126,6 +126,10 @@ Confirmed findings:
   - `smartstock-windows-setup-1.0.82.exe`: 52,395,639 bytes, SHA-256 `048B5EA8B616C020384FFCE071F27D9AB9A84BEDB6BEEC7FA620B1AC22D0C847`
 - The 1.0.82 ZIP and application JAR manifest were inspected; the manifest reports SmartStock 1.0.82 and the expected new classes are present.
 - The standalone installer was not installed because its Windows elevation prompt was canceled. The owner explicitly chose to verify installation through the in-app updater instead; that live updater check remains outstanding until a workstation accepts the published update.
+- Published SmartStock 1.0.82 build 10082 for Windows to the development update channel (Supabase release ID 86).
+  - R2 object: `windows/1.0.82/smartstock-windows-1.0.82.zip`
+  - Pre-publication and post-publication downloads both matched the expected 34,152,451-byte size and SHA-256.
+  - Supabase `app_releases` readback returned exactly one published row matching version, build, platform, bucket, object path, size, and SHA-256.
 - No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
 
 ## Remaining work
