@@ -107,21 +107,24 @@ Confirmed findings:
   - `smartstock-windows-setup-1.0.81.exe`: 52,396,264 bytes, SHA-256 `1CA61A5498A7D023C87C207D8897DA727C3780178E2975BD7ED712CB71B36E76`
 - The 1.0.81 ZIP contents and application JAR manifest were inspected; the manifest reports SmartStock 1.0.81 and the expected new classes are present.
 - Interactive installation completed successfully. Both installed launchers report 1.0.81, and the installed JAR exactly matches the rebuilt JAR: SHA-256 `9C9086944954D45AA7B8DE8CDBE03D0413AB5B437BDAFCEC93C8B111E9EEA913`.
+- Published SmartStock 1.0.81 build 10081 for Windows to the development update channel.
+  - R2 object: `windows/1.0.81/smartstock-windows-1.0.81.zip`
+  - The uploaded object was downloaded and matched the expected 34,149,271-byte size and SHA-256 before publication and again after publication.
+  - Supabase `app_releases` readback returned exactly one published row matching the object path, size, and SHA-256.
 - No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
 
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.
-2. Configure release credentials/tooling, then upload, download, and verify the exact remote artifact before publishing release metadata.
-3. Perform the live performance and hardware checks below.
-4. Remeasure:
+2. Perform the live performance and hardware checks below.
+3. Remeasure:
    - `/v1/health` first and warm response times.
    - Login and main-menu load time.
    - Inventory, sales, customer, reports, and company-preferences load times.
    - Refresh-button response and visible feedback.
-5. Confirm PostgreSQL connection counts remain bounded during parallel screen loads.
-6. Verify audit records, device last-seen, and employee-session expiry still update correctly.
-7. Perform physical printer, cash drawer, and NFC checks separately if those workflows are included in the release.
+4. Confirm PostgreSQL connection counts remain bounded during parallel screen loads.
+5. Verify audit records, device last-seen, and employee-session expiry still update correctly.
+6. Perform physical printer, cash drawer, and NFC checks separately if those workflows are included in the release.
 
 ## Other changes currently present in the workspace
 
