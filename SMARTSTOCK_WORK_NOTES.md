@@ -141,6 +141,10 @@ Confirmed findings:
 - Windows 1.0.83 packaging passed. Exact artifacts:
   - `smartstock-windows-1.0.83.zip`: 34,152,830 bytes, SHA-256 `67481566409868FB5EAAE6A8A88C1BC6B0004316B09B47A5C08DA8EE02372079`
   - `smartstock-windows-setup-1.0.83.exe`: 52,398,125 bytes, SHA-256 `41C575B80C1CAE39549C419E85B4403070C026DB0A951AFF4563AD704EA4FECF`
+- Published SmartStock 1.0.83 build 10083 to the development update channel (Supabase release ID 87).
+  - R2 object: `windows/1.0.83/smartstock-windows-1.0.83.zip`
+  - Pre-publication and post-publication downloads matched the expected size and SHA-256.
+  - Supabase readback returned exactly one matching published release row.
 
 ## Remaining work
 
