@@ -1,6 +1,9 @@
 package Receipt;
 
 import managers.CompanyCustomizationManager;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.common.HybridBinarizer;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Color;
@@ -11,10 +14,11 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class CustomOrderSlipRendererTest {
     @Test
-    void letterSlipPaintsProvidedCompanyLogo() {
+    void letterSlipPaintsProvidedCompanyLogo() throws Exception {
         BufferedImage page = new BufferedImage(700, 400, BufferedImage.TYPE_INT_RGB);
         var pageGraphics = page.createGraphics();
         pageGraphics.setColor(Color.WHITE);
@@ -40,6 +44,14 @@ class CustomOrderSlipRendererTest {
             }
         }
         assertTrue(foundLogoPixel, "Letter slips must paint the supplied company logo");
+
+        BufferedImage barcodeArea = page.getSubimage(390, 80, 300, 80);
+        int[] pixels = barcodeArea.getRGB(0, 0, barcodeArea.getWidth(), barcodeArea.getHeight(),
+                null, 0, barcodeArea.getWidth());
+        var decoded = new com.google.zxing.MultiFormatReader().decode(new BinaryBitmap(
+                new HybridBinarizer(new RGBLuminanceSource(
+                        barcodeArea.getWidth(), barcodeArea.getHeight(), pixels))));
+        assertEquals("CO-001", decoded.getText(), "Letter slips must barcode the order number");
     }
 
     private static CompanyCustomizationManager.ReceiptSettings receiptSettings() {

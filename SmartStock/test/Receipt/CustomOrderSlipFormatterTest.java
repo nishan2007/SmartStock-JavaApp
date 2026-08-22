@@ -73,8 +73,8 @@ class CustomOrderSlipFormatterTest {
 
         byte[] bytes = CustomOrderSlipFormatter.formatEscPos40Column(sampleData(), receiptSettings, slipSettings);
 
-        assertTrue(contains(bytes, new byte[]{0x1D, 0x76, 0x30, 0x00}),
-                "40-column output must include an ESC/POS raster logo command");
+        assertTrue(count(bytes, new byte[]{0x1D, 0x76, 0x30, 0x00}) >= 2,
+                "40-column output must include separate ESC/POS raster commands for the logo and order barcode");
     }
 
     private static CustomOrderSlipData sampleData() {
@@ -95,5 +95,20 @@ class CustomOrderSlipFormatterTest {
             if (match) return true;
         }
         return false;
+    }
+
+    private static int count(byte[] bytes, byte[] sequence) {
+        int count = 0;
+        for (int i = 0; i <= bytes.length - sequence.length; i++) {
+            boolean match = true;
+            for (int j = 0; j < sequence.length; j++) {
+                if (bytes[i + j] != sequence[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) count++;
+        }
+        return count;
     }
 }

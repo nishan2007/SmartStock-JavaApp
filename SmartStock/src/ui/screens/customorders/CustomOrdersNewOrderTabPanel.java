@@ -9,6 +9,7 @@ import javax.swing.*;
 import ui.design.DeckersPalette;
 import ui.helpers.ThemeManager;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.basic.BasicButtonUI;
 import javax.swing.plaf.basic.BasicComboBoxUI;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -806,6 +807,10 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     }
 
     private void styleButton(AbstractButton button, Color color) {
+        // Windows' native button delegate can ignore an explicit background
+        // while still honoring the white foreground, leaving white-on-white
+        // labels. Use Swing's basic delegate for these palette-owned buttons.
+        button.setUI(new BasicButtonUI());
         button.setFocusPainted(false);
         button.setOpaque(true);
         button.setContentAreaFilled(true);

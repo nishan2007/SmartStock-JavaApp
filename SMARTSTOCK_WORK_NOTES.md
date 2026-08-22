@@ -113,6 +113,21 @@ Confirmed findings:
   - Supabase `app_releases` readback returned exactly one published row matching the object path, size, and SHA-256.
 - No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
 
+## 2026-08-22 release 1.0.82
+
+- Fixed custom-order action button text that could render white on white under the Windows look and feel.
+- Customer phone changes made during custom-order checkout are now sent to the server, saved to the customer account, and included on the printed order slip.
+- Added receipt/lookup barcodes to 40-column and letter custom-order slips and to quotation, invoice, and delivery documents.
+- Fixed quotation/invoice/delivery preview logo resolution for secured local assets and increased the document logo size.
+- Fixed the main-menu greeting and subtitle contrast on the always-dark ribbon in light mode.
+- Clean validation passed: 362 tests, 0 failures, 0 errors, 10 skipped; repository security and LAN API cutover checks passed; `git diff --check` passed.
+- Windows 1.0.82 packaging passed. Exact artifacts:
+  - `smartstock-windows-1.0.82.zip`: 34,152,451 bytes, SHA-256 `211486E8DB1968F452F223E4CF09934A56A38F1C37A00D023A4B9EC7AC5A1B58`
+  - `smartstock-windows-setup-1.0.82.exe`: 52,395,639 bytes, SHA-256 `048B5EA8B616C020384FFCE071F27D9AB9A84BEDB6BEEC7FA620B1AC22D0C847`
+- The 1.0.82 ZIP and application JAR manifest were inspected; the manifest reports SmartStock 1.0.82 and the expected new classes are present.
+- The standalone installer was not installed because its Windows elevation prompt was canceled. The owner explicitly chose to verify installation through the in-app updater instead; that live updater check remains outstanding until a workstation accepts the published update.
+- No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

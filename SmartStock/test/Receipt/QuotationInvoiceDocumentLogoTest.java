@@ -27,5 +27,20 @@ class QuotationInvoiceDocumentLogoTest {
                 "Invoice logo must retain its LAN image reference");
         assertTrue(QuotationInvoiceDocumentBuilder.buildSampleDelivery(receipt, print).contains(expected),
                 "Delivery bill logo must retain its LAN image reference");
+        String quotation = QuotationInvoiceDocumentBuilder.buildSampleQuotation(receipt, print);
+        assertTrue(quotation.contains("max-height: 96px"));
+        assertTrue(quotation.contains("max-width: 390px"));
+    }
+
+    @Test
+    void documentHeadersIncludeScannableNumberBarcodesWithoutImageTags() {
+        String quote = ServerQuotationInvoiceDocumentBuilder.documentBarcodeHtml("Q-MAIN-POS1-000123");
+        String invoice = ServerQuotationInvoiceDocumentBuilder.documentBarcodeHtml("INV-MAIN-POS1-000088");
+
+        assertTrue(quote.contains("class='document-barcode'"));
+        assertTrue(quote.contains("data-barcode-value='Q-MAIN-POS1-000123'"));
+        assertTrue(quote.contains("bgcolor='#000000'"));
+        assertTrue(invoice.contains("data-barcode-value='INV-MAIN-POS1-000088'"));
+        assertTrue(!quote.contains("<img"), "Document barcodes must survive the print renderer's image filtering");
     }
 }

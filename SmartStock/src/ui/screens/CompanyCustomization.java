@@ -3465,7 +3465,7 @@ public class CompanyCustomization extends JFrame {
     }
 
     private void updateSalesDocumentPreview(JEditorPane pane, String html) {
-        pane.setText(html == null ? "" : html);
+        pane.setText(utils.HtmlImageSourceResolver.resolveForSwing(html));
         pane.setCaretPosition(0);
     }
 

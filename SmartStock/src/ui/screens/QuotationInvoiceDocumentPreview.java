@@ -19,6 +19,7 @@ import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
 import utils.ImageCacheManager;
+import utils.HtmlImageSourceResolver;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -132,7 +133,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         documentArea.setText(stripHtml(safeText));
         documentArea.setCaretPosition(0);
         documentPane.setContentType(safeText.stripLeading().startsWith("<html") ? "text/html" : "text/plain");
-        documentPane.setText(safeText);
+        documentPane.setText(HtmlImageSourceResolver.resolveForSwing(safeText));
         documentPane.setCaretPosition(0);
     }
 
@@ -341,8 +342,8 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             int pagePadding = 14;
             int leftHeaderWidth = Math.max(1, (int) Math.round(renderWidth * 0.70));
-            int maxWidth = Math.min(330, leftHeaderWidth - (pagePadding * 2));
-            int maxHeight = 70;
+            int maxWidth = Math.min(390, leftHeaderWidth - (pagePadding * 2));
+            int maxHeight = 92;
             double logoScale = Math.min(maxWidth / (double) sourceWidth, maxHeight / (double) sourceHeight);
             int drawWidth = Math.max(1, (int) Math.round(sourceWidth * logoScale));
             int drawHeight = Math.max(1, (int) Math.round(sourceHeight * logoScale));

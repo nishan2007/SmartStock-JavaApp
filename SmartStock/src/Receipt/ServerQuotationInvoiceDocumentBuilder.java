@@ -299,13 +299,17 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 td, th { border: 0; padding: 4px 5px; font-size: 11px; line-height: 1.15; }
                 th { background: #d7d7d7; font-weight: bold; text-align: center; }
                 .top td { border: 0; }
-                .logo { font-size: 34px; color: #f05a00; font-weight: bold; font-style: italic; text-align: center; min-height: 76px; }
-                .logo img { max-height: 76px; max-width: 330px; }
+                .logo { font-size: 34px; color: #f05a00; font-weight: bold; font-style: italic; text-align: center; min-height: 96px; }
+                .logo img { max-height: 96px; max-width: 390px; }
                 .motto { font-size: 12px; font-weight: bold; font-style: italic; text-align: center; padding-top: 6px; padding-bottom: 4px; line-height: 1.12; }
                 .tagline { font-size: 12px; font-weight: bold; font-style: italic; text-align: center; padding-top: 2px; }
                 .doctype { font-size: 18px; color: #777; font-weight: bold; text-align: right; line-height: 1.05; }
                 .doctype-line { white-space: nowrap; }
                 .docmeta { font-size: 13px; font-weight: bold; text-align: right; }
+                .header-lower td { border: 0; vertical-align: middle; }
+                .document-barcode { margin-left: auto; border: 0; width: auto; }
+                .document-barcode td { border: 0; padding: 0; height: 42px; }
+                .barcode-caption { font-size: 9px; font-weight: bold; text-align: right; padding-top: 1px; }
                 .contact td { border: 0; font-weight: bold; font-size: 11px; padding: 1px 4px; }
                 .info, .document-grid { border: 2px solid #111; }
                 .info td { font-size: 11px; vertical-align: top; }
@@ -355,7 +359,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .append("<div class='docmeta'>Date:&nbsp;&nbsp;").append(esc(date)).append("</div>")
                 .append("<div class='docmeta'>Page:&nbsp;&nbsp;").append(esc(page)).append("</div>")
                 .append("</td></tr></table>");
+        html.append("<table class='header-lower'><tr><td style='width:70%'>");
         appendMotto(html, settings);
+        html.append("</td><td style='width:30%; text-align:right'>")
+                .append(documentBarcodeHtml(documentNumber))
+                .append("</td></tr></table>");
         appendContactBlock(html, settings, addressLine4);
     }
 
@@ -384,6 +392,29 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             return "<div class='doctype-line'>QUOTE</div><div class='doctype-line'>NOT FINAL SALE</div>";
         }
         return "<div class='doctype-line'>" + esc(title) + "</div>";
+    }
+
+    static String documentBarcodeHtml(String documentNumber) {
+        String value = clean(documentNumber);
+        if (!ReceiptBarcodeRenderer.hasScannableText(value)) return "";
+        java.awt.image.BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(value, 300, 54);
+        int y = barcode.getHeight() / 2;
+        StringBuilder html = new StringBuilder("<table class='document-barcode' data-barcode-value='")
+                .append(escAttr(value)).append("' cellspacing='0' cellpadding='0'><tr>");
+        int start = 0;
+        int color = barcode.getRGB(0, y);
+        for (int x = 1; x <= barcode.getWidth(); x++) {
+            int next = x < barcode.getWidth() ? barcode.getRGB(x, y) : Integer.MIN_VALUE;
+            if (x == barcode.getWidth() || next != color) {
+                String fill = new java.awt.Color(color).getRed() < 128 ? "#000000" : "#ffffff";
+                html.append("<td bgcolor='").append(fill).append("' width='")
+                        .append(x - start).append("'></td>");
+                start = x;
+                color = next;
+            }
+        }
+        return html.append("</tr></table><div class='barcode-caption'>")
+                .append(esc(value)).append("</div>").toString();
     }
 
     private static void appendContactBlock(StringBuilder html, ServerCompanyCustomizationRepository.ReceiptSettings settings,

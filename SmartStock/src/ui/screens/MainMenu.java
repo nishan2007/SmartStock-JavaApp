@@ -53,6 +53,9 @@ public class MainMenu extends JFrame {
     private static final int LEFT_SECTION_COLUMNS = 4;
     private static final int RIGHT_SECTION_COLUMNS = 1;
     private static final int COLUMN_GAP = 18;
+    private static final Color RIBBON_BACKGROUND = new Color(12, 12, 12);
+    private static final Color RIBBON_TITLE = new Color(248, 250, 252);
+    private static final Color RIBBON_SUBTITLE = new Color(203, 213, 225);
     private final JButton makeSaleButton;
     private final JButton returnSaleButton;
     private final JButton balanceDrawButton;
@@ -118,13 +121,13 @@ public class MainMenu extends JFrame {
         JLabel titleLabel = new JLabel(WelcomeGreetingHelper.currentGreeting().title());
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
         titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        titleLabel.setForeground(textColor);
+        titleLabel.setForeground(RIBBON_TITLE);
         titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JLabel subtitleLabel = new JLabel("Choose a section to continue");
         subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 16));
         subtitleLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        subtitleLabel.setForeground(mutedColor);
+        subtitleLabel.setForeground(RIBBON_SUBTITLE);
         subtitleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JPanel headerPanel = createHeaderPanel(titleLabel, subtitleLabel);
@@ -783,7 +786,7 @@ public class MainMenu extends JFrame {
         protected void paintComponent(Graphics graphics) {
             super.paintComponent(graphics);
             Graphics2D g = (Graphics2D) graphics.create();
-            g.setColor(new Color(12, 12, 12));
+            g.setColor(RIBBON_BACKGROUND);
             g.fillRect(0, 0, getWidth(), getHeight());
             if (ribbonImage == null) {
                 g.dispose();

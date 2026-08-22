@@ -66,7 +66,14 @@ public class CustomOrderSlipRenderer {
             if (!slipSettings.emailLine().isBlank()) {
                 g.drawString(slipSettings.emailLine(), titleX, currentY + 60);
             }
-            currentY += 82;
+            if (ReceiptBarcodeRenderer.hasScannableText(data.orderNumber())) {
+                int barcodeWidth = Math.min(280, right - titleX);
+                BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(
+                        data.orderNumber(), barcodeWidth, 50);
+                ReceiptBarcodeRenderer.drawBarcodeFit(
+                        g, barcode, right - barcodeWidth, currentY + 66, barcodeWidth, 50);
+            }
+            currentY += 136;
 
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
             currentY = drawLabelLine(g, left, right, currentY, "CUSTOMER NAME:", data.customerName(), "DATE:", createdDate(data));

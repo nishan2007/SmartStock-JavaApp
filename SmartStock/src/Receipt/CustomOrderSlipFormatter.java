@@ -115,9 +115,18 @@ public class CustomOrderSlipFormatter {
         appendEscPosLogo(out, receiptSettings, slipSettings);
         write(out, 0x1B, 0x61, 0x00);
         writeAscii(out, format40Column(data, receiptSettings, slipSettings));
+        appendEscPosOrderBarcode(out, data.orderNumber());
         writeAscii(out, "\n\n\n");
         write(out, 0x1D, 0x56, 0x42, 0x00);
         return out.toByteArray();
+    }
+
+    private static void appendEscPosOrderBarcode(ByteArrayOutputStream out, String orderNumber) {
+        if (!ReceiptBarcodeRenderer.hasScannableText(orderNumber)) return;
+        BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(orderNumber, 360, 72);
+        write(out, 0x1B, 0x61, 0x01);
+        appendEscPosRaster(out, barcode);
+        write(out, 0x1B, 0x61, 0x00);
     }
 
     private static void appendEscPosLogo(ByteArrayOutputStream out,
@@ -128,6 +137,10 @@ public class CustomOrderSlipFormatter {
         if (logo == null) return;
 
         BufferedImage prepared = prepareMonochromeLogo(logo, 384, 160);
+        appendEscPosRaster(out, prepared);
+    }
+
+    private static void appendEscPosRaster(ByteArrayOutputStream out, BufferedImage prepared) {
         int width = prepared.getWidth();
         int height = prepared.getHeight();
         int bytesPerRow = (width + 7) / 8;

@@ -61,6 +61,22 @@ public final class ImageCacheManager {
         }
     }
 
+    /** Resolves protected/remote image references to the owner-only local cache for Swing HTML previews. */
+    public static String resolveDisplayUrl(String pathOrUrl) {
+        String value = pathOrUrl == null ? "" : pathOrUrl.trim();
+        if (value.isBlank() || value.startsWith("file:")) return value;
+        try {
+            if (isRemoteImageUrl(value)) {
+                if (loadImage(value) == null) return value;
+                return cachePath(value).toUri().toString();
+            }
+            Path path = Path.of(value).toAbsolutePath().normalize();
+            return Files.isRegularFile(path) ? path.toUri().toString() : value;
+        } catch (Exception ex) {
+            return value;
+        }
+    }
+
     public static void cacheUploadedImage(String remoteUrl, Path sourcePath) {
         if (!isRemoteImageUrl(remoteUrl) || sourcePath == null || !Files.isRegularFile(sourcePath)) {
             return;

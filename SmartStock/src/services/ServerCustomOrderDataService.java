@@ -252,9 +252,7 @@ public final class ServerCustomOrderDataService {
 
     public static int resolveOrderCustomerId(Connection conn, CustomerOption selectedCustomer, String name, String phone) throws SQLException {
         if (selectedCustomer != null && selectedCustomer.customerId() != null) {
-            if (selectedCustomer.phone() == null || selectedCustomer.phone().isBlank()) {
-                updateCustomerPhone(conn, selectedCustomer.customerId(), phone);
-            }
+            updateCustomerPhone(conn, selectedCustomer.customerId(), phone);
             return selectedCustomer.customerId();
         }
         return createGeneralCustomerAccount(conn, name, phone);

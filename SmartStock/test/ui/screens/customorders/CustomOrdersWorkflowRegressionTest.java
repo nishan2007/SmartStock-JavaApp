@@ -5,8 +5,11 @@ import services.CustomOrderDataService.PrintMaterialOption;
 import ui.design.DeckersPalette;
 
 import javax.swing.*;
+import javax.swing.plaf.basic.BasicButtonUI;
 import java.awt.*;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -69,12 +72,35 @@ final class CustomOrdersWorkflowRegressionTest {
     }
 
     @Test
+    void paletteButtonsUseADelegateThatPaintsTheirBackgroundOnWindows() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            CustomOrdersNewOrderTabPanel panel = new CustomOrdersNewOrderTabPanel(new NoOpHandler());
+            List<AbstractButton> buttons = new ArrayList<>();
+            collectButtons(panel, buttons);
+
+            for (String label : List.of("Lookup", "Add Placement", "Delete Line", "Clear Order", "Back", "Next")) {
+                AbstractButton button = buttons.stream().filter(candidate -> label.equals(candidate.getText()))
+                        .findFirst().orElseThrow(() -> new AssertionError("Missing button: " + label));
+                assertTrue(button.getUI() instanceof BasicButtonUI, label + " must paint its configured background");
+                assertFalse(button.getForeground().equals(button.getBackground()), label + " text must remain visible");
+            }
+        });
+    }
+
+    @Test
     void customOrderMoneyUsesWholeGuyanaDollars() {
         assertEquals("101", CustomOrders.money(new BigDecimal("100.50")));
         assertEquals(new BigDecimal("100"), CustomOrders.wholeDollar(
                 new JTextField("100.00"), "upfront payment", true));
         assertThrows(IllegalArgumentException.class, () -> CustomOrders.wholeDollar(
                 new JTextField("100.50"), "upfront payment", true));
+    }
+
+    private static void collectButtons(Container container, List<AbstractButton> buttons) {
+        for (Component child : container.getComponents()) {
+            if (child instanceof AbstractButton button) buttons.add(button);
+            if (child instanceof Container nested) collectButtons(nested, buttons);
+        }
     }
 
     private static class NoOpHandler implements CustomOrdersNewOrderTabPanel.Handler {
