@@ -101,27 +101,27 @@ Confirmed findings:
 - Focused pool/configuration tests passed.
 - `git diff --check` passed.
 - Repository security and LAN API cutover checks passed before the final one-line label fallback correction; the final clean Maven suite and `git diff --check` passed after it.
-- Windows 1.0.80 packaging passed. Exact artifacts:
-  - `smartstock-windows-1.0.80.zip`: 34,149,274 bytes, SHA-256 `07CC2E02A8A80B2B532E405D09BBEF2CE6BF0FD125E0078987CA358C8C6973DF`
-  - `smartstock-windows-setup-1.0.80.exe`: 52,395,900 bytes, SHA-256 `3EF8CEDEB19886127EC92AD1088B51C949A7810AF44D8A120A7D1C70AE037BCC`
-- The ZIP contents and application JAR manifest were inspected; the manifest reports SmartStock 1.0.80 and the new cache/pool/printing classes are present.
-- Silent installation of the rebuilt installer could not complete because the admin-required installer waited for an interactive Windows UAC approval. The waiting installer was stopped, so the currently installed copy is not claimed as verification of this exact artifact.
+- A 1.0.80 candidate was packaged and installation-tested successfully, but it was superseded before publication when the intended release version was confirmed as 1.0.81. The 1.0.80 artifacts must not be published.
+- Windows 1.0.81 packaging and installation verification passed. Exact artifacts:
+  - `smartstock-windows-1.0.81.zip`: 34,149,271 bytes, SHA-256 `18A125526397E1C57B465ED0E2AFA322AA29F85ABF91E5B5FD1EBA864AC01581`
+  - `smartstock-windows-setup-1.0.81.exe`: 52,396,264 bytes, SHA-256 `1CA61A5498A7D023C87C207D8897DA727C3780178E2975BD7ED712CB71B36E76`
+- The 1.0.81 ZIP contents and application JAR manifest were inspected; the manifest reports SmartStock 1.0.81 and the expected new classes are present.
+- Interactive installation completed successfully. Both installed launchers report 1.0.81, and the installed JAR exactly matches the rebuilt JAR: SHA-256 `9C9086944954D45AA7B8DE8CDBE03D0413AB5B437BDAFCEC93C8B111E9EEA913`.
 - No live PostgreSQL server, service, physical printer, drawer, or NFC verification was performed.
 
 ## Remaining work
 
-1. Install the rebuilt SmartStock 1.0.80 installer interactively with administrator approval and verify the installed application.
-2. Restart the server service so the connection pool and credential cache become active.
-3. Configure release credentials/tooling, then upload, download, and verify the exact remote artifact before publishing release metadata.
-4. Perform the live performance and hardware checks below.
-5. Remeasure:
+1. Restart the server service so the connection pool and credential cache become active.
+2. Configure release credentials/tooling, then upload, download, and verify the exact remote artifact before publishing release metadata.
+3. Perform the live performance and hardware checks below.
+4. Remeasure:
    - `/v1/health` first and warm response times.
    - Login and main-menu load time.
    - Inventory, sales, customer, reports, and company-preferences load times.
    - Refresh-button response and visible feedback.
-6. Confirm PostgreSQL connection counts remain bounded during parallel screen loads.
-7. Verify audit records, device last-seen, and employee-session expiry still update correctly.
-8. Perform physical printer, cash drawer, and NFC checks separately if those workflows are included in the release.
+5. Confirm PostgreSQL connection counts remain bounded during parallel screen loads.
+6. Verify audit records, device last-seen, and employee-session expiry still update correctly.
+7. Perform physical printer, cash drawer, and NFC checks separately if those workflows are included in the release.
 
 ## Other changes currently present in the workspace
 
