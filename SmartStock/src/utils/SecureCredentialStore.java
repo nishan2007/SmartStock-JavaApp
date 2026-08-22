@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -18,6 +20,7 @@ public final class SecureCredentialStore {
     private static final String SERVICE = "com.smartstock.database";
     private static final Path FALLBACK_PATH = Path.of(
             System.getProperty("user.home"), ".smartstock", "secure-credentials.properties");
+    private static final ConcurrentHashMap<String, Optional<String>> READ_CACHE = new ConcurrentHashMap<>();
 
     private SecureCredentialStore() {
     }
@@ -26,19 +29,23 @@ public final class SecureCredentialStore {
         if (key == null || key.isBlank()) {
             return null;
         }
+        Optional<String> cached = READ_CACHE.get(key);
+        if (cached != null) return cached.orElse(null);
+        String value = null;
         try {
             String os = osName();
             if (os.contains("mac")) {
-                return readMac(key);
+                value = readMac(key);
+            } else if (os.contains("win")) {
+                value = readWindows(key);
+            } else {
+                value = readFallback(key);
             }
-            if (os.contains("win")) {
-                return readWindows(key);
-            }
-            return readFallback(key);
         } catch (Exception ex) {
             System.err.println("Could not read secure credential " + key + ": " + ex.getMessage());
-            return null;
         }
+        READ_CACHE.put(key, Optional.ofNullable(value));
+        return value;
     }
 
     public static void write(String key, String value) throws IOException {
@@ -49,13 +56,16 @@ public final class SecureCredentialStore {
             String os = osName();
             if (os.contains("mac")) {
                 writeMac(key, value);
+                READ_CACHE.put(key, Optional.of(value));
                 return;
             }
             if (os.contains("win")) {
                 writeWindows(key, value);
+                READ_CACHE.put(key, Optional.of(value));
                 return;
             }
             writeFallback(key, value);
+            READ_CACHE.put(key, Optional.of(value));
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new IOException("Secure credential storage was interrupted.", ex);
@@ -82,6 +92,8 @@ public final class SecureCredentialStore {
             }
         } catch (Exception ex) {
             System.err.println("Could not delete secure credential " + key + ": " + ex.getMessage());
+        } finally {
+            READ_CACHE.remove(key);
         }
     }
 

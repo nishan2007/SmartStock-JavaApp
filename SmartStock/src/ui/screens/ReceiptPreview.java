@@ -25,6 +25,7 @@ import java.util.List;
 
 public class ReceiptPreview extends JFrame {
     private final ReceiptData receiptData;
+    private final boolean reprint;
     private CompanyCustomizationManager.ReceiptSettings receiptSettings;
     private final ReceiptPaperPanel receiptPaperPanel = new ReceiptPaperPanel();
     private final JComboBox<PrinterOption> printerBox = new JComboBox<>();
@@ -32,9 +33,14 @@ public class ReceiptPreview extends JFrame {
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public ReceiptPreview(ReceiptData receiptData) {
-        this.receiptData = receiptData;
+        this(receiptData, false);
+    }
 
-        setTitle("Receipt Preview");
+    public ReceiptPreview(ReceiptData receiptData, boolean reprint) {
+        this.receiptData = receiptData;
+        this.reprint = reprint;
+
+        setTitle(reprint ? "Receipt Reprint Preview" : "Receipt Preview");
         setSize(520, 760);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -47,7 +53,7 @@ public class ReceiptPreview extends JFrame {
         JPanel headerPanel = new JPanel(new BorderLayout(12, 8));
         headerPanel.setOpaque(false);
 
-        JLabel titleLabel = new JLabel("Receipt Preview");
+        JLabel titleLabel = new JLabel(reprint ? "Receipt Reprint Preview" : "Receipt Preview");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 24));
         headerPanel.add(titleLabel, BorderLayout.WEST);
 
@@ -136,9 +142,13 @@ public class ReceiptPreview extends JFrame {
         if (receiptSettings == null) return;
         HardwareSettingsManager.PrintFormat format = getSelectedPrintFormat();
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
-            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatLetterText(receiptData, receiptSettings), true, receiptData.getReceiptNumber());
+            String text = ReceiptFormatter.formatLetterText(receiptData, receiptSettings);
+            receiptPaperPanel.setReceiptText(reprint ? "DUPLICATE / REPRINT\n" + text : text,
+                    true, receiptData.getReceiptNumber());
         } else {
-            receiptPaperPanel.setReceiptText(ReceiptFormatter.formatText(receiptData, receiptSettings), false, receiptData.getReceiptNumber());
+            String text = ReceiptFormatter.formatText(receiptData, receiptSettings);
+            receiptPaperPanel.setReceiptText(reprint ? "DUPLICATE / REPRINT\n" + text : text,
+                    false, receiptData.getReceiptNumber());
         }
     }
 
@@ -158,12 +168,8 @@ public class ReceiptPreview extends JFrame {
     private void printReceipt() {
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
-            if (selected != null && selected.printer != null
-                    && getSelectedPrintFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
-                ReceiptPrinter.printToPosPrinter(receiptData, selected.printer, false, true);
-            } else {
-                ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer, getSelectedPrintFormat());
-            }
+            ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer,
+                    getSelectedPrintFormat(), reprint);
             JOptionPane.showMessageDialog(this, "Receipt sent to " + (selected == null ? "the printer" : selected) + ".");
         } catch (PrintException ex) {
             JOptionPane.showMessageDialog(

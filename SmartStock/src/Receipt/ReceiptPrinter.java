@@ -56,17 +56,24 @@ public class ReceiptPrinter {
             }
             return result;
         }
-        printToPosPrinter(receipt, printer, printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat());
+        printToPosPrinter(receipt, printer,
+                printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat(), reprint);
         return EpsonReceiptPrintService.PrintResult.queued(printer == null ? "" : printer.systemName());
     }
 
     public static void printToPosPrinter(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer, HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
+        printToPosPrinter(receipt, printer, printFormat, false);
+    }
+
+    public static void printToPosPrinter(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer,
+                                         HardwareSettingsManager.PrintFormat printFormat,
+                                         boolean reprint) throws PrintException {
         if (printer == null) {
             PrintService service = PrintServiceLookup.lookupDefaultPrintService();
             if (service == null) {
                 throw new PrintException("No default printer is configured.");
             }
-            printToService(receipt, service, printFormat);
+            printToService(receipt, service, printFormat, reprint);
             return;
         }
 
@@ -75,17 +82,23 @@ public class ReceiptPrinter {
             throw new PrintException("Configured printer was not found: " + printer.systemName());
         }
 
-        printToService(receipt, service, printFormat == null ? printer.printFormat() : printFormat);
+        printToService(receipt, service, printFormat == null ? printer.printFormat() : printFormat, reprint);
     }
 
     private static void printToService(ReceiptData receipt, PrintService service, HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
+        printToService(receipt, service, printFormat, false);
+    }
+
+    private static void printToService(ReceiptData receipt, PrintService service,
+                                       HardwareSettingsManager.PrintFormat printFormat,
+                                       boolean reprint) throws PrintException {
         CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
         if (printFormat == HardwareSettingsManager.PrintFormat.LETTER) {
-            printLetterToService(receipt, service, settings);
+            printLetterToService(receipt, service, settings, reprint);
             return;
         }
 
-        byte[] bytes = EpsonReceiptPrintService.composeJob(ReceiptFormatter.formatEscPos(receipt, settings),
+        byte[] bytes = EpsonReceiptPrintService.composeJob(ReceiptFormatter.formatEscPos(receipt, settings, reprint),
                 loadEpsonSettings(), false);
         DocFlavor flavor = DocFlavor.BYTE_ARRAY.AUTOSENSE;
         Doc doc = new SimpleDoc(bytes, flavor, null);
@@ -136,7 +149,9 @@ public class ReceiptPrinter {
         if (failure[0] != null) throw failure[0];
     }
 
-    private static void printLetterToService(ReceiptData receipt, PrintService service, CompanyCustomizationManager.ReceiptSettings settings) throws PrintException {
+    private static void printLetterToService(ReceiptData receipt, PrintService service,
+                                             CompanyCustomizationManager.ReceiptSettings settings,
+                                             boolean reprint) throws PrintException {
         PrinterJob job = PrinterJob.getPrinterJob();
         try {
             job.setPrintService(service);
@@ -144,7 +159,8 @@ public class ReceiptPrinter {
             throw new PrintException(ex);
         }
 
-        String[] lines = ReceiptFormatter.formatLetterText(receipt, settings).split("\\R", -1);
+        String prefix = reprint ? "DUPLICATE / REPRINT\n" : "";
+        String[] lines = (prefix + ReceiptFormatter.formatLetterText(receipt, settings)).split("\\R", -1);
         Font font = new Font(Font.MONOSPACED, Font.PLAIN, 10);
         BufferedImage logo = CompanyCustomizationManager.loadReceiptLogo(settings);
         job.setPrintable(

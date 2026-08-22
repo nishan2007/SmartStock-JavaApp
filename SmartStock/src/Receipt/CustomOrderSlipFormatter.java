@@ -4,6 +4,10 @@ import utils.CurrencyFormatter;
 import managers.CompanyCustomizationManager;
 
 import java.io.ByteArrayOutputStream;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
@@ -108,10 +112,60 @@ public class CustomOrderSlipFormatter {
         write(out, 0x1B, 0x40);
         write(out, 0x1B, 0x4D, 0x00);
         write(out, 0x1D, 0x21, 0x00);
+        appendEscPosLogo(out, receiptSettings, slipSettings);
+        write(out, 0x1B, 0x61, 0x00);
         writeAscii(out, format40Column(data, receiptSettings, slipSettings));
         writeAscii(out, "\n\n\n");
         write(out, 0x1D, 0x56, 0x42, 0x00);
         return out.toByteArray();
+    }
+
+    private static void appendEscPosLogo(ByteArrayOutputStream out,
+                                         CompanyCustomizationManager.ReceiptSettings receiptSettings,
+                                         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings) {
+        if (slipSettings == null || !slipSettings.showLogo()) return;
+        BufferedImage logo = CompanyCustomizationManager.loadCompanyLogo(receiptSettings);
+        if (logo == null) return;
+
+        BufferedImage prepared = prepareMonochromeLogo(logo, 384, 160);
+        int width = prepared.getWidth();
+        int height = prepared.getHeight();
+        int bytesPerRow = (width + 7) / 8;
+        write(out, 0x1B, 0x61, 0x01);
+        write(out, 0x1D, 0x76, 0x30, 0x00,
+                bytesPerRow & 0xFF, (bytesPerRow >> 8) & 0xFF,
+                height & 0xFF, (height >> 8) & 0xFF);
+        for (int y = 0; y < height; y++) {
+            for (int xByte = 0; xByte < bytesPerRow; xByte++) {
+                int value = 0;
+                for (int bit = 0; bit < 8; bit++) {
+                    int x = (xByte * 8) + bit;
+                    if (x < width && isDark(prepared.getRGB(x, y))) value |= 0x80 >> bit;
+                }
+                out.write(value);
+            }
+        }
+        writeAscii(out, "\n");
+    }
+
+    private static BufferedImage prepareMonochromeLogo(BufferedImage logo, int maxWidth, int maxHeight) {
+        double scale = Math.min((double) maxWidth / logo.getWidth(), (double) maxHeight / logo.getHeight());
+        scale = Math.min(scale, 1.0);
+        int width = Math.max(1, (int) Math.round(logo.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(logo.getHeight() * scale));
+        BufferedImage prepared = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = prepared.createGraphics();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        graphics.setColor(Color.WHITE);
+        graphics.fillRect(0, 0, width, height);
+        graphics.drawImage(logo, 0, 0, width, height, null);
+        graphics.dispose();
+        return prepared;
+    }
+
+    private static boolean isDark(int rgb) {
+        Color color = new Color(rgb);
+        return ((color.getRed() * 0.299) + (color.getGreen() * 0.587) + (color.getBlue() * 0.114)) < 160;
     }
 
     private static void appendField(StringBuilder builder, String label, String value) {

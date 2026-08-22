@@ -18,6 +18,7 @@ import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
+import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
 
 /** Prints a compact adhesive label that identifies a custom order. */
@@ -63,14 +64,79 @@ public final class CustomOrderLabelPrinter {
         } catch (Exception ex) {
             throw new PrintException(ex);
         }
-        if (printer == null) {
-            throw new PrintException("No custom order label printer is configured. Open Workstation Preferences > Hardware Settings and set an Order Label Default.");
+        boolean receiptPrinterFallback = printer == null;
+        if (receiptPrinterFallback) {
+            try {
+                printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+            } catch (Exception ex) {
+                throw new PrintException(ex);
+            }
         }
+        if (printer == null) throw new PrintException("No order label or receipt printer is configured.");
         PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
         if (service == null) {
-            throw new PrintException("The configured custom order label printer is unavailable: " + printer.displayName());
+            throw new PrintException("The configured " + (receiptPrinterFallback ? "receipt" : "custom order label")
+                    + " printer is unavailable: " + printer.displayName());
         }
-        printToService(data, count, service);
+        if (receiptPrinterFallback
+                && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            printToReceiptService(data, count, service);
+        } else {
+            printToService(data, count, service);
+        }
+    }
+
+    static void printToReceiptService(CustomOrderSlipData data, int count, PrintService service) throws PrintException {
+        byte[] content = formatEscPosReceiptLabels(data, count);
+        service.createPrintJob().print(new javax.print.SimpleDoc(content, javax.print.DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+    }
+
+    static byte[] formatEscPosReceiptLabels(CustomOrderSlipData data, int count) {
+        parseLabelCount(String.valueOf(count));
+        BufferedImage label = scaleForReceipt(render(data), 384);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (int copy = 0; copy < count; copy++) {
+            out.writeBytes(new byte[]{0x1B, 0x40, 0x1B, 0x61, 0x01});
+            appendRaster(out, label);
+            out.writeBytes(new byte[]{0x0A, 0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00});
+        }
+        return out.toByteArray();
+    }
+
+    private static BufferedImage scaleForReceipt(BufferedImage source, int width) {
+        int height = Math.max(1, (int) Math.round(source.getHeight() * ((double) width / source.getWidth())));
+        BufferedImage scaled = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = scaled.createGraphics();
+        try {
+            graphics.setColor(Color.WHITE);
+            graphics.fillRect(0, 0, width, height);
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        return scaled;
+    }
+
+    private static void appendRaster(ByteArrayOutputStream out, BufferedImage image) {
+        int bytesPerRow = (image.getWidth() + 7) / 8;
+        out.writeBytes(new byte[]{0x1D, 0x76, 0x30, 0x00,
+                (byte) (bytesPerRow & 0xFF), (byte) ((bytesPerRow >> 8) & 0xFF),
+                (byte) (image.getHeight() & 0xFF), (byte) ((image.getHeight() >> 8) & 0xFF)});
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int xByte = 0; xByte < bytesPerRow; xByte++) {
+                int value = 0;
+                for (int bit = 0; bit < 8; bit++) {
+                    int x = xByte * 8 + bit;
+                    if (x < image.getWidth()) {
+                        Color color = new Color(image.getRGB(x, y));
+                        double luminance = color.getRed() * 0.299 + color.getGreen() * 0.587 + color.getBlue() * 0.114;
+                        if (luminance < 160) value |= 0x80 >> bit;
+                    }
+                }
+                out.write(value);
+            }
+        }
     }
 
     static void printToService(CustomOrderSlipData data, int count, PrintService service) throws PrintException {

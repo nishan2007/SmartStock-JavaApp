@@ -3,6 +3,7 @@ import services.EmployeePinService;
 import services.NotificationService;
 import services.AppUpdateService;
 import services.LanApiClient;
+import services.InventoryCatalogCache;
 import managers.NavigationManager;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -708,6 +709,7 @@ public class AppMenuBar {
         JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
         JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
+        JMenuItem refreshInventoryItem = new JMenuItem("Refresh Inventory List");
         JMenuItem closeItem = new JMenuItem("Close");
         JMenuItem logoutItem = new JMenuItem("Logout");
 
@@ -770,6 +772,24 @@ public class AppMenuBar {
                 AppUpdateService.checkForUpdatesAsync(parent, true);
             }
         });
+        refreshInventoryItem.addActionListener(e -> {
+            refreshInventoryItem.setEnabled(false);
+            refreshInventoryItem.setText("Refreshing Inventory List…");
+            InventoryCatalogCache.refresh().whenComplete((snapshot, failure) -> SwingUtilities.invokeLater(() -> {
+                refreshInventoryItem.setEnabled(true);
+                refreshInventoryItem.setText("Refresh Inventory List");
+                if (failure == null) {
+                    JOptionPane.showMessageDialog(parent,
+                            "Inventory list refreshed. " + snapshot.products().size() + " products are ready.",
+                            "Inventory List", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    Throwable cause = failure;
+                    while (cause.getCause() != null) cause = cause.getCause();
+                    JOptionPane.showMessageDialog(parent, "Inventory refresh failed: " + cause.getMessage(),
+                            "Inventory List", JOptionPane.ERROR_MESSAGE);
+                }
+            }));
+        });
         closeItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 NavigationManager.closeApplication(parent);
@@ -789,6 +809,7 @@ public class AppMenuBar {
         statusMenu.add(syncStatusItem);
         statusMenu.add(remoteQueueItem);
         statusMenu.add(mobileItemWebItem);
+        statusMenu.add(refreshInventoryItem);
         statusMenu.add(checkUpdatesItem);
 
         sessionMenu.add(changeStoreItem);

@@ -180,10 +180,13 @@ public class CustomOrderSlipPreview extends JFrame {
 
     private void printSlip() {
         Integer labelCount = CustomOrderLabelPrinter.promptLabelCount(this);
-        if (labelCount == null) return;
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
             CustomOrderSlipPrinter.printToPosPrinter(slipData, selected == null ? null : selected.printer, getSelectedPrintFormat());
+            if (labelCount == null) {
+                JOptionPane.showMessageDialog(this, "Custom order slip sent to the printer. Order labels were skipped.");
+                return;
+            }
             try {
                 CustomOrderLabelPrinter.print(slipData, labelCount);
                 JOptionPane.showMessageDialog(this, "Custom order slip and " + labelCount + " label" + (labelCount == 1 ? "" : "s") + " sent to the printers.");

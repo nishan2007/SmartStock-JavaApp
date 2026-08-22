@@ -1,6 +1,7 @@
 
 package ui.screens;
 
+import Receipt.ReceiptBuilder;
 import utils.CurrencyFormatter;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -172,11 +173,13 @@ public class ViewSales extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JButton clearButton = new JButton("Clear Filters");
         JButton detailsButton = new JButton("View Details");
+        JButton reprintReceiptButton = new JButton("Reprint Receipt");
         JButton returnButton = new JButton("Process Return");
 
         buttonPanel.add(refreshButton);
         buttonPanel.add(clearButton);
         buttonPanel.add(detailsButton);
+        buttonPanel.add(reprintReceiptButton);
         buttonPanel.add(returnButton);
 
         gbc.gridx = 0;
@@ -188,6 +191,7 @@ public class ViewSales extends JFrame {
         refreshButton.addActionListener(e -> loadSales());
         clearButton.addActionListener(e -> clearFilters());
         detailsButton.addActionListener(e -> showSelectedSaleDetails());
+        reprintReceiptButton.addActionListener(e -> reprintSelectedReceipt());
         returnButton.addActionListener(e -> openReturnForSelectedSale());
         returnButton.setEnabled(PermissionManager.hasPermission("PROCESS_RETURNS"));
 
@@ -286,6 +290,34 @@ public class ViewSales extends JFrame {
             JOptionPane.showMessageDialog(this,"You do not have permission to return another store's sale.");return;
         }
         WindowHelper.showPosWindow(new ReturnSale(selected.saleId(),selected.sourceLocationId()), this);
+    }
+
+    private void reprintSelectedReceipt() {
+        int selectedRow = salesTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a transaction first.",
+                    "No Transaction Selected", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        int modelRow = salesTable.convertRowIndexToModel(selectedRow);
+        LanApiClient.SalesHistoryRow selected = displayedRows.get(modelRow);
+        boolean remote = selected.sourceLocationId() != null
+                && !selected.sourceLocationId().equals(SessionManager.getCurrentLocationId());
+        if (remote) {
+            JOptionPane.showMessageDialog(this,
+                    "Receipts can only be reprinted at the store where the sale was completed.",
+                    "Remote Sale Receipt", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "sales.receipt-reprint",
+                () -> ReceiptBuilder.loadSaleReceipt(selected.saleId(), null, null),
+                receipt -> {
+                    loadingState.ready(java.time.Instant.now());
+                    WindowHelper.showPosWindow(new ReceiptPreview(receipt, true), this);
+                }, failure -> loadingState.failed(failure.getMessage(), false, this::reprintSelectedReceipt));
     }
 
     private void showSaleDetailsDialog(int saleId,Integer sourceLocationId) {

@@ -74,6 +74,7 @@ public final class LanApiServer implements AutoCloseable {
     private final LanTlsIdentity tlsIdentity;
     private final LanDiscoveryService discoveryService;
     private volatile MobileItemWebServer mobileItemWebServer;
+    private volatile HealthReadiness cachedHealthReadiness;
 
     private LanApiServer(HttpsServer server, ExecutorService executor, LanTlsIdentity tlsIdentity,
                          LanDiscoveryService discoveryService) {
@@ -638,15 +639,9 @@ public final class LanApiServer implements AutoCloseable {
         data.put("service", "SmartStock LAN Service");
         data.put("status", "ok");
         data.put("apiVersion", "v1");
-        try (Connection connection = DB.getConnection()) {
-            SchemaContractService.Readiness local =
-                    SchemaContractService.validateLocal(connection);
-            data.put("localSchemaVersion", local.version());
-            data.put("localSchemaReady", local.ready());
-        } catch (Exception ex) {
-            data.put("localSchemaVersion", null);
-            data.put("localSchemaReady", false);
-        }
+        HealthReadiness local = healthReadiness();
+        data.put("localSchemaVersion", local.version());
+        data.put("localSchemaReady", local.ready());
         CloudSyncManifest.SchemaReadiness cloud =
                 CloudSyncManifest.latestSchemaReadiness();
         data.put("cloudSchemaVersion", cloud.version());
@@ -659,6 +654,25 @@ public final class LanApiServer implements AutoCloseable {
         send(exchange, 200, success(data));
     }
 
+    private HealthReadiness healthReadiness() {
+        HealthReadiness ready = cachedHealthReadiness;
+        Instant now = Instant.now();
+        if (ready != null && ready.checkedAt().plusSeconds(30).isAfter(now)) return ready;
+        synchronized (this) {
+            ready = cachedHealthReadiness;
+            if (ready != null && ready.checkedAt().plusSeconds(30).isAfter(now)) return ready;
+            try (Connection connection = DB.getConnection()) {
+                SchemaContractService.Readiness local = SchemaContractService.validateLocal(connection);
+                ready = new HealthReadiness(local.version(), local.ready(), now);
+            } catch (Exception ex) {
+                ready = new HealthReadiness(null, false, now);
+            }
+            cachedHealthReadiness = ready;
+            return ready;
+        }
+    }
+
+    private record HealthReadiness(Integer version, boolean ready, Instant checkedAt) { }
     private ApiResult enroll(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
         JsonObject body = context.body();
@@ -3563,7 +3577,9 @@ public final class LanApiServer implements AutoCloseable {
                 }
                 try (PreparedStatement touch = connection.prepareStatement("""
                         UPDATE devices SET last_seen = CURRENT_TIMESTAMP,
-                            api_credential_last_used_at = CURRENT_TIMESTAMP WHERE device_id = ?
+                            api_credential_last_used_at = CURRENT_TIMESTAMP
+                        WHERE device_id = ?
+                          AND (last_seen IS NULL OR last_seen < CURRENT_TIMESTAMP - INTERVAL '30 seconds')
                         """)) {
                     touch.setObject(1, deviceId);
                     touch.executeUpdate();
@@ -3610,6 +3626,8 @@ public final class LanApiServer implements AutoCloseable {
                         try (PreparedStatement update = connection.prepareStatement("""
                                 UPDATE lan_api_sessions SET expires_at = ?, last_seen_at = CURRENT_TIMESTAMP
                                 WHERE session_id = ?
+                                  AND (last_seen_at < CURRENT_TIMESTAMP - INTERVAL '30 seconds'
+                                       OR expires_at < CURRENT_TIMESTAMP + INTERVAL '5 minutes')
                                 """)) {
                             update.setTimestamp(1, Timestamp.from(next));
                             update.setObject(2, sessionId);
@@ -4086,6 +4104,7 @@ public final class LanApiServer implements AutoCloseable {
         server.stop(2);
         if (discoveryService != null) discoveryService.close();
         executor.shutdownNow();
+        DB.shutdown();
     }
 
     MobileLogin authenticateMobileLogin(String identifier,String secret,int locationId)throws Exception{

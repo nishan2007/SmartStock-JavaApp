@@ -2,6 +2,7 @@ package ui.screens.customorders;
 
 import org.junit.jupiter.api.Test;
 import services.CustomOrderDataService.PrintMaterialOption;
+import ui.design.DeckersPalette;
 
 import javax.swing.*;
 import java.awt.*;
@@ -43,8 +44,9 @@ final class CustomOrdersWorkflowRegressionTest {
             Component selected = renderer.getListCellRendererComponent(
                     list, new PrintMaterialOption(1L, "Vinyl"), 0, true, false);
 
-            assertEquals(new Color(9, 13, 19), normalBackground);
-            assertEquals(new Color(238, 242, 247), normalForeground);
+            assertEquals(DeckersPalette.background(), panel.getBackground());
+            assertEquals(DeckersPalette.fieldBackground(), normalBackground);
+            assertEquals(DeckersPalette.text(), normalForeground);
             assertEquals(new Color(29, 78, 216), selected.getBackground());
             assertEquals(Color.WHITE, selected.getForeground());
         });

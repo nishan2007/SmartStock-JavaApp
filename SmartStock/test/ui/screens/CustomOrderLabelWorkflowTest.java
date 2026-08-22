@@ -34,4 +34,15 @@ class CustomOrderLabelWorkflowTest {
         assertTrue(panel.contains("Set Receipt Default"));
         assertTrue(panel.contains("Set Order Label Default"));
     }
+
+    @Test
+    void closingLabelPromptStillPrintsTheSlip() throws Exception {
+        String preview = Files.readString(Path.of("src/ui/screens/CustomOrderSlipPreview.java"));
+        String orders = Files.readString(Path.of("src/ui/screens/customorders/CustomOrders.java"));
+
+        assertTrue(preview.contains("if (labelCount == null) {"));
+        assertTrue(preview.indexOf("CustomOrderSlipPrinter.printToPosPrinter") < preview.indexOf("if (labelCount == null) {"));
+        assertTrue(orders.contains("printSlipAndLabelsAsync(orderNumber, count);"));
+        assertTrue(orders.contains("if (count == null) return new OrderPrintResult(data, null, null);"));
+    }
 }

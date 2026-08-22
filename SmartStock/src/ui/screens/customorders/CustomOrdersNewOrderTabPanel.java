@@ -6,6 +6,7 @@ import services.CustomOrderDataService.PrintSizePresetOption;
 import services.CustomOrderDataService.VariantOption;
 
 import javax.swing.*;
+import ui.design.DeckersPalette;
 import ui.helpers.ThemeManager;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.basic.BasicComboBoxUI;
@@ -15,13 +16,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 class CustomOrdersNewOrderTabPanel extends JPanel {
-    private static final Color BG = new Color(13, 17, 23);
-    private static final Color PANEL = new Color(22, 27, 34);
-    private static final Color PANEL_ALT = new Color(30, 36, 46);
-    private static final Color FIELD_BG = new Color(9, 13, 19);
-    private static final Color BORDER = new Color(54, 65, 82);
-    private static final Color TEXT = new Color(238, 242, 247);
-    private static final Color MUTED = new Color(166, 176, 190);
+    private final Color BG = DeckersPalette.background();
+    private final Color PANEL = DeckersPalette.surface();
+    private final Color PANEL_ALT = DeckersPalette.tableStripe();
+    private final Color FIELD_BG = DeckersPalette.fieldBackground();
+    private final Color BORDER = DeckersPalette.border();
+    private final Color TEXT = DeckersPalette.text();
+    private final Color MUTED = DeckersPalette.muted();
     private static final Color ACCENT = new Color(37, 99, 235);
     private static final Color ACCENT_DARK = new Color(29, 78, 216);
     private static final Color TEAL = new Color(20, 184, 166);

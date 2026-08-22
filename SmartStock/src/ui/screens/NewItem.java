@@ -4,6 +4,7 @@ import ui.screens.customorders.NewCustomItem;
 
 import managers.SessionManager;
 import services.LanApiClient;
+import services.InventoryCatalogCache;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
 import ui.components.ItemDetailsSelector;
@@ -519,7 +520,7 @@ public class NewItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;
-            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }

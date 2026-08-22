@@ -5,6 +5,7 @@ import ui.screens.customorders.EditCustomItem;
 import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
+import services.InventoryCatalogCache;
 import ui.components.RoundedBorder;
 import ui.components.AppMenuBar;
 import ui.components.DepartmentSelector;
@@ -686,7 +687,7 @@ public class EditItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;Integer productId=selectedProductId;Integer originalQuantity=selectedOriginalQuantity;int requestedQuantity=quantity,requestedReorderLevel=reorderLevel;boolean adjust=inventoryItem&&canManualAdjustment;
-            UiTaskRunner.submit(this,"items.update",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust);return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.update",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust);return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update item: " + ex.getMessage());
         }

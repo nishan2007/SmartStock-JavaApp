@@ -156,6 +156,7 @@ public record DatabaseConfig(
             props.store(output, "SmartStock database mode and sync configuration");
         }
         SecureFilePermissions.restrictFileToOwner(configPath);
+        DB.configurationChanged();
     }
 
     private static void storeSecret(String key, String value) throws IOException {

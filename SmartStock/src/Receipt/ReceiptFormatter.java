@@ -101,6 +101,7 @@ public class ReceiptFormatter {
         }
         builder.append(repeat("-", width)).append('\n');
         appendCentered(builder, settings.footerLine(), width);
+        appendCentered(builder, "Powered by SmartStock", width);
         builder.append('\n');
         return builder.toString();
     }

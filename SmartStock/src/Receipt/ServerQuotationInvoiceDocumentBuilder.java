@@ -654,7 +654,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static String imageSrc(String path) {
-        if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("file:")) {
+        if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("file:")
+                || services.ImageAssetReference.isAssetReference(path)) {
             return path;
         }
         return new java.io.File(path).toURI().toString();

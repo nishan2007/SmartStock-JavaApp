@@ -56,6 +56,30 @@ class CustomOrderLabelPrinterTest {
                 () -> CustomOrderLabelPrinter.render(sample(" ", "Customer", LocalDate.now())));
     }
 
+    @Test
+    void receiptFallbackFormatsEveryLabelWithItsOwnCut() {
+        byte[] bytes = CustomOrderLabelPrinter.formatEscPosReceiptLabels(
+                sample("CO-12", "Customer", LocalDate.of(2026, 8, 21)), 3);
+
+        assertEquals(3, occurrences(bytes, new byte[]{0x1D, 0x76, 0x30, 0x00}));
+        assertEquals(3, occurrences(bytes, new byte[]{0x1D, 0x56, 0x42, 0x00}));
+    }
+
+    private static int occurrences(byte[] content, byte[] needle) {
+        int count = 0;
+        for (int i = 0; i <= content.length - needle.length; i++) {
+            boolean match = true;
+            for (int j = 0; j < needle.length; j++) {
+                if (content[i + j] != needle[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) count++;
+        }
+        return count;
+    }
+
     private static CustomOrderSlipData sample(String orderNumber, String customer, LocalDate dueDate) {
         return new CustomOrderSlipData(orderNumber, customer, "", "", dueDate,
                 Timestamp.valueOf("2026-08-03 12:00:00"), "Cashier", "Store", "Register",

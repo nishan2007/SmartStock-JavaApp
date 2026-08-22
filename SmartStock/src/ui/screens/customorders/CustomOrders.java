@@ -226,10 +226,10 @@ public class CustomOrders extends JFrame {
     }
     private void promptAndPrintSlip(String orderNumber) {
         Integer count = CustomOrderLabelPrinter.promptLabelCount(this);
-        if (count != null) printSlipAndLabelsAsync(orderNumber, count);
+        printSlipAndLabelsAsync(orderNumber, count);
     }
 
-    private void printSlipAndLabelsAsync(String orderNumber, int count) {
+    private void printSlipAndLabelsAsync(String orderNumber, Integer count) {
         loadingState.loading(false, java.time.Instant.now());
         UiTaskRunner.submit(this, "custom-orders.print-slip", () -> {
             CustomOrderSlipData data = CustomOrderSlipBuilder.buildFromOrderNumber(orderNumber);
@@ -238,6 +238,7 @@ public class CustomOrders extends JFrame {
             } catch (Exception ex) {
                 return new OrderPrintResult(data, ex, null);
             }
+            if (count == null) return new OrderPrintResult(data, null, null);
             try {
                 CustomOrderLabelPrinter.print(data, count);
                 return new OrderPrintResult(data, null, null);
@@ -253,7 +254,11 @@ public class CustomOrders extends JFrame {
                         () -> printLabelsAsync(orderNumber, count));
             } else {
                 loadingState.ready(java.time.Instant.now());
-                JOptionPane.showMessageDialog(this, "Order slip and " + count + " label" + (count == 1 ? "" : "s") + " sent to the printers.");
+                if (count == null) {
+                    JOptionPane.showMessageDialog(this, "Order slip sent to the printer. Order labels were skipped.");
+                } else {
+                    JOptionPane.showMessageDialog(this, "Order slip and " + count + " label" + (count == 1 ? "" : "s") + " sent to the printers.");
+                }
             }
         }, failure -> loadingState.failed("Unable to load order " + orderNumber + " for printing: " + message(failure), false,
                 () -> printSlipAndLabelsAsync(orderNumber, count)));

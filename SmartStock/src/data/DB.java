@@ -3,7 +3,6 @@ package data;
 import services.SchemaContractService;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,6 +11,9 @@ import ui.helpers.PerformanceDiagnostics;
 
 public class DB {
     private static final Object SCHEMA_LOCK = new Object();
+    private static final Object POOL_LOCK = new Object();
+    private static volatile PostgresConnectionPool pool;
+    private static volatile DatabaseConfig poolConfig;
     private static final Set<String> ENSURED_SCHEMA_KEYS = ConcurrentHashMap.newKeySet();
     public static Connection getConnection() throws SQLException {
         BlockingCallGuard.check("primary database connection");
@@ -32,14 +34,18 @@ public class DB {
         }
         SQLException last = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
+            Connection conn = null;
             try {
-                Connection conn = DriverManager.getConnection(withPrimarySecurity(config), config.dbUser(), config.dbPassword());
+                conn = connectionFor(config);
                 if (config.mode() == DatabaseMode.SERVER) {
                     ensureSchemaOnce(conn, config);
                 }
                 PerformanceDiagnostics.record("database", "primary-connect", started, true, -1);
                 return conn;
             } catch (SQLException ex) {
+                if (conn != null) {
+                    try { conn.close(); } catch (SQLException ignored) { }
+                }
                 last = ex;
                 if (attempt == 3 || !isTransientConnectionFailure(ex)) break;
                 try {
@@ -55,6 +61,35 @@ public class DB {
         throw last == null ? new SQLException("Database connection failed.") : last;
     }
 
+    private static Connection connectionFor(DatabaseConfig config) throws SQLException {
+        PostgresConnectionPool ready = pool;
+        if (ready != null && config.equals(poolConfig)) {
+            return ready.borrow();
+        }
+        PostgresConnectionPool selected;
+        synchronized (POOL_LOCK) {
+            if (pool == null || !config.equals(poolConfig)) {
+                if (pool != null) pool.close();
+                pool = new PostgresConnectionPool(withPrimarySecurity(config), config.dbUser(), config.dbPassword());
+                poolConfig = config;
+            }
+            selected = pool;
+        }
+        return selected.borrow();
+    }
+
+    public static void shutdown() {
+        configurationChanged();
+    }
+
+    static void configurationChanged() {
+        synchronized (POOL_LOCK) {
+            if (pool != null) pool.close();
+            pool = null;
+            poolConfig = null;
+            ENSURED_SCHEMA_KEYS.clear();
+        }
+    }
     private static String withPrimarySecurity(DatabaseConfig config) {
         String url = config.jdbcUrl() == null ? "" : config.jdbcUrl();
         url = withJdbcParam(url, "connectTimeout", "10");

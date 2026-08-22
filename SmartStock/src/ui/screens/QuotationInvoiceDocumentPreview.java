@@ -18,7 +18,7 @@ import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
-import java.net.URL;
+import utils.ImageCacheManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -255,7 +255,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     }
 
     private static class HtmlPagePrintable implements Printable {
-        private static final Pattern IMG_SRC_PATTERN = Pattern.compile("(?is)<img\\b[^>]*\\bsrc=['\"]([^'\"]+)['\"]");
+        private static final Pattern IMG_SRC_PATTERN = Pattern.compile("(?is)<img\\b[^>]*\\bsrc=['\"]([^'\"]+)['\"][^>]*>");
         private final List<String> pages;
 
         private HtmlPagePrintable(List<String> pages) {
@@ -312,9 +312,9 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             while (matcher.find()) {
                 String source = htmlDecode(matcher.group(1));
                 try {
-                    ImageIcon icon = new ImageIcon(new URL(source));
-                    if (icon.getIconWidth() > 0 && icon.getIconHeight() > 0) {
-                        loadedImages.add(icon);
+                    java.awt.image.BufferedImage image = ImageCacheManager.loadImage(source);
+                    if (image != null && image.getWidth() > 0 && image.getHeight() > 0) {
+                        loadedImages.add(new ImageIcon(image));
                     }
                 } catch (Exception ignored) {
                     // Printing can continue without optional images; the preview still shows broken paths.

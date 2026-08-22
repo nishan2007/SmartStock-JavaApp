@@ -3,6 +3,7 @@ package ui.screens;
 import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
+import services.InventoryCatalogCache;
 import services.ManagerApprovalService;
 import ui.components.AppMenuBar;
 import ui.design.DeckersPalette;
@@ -402,7 +403,7 @@ public class EnterInventory extends JFrame {
         String mutationKey=UUID.randomUUID().toString();
         LanApiClient.ReceivingBarcodeRequest request=new LanApiClient.ReceivingBarcodeRequest(itemType,itemId,barcode);
         UiTaskRunner.submit(this,"receiving-inventory.add-barcode",()->LanApiClient.addReceivingBarcode(request,mutationKey),result->{
-            SessionDataCache.invalidate("inventory-");SessionDataCache.invalidate("catalog-");
+            SessionDataCache.invalidate("inventory-");SessionDataCache.invalidate("catalog-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);
             String place="PRIMARY".equals(result.destination())?"primary barcode":"additional barcodes";
             JOptionPane.showMessageDialog(this,"Barcode "+result.barcode()+" added to "+place+" for "+itemName+".");
         },ex->JOptionPane.showMessageDialog(this,"Barcode was not added: "+ex.getMessage()));
@@ -748,7 +749,7 @@ public class EnterInventory extends JFrame {
             }
 
             String mutationKey=pendingReceiveKey;
-            UiTaskRunner.submit(this,"receiving-inventory.receive",()->LanApiClient.receiveInventory(request,mutationKey),result->{pendingReceiveKey=null;pendingReceiveFingerprint=null;SessionDataCache.invalidate("inventory-");
+            UiTaskRunner.submit(this,"receiving-inventory.receive",()->LanApiClient.receiveInventory(request,mutationKey),result->{pendingReceiveKey=null;pendingReceiveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);
             JOptionPane.showMessageDialog(this,
                     "Inventory added successfully.\nReceive ID: " + result.receiveId());
             inventoryModel.setRowCount(0);

@@ -8,6 +8,7 @@ import managers.SessionLogoutManager;
 import models.AppNotification;
 import services.LanApiClient;
 import services.NotificationService;
+import services.InventoryCatalogCache;
 import ui.components.AppMenuBar;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
@@ -325,6 +326,10 @@ public class MainMenu extends JFrame {
                 refreshNotifications(true);
                 startNotificationRefreshTimer();
                 promptToStartDrawIfNeeded();
+                Timer inventoryWarmupTimer = new Timer(1_500, ignored ->
+                        InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null));
+                inventoryWarmupTimer.setRepeats(false);
+                inventoryWarmupTimer.start();
             }
         });
     }

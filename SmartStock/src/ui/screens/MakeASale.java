@@ -10,6 +10,7 @@ import managers.SessionManager;
 import services.ManagerApprovalService;
 import services.LanApiClient;
 import services.ProductSearchHelper;
+import services.InventoryCatalogCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.components.AppMenuBar;
@@ -107,15 +108,12 @@ public class MakeASale extends JFrame {
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
     private SwingWorker<java.util.List<Object[]>, Void> searchWorker;
-    private SwingWorker<java.util.List<Object[]>, Void> productCacheWorker;
     private long latestSearchRequestId = 0L;
-    private volatile java.util.List<Object[]> productSearchCache = java.util.Collections.emptyList();
     private long productSearchGeneration;
     private long identifierLookupGeneration;
     private String searchResultsQuery = "";
     private boolean productSearchSelectionNavigated;
     private boolean resettingProductSearch;
-    private int cachedProductLocationId = -1;
     private boolean suppressDiscountFieldEvents = false;
     private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
     private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
@@ -1567,14 +1565,16 @@ public class MakeASale extends JFrame {
     }
 
     private java.util.List<Object[]> tryFilterCachedProducts(int locationId, String searchText) {
-        if (cachedProductLocationId != locationId || productSearchCache.isEmpty()) {
+        java.util.Optional<InventoryCatalogCache.Snapshot> cached = InventoryCatalogCache.current();
+        if (cached.isEmpty() || !java.util.Objects.equals(cached.get().scope().locationId(), locationId)) {
             return null;
         }
         java.util.List<Object[]> rows = new java.util.ArrayList<>();
-        for (Object[] row : productSearchCache) {
+        for (LanApiClient.CatalogProduct product : cached.get().products()) {
             if (rows.size() >= 250) {
                 break;
             }
+            Object[] row = catalogRow(product);
             if (ProductSearchHelper.textMatches(rowValue(row, 9), searchText)) {
                 rows.add(row);
             }
@@ -1590,43 +1590,7 @@ public class MakeASale extends JFrame {
     }
 
     private void warmProductSearchCacheInBackground() {
-        Integer locationId = SessionManager.getCurrentLocationId();
-        if (locationId == null) {
-            return;
-        }
-        if (cachedProductLocationId == locationId && !productSearchCache.isEmpty()) {
-            return;
-        }
-        if (productCacheWorker != null && !productCacheWorker.isDone()) {
-            return;
-        }
-
-        final int loadLocationId = locationId;
-        productCacheWorker = new SwingWorker<>() {
-            @Override
-            protected java.util.List<Object[]> doInBackground() throws Exception {
-                java.util.List<Object[]> rows = new java.util.ArrayList<>();
-                for (LanApiClient.CatalogProduct product : LanApiClient.searchCatalog("")) {
-                    if (isCancelled()) return rows;
-                    rows.add(catalogRow(product));
-                }
-                return rows;
-            }
-
-            @Override
-            protected void done() {
-                if (isCancelled()) {
-                    return;
-                }
-                try {
-                    productSearchCache = get();
-                    cachedProductLocationId = loadLocationId;
-                } catch (Exception ignored) {
-                    // Keep fallback search path active if cache warm-up fails.
-                }
-            }
-        };
-        productCacheWorker.execute();
+        InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null);
     }
 
     private static Object[] catalogRow(LanApiClient.CatalogProduct product) {
@@ -2736,6 +2700,7 @@ public class MakeASale extends JFrame {
             return new CheckoutSnapshot(result, receipt, receiptError, printError);
         }, snapshot -> {
             LanApiClient.CheckoutResult result = snapshot.result();
+            InventoryCatalogCache.refreshAfterMutation().exceptionally(failure -> null);
             pendingCheckoutKey = null;
             pendingCheckoutFingerprint = null;
             String message = "Sale completed successfully.\nReceipt #: " + result.receiptNumber()
