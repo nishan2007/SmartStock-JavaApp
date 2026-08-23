@@ -1858,19 +1858,19 @@ public final class ServerBalanceSheetService {
         String orderSql = """
                 SELECT p.custom_order_payment_id, co.order_number, p.created_at, p.cash_drawer_session_id,
                        COALESCE(NULLIF(TRIM(p.device_name), ''), NULLIF(TRIM(p.device_id), ''), 'Unassigned Device') AS device_label,
-                       COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'No Drawer') AS drawer_label,
+                       COALESCE(NULLIF(TRIM(p.cash_drawer_name), ''), 'No Drawer') AS drawer_label,
                        CASE
-                            WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
-                            WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
+                            WHEN p.payment_action = 'PAYMENT' THEN COALESCE(p.payment_amount, 0)
+                            WHEN p.payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(p.payment_amount, 0)
                             ELSE 0
                        END AS amount
                 FROM custom_order_payments p
                 JOIN custom_orders co ON co.custom_order_id=p.custom_order_id
                 WHERE (? IS NULL OR co.location_id = ?)
-                  AND UPPER(COALESCE(payment_method, '')) = 'CASH'
-                  AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
-                """ + notInSessionFilterSql(cashDrawerSessionIds, "cash_drawer_session_id") + """
-                ORDER BY created_at ASC
+                  AND UPPER(COALESCE(p.payment_method, '')) = 'CASH'
+                  AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                """ + notInSessionFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id") + """
+                ORDER BY p.created_at ASC
                 """;
         try (PreparedStatement ps = conn.prepareStatement(orderSql)) {
             int index = 1;

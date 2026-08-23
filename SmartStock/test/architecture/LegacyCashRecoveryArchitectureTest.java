@@ -24,5 +24,8 @@ class LegacyCashRecoveryArchitectureTest {
         assertTrue(service.contains("unselected session "));
         assertTrue(service.contains("receipt_number"));
         assertTrue(service.contains("order_number"));
+        assertTrue(service.contains("(p.created_at AT TIME ZONE ?)::date"));
+        assertTrue(service.contains("notInSessionFilterSql(cashDrawerSessionIds, \"p.cash_drawer_session_id\")"));
+        assertTrue(service.contains("ORDER BY p.created_at ASC"));
     }
 }

@@ -276,6 +276,14 @@ public final class ThemeManager {
             } else if (Boolean.TRUE.equals(button.getClientProperty("SmartStock.customPaintedButton"))) {
                 button.setOpaque(false);
                 button.setContentAreaFilled(false);
+            } else if (button.getClientProperty("SmartStock.ownedButtonBackground") instanceof Color ownedBackground
+                    && button.getClientProperty("SmartStock.ownedButtonForeground") instanceof Color ownedForeground) {
+                button.setUI(new BasicButtonUI());
+                button.setBackground(ownedBackground);
+                button.setForeground(ownedForeground);
+                button.setOpaque(true);
+                button.setContentAreaFilled(true);
+                button.setBorderPainted(true);
             } else if (!(button instanceof JMenuItem) && isNeutralColor(button.getBackground())) {
                 button.setUI(new BasicButtonUI());
                 button.setBackground(buttonColor);

@@ -362,7 +362,7 @@ public class Quotations extends JFrame {
         return panel;
     }
 
-    static void stylePrimaryButton(JButton button) {
+    public static void stylePrimaryButton(JButton button) {
         styleButton(button, BUTTON_PRIMARY, Color.WHITE);
     }
 
@@ -371,7 +371,10 @@ public class Quotations extends JFrame {
     }
 
     private static void styleButton(JButton button, Color background, Color foreground) {
+        button.putClientProperty("SmartStock.ownedButtonBackground", background);
+        button.putClientProperty("SmartStock.ownedButtonForeground", foreground);
         button.setOpaque(true);
+        button.setContentAreaFilled(true);
         button.setBackground(background);
         button.setForeground(foreground);
         button.setFocusPainted(false);

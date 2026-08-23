@@ -161,6 +161,20 @@ Confirmed findings:
   - The post-upload R2 download matched the expected byte size and SHA-256.
   - Supabase readback returned exactly one matching published release row.
 
+## 2026-08-22 Balance Sheet and quotation-button hotfix 1.0.85
+
+- Fixed the expanded Balance Sheet drawer-match query by qualifying custom-order payment columns after its join, removing the PostgreSQL ambiguous-column failure seen in 1.0.84.
+- Verified the corrected `2026-05-24` through `2026-08-22` query read-only against live local PostgreSQL; no database row was changed.
+- Fixed the blank `New Quotation` button under Windows look and feel by preserving an explicitly painted, contrast-checked accent-button palette through theme refreshes.
+- Focused regressions, the full Maven suite, repository security checks, Windows packaging, and `git diff --check` passed.
+- Windows 1.0.85 artifacts:
+  - `smartstock-windows-1.0.85.zip`: 34,165,190 bytes, SHA-256 `76B6AFB5506B1219436CF0E5E39C87E4935CE5B48834FC09EA33D69BE626587A`
+  - `smartstock-windows-setup-1.0.85.exe`: 52,406,568 bytes, SHA-256 `512C757569432C73EAF88A495D53EF56A7DE0D6DBF4595AC71FE203B14C14EEB`
+- Published SmartStock 1.0.85 build 10085 to the development update channel (Supabase release ID 89).
+  - R2 object: `windows/1.0.85/smartstock-windows-1.0.85.zip`
+  - The post-upload R2 download matched the expected byte size and SHA-256.
+  - Supabase readback returned exactly one matching published release row.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.
