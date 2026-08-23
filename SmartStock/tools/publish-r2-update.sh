@@ -56,20 +56,44 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "jq is required to publish release metadata." >&2
   exit 1
 fi
+wrangler() {
+  if command -v npx >/dev/null 2>&1; then
+    npx wrangler "$@"
+  elif command -v node >/dev/null 2>&1 && [[ -f "$WORKER_DIR/node_modules/wrangler/bin/wrangler.js" ]]; then
+    node "$WORKER_DIR/node_modules/wrangler/bin/wrangler.js" "$@"
+  else
+    echo "Node.js and the local Wrangler dependency are required to publish updates." >&2
+    return 127
+  fi
+}
 
 SUPABASE_SERVER_KEY="${SUPABASE_SECRET_KEY:-${SUPABASE_SERVICE_ROLE_KEY}}"
 ARTIFACT_NAME="$(basename "$ARTIFACT_PATH")"
 OBJECT_KEY="$PLATFORM/$VERSION/$ARTIFACT_NAME"
 OBJECT_PATH="$R2_BUCKET/$OBJECT_KEY"
-LOCAL_SHA256="$(shasum -a 256 "$ARTIFACT_PATH" | awk '{print $1}')"
-LOCAL_SIZE="$(stat -f '%z' "$ARTIFACT_PATH")"
+sha256_file() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
+}
+file_size() {
+  if stat -f '%z' "$1" >/dev/null 2>&1; then
+    stat -f '%z' "$1"
+  else
+    stat -c '%s' "$1"
+  fi
+}
+LOCAL_SHA256="$(sha256_file "$ARTIFACT_PATH")"
+LOCAL_SIZE="$(file_size "$ARTIFACT_PATH")"
 VERIFY_FILE="$(mktemp "${TMPDIR:-/tmp}/smartstock-r2-verify.XXXXXX")"
 trap 'rm -f "$VERIFY_FILE"' EXIT
 
 echo "Uploading $ARTIFACT_NAME to R2 as $OBJECT_KEY..."
 (
   cd "$WORKER_DIR"
-  npx wrangler r2 object put "$OBJECT_PATH" \
+  wrangler r2 object put "$OBJECT_PATH" \
     --remote \
     --file "$ARTIFACT_PATH" \
     --content-type "application/zip" \
@@ -80,10 +104,10 @@ echo "Uploading $ARTIFACT_NAME to R2 as $OBJECT_KEY..."
 echo "Downloading the stored object for byte-for-byte verification..."
 (
   cd "$WORKER_DIR"
-  npx wrangler r2 object get "$OBJECT_PATH" --remote --file "$VERIFY_FILE"
+  wrangler r2 object get "$OBJECT_PATH" --remote --file "$VERIFY_FILE"
 )
-REMOTE_SHA256="$(shasum -a 256 "$VERIFY_FILE" | awk '{print $1}')"
-REMOTE_SIZE="$(stat -f '%z' "$VERIFY_FILE")"
+REMOTE_SHA256="$(sha256_file "$VERIFY_FILE")"
+REMOTE_SIZE="$(file_size "$VERIFY_FILE")"
 if [[ "$REMOTE_SHA256" != "$LOCAL_SHA256" || "$REMOTE_SIZE" != "$LOCAL_SIZE" ]]; then
   echo "R2 verification failed. Supabase release metadata was not published." >&2
   echo "Expected size/SHA-256: $LOCAL_SIZE $LOCAL_SHA256" >&2

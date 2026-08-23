@@ -506,8 +506,8 @@ public final class ServerBalanceSheetService {
             syncPaidPayrollExpenses(conn, storeZoneId, locationId);
             List<SheetLine> income = loadIncome(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> receivables = loadReceivables(conn, locationId);
-            List<SheetLine> expenses = loadExpenses(conn, from, to, locationId, "PAID");
-            List<SheetLine> payables = loadExpenses(conn, from, to, locationId, "UNPAID");
+            List<SheetLine> expenses = loadExpenses(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds, "PAID");
+            List<SheetLine> payables = loadExpenses(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds, "UNPAID");
             List<SheetLine> drawerCash = loadDrawerCash(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceSales = loadDeviceSales(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceOrders = loadDeviceOrders(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
@@ -784,7 +784,7 @@ public final class ServerBalanceSheetService {
 
     public static BalanceSheet loadBalanceSheet(Connection conn,LocalDate from,LocalDate to,String zone,List<Long>sessionIds)throws SQLException{
         ensureSchema(conn);Integer locationId=ServerRequestIdentity.locationId();syncPaidPayrollExpenses(conn,zone,locationId);
-        List<SheetLine>income=loadIncome(conn,from,to,zone,locationId,sessionIds),receivables=loadReceivables(conn,locationId),expenses=loadExpenses(conn,from,to,locationId,"PAID"),payables=loadExpenses(conn,from,to,locationId,"UNPAID"),drawerCash=loadDrawerCash(conn,from,to,zone,locationId,sessionIds),deviceSales=loadDeviceSales(conn,from,to,zone,locationId,sessionIds),deviceOrders=loadDeviceOrders(conn,from,to,zone,locationId,sessionIds),devicePayments=loadDevicePayments(conn,from,to,zone,locationId,sessionIds),accountPayments=loadAccountPayments(conn,from,to,zone,locationId,sessionIds),drawerChecks=loadDrawerMatchChecks(conn,from,to,zone,locationId,sessionIds);
+        List<SheetLine>income=loadIncome(conn,from,to,zone,locationId,sessionIds),receivables=loadReceivables(conn,locationId),expenses=loadExpenses(conn,from,to,zone,locationId,sessionIds,"PAID"),payables=loadExpenses(conn,from,to,zone,locationId,sessionIds,"UNPAID"),drawerCash=loadDrawerCash(conn,from,to,zone,locationId,sessionIds),deviceSales=loadDeviceSales(conn,from,to,zone,locationId,sessionIds),deviceOrders=loadDeviceOrders(conn,from,to,zone,locationId,sessionIds),devicePayments=loadDevicePayments(conn,from,to,zone,locationId,sessionIds),accountPayments=loadAccountPayments(conn,from,to,zone,locationId,sessionIds),drawerChecks=loadDrawerMatchChecks(conn,from,to,zone,locationId,sessionIds);
         List<BankTransactionLine>bank=loadBankTransactions(conn,from,to,locationId);List<ChequeDepositOption>cheques=loadPendingChequeDeposits(conn,locationId);BigDecimal cash=total(drawerCash),totalIncome=total(income),totalReceivables=total(receivables),totalExpenses=total(expenses),totalPayables=total(payables),bf=loadPreviousBalanceCf(conn,from,locationId);if(bf==null)bf=BigDecimal.ZERO;BigDecimal cf=bf.add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
         return new BalanceSheet(null,null,null,null,null,null,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bank,cheques,drawerChecks,cash,bf,totalIncome,totalReceivables,totalExpenses,totalPayables,cf);
     }
@@ -1356,11 +1356,7 @@ public final class ServerBalanceSheetService {
 
         String customOrderSql = """
                 SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
-                       SUM(CASE
-                            WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
-                            WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
-                            ELSE 0
-                       END) AS amount
+                       SUM(COALESCE(payment_amount, 0)) AS amount
                 FROM custom_order_payments
                 WHERE (? IS NULL OR EXISTS (
                     SELECT 1 FROM custom_orders co
@@ -1368,6 +1364,7 @@ public final class ServerBalanceSheetService {
                       AND co.location_id = ?
                 ))
                   AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                  AND COALESCE(payment_action, 'PAYMENT') = 'PAYMENT'
                 """ + sessionFilter + """
                 GROUP BY COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN')
                 """;
@@ -1388,17 +1385,88 @@ public final class ServerBalanceSheetService {
                 }
             }
         }
+        if (tableExists(conn, "customer_account_transactions")) {
+            StringBuilder orderAccountSql = new StringBuilder("""
+                    SELECT COALESCE(SUM(adjustment), 0) AS amount
+                    FROM (
+                        SELECT CASE
+                                   WHEN cat.transaction_type = 'CUSTOM_ORDER_REFUND' AND COALESCE(cat.amount, 0) > 0
+                                       THEN cat.amount
+                                   ELSE COALESCE(cat.amount, 0)
+                               END AS adjustment
+                        FROM customer_account_transactions cat
+                        JOIN custom_orders co ON co.custom_order_id = cat.custom_order_id
+                        WHERE (cat.transaction_type IN ('CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')
+                               OR (cat.transaction_type = 'CUSTOM_ORDER_REFUND' AND COALESCE(cat.amount, 0) > 0))
+                          AND (? IS NULL OR co.location_id = ?)
+                          AND (cat.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """);
+            boolean hasAllocations = tableExists(conn, "customer_account_payment_allocations");
+            if (hasAllocations) {
+                orderAccountSql.append("""
+                        UNION ALL
+                        SELECT -COALESCE(allocation.amount, 0) AS adjustment
+                        FROM customer_account_payment_allocations allocation
+                        JOIN custom_orders co ON co.custom_order_id = allocation.custom_order_id
+                        WHERE allocation.custom_order_id IS NOT NULL
+                          AND (? IS NULL OR co.location_id = ?)
+                          AND (allocation.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                        """);
+            }
+            boolean hasLineReturns = tableExists(conn, "custom_order_line_returns");
+            if (hasLineReturns) {
+                orderAccountSql.append("""
+                        UNION ALL
+                        SELECT -COALESCE(order_return.balance_reduction, 0) AS adjustment
+                        FROM custom_order_line_returns order_return
+                        JOIN custom_orders co ON co.custom_order_id = order_return.custom_order_id
+                        WHERE COALESCE(order_return.balance_reduction, 0) > 0
+                          AND (? IS NULL OR co.location_id = ?)
+                          AND (order_return.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                        """);
+            }
+            orderAccountSql.append(") order_account_activity");
+            try (PreparedStatement ps = conn.prepareStatement(orderAccountSql.toString())) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                if (hasAllocations) {
+                    setNullableInteger(ps, index++, locationId);
+                    setNullableInteger(ps, index++, locationId);
+                    ps.setString(index++, storeZoneId);
+                    ps.setDate(index++, Date.valueOf(from));
+                    ps.setDate(index, Date.valueOf(to));
+                    index++;
+                }
+                if (hasLineReturns) {
+                    setNullableInteger(ps, index++, locationId);
+                    setNullableInteger(ps, index++, locationId);
+                    ps.setString(index++, storeZoneId);
+                    ps.setDate(index++, Date.valueOf(from));
+                    ps.setDate(index, Date.valueOf(to));
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        BigDecimal amount = defaultZero(rs.getBigDecimal("amount"));
+                        if (amount.signum() != 0) {
+                            lines.add(new SheetLine("ORDER ACCOUNT", amount));
+                        }
+                    }
+                }
+            }
+        }
         if (tableExists(conn, "invoice_payments")) {
             String invoicePaymentSql = """
                     SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
-                           SUM(CASE
-                                WHEN payment_action = 'PAYMENT' THEN COALESCE(payment_amount, 0)
-                                WHEN payment_action IN ('REFUND', 'REVERSAL') THEN -COALESCE(payment_amount, 0)
-                                ELSE 0
-                           END) AS amount
+                           SUM(COALESCE(payment_amount, 0)) AS amount
                     FROM invoice_payments
                     WHERE (? IS NULL OR location_id = ?)
                       AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                      AND COALESCE(payment_action, 'PAYMENT') = 'PAYMENT'
+                      AND voided_at IS NULL
                     """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "payment_method") + """
                     GROUP BY COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN')
                     """;
@@ -1474,17 +1542,35 @@ public final class ServerBalanceSheetService {
     private static List<SheetLine> loadReceivables(Connection conn, Integer locationId) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
         String sql = """
-                SELECT COALESCE(NULLIF(TRIM(name), ''), 'Customer Account') AS label,
-                       COALESCE(current_balance, 0) AS amount
-                FROM customer_accounts
-                WHERE COALESCE(current_balance, 0) > 0
-                ORDER BY current_balance DESC, name ASC
+                SELECT label, SUM(amount) AS amount
+                FROM (
+                    SELECT customer_id,
+                           COALESCE(NULLIF(TRIM(name), ''), 'Customer Account') AS label,
+                           COALESCE(current_balance, 0) AS amount
+                    FROM customer_accounts
+                    WHERE COALESCE(current_balance, 0) > 0
+                    UNION ALL
+                    SELECT co.customer_id,
+                           COALESCE(NULLIF(TRIM(co.customer_name), ''), 'Customer Account') AS label,
+                           SUM(COALESCE(co.balance_due, 0)) AS amount
+                    FROM custom_orders co
+                    WHERE COALESCE(co.balance_due, 0) > 0
+                      AND COALESCE(co.status, '') <> 'CANCELLED'
+                      AND (? IS NULL OR co.location_id = ?)
+                    GROUP BY co.customer_id, COALESCE(NULLIF(TRIM(co.customer_name), ''), 'Customer Account')
+                ) receivable_sources
+                GROUP BY customer_id, label
+                HAVING SUM(amount) > 0
+                ORDER BY amount DESC, label ASC
                 LIMIT 30
                 """;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                lines.add(new SheetLine(rs.getString("label"), defaultZero(rs.getBigDecimal("amount"))));
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            setNullableInteger(ps, 1, locationId);
+            setNullableInteger(ps, 2, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    lines.add(new SheetLine(rs.getString("label"), defaultZero(rs.getBigDecimal("amount"))));
+                }
             }
         }
         if (lines.isEmpty()) {
@@ -1493,7 +1579,8 @@ public final class ServerBalanceSheetService {
         return lines;
     }
 
-    private static List<SheetLine> loadExpenses(Connection conn, LocalDate from, LocalDate to, Integer locationId,
+    private static List<SheetLine> loadExpenses(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
+                                                Integer locationId, List<Long> cashDrawerSessionIds,
                                                 String status) throws SQLException {
         List<SheetLine> lines = new ArrayList<>();
         String sql = """
@@ -1517,6 +1604,130 @@ public final class ServerBalanceSheetService {
                 while (rs.next()) {
                     String label = rs.getString("category") + " - " + rs.getString("label");
                     lines.add(new SheetLine(label, defaultZero(rs.getBigDecimal("amount"))));
+                }
+            }
+        }
+        if ("PAID".equals(status) && tableExists(conn, "sale_returns")) {
+            String saleRefundSql = """
+                    SELECT COALESCE(NULLIF(TRIM(return_receipt_number), ''), 'Sale ' || sale_id) AS refund_label,
+                           COALESCE(NULLIF(TRIM(refund_method), ''), 'UNKNOWN') AS refund_method,
+                           SUM(COALESCE(refund_amount, 0)) AS amount
+                    FROM sale_returns
+                    WHERE (? IS NULL OR location_id = ?)
+                      AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "refund_method") + """
+                    GROUP BY COALESCE(NULLIF(TRIM(return_receipt_number), ''), 'Sale ' || sale_id),
+                             COALESCE(NULLIF(TRIM(refund_method), ''), 'UNKNOWN')
+                    ORDER BY refund_label, refund_method
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(saleRefundSql)) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                index = bindSessionIds(ps, index, cashDrawerSessionIds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        lines.add(new SheetLine("SALE REFUND - " + rs.getString("refund_label")
+                                + " (" + rs.getString("refund_method") + ")", defaultZero(rs.getBigDecimal("amount"))));
+                    }
+                }
+            }
+        }
+        if ("PAID".equals(status) && tableExists(conn, "custom_order_payments")) {
+            String refundSql = """
+                    SELECT COALESCE(NULLIF(TRIM(co.order_number), ''), 'Order ' || co.custom_order_id) AS order_label,
+                           COALESCE(NULLIF(TRIM(p.payment_method), ''), 'UNKNOWN') AS payment_method,
+                           SUM(COALESCE(p.payment_amount, 0)) AS amount
+                    FROM custom_order_payments p
+                    JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
+                    WHERE COALESCE(p.payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL')
+                      AND (? IS NULL OR co.location_id = ?)
+                      AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """ + cashDrawerFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id", "p.payment_method") + """
+                    GROUP BY COALESCE(NULLIF(TRIM(co.order_number), ''), 'Order ' || co.custom_order_id),
+                             COALESCE(NULLIF(TRIM(p.payment_method), ''), 'UNKNOWN')
+                    ORDER BY order_label, payment_method
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(refundSql)) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                index = bindSessionIds(ps, index, cashDrawerSessionIds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        lines.add(new SheetLine(
+                                "CUSTOM ORDER REFUND - " + rs.getString("order_label") + " (" + rs.getString("payment_method") + ")",
+                                defaultZero(rs.getBigDecimal("amount"))
+                        ));
+                    }
+                }
+            }
+        }
+        if ("PAID".equals(status) && tableExists(conn, "invoice_payments")) {
+            String invoiceRefundSql = """
+                    SELECT COALESCE(NULLIF(TRIM(i.invoice_number), ''), 'Invoice ' || i.invoice_id) AS invoice_label,
+                           COALESCE(NULLIF(TRIM(p.payment_method), ''), 'UNKNOWN') AS payment_method,
+                           SUM(COALESCE(p.payment_amount, 0)) AS amount
+                    FROM invoice_payments p
+                    JOIN invoices i ON i.invoice_id = p.invoice_id
+                    WHERE COALESCE(p.payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL')
+                      AND p.voided_at IS NULL
+                      AND (? IS NULL OR p.location_id = ?)
+                      AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """ + cashDrawerFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id", "p.payment_method") + """
+                    GROUP BY COALESCE(NULLIF(TRIM(i.invoice_number), ''), 'Invoice ' || i.invoice_id),
+                             COALESCE(NULLIF(TRIM(p.payment_method), ''), 'UNKNOWN')
+                    ORDER BY invoice_label, payment_method
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(invoiceRefundSql)) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                index = bindSessionIds(ps, index, cashDrawerSessionIds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        lines.add(new SheetLine("INVOICE REFUND - " + rs.getString("invoice_label")
+                                + " (" + rs.getString("payment_method") + ")", defaultZero(rs.getBigDecimal("amount"))));
+                    }
+                }
+            }
+        }
+        if ("PAID".equals(status) && tableExists(conn, "cross_store_refund_requests")) {
+            String crossStoreRefundSql = """
+                    SELECT COALESCE(NULLIF(TRIM(return_receipt_number), ''), 'Request ' || request_id) AS refund_label,
+                           COALESCE(NULLIF(TRIM(refund_method), ''), 'UNKNOWN') AS refund_method,
+                           SUM(COALESCE(refund_amount, 0)) AS amount
+                    FROM cross_store_refund_requests
+                    WHERE status NOT IN ('REJECTED', 'CANCELLED')
+                      AND (? IS NULL OR receiving_location_id = ?)
+                      AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+                    """ + cashDrawerFilterSql(cashDrawerSessionIds, "cash_drawer_session_id", "refund_method") + """
+                    GROUP BY COALESCE(NULLIF(TRIM(return_receipt_number), ''), 'Request ' || request_id),
+                             COALESCE(NULLIF(TRIM(refund_method), ''), 'UNKNOWN')
+                    ORDER BY refund_label, refund_method
+                    """;
+            try (PreparedStatement ps = conn.prepareStatement(crossStoreRefundSql)) {
+                int index = 1;
+                setNullableInteger(ps, index++, locationId);
+                setNullableInteger(ps, index++, locationId);
+                ps.setString(index++, storeZoneId);
+                ps.setDate(index++, Date.valueOf(from));
+                ps.setDate(index++, Date.valueOf(to));
+                index = bindSessionIds(ps, index, cashDrawerSessionIds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        lines.add(new SheetLine("CROSS-STORE REFUND - " + rs.getString("refund_label")
+                                + " (" + rs.getString("refund_method") + ")", defaultZero(rs.getBigDecimal("amount"))));
+                    }
                 }
             }
         }

@@ -175,6 +175,22 @@ Confirmed findings:
   - The post-upload R2 download matched the expected byte size and SHA-256.
   - Supabase readback returned exactly one matching published release row.
 
+## 2026-08-23 Balance Sheet accounting release 1.0.86
+
+- Added custom-order unpaid balances to `Orders / Charge Account` and Accounts Receivable.
+- Later custom-order payments now reclassify the matching charge amount while continuing to display the received payment under cash, card, MMG, or cheque, preventing duplicate income.
+- POS sale, custom-order, invoice, and cross-store refund payouts now appear under Expenses instead of being netted into Income.
+- Cash refunds remain tied to their drawer session and reduce expected drawer cash; unpaid-balance reductions affect receivables without being reported as payouts.
+- Made the R2 publisher portable across macOS and Git Bash by supporting either `shasum` or `sha256sum`, BSD or GNU `stat`, and the repository-local Wrangler executable when `npx` is unavailable.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, and `git diff --check` passed.
+- Windows 1.0.86 artifacts:
+  - `smartstock-windows-1.0.86.zip`: 34,167,144 bytes, SHA-256 `874176CE7CE74D9FD19F721FF55A7E8AC793634A377C2C5E7501734D57A88D9E`
+  - `smartstock-windows-setup-1.0.86.exe`: 52,407,536 bytes, SHA-256 `0F021302BE93A9FBBF2473AC18A2B129195CE4BFF15E3F1679B3F5B400ECF99F`
+- Published SmartStock 1.0.86 build 10086 to the development update channel (Supabase release ID 90).
+  - R2 object: `windows/1.0.86/smartstock-windows-1.0.86.zip`
+  - The post-upload R2 download matched the expected byte size and SHA-256.
+  - Supabase readback returned exactly one matching published release row.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

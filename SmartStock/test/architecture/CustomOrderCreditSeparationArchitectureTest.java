@@ -36,6 +36,21 @@ class CustomOrderCreditSeparationArchitectureTest {
         assertTrue(screen.contains("Total Due"));
     }
 
+    @Test void balanceSheetReclassifiesCustomOrderChargesAndShowsOpenOrderReceivables()throws Exception{
+        String balanceSheet=read("src/services/ServerBalanceSheetService.java");
+        assertTrue(balanceSheet.contains("cat.transaction_type IN ('CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')"));
+        assertTrue(balanceSheet.contains("SELECT -COALESCE(allocation.amount, 0) AS adjustment"));
+        assertTrue(balanceSheet.contains("SELECT -COALESCE(order_return.balance_reduction, 0) AS adjustment"));
+        assertTrue(balanceSheet.contains("lines.add(new SheetLine(\"ORDER ACCOUNT\", amount))"));
+        assertTrue(balanceSheet.contains("SUM(COALESCE(co.balance_due, 0)) AS amount"));
+        assertTrue(balanceSheet.contains("COALESCE(co.status, '') <> 'CANCELLED'"));
+        assertTrue(balanceSheet.contains("CUSTOM ORDER REFUND - "));
+        assertTrue(balanceSheet.contains("SALE REFUND - "));
+        assertTrue(balanceSheet.contains("INVOICE REFUND - "));
+        assertTrue(balanceSheet.contains("CROSS-STORE REFUND - "));
+        assertTrue(balanceSheet.contains("COALESCE(p.payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL')"));
+    }
+
     @Test void baselineAndMigrationCoverHistoricalRows()throws Exception{
         String baseline=read("database/v1/local/001_schema.sql");
         String migration=read("database/migrations/v1_after/20260811130000_separate_custom_order_credit.sql");

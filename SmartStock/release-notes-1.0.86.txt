@@ -1,0 +1,5 @@
+Balance Sheet accounting improvements:
+- Shows unpaid custom-order balances under Orders / Charge Account and Accounts Receivable.
+- Reclassifies later custom-order payments from Charge Account to their received payment method without duplicating income.
+- Lists POS sale, custom-order, invoice, and cross-store refund payouts under Expenses instead of Income.
+- Cash refunds continue to reduce the matched drawer session's expected cash.
