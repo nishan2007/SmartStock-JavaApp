@@ -26,6 +26,10 @@ class BalanceSheetBfOverrideArchitectureTest {
         assertTrue(api.contains("Only an administrator can set or edit Balance B/F."));
         assertTrue(client.contains("mutate(\"SET_BALANCE_BF\",body)"));
         assertTrue(screen.contains("new JButton(\"Set Balance B/F\")"));
+        assertTrue(screen.contains("startNextDraft(to)"));
+        assertTrue(screen.contains("submittedPeriodEnd.plusDays(1)"));
+        assertTrue(screen.contains("matchedDrawerSessionIds = List.of()"));
+        assertTrue(screen.contains("submitted CF as its Balance BF"));
         assertTrue(sync.contains("\"balance_sheet_bf_overrides\""));
     }
 

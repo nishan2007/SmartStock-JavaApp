@@ -70,4 +70,18 @@ class MobileItemWebArchitectureTest {
         assertTrue(api.contains("/trust"));
         assertTrue(source("src/mobile-web/boot.js").contains("smartstockMobileReady"));
     }
+
+    @Test void addItemSupportsSaveAndNewAndMarksRequiredFields()throws Exception{
+        String html=source("src/mobile-web/index.html");
+        String js=source("src/mobile-web/app.js");
+        String css=source("src/mobile-web/app.css");
+        assertTrue(html.contains("id=\"saveAndNew\""));
+        assertTrue(html.contains("Save &amp; New"));
+        assertTrue(html.contains("Required fields"));
+        assertTrue(js.contains("e.submitter?.id==='saveAndNew'"));
+        assertTrue(js.contains("openEditor(kind,next)"));
+        assertTrue(js.contains("requiredLabel(label,required)"));
+        assertTrue(js.contains("class=\"required-marker\""));
+        assertTrue(css.contains(".required-marker"));
+    }
 }

@@ -1,0 +1,5 @@
+Workflow improvements:
+- Adds Save & New to the mobile Add Item web app so employees can continue entering items after a successful save.
+- Marks the Add Item form's required fields, including the required product photo, with a red asterisk.
+- Starts a clean, non-overlapping Balance Sheet draft after submission and carries the submitted CF into the new draft as Balance BF.
+- Clears the prior draft's matched drawer-session selection after submission while keeping the saved sheet available in Previous.

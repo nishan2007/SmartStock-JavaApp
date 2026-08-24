@@ -191,6 +191,22 @@ Confirmed findings:
   - The post-upload R2 download matched the expected byte size and SHA-256.
   - Supabase readback returned exactly one matching published release row.
 
+## 2026-08-23 mobile item and Balance Sheet workflow release 1.0.87
+
+- Added `Save & New` to the mobile Add Item web app. A successful save opens a clean form of the same item type, while edits continue to offer only the normal Save action.
+- Added visible red asterisks for the web form's actual required fields, including the required inventory-product photo.
+- Fixed Balance Sheet submission success to start the next non-overlapping draft instead of reopening the submitted read-only sheet.
+- The new draft clears the submitted draft's matched drawer sessions and automatically carries the submitted CF into Balance BF.
+- Verified live submission 5 saved for `2026-05-24` through `2026-08-23` with CF `$51,542.50`; the corrected next draft starts `2026-08-24` with that amount as BF. No live database row was changed during verification.
+- JavaScript syntax validation, full Maven tests, repository security checks, Windows packaging, embedded mobile-resource validation, and `git diff --check` passed.
+- Windows 1.0.87 artifacts:
+  - `smartstock-windows-1.0.87.zip`: 34,167,732 bytes, SHA-256 `A007DBF9E12C6E2757EE26EA6B824CAC0073651A2FA4ED16E7270D62C0AC6FC2`
+  - `smartstock-windows-setup-1.0.87.exe`: 52,409,788 bytes, SHA-256 `88B704CFE83AD6AD31BDE26894B0EEC5E0A2F964A65259DF1070AA244B1CD346`
+- Published SmartStock 1.0.87 build 10087 to the development update channel (Supabase release ID 91).
+  - R2 object: `windows/1.0.87/smartstock-windows-1.0.87.zip`
+  - The post-upload R2 download matched the expected byte size and SHA-256.
+  - Supabase readback returned exactly one matching published release row.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

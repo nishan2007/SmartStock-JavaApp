@@ -619,11 +619,11 @@ public class BalanceSheet extends JFrame {
             });
             if (submitted == null) return;
             loadSubmissionHistory();
-            loadSubmissionById(submitted.submissionId());
+            startNextDraft(to);
             services.EmailOutboxService.QueueResult emailResult = submitted.emailResult();
             String message = emailResult.queued()
-                    ? "Balance sheet submitted and the email copy was queued."
-                    : "Balance sheet submitted.\n\nEmail copy not sent: " + emailResult.message();
+                    ? "Balance sheet submitted and the email copy was queued.\n\nA new draft has been started with the submitted CF as its Balance BF."
+                    : "Balance sheet submitted. A new draft has been started with the submitted CF as its Balance BF.\n\nEmail copy not sent: " + emailResult.message();
             JOptionPane.showMessageDialog(this, message, "Balance Sheet", JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to submit balance sheet: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -632,6 +632,17 @@ public class BalanceSheet extends JFrame {
 
     private record SubmissionResult(long submissionId,
                                     services.EmailOutboxService.QueueResult emailResult) { }
+
+    private void startNextDraft(LocalDate submittedPeriodEnd) {
+        LocalDate nextStart = submittedPeriodEnd.plusDays(1);
+        LocalDate nextEnd = StoreTimeZoneHelper.today();
+        if (nextEnd.isBefore(nextStart)) nextEnd = nextStart;
+        currentSheet = null;
+        matchedDrawerSessionIds = List.of();
+        fromField.setText(nextStart.toString());
+        toField.setText(nextEnd.toString());
+        loadSheet();
+    }
 
     private void loadSubmissionHistory() {
         Object selected = savedSheetBox.getSelectedItem();
