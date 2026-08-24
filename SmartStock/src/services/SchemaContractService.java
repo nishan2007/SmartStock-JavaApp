@@ -46,7 +46,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260818120000_mobile_item_web.sql",
             "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
             "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql",
-            "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
+            "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql",
+            "database/migrations/v1_after/20260823123000_optional_new_item_cost_price.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -145,6 +146,37 @@ public final class SchemaContractService {
             connection.rollback();
             if (ex instanceof SQLException sql) throw sql;
             throw new SQLException("The mobile item web schema could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureOptionalNewItemCostPriceUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "company_customization")
+                || columnExists(connection, "public", "company_customization", "require_cost_price_on_new_item")) return;
+        String storedResource = null, storedCatalog = null;
+        if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setInt(1, BASELINE_VERSION);
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) { storedResource=rs.getString(1); storedCatalog=rs.getString(2); } }
+            }
+        }
+        String actual = catalogFingerprint(connection, List.of("public"), false);
+        if (storedCatalog != null && !actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic cost-price preference installation is blocked.", "55000");
+        String expected;
+        try { expected = resourceFingerprint(localContractResources()); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        boolean auto = connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource("database/migrations/v1_after/20260823123000_optional_new_item_cost_price.sql"));
+            if (storedResource != null) try (PreparedStatement ps = connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")) {
+                ps.setString(1, expected); ps.setString(2, catalogFingerprint(connection,List.of("public"),false));
+                ps.setInt(3, BASELINE_VERSION); ps.setString(4, storedResource);
+                if (ps.executeUpdate()!=1) throw new SQLException("Local schema metadata changed during cost-price preference installation.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback(); if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The cost-price preference could not be installed.", ex);
         } finally { connection.setAutoCommit(auto); }
     }
 

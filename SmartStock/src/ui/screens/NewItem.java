@@ -3,6 +3,7 @@ package ui.screens;
 import ui.screens.customorders.NewCustomItem;
 
 import managers.SessionManager;
+import managers.CompanyCustomizationManager;
 import services.LanApiClient;
 import services.InventoryCatalogCache;
 import ui.components.AppMenuBar;
@@ -58,6 +59,7 @@ public class NewItem extends JFrame {
     private final int selectedLocationId;
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
+    private final boolean requireCostPrice;
 
     public NewItem() {
         this(1);
@@ -65,6 +67,7 @@ public class NewItem extends JFrame {
 
     public NewItem(int selectedLocationId) {
         this.selectedLocationId = selectedLocationId;
+        this.requireCostPrice = loadRequireCostPricePreference();
         setTitle("Add New Item");
         setSize(1120, 800);
         setMinimumSize(new Dimension(900, 650));
@@ -179,7 +182,9 @@ public class NewItem extends JFrame {
 
     private JPanel createPricingSection() {
         JPanel fields = createFieldGrid();
-        addField(fields, 0, 0, "Cost price", costPriceField, "What the business pays for one item.", true, 1);
+        addField(fields, 0, 0, "Cost price", costPriceField,
+                requireCostPrice ? "What the business pays for one item." : "Optional; blank saves as $0.00.",
+                requireCostPrice, 1);
         addField(fields, 1, 0, "Selling price", priceField, "The price charged to the customer.", true, 1);
         addField(fields, 0, 1, "Product classification", itemTypeBox, "Choose Inventory, Service, or Non Inventory.", false, 1);
         addField(fields, 1, 1, "Starting quantity", quantityField, quantityHintLabel, false, 1);
@@ -432,7 +437,7 @@ public class NewItem extends JFrame {
             showValidationError("Scan or enter the primary barcode.", barcodeField);
             return;
         }
-        if (costPriceText.isEmpty()) {
+        if (requireCostPrice && costPriceText.isEmpty()) {
             showValidationError("Enter the cost price.", costPriceField);
             return;
         }
@@ -443,7 +448,8 @@ public class NewItem extends JFrame {
 
         double costPrice;
         try {
-            costPrice = utils.CurrencyFormatter.normalize(new java.math.BigDecimal(costPriceText)).doubleValue();
+            costPrice = costPriceText.isEmpty() ? 0.0
+                    : utils.CurrencyFormatter.normalize(new java.math.BigDecimal(costPriceText)).doubleValue();
         } catch (NumberFormatException ex) {
             showValidationError("Cost price must be a valid number.", costPriceField);
             return;
@@ -524,6 +530,11 @@ public class NewItem extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
+    }
+
+    private static boolean loadRequireCostPricePreference() {
+        try { return CompanyCustomizationManager.loadSaleSafetySettings().requireCostPriceOnNewItem(); }
+        catch (Exception ex) { return true; }
     }
 
     private record ProductSaveOutcome(LanApiClient.SavedProduct saved,String imageUrl) { }

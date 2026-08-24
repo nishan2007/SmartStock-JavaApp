@@ -84,4 +84,14 @@ class MobileItemWebArchitectureTest {
         assertTrue(js.contains("class=\"required-marker\""));
         assertTrue(css.contains(".required-marker"));
     }
+
+    @Test void costPriceRequirementComesFromServerPreferenceAndBlankOptionalCostBecomesZero()throws Exception{
+        String api=source("src/services/MobileItemWebServer.java");
+        String product=source("src/services/LanProductAdminService.java");
+        String js=source("src/mobile-web/app.js");
+        assertTrue(api.contains("requireCostPriceOnNewItem"));
+        assertTrue(js.contains("bootstrap?.requireCostPriceOnNewItem!==false"));
+        assertTrue(product.contains("Cost price is required by Company Preferences."));
+        assertTrue(product.contains("request.costPrice() == null ? BigDecimal.ZERO"));
+    }
 }

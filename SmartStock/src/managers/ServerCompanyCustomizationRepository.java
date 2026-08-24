@@ -746,7 +746,8 @@ public class ServerCompanyCustomizationRepository {
     private static SaleSafetySettings loadSaleSafetySettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT COALESCE(sale_discount_limit_percent, 5) AS sale_discount_limit_percent,
-                       COALESCE(sale_return_approval_limit, 0) AS sale_return_approval_limit
+                       COALESCE(sale_return_approval_limit, 0) AS sale_return_approval_limit,
+                       COALESCE(require_cost_price_on_new_item, TRUE) AS require_cost_price_on_new_item
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -759,7 +760,8 @@ public class ServerCompanyCustomizationRepository {
                 }
                 return new SaleSafetySettings(
                         rs.getBigDecimal("sale_discount_limit_percent"),
-                        rs.getBigDecimal("sale_return_approval_limit")
+                        rs.getBigDecimal("sale_return_approval_limit"),
+                        rs.getBoolean("require_cost_price_on_new_item")
                 );
             }
         }
@@ -771,12 +773,14 @@ public class ServerCompanyCustomizationRepository {
                     location_id,
                     sale_discount_limit_percent,
                     sale_return_approval_limit,
+                    require_cost_price_on_new_item,
                     updated_at
                 )
-                VALUES (?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     sale_discount_limit_percent = EXCLUDED.sale_discount_limit_percent,
                     sale_return_approval_limit = EXCLUDED.sale_return_approval_limit,
+                    require_cost_price_on_new_item = EXCLUDED.require_cost_price_on_new_item,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -784,6 +788,7 @@ public class ServerCompanyCustomizationRepository {
             ps.setInt(1, locationId);
             ps.setBigDecimal(2, settings.discountLimitPercent());
             ps.setBigDecimal(3, settings.returnApprovalLimit());
+            ps.setBoolean(4, settings.requireCostPriceOnNewItem());
             ps.executeUpdate();
         }
     }
@@ -1266,7 +1271,8 @@ public class ServerCompanyCustomizationRepository {
         }
         return new SaleSafetySettings(
                 parsePercent(properties.getProperty("sales.discount_limit_percent", "5")),
-                parseMoney(properties.getProperty("sales.return_approval_limit", "0"))
+                parseMoney(properties.getProperty("sales.return_approval_limit", "0")),
+                Boolean.parseBoolean(properties.getProperty("inventory.require_cost_price_on_new_item", "true"))
         );
     }
 
@@ -1434,6 +1440,7 @@ public class ServerCompanyCustomizationRepository {
         }
         properties.setProperty("sales.discount_limit_percent", settings.discountLimitPercent().toPlainString());
         properties.setProperty("sales.return_approval_limit", settings.returnApprovalLimit().toPlainString());
+        properties.setProperty("inventory.require_cost_price_on_new_item", String.valueOf(settings.requireCostPriceOnNewItem()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -2053,7 +2060,8 @@ public class ServerCompanyCustomizationRepository {
         }
     }
 
-    public record SaleSafetySettings(java.math.BigDecimal discountLimitPercent, java.math.BigDecimal returnApprovalLimit) {
+    public record SaleSafetySettings(java.math.BigDecimal discountLimitPercent, java.math.BigDecimal returnApprovalLimit,
+                                     boolean requireCostPriceOnNewItem) {
         public SaleSafetySettings {
             discountLimitPercent = discountLimitPercent == null ? java.math.BigDecimal.valueOf(5) : discountLimitPercent;
             if (discountLimitPercent.compareTo(java.math.BigDecimal.ZERO) < 0) {

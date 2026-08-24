@@ -1,0 +1,6 @@
+Inventory cost-price preference:
+- Adds a per-store Company Preference controlling whether Cost Price is required when adding an inventory item.
+- Keeps Cost Price required by default so existing stores retain their current workflow.
+- Saves a blank Cost Price as $0.00 when the preference is disabled.
+- Applies the preference to both the desktop and mobile Add Item forms and enforces it on the store server.
+- Safely upgrades existing local databases with the new preference column.

@@ -207,6 +207,20 @@ Confirmed findings:
   - The post-upload R2 download matched the expected byte size and SHA-256.
   - Supabase readback returned exactly one matching published release row.
 
+## 2026-08-23 optional new-item cost price release 1.0.88
+
+- Added a per-location Company Preference to require or allow a blank Cost Price when adding inventory items.
+- The preference defaults to required; when disabled, blank cost is stored as `$0.00` in desktop and mobile workflows.
+- Added server-side validation, mobile bootstrap exposure, and a guarded local-schema migration.
+- Existing products are not rewritten by this preference.
+- Full Maven tests, repository security checks, JavaScript syntax validation, Windows packaging, embedded-resource validation, and `git diff --check` passed.
+- Windows 1.0.88 artifacts:
+  - `smartstock-windows-1.0.88.zip`: 34,169,893 bytes, SHA-256 `96D11A4E0ABBC23E7DBD7F6C49D72AA98AB6E0EE847E1AC79369F9325EBBD7C5`
+  - `smartstock-windows-setup-1.0.88.exe`: 52,413,644 bytes, SHA-256 `ADEA9E49F80254EF9DB7AE10C72BE9BE44686D51F190A39C58539220CF9635E3`
+- Published SmartStock 1.0.88 build 10088 to the development update channel (Supabase release ID 92).
+  - R2 object: `windows/1.0.88/smartstock-windows-1.0.88.zip`
+  - The remote download matched the exact local byte size and SHA-256 before metadata publication.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

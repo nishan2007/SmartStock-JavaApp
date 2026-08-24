@@ -2092,6 +2092,7 @@ CREATE TABLE public.company_customization (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     sale_discount_limit_percent numeric(7,4) DEFAULT 5 NOT NULL,
     sale_return_approval_limit numeric(12,2) DEFAULT 0 NOT NULL,
+    require_cost_price_on_new_item boolean DEFAULT true NOT NULL,
     next_quotation_counter integer DEFAULT 1 NOT NULL,
     next_invoice_counter integer DEFAULT 1 NOT NULL,
     next_invoice_delivery_counter integer DEFAULT 1 NOT NULL,

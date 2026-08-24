@@ -148,6 +148,7 @@ public class CompanyCustomization extends JFrame {
     private final JTextField vatFixedRatePercentField = new JTextField("0", 8);
     private final JTextField saleDiscountLimitPercentField = new JTextField("5", 8);
     private final JTextField saleReturnApprovalLimitField = new JTextField("0", 8);
+    private final JCheckBox requireCostPriceOnNewItemBox = new JCheckBox("Require cost price when adding a new inventory item", true);
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
@@ -777,6 +778,11 @@ public class CompanyCustomization extends JFrame {
     private JPanel buildSaleReceiptPreferencesScreen() {
         JPanel contentPanel = new JPanel(new BorderLayout(18, 18));
         contentPanel.setOpaque(false);
+        JPanel inventoryRules = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        inventoryRules.setOpaque(false);
+        requireCostPriceOnNewItemBox.setToolTipText("When disabled, a blank cost price is saved as $0.00.");
+        inventoryRules.add(requireCostPriceOnNewItemBox);
+        contentPanel.add(inventoryRules, BorderLayout.NORTH);
         contentPanel.add(buildReceiptFormattingPanel(), BorderLayout.CENTER);
         contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
         return contentPanel;
@@ -2522,6 +2528,7 @@ public class CompanyCustomization extends JFrame {
         loadedSaleSafetySettings=saleSafetySettings;
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
         saleReturnApprovalLimitField.setText(utils.CurrencyFormatter.normalize(saleSafetySettings.returnApprovalLimit()).toPlainString());
+        requireCostPriceOnNewItemBox.setSelected(saleSafetySettings.requireCostPriceOnNewItem());
         CompanyCustomizationManager.CustomOrderSettings customOrderSettings = all.customOrder();
         loadedCustomOrderSettings=customOrderSettings;
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
@@ -2560,7 +2567,7 @@ public class CompanyCustomization extends JFrame {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             var receipt=getSettingsFromFields();
-            var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
+            var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled()||requireCostPriceOnNewItemBox.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
             var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
             var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
             var badgeSecurity=new CompanyCustomizationManager.BadgeSecuritySettings(requireBadgePinLoginBox.isSelected());
@@ -2771,7 +2778,9 @@ public class CompanyCustomization extends JFrame {
         }
         BigDecimal savedDiscountLimit = saleDiscountLimitPercentField.isEnabled() ? discountLimit : existingSettings.discountLimitPercent();
         BigDecimal savedReturnLimit = saleReturnApprovalLimitField.isEnabled() ? returnApprovalLimit : existingSettings.returnApprovalLimit();
-        return new CompanyCustomizationManager.SaleSafetySettings(savedDiscountLimit, savedReturnLimit);
+        boolean requireCostPrice = requireCostPriceOnNewItemBox.isEnabled()
+                ? requireCostPriceOnNewItemBox.isSelected() : existingSettings.requireCostPriceOnNewItem();
+        return new CompanyCustomizationManager.SaleSafetySettings(savedDiscountLimit, savedReturnLimit, requireCostPrice);
     }
 
     private CompanyCustomizationManager.ReceiptSettings getSettingsFromFields() {

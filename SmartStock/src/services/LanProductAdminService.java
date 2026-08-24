@@ -228,6 +228,8 @@ final class LanProductAdminService {
         String name = required(request.name(), 300, "Item name is required.");
         String barcode = required(request.barcode(), 300, "Primary barcode is required.");
         String sku = clean(request.sku(), 300);
+        if (request.productId() == null && request.costPrice() == null && requiresCostPrice(connection, locationId))
+            throw rule(400, "VALIDATION_ERROR", "Cost price is required by Company Preferences.");
         BigDecimal cost = request.costPrice() == null ? BigDecimal.ZERO : request.costPrice();
         BigDecimal price = request.price() == null ? BigDecimal.ZERO : request.price();
         if (cost.signum() < 0 || price.signum() < 0)
@@ -351,6 +353,16 @@ final class LanProductAdminService {
             ps.setInt(1, id); try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw rule(400, "VALIDATION_ERROR", label + " was not found.");
             }
+        }
+    }
+
+    private static boolean requiresCostPrice(Connection connection, int locationId) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT COALESCE(require_cost_price_on_new_item, TRUE)
+                FROM company_customization WHERE location_id=?
+                """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) { return !rs.next() || rs.getBoolean(1); }
         }
     }
 

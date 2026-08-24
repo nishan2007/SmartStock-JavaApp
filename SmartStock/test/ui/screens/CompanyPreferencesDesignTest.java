@@ -60,4 +60,12 @@ class CompanyPreferencesDesignTest {
         assertTrue(renderer.contains("DeckersPalette.tilePressed(DeckersPalette.ORANGE)"));
         assertTrue(renderer.contains("BorderFactory.createMatteBorder(0, 4, 0, 0"));
     }
+
+    @Test
+    void inventoryCostRequirementIsACompanyPreference() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/CompanyCustomization.java"));
+        assertTrue(source.contains("Require cost price when adding a new inventory item"));
+        assertTrue(source.contains("blank cost price is saved as $0.00"));
+        assertTrue(source.contains("requireCostPriceOnNewItem()"));
+    }
 }

@@ -152,6 +152,7 @@ public final class MobileItemWebServer implements AutoCloseable {
     private Object bootstrap(Session s)throws Exception{
         try(Connection c=DB.getConnection()){
             Map<String,Object> out=new LinkedHashMap<>();out.put("permissions",owner.mobilePermissions(s.userId));
+            try(PreparedStatement p=c.prepareStatement("SELECT COALESCE(require_cost_price_on_new_item,TRUE) FROM company_customization WHERE location_id=?")){p.setInt(1,s.locationId);try(ResultSet r=p.executeQuery()){out.put("requireCostPriceOnNewItem",!r.next()||r.getBoolean(1));}}
             out.put("departments",rows(c,"SELECT category_id id,name FROM categories ORDER BY name"));
             out.put("vendors",rows(c,"SELECT vendor_id id,name FROM vendors WHERE COALESCE(is_active,TRUE)=TRUE ORDER BY name"));
             out.put("itemTypes",itemTypeRows(c));
