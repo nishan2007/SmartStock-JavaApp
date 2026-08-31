@@ -33,7 +33,7 @@ public final class ServerEmployeeScheduleService {
         }
     }
 
-    public record Employee(int userId, String displayName, String username) {
+    public record Employee(int userId, String displayName, String username, boolean administrator) {
         @Override
         public String toString() {
             return displayName;
@@ -118,8 +118,10 @@ public final class ServerEmployeeScheduleService {
                        COALESCE(NULLIF(TRIM(u.full_name), ''),
                                 NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
                                 u.username) AS display_name,
-                       u.username
+                       u.username,
+                       r.role_name
                 FROM users u
+                LEFT JOIN roles r ON r.role_id = u.role_id
                 WHERE COALESCE(u.is_active, TRUE) = TRUE
                   AND (
                       EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id = u.user_id AND ul.location_id = ?)
@@ -136,12 +138,18 @@ public final class ServerEmployeeScheduleService {
                 ps.setInt(1, locationId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        employees.add(new Employee(rs.getInt("user_id"), rs.getString("display_name"), rs.getString("username")));
+                        employees.add(new Employee(rs.getInt("user_id"), rs.getString("display_name"), rs.getString("username"),
+                                isAdministratorRole(rs.getString("role_name"))));
                     }
                 }
             }
         }
         return employees;
+    }
+
+    static boolean isAdministratorRole(String roleName) {
+        if (roleName == null) return false;
+        return Set.of("ADMIN", "ADMINISTRATOR", "OWNER").contains(roleName.trim().toUpperCase(java.util.Locale.ROOT));
     }
 
     public static List<Shift> loadShifts(int locationId, boolean includeInactive) throws SQLException {

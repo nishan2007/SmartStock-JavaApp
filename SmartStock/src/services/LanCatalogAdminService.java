@@ -158,7 +158,8 @@ final class LanCatalogAdminService {
         requirePermission(connection, userId, "CUSTOMER_ACCOUNTS");
         String query = clean(search, 300);
         StringBuilder sql = new StringBuilder("""
-                SELECT customer_type_id,name,COALESCE(description,''),COALESCE(is_active,TRUE)
+                SELECT customer_type_id,name,COALESCE(description,''),COALESCE(is_active,TRUE),
+                       COALESCE(auto_print_sale_receipt,TRUE),COALESCE(customer_card_template_slot,4)
                 FROM customer_types WHERE TRUE
                 """);
         if (activeOnly) sql.append(" AND COALESCE(is_active,TRUE)=TRUE");
@@ -169,7 +170,8 @@ final class LanCatalogAdminService {
             if (!query.isBlank()) { ps.setString(1, "%" + query + "%"); ps.setString(2, "%" + query + "%"); }
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) rows.add(map("customerTypeId", rs.getInt(1), "name", rs.getString(2),
-                        "description", rs.getString(3), "active", rs.getBoolean(4)));
+                        "description", rs.getString(3), "active", rs.getBoolean(4),
+                        "autoPrintSaleReceipt", rs.getBoolean(5),"customerCardTemplateSlot",rs.getInt(6)));
             }
         }
         return rows;
@@ -182,12 +184,19 @@ final class LanCatalogAdminService {
         String name = required(request == null ? null : request.name(), 200, "Customer type name is required.");
         String description = nullable(request.description(), 2000);
         Integer id = request.customerTypeId();
+        int cardSlot=body.has("customerCardTemplateSlot")?request.customerCardTemplateSlot():4;if(cardSlot<1||cardSlot>5)throw rule(400,"VALIDATION_ERROR","Customer card template must be from 1 through 5.");
+        boolean autoPrint=body.has("autoPrintSaleReceipt")?request.autoPrintSaleReceipt():true;
+        if(id!=null&&!body.has("autoPrintSaleReceipt"))try(PreparedStatement existing=connection.prepareStatement("SELECT COALESCE(auto_print_sale_receipt,TRUE) FROM customer_types WHERE customer_type_id=?")){
+            existing.setInt(1,id);try(ResultSet rs=existing.executeQuery()){if(rs.next())autoPrint=rs.getBoolean(1);}
+        }
         try {
             if (id == null) {
                 try (PreparedStatement ps = connection.prepareStatement(
-                        "INSERT INTO customer_types(name,description,is_active) VALUES (?,?,?)",
+                        "INSERT INTO customer_types(name,description,is_active,auto_print_sale_receipt,customer_card_template_slot) VALUES (?,?,?,?,?)",
                         Statement.RETURN_GENERATED_KEYS)) {
                     ps.setString(1, name); ps.setString(2, description); ps.setBoolean(3, request.active());
+                    ps.setBoolean(4, autoPrint);
+                    ps.setInt(5,cardSlot);
                     ps.executeUpdate(); try (ResultSet keys = ps.getGeneratedKeys()) {
                         if (!keys.next()) throw new SQLException("Customer type could not be created.");
                         id = keys.getInt(1);
@@ -195,8 +204,9 @@ final class LanCatalogAdminService {
                 }
             } else {
                 try (PreparedStatement ps = connection.prepareStatement(
-                        "UPDATE customer_types SET name=?,description=?,is_active=? WHERE customer_type_id=?")) {
-                    ps.setString(1, name); ps.setString(2, description); ps.setBoolean(3, request.active()); ps.setInt(4, id);
+                        "UPDATE customer_types SET name=?,description=?,is_active=?,auto_print_sale_receipt=?,customer_card_template_slot=? WHERE customer_type_id=?")) {
+                    ps.setString(1, name); ps.setString(2, description); ps.setBoolean(3, request.active());
+                    ps.setBoolean(4, autoPrint);ps.setInt(5,cardSlot); ps.setInt(6, id);
                     if (ps.executeUpdate() != 1) throw rule(404, "CUSTOMER_TYPE_NOT_FOUND", "Customer type was not found.");
                 }
             }
@@ -275,5 +285,6 @@ final class LanCatalogAdminService {
     private record DepartmentRequest(Integer categoryId, String name, BigDecimal vatRatePercent, String description) { }
     private record VendorRequest(Integer vendorId, String name, String contactName, String phone, String email,
                                  String address, String notes, boolean active) { }
-    private record CustomerTypeRequest(Integer customerTypeId, String name, String description, boolean active) { }
+    private record CustomerTypeRequest(Integer customerTypeId, String name, String description, boolean active,
+                                       boolean autoPrintSaleReceipt,int customerCardTemplateSlot) { }
 }

@@ -1,0 +1,6 @@
+SmartStock 1.0.124
+
+- Waits for the tracked SmartStock Java server to exit before terminating the Scheduler tunnel.
+- Uses the absolute Windows PowerShell system path for elevated updater helper commands.
+- Prevents the server-stop race that could relaunch Cloudflare while an update was replacing server files.
+- Retains the complete dependency validation and single-instance server task fixes from 1.0.123.

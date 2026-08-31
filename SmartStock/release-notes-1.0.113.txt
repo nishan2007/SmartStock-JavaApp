@@ -1,0 +1,5 @@
+SmartStock 1.0.113
+
+- Fixes false manager price-override prompts when a catalog price contains cents but the register displays and charges the normalized whole-currency amount.
+- Applies the same catalog-price normalization during direct checkout and held-cart validation.
+- Preserves two-decimal pricing for miscellaneous sale items.

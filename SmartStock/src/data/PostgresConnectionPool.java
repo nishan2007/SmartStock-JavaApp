@@ -14,13 +14,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class PostgresConnectionPool implements AutoCloseable {
     private static final int DEFAULT_MAX_SIZE = 16;
     private static final long DEFAULT_ACQUIRE_TIMEOUT_MILLIS = 10_000L;
+    private static final long DEFAULT_IDLE_VALIDATION_INTERVAL_MILLIS = 30_000L;
 
     private final String jdbcUrl;
     private final String user;
     private final String password;
     private final int maxSize;
     private final long acquireTimeoutMillis;
-    private final Deque<Connection> idle = new ArrayDeque<>();
+    private final long idleValidationIntervalNanos;
+    private final Deque<IdleConnection> idle = new ArrayDeque<>();
     private int created;
     private boolean closed;
 
@@ -31,16 +33,22 @@ final class PostgresConnectionPool implements AutoCloseable {
         this.maxSize = Math.max(2, Integer.getInteger("smartstock.db.pool.maxSize", DEFAULT_MAX_SIZE));
         this.acquireTimeoutMillis = Math.max(1_000L,
                 Long.getLong("smartstock.db.pool.acquireTimeoutMillis", DEFAULT_ACQUIRE_TIMEOUT_MILLIS));
+        this.idleValidationIntervalNanos = TimeUnit.MILLISECONDS.toNanos(Math.max(1_000L,
+                Long.getLong("smartstock.db.pool.idleValidationIntervalMillis",
+                        DEFAULT_IDLE_VALIDATION_INTERVAL_MILLIS)));
     }
 
     Connection borrow() throws SQLException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(acquireTimeoutMillis);
         while (true) {
             Connection physical;
+            long lastValidatedNanos = System.nanoTime();
             boolean create = false;
             synchronized (this) {
                 ensureOpen();
-                physical = idle.pollFirst();
+                IdleConnection available = idle.pollFirst();
+                physical = available == null ? null : available.connection();
+                if (available != null) lastValidatedNanos = available.lastValidatedNanos();
                 if (physical == null && created < maxSize) {
                     created++;
                     create = true;
@@ -71,15 +79,17 @@ final class PostgresConnectionPool implements AutoCloseable {
                 }
             }
 
-            if (!isUsable(physical)) {
+            long now = System.nanoTime();
+            boolean validationDue = !create && now - lastValidatedNanos >= idleValidationIntervalNanos;
+            if (!(validationDue ? isUsable(physical) : isOpen(physical))) {
                 discard(physical);
                 continue;
             }
-            return logicalConnection(physical);
+            return logicalConnection(physical, validationDue ? now : lastValidatedNanos);
         }
     }
 
-    private Connection logicalConnection(Connection physical) {
+    private Connection logicalConnection(Connection physical, long lastValidatedNanos) {
         AtomicBoolean returned = new AtomicBoolean();
         return (Connection) Proxy.newProxyInstance(
                 Connection.class.getClassLoader(),
@@ -87,7 +97,7 @@ final class PostgresConnectionPool implements AutoCloseable {
                 (proxy, method, args) -> {
                     String name = method.getName();
                     if ("close".equals(name)) {
-                        if (returned.compareAndSet(false, true)) recycle(physical);
+                        if (returned.compareAndSet(false, true)) recycle(physical, lastValidatedNanos);
                         return null;
                     }
                     if ("isClosed".equals(name)) {
@@ -114,11 +124,11 @@ final class PostgresConnectionPool implements AutoCloseable {
                 });
     }
 
-    private void recycle(Connection physical) {
+    private void recycle(Connection physical, long lastValidatedNanos) {
         boolean reusable = reset(physical);
         synchronized (this) {
             if (!closed && reusable) {
-                idle.addLast(physical);
+                idle.addLast(new IdleConnection(physical, lastValidatedNanos));
             } else {
                 closePhysical(physical);
                 created--;
@@ -136,7 +146,7 @@ final class PostgresConnectionPool implements AutoCloseable {
             }
             if (connection.isReadOnly()) connection.setReadOnly(false);
             connection.clearWarnings();
-            return connection.isValid(2);
+            return !connection.isClosed();
         } catch (SQLException ex) {
             return false;
         }
@@ -145,6 +155,14 @@ final class PostgresConnectionPool implements AutoCloseable {
     private static boolean isUsable(Connection connection) {
         try {
             return connection != null && !connection.isClosed() && connection.isValid(2);
+        } catch (SQLException ex) {
+            return false;
+        }
+    }
+
+    private static boolean isOpen(Connection connection) {
+        try {
+            return connection != null && !connection.isClosed();
         } catch (SQLException ex) {
             return false;
         }
@@ -167,7 +185,7 @@ final class PostgresConnectionPool implements AutoCloseable {
         if (closed) return;
         closed = true;
         while (!idle.isEmpty()) {
-            closePhysical(idle.removeFirst());
+            closePhysical(idle.removeFirst().connection());
             created--;
         }
         notifyAll();
@@ -180,4 +198,6 @@ final class PostgresConnectionPool implements AutoCloseable {
         } catch (SQLException ignored) {
         }
     }
+
+    private record IdleConnection(Connection connection, long lastValidatedNanos) { }
 }

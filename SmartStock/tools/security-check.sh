@@ -128,8 +128,10 @@ rg -Fq 'FOR UPDATE' src/services/LanProductAdminService.java \
   || fail "product edits do not lock rows before mutation"
 rg -Fq 'request.expectedQuantity() != inventory.quantity()' src/services/LanProductAdminService.java \
   || fail "manual inventory edits can overwrite concurrent register activity"
-rg -Fq 'quantity_on_hand=quantity_on_hand-?' src/services/LanSalesService.java \
-  || fail "sales no longer use atomic relative inventory subtraction"
+if ! rg -Fq 'quantity_on_hand=quantity_on_hand-?' src/services/LanSalesService.java \
+  && ! rg -Fq 'quantity_on_hand=inventory.quantity_on_hand+EXCLUDED.quantity_on_hand' src/services/LanSalesService.java; then
+  fail "sales no longer use atomic relative inventory subtraction"
+fi
 rg -Fq 'productIds.sort(Integer::compareTo)' src/services/LanSalesService.java \
   || fail "sales do not lock cart products in deterministic order"
 if rg -n 'SyncServiceStatusService|WorkflowSyncIdentityCollisionVerifier' src/ui src/managers src/Receipt; then

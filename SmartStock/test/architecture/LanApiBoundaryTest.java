@@ -118,7 +118,8 @@ final class LanApiBoundaryTest {
     void salesPreserveNegativeStockAndDeterministicConcurrencyLocks() throws Exception {
         String sales = Files.readString(SRC.resolve("services/LanSalesService.java"));
         assertTrue(sales.contains("productIds.sort(Integer::compareTo)"));
-        assertTrue(sales.contains("quantity_on_hand=quantity_on_hand-?"));
+        assertTrue(sales.contains("quantity_on_hand=inventory.quantity_on_hand+EXCLUDED.quantity_on_hand"));
+        assertTrue(sales.contains("statement.setInt(3, -line.quantity())"));
         assertFalse(sales.matches("(?s).*quantity_on_hand\\s*>=\\s*\\?.*"));
         assertTrue(sales.contains("customer_id,sale_id,location_id,transaction_type,amount"));
         assertFalse(sales.contains("description,user_id,user_name,device_id,created_at"));

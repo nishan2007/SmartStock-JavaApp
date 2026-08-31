@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PostgresConnectionPoolTest {
     private final AtomicInteger physicalConnections = new AtomicInteger();
+    private final AtomicInteger validityChecks = new AtomicInteger();
     private Driver driver;
 
     @BeforeEach
@@ -59,10 +60,12 @@ class PostgresConnectionPoolTest {
             second.close();
 
             assertEquals(1, physicalConnections.get());
+            assertEquals(2, validityChecks.get(),
+                    "Recent pooled connections should not run an extra database health query on borrow or return");
         }
     }
 
-    private static Connection fakeConnection() {
+    private Connection fakeConnection() {
         AtomicBoolean closed = new AtomicBoolean();
         AtomicBoolean autoCommit = new AtomicBoolean(true);
         AtomicBoolean readOnly = new AtomicBoolean();
@@ -70,7 +73,7 @@ class PostgresConnectionPoolTest {
                 new Class<?>[]{Connection.class}, (proxy, method, args) -> switch (method.getName()) {
                     case "close" -> { closed.set(true); yield null; }
                     case "isClosed" -> closed.get();
-                    case "isValid" -> !closed.get();
+                    case "isValid" -> { validityChecks.incrementAndGet(); yield !closed.get(); }
                     case "getAutoCommit" -> autoCommit.get();
                     case "setAutoCommit" -> { autoCommit.set((Boolean) args[0]); yield null; }
                     case "isReadOnly" -> readOnly.get();

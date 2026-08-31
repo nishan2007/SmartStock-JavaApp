@@ -68,6 +68,10 @@ class SmartStockUpdaterTest {
         Files.createDirectories(dependency);
         Files.writeString(appDir.resolve("inventory-management-1.0.82.jar"), "new-app");
         Files.writeString(dependency.resolve("library.jar"), "new-library");
+        Files.writeString(dependency.resolve("postgresql-42.7.3.jar"), "postgres-driver");
+        Path tunnel=dependency.resolve("cloudflared/windows-amd64/cloudflared.exe");
+        Files.createDirectories(tunnel.getParent());
+        Files.writeString(tunnel,"verified-tunnel-fixture");
 
         Path syncAppDir = tempDir.resolve("sync-service").resolve("app");
         Files.createDirectories(syncAppDir.resolve("dependency"));
@@ -77,6 +81,8 @@ class SmartStockUpdaterTest {
         Properties properties = new Properties();
         properties.setProperty("sync.service.app.dir", syncAppDir.toString());
         SmartStockUpdater.updateSyncServiceCopy(appDir, properties);
+
+        assertEquals("verified-tunnel-fixture",Files.readString(syncAppDir.resolve("dependency/cloudflared/windows-amd64/cloudflared.exe")));
 
         assertFalse(Files.exists(syncAppDir.resolve("inventory-management-1.0.81.jar")));
         assertEquals("new-app", Files.readString(
@@ -146,10 +152,10 @@ class SmartStockUpdaterTest {
     }
 
     @Test
-    void terminatesTheCompleteWindowsServerProcessTree() {
+    void terminatesTheServerTreeWithoutKillingTheDescendantUpdater() {
         assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStockServer.exe"),
                 SmartStockUpdater.windowsServerTerminationCommand());
-        assertEquals(List.of("taskkill", "/F", "/T", "/IM", "SmartStock.exe"),
+        assertEquals(List.of("taskkill", "/F", "/IM", "SmartStock.exe"),
                 SmartStockUpdater.windowsApplicationTerminationCommand());
     }
 
@@ -169,23 +175,82 @@ class SmartStockUpdaterTest {
     }
 
     @Test
+    void identifiesOnlyTheCloudflareTunnelInsideTheSyncServiceCopy(@TempDir Path tempDir) {
+        Path serviceApp = tempDir.resolve("sync-service").resolve("app").toAbsolutePath();
+        Path bundledTunnel = serviceApp.resolve(
+                "dependency/cloudflared/windows-amd64/cloudflared.exe");
+
+        assertTrue(SmartStockUpdater.isWindowsSyncServiceCloudflareProcess(
+                bundledTunnel.toString(), serviceApp));
+        assertFalse(SmartStockUpdater.isWindowsSyncServiceCloudflareProcess(
+                tempDir.resolve("other/cloudflared.exe").toString(), serviceApp));
+        assertFalse(SmartStockUpdater.isWindowsSyncServiceCloudflareProcess(
+                serviceApp.resolve("dependency/cloudflared/windows-amd64/helper.exe").toString(),
+                serviceApp));
+    }
+
+    @Test
+    void buildsAnExactPathWindowsCloudflareTerminationCommand() {
+        List<String> command = SmartStockUpdater.windowsCloudflareTerminationCommand(
+                Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app"));
+
+        assertTrue(command.get(0).endsWith("WindowsPowerShell\\v1.0\\powershell.exe"));
+        String script = command.get(6);
+        assertTrue(script.contains("Get-CimInstance Win32_Process"));
+        assertTrue(script.contains("Name='cloudflared.exe'"));
+        assertTrue(script.contains("C:\\Users\\test\\.smartstock\\sync-service\\app\\dependency\\cloudflared\\windows-amd64\\cloudflared.exe"));
+        assertTrue(script.contains("OrdinalIgnoreCase"));
+        assertTrue(script.contains("Invoke-CimMethod"));
+        assertTrue(script.contains("ReturnValue"));
+    }
+
+    @Test
     void rewritesWindowsSyncTaskBeforeRestartingIt() {
         List<String> command = SmartStockUpdater.windowsSyncTaskUpdateCommand(
                 "SmartStockServerService",
                 Path.of("C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe"),
                 Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app"),
-                "inventory-management-1.0.52.jar");
+                "inventory-management-1.0.52.jar", "STORE\\test");
 
-        assertEquals(List.of("powershell.exe", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-Command"), command.subList(0, 6));
+        assertTrue(command.get(0).endsWith("WindowsPowerShell\\v1.0\\powershell.exe"));
+        assertEquals(List.of("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-Command"), command.subList(1, 6));
         String script = command.get(6);
         assertTrue(script.contains("New-ScheduledTaskAction"));
-        assertTrue(script.contains("CreateShortcut"));
-        assertTrue(script.contains("explorer.exe"));
+        assertFalse(script.contains("explorer.exe"));
+        assertTrue(script.contains("-WorkingDirectory"));
+        assertTrue(script.contains("javaw.exe"));
+        assertTrue(script.contains("Get-ScheduledTask"));
+        assertTrue(script.contains("Register-ScheduledTask"));
         assertTrue(script.contains("-Duser.home=\"C:\\Users\\test\""));
         assertTrue(script.contains("inventory-management-1.0.52.jar"));
         assertTrue(script.contains("C:\\Users\\test\\.smartstock\\sync-service\\app"));
         assertTrue(script.contains("Set-ScheduledTask -TaskName 'SmartStockServerService'"));
+        assertTrue(script.contains("$serviceUser='STORE\\test'"));
+    }
+
+    @Test
+    void refusesToEraseInstalledAppWhenRollbackIsMissing(@TempDir Path tempDir) throws Exception {
+        Path appDir = tempDir.resolve("app");
+        Files.createDirectories(appDir.resolve("dependency"));
+        Files.writeString(appDir.resolve("inventory-management-1.0.81.jar"), "installed");
+
+        assertThrows(java.io.IOException.class,
+                () -> SmartStockUpdater.restoreBackup(appDir, tempDir.resolve("missing")));
+        assertEquals("installed", Files.readString(
+                appDir.resolve("inventory-management-1.0.81.jar")));
+    }
+
+    @Test
+    void updaterStopsDesktopAndJavaBeforeTheSchedulerTunnel() throws Exception {
+        String source = Files.readString(Path.of("src/app/SmartStockUpdater.java"));
+        int method = source.indexOf("private static void stopSyncService");
+        String body = source.substring(method, source.indexOf("private static void startSyncService", method));
+
+        assertTrue(body.indexOf("terminateWindowsApplicationProcessTree()")
+                < body.indexOf("runWindowsTaskCommand"));
+        assertTrue(body.indexOf("terminateWindowsJavaSyncProcesses(props)")
+                < body.indexOf("terminateWindowsSyncServiceCloudflareProcesses(props)"));
     }
 
     @Test

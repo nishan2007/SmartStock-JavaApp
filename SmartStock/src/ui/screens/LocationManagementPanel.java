@@ -89,7 +89,7 @@ public class LocationManagementPanel extends JPanel {
         configureGmailActions();
         add(buildHeaderPanel(), BorderLayout.NORTH);
         add(new JScrollPane(locationTable), BorderLayout.CENTER);
-        add(buildEditorPanel(), BorderLayout.EAST);
+        add(buildEditorScrollPane(), BorderLayout.EAST);
         add(loadingState, BorderLayout.SOUTH);
         UiDebouncer.bind(searchField,300,this::loadLocations);
         loadLocations();
@@ -147,6 +147,19 @@ public class LocationManagementPanel extends JPanel {
         },ex->JOptionPane.showMessageDialog(this,"Failed to process email outbox: "+ex.getMessage(),"Email Outbox",JOptionPane.ERROR_MESSAGE));
     }
 
+    private JScrollPane buildEditorScrollPane() {
+        JScrollPane scrollPane = new JScrollPane(
+                buildEditorPanel(),
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        );
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setPreferredSize(new Dimension(400, 0));
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.getViewport().setBackground(Color.WHITE);
+        return scrollPane;
+    }
+
     private JPanel buildEditorPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(Color.WHITE);
@@ -154,8 +167,6 @@ public class LocationManagementPanel extends JPanel {
                 BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
                 new EmptyBorder(16, 16, 16, 16)
         ));
-        panel.setPreferredSize(new Dimension(380, 0));
-
         addressArea.setLineWrap(true);
         addressArea.setWrapStyleWord(true);
         emailReceiptsBox.setOpaque(false);
@@ -216,7 +227,7 @@ public class LocationManagementPanel extends JPanel {
         gbc.gridx = 0;
         gbc.gridy = 19;
         gbc.gridwidth = 2;
-        gbc.weighty = 1;
+        gbc.weighty = 0;
         gbc.anchor = GridBagConstraints.SOUTH;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(8, 0, 0, 0);
@@ -225,6 +236,9 @@ public class LocationManagementPanel extends JPanel {
         newButton.addActionListener(e -> clearEditor());
         clearButton.addActionListener(e -> clearEditor());
         saveButton.addActionListener(e -> saveLocation());
+
+        Dimension preferred = panel.getPreferredSize();
+        panel.setPreferredSize(new Dimension(380, preferred.height));
 
         return panel;
     }

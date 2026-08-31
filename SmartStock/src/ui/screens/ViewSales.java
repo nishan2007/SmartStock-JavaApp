@@ -2,7 +2,11 @@
 package ui.screens;
 
 import Receipt.ReceiptBuilder;
+import Receipt.ReceiptItem;
+import Receipt.ReturnReceiptData;
+import Receipt.ReturnReceiptPrinter;
 import utils.CurrencyFormatter;
+import managers.HardwareSettingsManager;
 import managers.PermissionManager;
 import managers.SessionManager;
 import services.LanApiClient;
@@ -311,6 +315,11 @@ public class ViewSales extends JFrame {
             return;
         }
 
+        if ("RETURN".equalsIgnoreCase(selected.transactionType()) && selected.returnId() != null) {
+            reprintSelectedReturn(selected);
+            return;
+        }
+
         loadingState.loading(false, java.time.Instant.now());
         UiTaskRunner.submit(this, "sales.receipt-reprint",
                 () -> ReceiptBuilder.loadSaleReceipt(selected.saleId(), null, null),
@@ -318,6 +327,31 @@ public class ViewSales extends JFrame {
                     loadingState.ready(java.time.Instant.now());
                     WindowHelper.showPosWindow(new ReceiptPreview(receipt, true), this);
                 }, failure -> loadingState.failed(failure.getMessage(), false, this::reprintSelectedReceipt));
+    }
+
+    private void reprintSelectedReturn(LanApiClient.SalesHistoryRow selected) {
+        loadingState.loading(false, Instant.now());
+        UiTaskRunner.submit(this, "sales.return-receipt-reprint", () -> {
+            LanApiClient.SaleHistoryDetails details = LanApiClient.loadSaleHistoryDetails(
+                    selected.saleId(), selected.sourceLocationId());
+            LanApiClient.SaleHistoryReturn returned = details.returns().stream()
+                    .filter(item -> item.returnId() == selected.returnId())
+                    .findFirst().orElseThrow(() -> new IllegalStateException("The selected return could not be found."));
+            List<ReceiptItem> items = details.returnItems().stream()
+                    .filter(item -> item.returnId() == selected.returnId())
+                    .map(item -> new ReceiptItem(item.productName(), "", item.quantity(), item.unitPrice(),
+                            item.unitPrice(), BigDecimal.ZERO, item.lineTotal()))
+                    .toList();
+            ReturnReceiptData receipt = new ReturnReceiptData(returned.returnId(), returned.returnReceiptNumber(),
+                    selected.saleId(), selected.receiptNumber(), Instant.ofEpochMilli(returned.createdAtEpochMillis()),
+                    returned.userName(), returned.refundMethod(), returned.refundAmount(), returned.reason(), items);
+            ReturnReceiptPrinter.printToPosPrinter(receipt, HardwareSettingsManager.getDefaultReceiptPrinter(), true);
+            return returned.returnReceiptNumber();
+        }, receiptNumber -> {
+            loadingState.ready(Instant.now());
+            JOptionPane.showMessageDialog(this, "Return receipt reprinted successfully.\nReturn receipt: " + receiptNumber,
+                    "Return Receipt Reprinted", JOptionPane.INFORMATION_MESSAGE);
+        }, failure -> loadingState.failed(failure.getMessage(), false, () -> reprintSelectedReturn(selected)));
     }
 
     private void showSaleDetailsDialog(int saleId,Integer sourceLocationId) {

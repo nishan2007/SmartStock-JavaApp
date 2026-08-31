@@ -10,6 +10,11 @@ public final class WelcomeGreetingHelper {
     }
 
     public static Greeting currentGreeting() {
+        return currentGreeting("SmartStock");
+    }
+
+    public static Greeting currentGreeting(String companyName) {
+        String company = displayName(companyName);
         LocalDateTime now = LocalDateTime.now(StoreTimeZoneHelper.getStoreZone());
         int hour = now.getHour();
         int variant = (now.getMinute() / 10) % 3;
@@ -17,11 +22,11 @@ public final class WelcomeGreetingHelper {
             return new Greeting(
                     "Welcome, Night Crew",
                     variant == 0 ? "Quiet shift, clean starts, steady systems."
-                            : variant == 1 ? "SmartStock is ready whenever you are."
+                            : variant == 1 ? company + " is ready whenever you are."
                             : "Late hours still deserve a smooth login.");
         } else if (hour < 12) {
             return new Greeting(
-                    variant == 1 ? "Morning, SmartStock Team" : "Good Morning",
+                    variant == 1 ? "Morning, " + company + " Team" : "Good Morning",
                     variant == 0 ? "Let us get the day opened cleanly."
                             : variant == 1 ? "Coffee checked, inventory ready."
                             : "Fresh day, clear counts, confident sales.");
@@ -42,7 +47,7 @@ public final class WelcomeGreetingHelper {
         } else if (hour < 18) {
             return new Greeting(
                     variant == 0 ? "Waiting for 5 PM?" : "Final Stretch",
-                    variant == 0 ? "Close time is close, but SmartStock is awake."
+                    variant == 0 ? "Close time is close, but " + company + " is awake."
                             : variant == 1 ? "Finish sharp, then head out proud."
                             : "One clean close makes tomorrow easier.");
         }
@@ -51,5 +56,10 @@ public final class WelcomeGreetingHelper {
                 variant == 0 ? "Settle in and keep the close simple."
                         : variant == 1 ? "Evening pace, clean screens, calm totals."
                         : "Let us make the last tasks feel lighter.");
+    }
+
+    public static String displayName(String companyName) {
+        String value = companyName == null ? "" : companyName.trim();
+        return value.isBlank() ? "SmartStock" : value;
     }
 }

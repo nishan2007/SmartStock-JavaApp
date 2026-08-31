@@ -5,7 +5,8 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
 public class CustomOrderDepositPanel extends JPanel {
-    public CustomOrderDepositPanel(JTextField minimumDepositPercentField, JTextField refundApprovalLimitField) {
+    public CustomOrderDepositPanel(JTextField minimumDepositPercentField, JTextField refundApprovalLimitField,
+                                   JCheckBox roundToNearestTwentyBox) {
         setLayout(new GridBagLayout());
         setBackground(Color.WHITE);
         setBorder(BorderFactory.createCompoundBorder(
@@ -24,6 +25,7 @@ public class CustomOrderDepositPanel extends JPanel {
         percentPanel.add(new JLabel("%"));
         addRow(this, 1, "Minimum Deposit", percentPanel);
         addRow(this, 2, "Refund Approval Over", refundApprovalLimitField);
+        addWide(this, roundToNearestTwentyBox, 3);
     }
 
     private static void addRow(JPanel panel, int row, String label, JComponent field) {

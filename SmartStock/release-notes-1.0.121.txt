@@ -1,0 +1,8 @@
+SmartStock 1.0.121
+
+- Includes the browser and phone Scheduler layouts introduced in 1.0.120.
+- Fixes Windows updates failing when the Scheduler Cloudflare tunnel keeps the background server directory locked.
+- Stops only the Cloudflare process bundled inside SmartStock's server copy before replacing server files.
+- Validates that the staged server contains both the SmartStock JAR and PostgreSQL driver before installation.
+- Recreates the per-user SmartStockServerService scheduled task when it is missing instead of leaving the server offline.
+- Preserves the existing rollback transaction so incomplete desktop/server updates are not accepted.

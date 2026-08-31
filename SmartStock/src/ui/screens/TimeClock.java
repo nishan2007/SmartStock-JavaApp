@@ -552,7 +552,8 @@ public class TimeClock extends JFrame {
     private void loadTimeClock() {
         YearMonth month = currentMonth;
         boolean loadReviews = autoClockOutReviewsButton != null;
-        String cacheKey = "time-clock:" + month;
+        String cacheKey = timeClockCacheKey(SessionManager.getCurrentUserId(),
+                SessionManager.getCurrentLocationId(), month);
         CachedUiLoader.load(this, "time-clock.load", cacheKey, TimeClockSnapshot.class, SessionDataCache.SCREEN_TTL,
                 loadingState, () -> loadTimeClockSnapshot(month, loadReviews), this::applyTimeClockSnapshot);
     }
@@ -569,7 +570,10 @@ public class TimeClock extends JFrame {
 
     private void applyTimeClockSnapshot(TimeClockSnapshot snapshot) {
         TimeClockDashboard dashboard = snapshot.dashboard();
-        allRows = dashboard.rows();
+        Integer currentUserId = SessionManager.getCurrentUserId();
+        allRows = dashboard.rows() == null ? List.of() : dashboard.rows().stream()
+                .filter(row -> belongsToUser(row.userId(), currentUserId))
+                .toList();
         holidays = snapshot.holidays();
         updateClockStatus(dashboard.status());
         updateCurrentSession();
@@ -711,9 +715,11 @@ public class TimeClock extends JFrame {
     private void updateCurrentSession() {
         LocalDate today = LocalDate.now();
         TimeClockRow currentRecord = null;
+        Integer currentUserId = SessionManager.getCurrentUserId();
 
         for (TimeClockRow row : allRows) {
-            if (row.workDate().equals(today) && row.clockOut() == null) {
+            if (belongsToUser(row.userId(), currentUserId)
+                    && row.workDate().equals(today) && row.clockOut() == null) {
                 currentRecord = row;
                 break;
             }
@@ -743,6 +749,15 @@ public class TimeClock extends JFrame {
             stopSessionTimer();
             stopPulseAnimation();
         }
+    }
+
+    static String timeClockCacheKey(Integer userId, Integer locationId, YearMonth month) {
+        return "time-clock:user=" + String.valueOf(userId) + ":location="
+                + String.valueOf(locationId) + ":month=" + month;
+    }
+
+    static boolean belongsToUser(int rowUserId, Integer currentUserId) {
+        return currentUserId != null && rowUserId == currentUserId;
     }
 
     private void startSessionTimer() {
@@ -1113,7 +1128,7 @@ public class TimeClock extends JFrame {
             case NOT_CLOCKED_IN -> "Not clocked in";
             case CLOCKED_IN -> "Clocked in";
             case ON_LUNCH -> "On lunch";
-            case ON_BREAK -> "On 10-minute break";
+            case ON_BREAK -> "On break";
             case CLOCKED_OUT -> "Clocked out today";
         };
     }

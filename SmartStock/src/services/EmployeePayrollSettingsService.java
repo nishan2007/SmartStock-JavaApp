@@ -66,6 +66,9 @@ public final class EmployeePayrollSettingsService {
                             PeriodType periodType, BigDecimal workHourLimit) {
     }
 
+    public record PayRate(String compensationType, BigDecimal rate, LocalDate effectiveFrom) {
+    }
+
     private EmployeePayrollSettingsService() {
     }
 
@@ -179,11 +182,12 @@ public final class EmployeePayrollSettingsService {
             }
         }
         if (settingId == null) settingId = UUID.randomUUID();
+        PayRate currentRate = payRateFor(conn, userId, today);
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO employee_payroll_settings (
                     setting_id, user_id, period_type, work_hour_limit, effective_from,
-                    created_by_user_id, created_by_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    compensation_type, pay_rate, created_by_user_id, created_by_name
+                ) VALUES (?, ?, ?, ?, ?, ?::compensation_type_enum, ?, ?, ?)
                 ON CONFLICT (setting_id) DO UPDATE SET
                     period_type = EXCLUDED.period_type,
                     work_hour_limit = EXCLUDED.work_hour_limit,
@@ -197,9 +201,11 @@ public final class EmployeePayrollSettingsService {
             ps.setString(3, type.name());
             ps.setBigDecimal(4, normalized);
             ps.setDate(5, Date.valueOf(candidate));
-            if (SessionManager.getCurrentUserId() == null) ps.setNull(6, Types.INTEGER);
-            else ps.setInt(6, SessionManager.getCurrentUserId());
-            ps.setString(7, SessionManager.getCurrentUserDisplayName());
+            ps.setString(6, currentRate.compensationType());
+            ps.setBigDecimal(7, currentRate.rate());
+            if (SessionManager.getCurrentUserId() == null) ps.setNull(8, Types.INTEGER);
+            else ps.setInt(8, SessionManager.getCurrentUserId());
+            ps.setString(9, SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
         }
         return new PayrollSetting(settingId, userId, type, normalized, candidate,
@@ -210,13 +216,16 @@ public final class EmployeePayrollSettingsService {
         ensureSchema(conn);
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO employee_payroll_settings (
-                    setting_id, user_id, period_type, work_hour_limit, effective_from, created_by_name
-                ) VALUES (?, ?, 'SEMI_MONTHLY', 80.00, ?, 'System default')
+                    setting_id, user_id, period_type, work_hour_limit, effective_from,
+                    compensation_type, pay_rate, created_by_name
+                ) SELECT ?, u.user_id, 'SEMI_MONTHLY', 80.00, ?, u.compensation_type,
+                         u.salary, 'System default'
+                  FROM users u WHERE u.user_id = ?
                 ON CONFLICT (user_id, effective_from) DO NOTHING
                 """)) {
             ps.setObject(1, UUID.randomUUID());
-            ps.setInt(2, userId);
-            ps.setDate(3, Date.valueOf(DEFAULT_EFFECTIVE_FROM));
+            ps.setDate(2, Date.valueOf(DEFAULT_EFFECTIVE_FROM));
+            ps.setInt(3, userId);
             ps.executeUpdate();
         }
     }
@@ -239,6 +248,96 @@ public final class EmployeePayrollSettingsService {
             ps.setDate(6, Date.valueOf(DEFAULT_EFFECTIVE_FROM));
             ps.executeUpdate();
         }
+    }
+
+    public static void setInitialPayRate(Connection conn, int userId, String compensationType,
+                                         BigDecimal rate) throws SQLException {
+        ensureDefaultForEmployee(conn, userId);
+        updatePayRate(conn, userId, DEFAULT_EFFECTIVE_FROM, compensationType, rate);
+    }
+
+    public static void saveCurrentPeriodPayRate(Connection conn, int userId, LocalDate today,
+                                                String previousCompensationType,
+                                                String compensationType, BigDecimal rate) throws SQLException {
+        ensureSchema(conn);
+        PayrollSetting current = settingFor(conn, userId, today, previousCompensationType);
+        LocalDate effectiveFrom = periodFor(current.periodType(), current.workHourLimit(), today).start();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO employee_payroll_settings (
+                    setting_id, user_id, period_type, work_hour_limit, effective_from,
+                    compensation_type, pay_rate, created_by_user_id, created_by_name
+                ) VALUES (?, ?, ?, ?, ?, ?::compensation_type_enum, ?, ?, ?)
+                ON CONFLICT (user_id, effective_from) DO UPDATE SET
+                    compensation_type = EXCLUDED.compensation_type,
+                    pay_rate = EXCLUDED.pay_rate,
+                    created_by_user_id = EXCLUDED.created_by_user_id,
+                    created_by_name = EXCLUDED.created_by_name,
+                    updated_at = CURRENT_TIMESTAMP
+                """)) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setInt(2, userId);
+            ps.setString(3, current.periodType().name());
+            ps.setBigDecimal(4, current.workHourLimit());
+            ps.setDate(5, Date.valueOf(effectiveFrom));
+            ps.setString(6, normalizeCompensationType(compensationType));
+            ps.setBigDecimal(7, normalizeRate(rate));
+            if (SessionManager.getCurrentUserId() == null) ps.setNull(8, Types.INTEGER);
+            else ps.setInt(8, SessionManager.getCurrentUserId());
+            ps.setString(9, SessionManager.getCurrentUserDisplayName());
+            ps.executeUpdate();
+        }
+    }
+
+    public static PayRate payRateFor(Connection conn, int userId, LocalDate date) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT COALESCE(eps.compensation_type::text, u.compensation_type::text, 'HOURLY'),
+                       COALESCE(eps.pay_rate, u.salary, 0),
+                       COALESCE(eps.effective_from, DATE '1900-01-01')
+                FROM users u
+                LEFT JOIN LATERAL (
+                    SELECT compensation_type, pay_rate, effective_from
+                    FROM employee_payroll_settings
+                    WHERE user_id = u.user_id AND effective_from <= ?
+                    ORDER BY effective_from DESC, updated_at DESC
+                    LIMIT 1
+                ) eps ON TRUE
+                WHERE u.user_id = ?
+                """)) {
+            ps.setDate(1, Date.valueOf(date));
+            ps.setInt(2, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) throw new SQLException("Employee record was not found.");
+                return new PayRate(rs.getString(1), rs.getBigDecimal(2), rs.getDate(3).toLocalDate());
+            }
+        }
+    }
+
+    private static void updatePayRate(Connection conn, int userId, LocalDate effectiveFrom,
+                                      String compensationType, BigDecimal rate) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE employee_payroll_settings
+                SET compensation_type = ?::compensation_type_enum, pay_rate = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND effective_from = ?
+                """)) {
+            ps.setString(1, normalizeCompensationType(compensationType));
+            ps.setBigDecimal(2, normalizeRate(rate));
+            ps.setInt(3, userId);
+            ps.setDate(4, Date.valueOf(effectiveFrom));
+            ps.executeUpdate();
+        }
+    }
+
+    private static BigDecimal normalizeRate(BigDecimal rate) {
+        if (rate == null || rate.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Pay rate must be zero or greater.");
+        }
+        return rate.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private static String normalizeCompensationType(String value) {
+        if (value == null || value.isBlank()) return "HOURLY";
+        return value.trim().toUpperCase(Locale.ROOT);
     }
 
     public static boolean isHourly(String compensationType) {

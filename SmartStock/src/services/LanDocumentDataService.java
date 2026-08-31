@@ -53,7 +53,7 @@ final class LanDocumentDataService {
     private static List<ReceiptItem> saleItems(Connection connection, int saleId) throws SQLException {
         List<ReceiptItem> items = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT COALESCE(p.name,'Deleted Item') || CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,
+                SELECT CASE WHEN si.is_misc_item THEN COALESCE(si.item_name,'Misc Item') ELSE COALESCE(p.name,'Deleted Item') || CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END END,
                        COALESCE(p.sku,''),COALESCE(si.quantity,0),COALESCE(si.original_unit_price,si.unit_price,0),
                        COALESCE(si.unit_price,0),COALESCE(si.discount_percent,0),
                        COALESCE(si.quantity,0)*COALESCE(si.unit_price,0)

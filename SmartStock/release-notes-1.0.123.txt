@@ -1,0 +1,6 @@
+SmartStock 1.0.123
+
+- Fixes Windows updates when the Scheduler Cloudflare tunnel is using its bundled executable.
+- Makes the SmartStock server scheduled task track the Java service directly, preventing duplicate server and tunnel processes.
+- Treats an incomplete server dependency payload as an update failure and rolls back instead of leaving the server partially installed.
+- Restores reliable server startup with the PostgreSQL driver and full runtime dependency set.

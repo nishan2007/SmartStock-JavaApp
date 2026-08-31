@@ -1,0 +1,7 @@
+SmartStock 1.0.122
+
+- Includes the complete Scheduler browser/phone interface and all 1.0.121 server-update recovery protections.
+- Stops the Scheduler tunnel through an exact executable-path Windows process query before stopping Java.
+- Avoids relying on incomplete Java ProcessHandle metadata when Cloudflare keeps the server directory locked.
+- Keeps the tunnel termination scoped to SmartStock's bundled sync-service executable.
+- Fixes Start Server Processes failing while copying the active Cloudflare executable, and prevents a partial dependency directory from leaving PostgreSQL unavailable.

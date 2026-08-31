@@ -125,7 +125,7 @@ public final class ReportDataService {
 
     private static List<SaleFact> loadSaleFacts(Connection c, Filters f) throws SQLException {
         StringBuilder q = new StringBuilder("""
-            SELECT s.sale_id, COALESCE(p.product_id,0), COALESCE(p.name,'Unknown Product'),
+            SELECT s.sale_id, COALESCE(p.product_id,0), CASE WHEN si.is_misc_item THEN COALESCE(si.item_name,'Misc Item') ELSE COALESCE(p.name,'Unknown Product') END,
               COALESCE(b.name,'Unassigned'), COALESCE(d.name,'Unassigned'), COALESCE(it.name,'Unassigned'),
               COALESCE(s.user_id,0), COALESCE(NULLIF(s.user_name,''),u.full_name,u.username,'Unknown'),
               COALESCE(s.payment_method,'UNKNOWN'), s.created_at AT TIME ZONE ?,
@@ -146,7 +146,7 @@ public final class ReportDataService {
         filter(q,p,"si.product_id",f.products()); filter(q,p,"p.brand_id",f.brands());
         filter(q,p,"p.category_id",f.departments()); filter(q,p,"p.item_type_id",f.itemTypes());
         filter(q,p,"s.user_id",f.employees()); filterStrings(q,p,"s.payment_method",f.paymentMethods());
-        q.append(" GROUP BY s.sale_id,p.product_id,p.name,b.name,d.name,it.name,s.user_id,s.user_name,u.full_name,u.username,s.payment_method,s.created_at,si.sale_item_id,si.quantity,si.unit_price,si.discount_amount,p.cost_price ORDER BY s.created_at");
+        q.append(" GROUP BY s.sale_id,p.product_id,p.name,si.item_name,si.is_misc_item,b.name,d.name,it.name,s.user_id,s.user_name,u.full_name,u.username,s.payment_method,s.created_at,si.sale_item_id,si.quantity,si.unit_price,si.discount_amount,p.cost_price ORDER BY s.created_at");
         List<SaleFact> out = new ArrayList<>();
         try (PreparedStatement ps=c.prepareStatement(q.toString())) { bind(ps,p); try(ResultSet r=ps.executeQuery()) {
             while(r.next()) out.add(new SaleFact(r.getInt(1),r.getInt(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),

@@ -273,8 +273,8 @@ public final class ServerTimeClockManager {
                        (tc.break_start AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_break_start,
                        (tc.break_end AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_break_end,
                        (tc.clock_out AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), ?)) AS local_clock_out,
-                       COALESCE(u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
-                       COALESCE(u.salary, 0) AS salary,
+                       COALESCE(pay.compensation_type::TEXT, u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
+                       COALESCE(pay.pay_rate, u.salary, 0) AS salary,
                        tc.total_hours_worked,
                        tc.total_earned,
                        tc.location_id,
@@ -285,6 +285,13 @@ public final class ServerTimeClockManager {
                        tc.auto_break_end_review_status
                 FROM employee_time_clock tc
                 LEFT JOIN users u ON u.user_id = tc.user_id
+                LEFT JOIN LATERAL (
+                    SELECT compensation_type, pay_rate
+                    FROM employee_payroll_settings
+                    WHERE user_id = tc.user_id AND effective_from <= tc.work_date
+                    ORDER BY effective_from DESC, updated_at DESC
+                    LIMIT 1
+                ) pay ON TRUE
                 LEFT JOIN roles r ON r.role_id = u.role_id
                 LEFT JOIN locations l ON l.location_id = tc.location_id
                 """);
@@ -871,8 +878,8 @@ public final class ServerTimeClockManager {
                                )) / 3600, 0)::NUMERIC,
                                2
                            ) AS rounded_hours,
-                           COALESCE(u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
-                           COALESCE(u.salary, 0) AS salary,
+                           COALESCE(pay.compensation_type::TEXT, u.compensation_type::TEXT, 'HOURLY') AS compensation_type,
+                           COALESCE(pay.pay_rate, u.salary, 0) AS salary,
                            NOT EXISTS (
                                SELECT 1
                                FROM employee_time_clock paid_daily
@@ -883,6 +890,13 @@ public final class ServerTimeClockManager {
                            ) AS should_pay_daily
                     FROM employee_time_clock tc
                     JOIN users u ON u.user_id = tc.user_id
+                    LEFT JOIN LATERAL (
+                        SELECT compensation_type, pay_rate
+                        FROM employee_payroll_settings
+                        WHERE user_id = tc.user_id AND effective_from <= tc.work_date
+                        ORDER BY effective_from DESC, updated_at DESC
+                        LIMIT 1
+                    ) pay ON TRUE
                     WHERE tc.clock_id = ?
                 )
                 UPDATE employee_time_clock tc
@@ -912,19 +926,19 @@ public final class ServerTimeClockManager {
                 throw new TimeClockException("Lunch start has already been recorded.");
             }
             if ("lunch_start".equals(columnName) && current.breakStart != null && current.breakEnd == null) {
-                throw new TimeClockException("End your 10-minute break before starting lunch.");
+                throw new TimeClockException("End your break before starting lunch.");
             }
             if ("lunch_end".equals(columnName) && (current.lunchStart == null || current.lunchEnd != null)) {
                 throw new TimeClockException("Lunch start must be recorded before lunch end.");
             }
             if ("break_start".equals(columnName) && current.breakStart != null) {
-                throw new TimeClockException("Your 10-minute break has already been recorded for this session.");
+                throw new TimeClockException("Your break has already been recorded for this session.");
             }
             if ("break_start".equals(columnName) && current.lunchStart != null && current.lunchEnd == null) {
-                throw new TimeClockException("End lunch before starting your 10-minute break.");
+                throw new TimeClockException("End lunch before starting your break.");
             }
             if ("break_end".equals(columnName) && (current.breakStart == null || current.breakEnd != null)) {
-                throw new TimeClockException("Start your 10-minute break before ending it.");
+                throw new TimeClockException("Start your break before ending it.");
             }
             if ("clock_out".equals(columnName) && current.lunchStart != null && current.lunchEnd == null) {
                 throw new TimeClockException("Punch lunch end before clocking out.");

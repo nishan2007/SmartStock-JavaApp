@@ -1,0 +1,5 @@
+SmartStock 1.0.95
+
+- Removes the production Supabase static-initialization dependency from ordinary LAN login transitions.
+- Loads Supabase public configuration only when a direct cloud token operation actually requires it.
+- Surfaces configuration linkage failures at Login instead of silently leaving the password-cleared window stuck.

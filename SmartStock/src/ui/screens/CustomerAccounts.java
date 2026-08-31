@@ -10,6 +10,7 @@ import ui.helpers.SessionDataCache;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.ResponsiveTask;
+import ui.helpers.CustomerCardActions;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -21,6 +22,8 @@ import java.sql.SQLException;
 import java.util.regex.Pattern;
 import java.util.UUID;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 public class CustomerAccounts extends JFrame {
     private JTable customerTable;
@@ -31,6 +34,7 @@ public class CustomerAccounts extends JFrame {
     private JTextField nameField;
     private JTextField phoneField;
     private JTextField emailField;
+    private JTextField customerSinceField;
     private CustomerTypeSelector customerTypeSelector;
     private JTextField creditLimitField;
     private JTextField balanceField;
@@ -45,6 +49,9 @@ public class CustomerAccounts extends JFrame {
     private JButton recordPaymentButton;
     private JButton transactionHistoryButton;
     private JButton paymentHistoryButton;
+    private JButton previewCardButton,printCardButton,pdfCardButton;
+    private LanApiClient.CustomerAccountRecord selectedAccount;
+    private final Map<Integer,LanApiClient.CustomerAccountRecord> customerRecords=new HashMap<>();
     private Integer selectedCustomerId;
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
@@ -153,6 +160,7 @@ public class CustomerAccounts extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         emailField = new JTextField();
+        customerSinceField = new JTextField();
         customerTypeSelector = new CustomerTypeSelector();
         creditLimitField = new JTextField("0");
         balanceField = new JTextField("0");
@@ -170,24 +178,25 @@ public class CustomerAccounts extends JFrame {
         addField(formPanel, gbc, 4, "Email:", emailField);
         addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
         addField(formPanel, gbc, 6, "Balance (All Stores):", balanceField);
+        addField(formPanel, gbc, 7, "Customer Since (year):", customerSinceField);
 
         gbc.gridx = 0;
-        gbc.gridy = 7;
+        gbc.gridy = 8;
         formPanel.add(new JLabel("Account Type:"), gbc);
         gbc.gridx = 1;
         formPanel.add(businessAccountCheckBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 9;
         formPanel.add(new JLabel("Status:"), gbc);
         gbc.gridx = 1;
         formPanel.add(activeCheckBox, gbc);
 
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
         notesScrollPane.setPreferredSize(new Dimension(0, 82));
-        addField(formPanel, gbc, 9, "Notes:", notesScrollPane);
+        addField(formPanel, gbc, 10, "Notes:", notesScrollPane);
 
-        JPanel buttonPanel = new JPanel(new GridLayout(5, 2, 8, 8));
+        JPanel buttonPanel = new JPanel(new GridLayout(0, 2, 8, 8));
         addButton = new JButton("Add Account");
         updateButton = new JButton("Update Account");
         clearButton = new JButton("Clear");
@@ -197,12 +206,14 @@ public class CustomerAccounts extends JFrame {
         recordPaymentButton = new JButton("Record Payment");
         transactionHistoryButton = new JButton("Details");
         paymentHistoryButton = new JButton("Payments");
+        previewCardButton=new JButton("Preview Card");printCardButton=new JButton("Print Card");pdfCardButton=new JButton("Save Card PDF");
 
         updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
         transactionHistoryButton.setEnabled(false);
         paymentHistoryButton.setEnabled(false);
+        previewCardButton.setEnabled(false);printCardButton.setEnabled(false);pdfCardButton.setEnabled(false);
 
         buttonPanel.add(addButton);
         buttonPanel.add(updateButton);
@@ -210,6 +221,7 @@ public class CustomerAccounts extends JFrame {
         buttonPanel.add(recordPaymentButton);
         buttonPanel.add(transactionHistoryButton);
         buttonPanel.add(paymentHistoryButton);
+        buttonPanel.add(previewCardButton);buttonPanel.add(printCardButton);buttonPanel.add(pdfCardButton);
         buttonPanel.add(customerTypesButton);
         buttonPanel.add(clearButton);
         buttonPanel.add(refreshButton);
@@ -223,6 +235,9 @@ public class CustomerAccounts extends JFrame {
         recordPaymentButton.addActionListener(e -> adjustBalance(false));
         transactionHistoryButton.addActionListener(e -> openAccountDetails());
         paymentHistoryButton.addActionListener(e -> openPaymentHistory());
+        previewCardButton.addActionListener(e->CustomerCardActions.run(this,selectedAccount,CustomerCardActions.Action.PREVIEW));
+        printCardButton.addActionListener(e->CustomerCardActions.run(this,selectedAccount,CustomerCardActions.Action.PRINT));
+        pdfCardButton.addActionListener(e->CustomerCardActions.run(this,selectedAccount,CustomerCardActions.Action.PDF));
 
         wrapper.add(formPanel, BorderLayout.NORTH);
         wrapper.add(buttonPanel, BorderLayout.SOUTH);
@@ -254,7 +269,9 @@ public class CustomerAccounts extends JFrame {
 
     private void applyCustomers(CustomerAccountsSnapshot snapshot) {
         customerModel.setRowCount(0);
+        customerRecords.clear();
         for (LanApiClient.CustomerAccountRecord row : snapshot.rows()) {
+                    customerRecords.put(row.customerId(),row);
                     customerModel.addRow(new Object[]{
                             row.customerId(),row.accountNumber(),row.name(),row.customerTypeId()==null?"":row.customerTypeId(),
                             row.customerTypeName(),row.phone(),row.email(),money(row.creditLimit()),money(row.currentBalance()),
@@ -272,6 +289,7 @@ public class CustomerAccounts extends JFrame {
         }
         int modelRow = customerTable.convertRowIndexToModel(row);
         selectedCustomerId = Integer.parseInt(String.valueOf(customerModel.getValueAt(modelRow, 0)));
+        selectedAccount=customerRecords.get(selectedCustomerId);
         accountNumberField.setText(valueAt(modelRow, 1));
         accountNumberField.setEditable(PermissionManager.hasPermission("EDIT_ACCOUNT_NUMBER"));
         nameField.setText(valueAt(modelRow, 2));
@@ -283,11 +301,13 @@ public class CustomerAccounts extends JFrame {
         businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 12)));
         activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 13)));
         accountNotesArea.setText(valueAt(modelRow, 14));
+        customerSinceField.setText(selectedAccount==null||selectedAccount.customerSince()==null?"":String.valueOf(selectedAccount.customerSince()));
         updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
         transactionHistoryButton.setEnabled(true);
         paymentHistoryButton.setEnabled(true);
+        previewCardButton.setEnabled(true);printCardButton.setEnabled(true);pdfCardButton.setEnabled(true);
     }
 
     private void openAccountDetails() {
@@ -339,6 +359,7 @@ public class CustomerAccounts extends JFrame {
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
         String accountNotes = accountNotesArea.getText().trim();
+        Integer customerSince=parseCustomerSince(customerSinceField.getText());if(customerSinceField.getText()!=null&&!customerSinceField.getText().trim().isEmpty()&&customerSince==null)return;
         Integer customerTypeId = customerTypeSelector.getSelectedCustomerTypeId();
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
@@ -354,7 +375,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(null,null,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince);
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -380,6 +401,7 @@ public class CustomerAccounts extends JFrame {
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
         String accountNotes = accountNotesArea.getText().trim();
+        Integer customerSince=parseCustomerSince(customerSinceField.getText());if(customerSinceField.getText()!=null&&!customerSinceField.getText().trim().isEmpty()&&customerSince==null)return;
         Integer customerTypeId = customerTypeSelector.getSelectedCustomerTypeId();
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
@@ -403,7 +425,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(selectedCustomerId,accountNumber,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince);
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -491,11 +513,13 @@ public class CustomerAccounts extends JFrame {
 
     private void clearFields() {
         selectedCustomerId = null;
+        selectedAccount = null;
         accountNumberField.setText("Generated on save");
         accountNumberField.setEditable(false);
         nameField.setText("");
         phoneField.setText("");
         emailField.setText("");
+        customerSinceField.setText("");
         customerTypeSelector.clearSelection();
         creditLimitField.setText("0");
         balanceField.setText("0");
@@ -507,9 +531,12 @@ public class CustomerAccounts extends JFrame {
         recordPaymentButton.setEnabled(false);
         transactionHistoryButton.setEnabled(false);
         paymentHistoryButton.setEnabled(false);
+        previewCardButton.setEnabled(false);printCardButton.setEnabled(false);pdfCardButton.setEnabled(false);
         customerTable.clearSelection();
         nameField.requestFocusInWindow();
     }
+
+    private Integer parseCustomerSince(String value){String text=value==null?"":value.trim();if(text.isEmpty())return null;try{int year=Integer.parseInt(text),current=java.time.Year.now().getValue();if(text.length()!=4||year<1900||year>current)throw new NumberFormatException();return year;}catch(NumberFormatException ex){JOptionPane.showMessageDialog(this,"Customer Since must be a four-digit year from 1900 through "+java.time.Year.now().getValue()+".");return null;}}
 
     private void applyCustomerFilter() {
         if (customerSorter == null) {

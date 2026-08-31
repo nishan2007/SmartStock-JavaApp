@@ -27,12 +27,18 @@ public class AccountPaymentReceiptPrinter {
 
     public static void printToPosPrinter(AccountPaymentReceiptData receipt, HardwareSettingsManager.PosPrinter printer,
                                          HardwareSettingsManager.PrintFormat printFormat) throws PrintException {
+        HardwareSettingsManager.PrintFormat resolvedFormat = printFormat == null
+                ? (printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat()) : printFormat;
+        if (resolvedFormat == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+            if (NativeEscPosTransport.sendIfEnabled(AccountPaymentReceiptFormatter.formatEscPos(receipt, settings)) != null) return;
+        }
         if (printer == null) {
             PrintService service = PrintServiceLookup.lookupDefaultPrintService();
             if (service == null) {
                 throw new PrintException("No default printer is configured.");
             }
-            printToService(receipt, service, printFormat);
+            printToService(receipt, service, resolvedFormat);
             return;
         }
 
@@ -40,7 +46,7 @@ public class AccountPaymentReceiptPrinter {
         if (service == null) {
             throw new PrintException("Configured printer was not found: " + printer.systemName());
         }
-        printToService(receipt, service, printFormat == null ? printer.printFormat() : printFormat);
+        printToService(receipt, service, resolvedFormat);
     }
 
     private static void printToService(AccountPaymentReceiptData receipt, PrintService service,

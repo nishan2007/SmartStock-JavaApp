@@ -125,9 +125,11 @@ public class AccountPaymentReceiptFormatter {
     }
 
     private static void appendCentered(StringBuilder builder, String value, int width) {
-        String text = trimToWidth(value, width);
-        int padding = Math.max((width - text.length()) / 2, 0);
-        builder.append(" ".repeat(padding)).append(text).append('\n');
+        for (String line : (value == null ? "" : value).replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
+            String text = trimToWidth(line, width);
+            int padding = Math.max((width - text.length()) / 2, 0);
+            builder.append(" ".repeat(padding)).append(text).append('\n');
+        }
     }
 
     private static void appendPair(StringBuilder builder, String label, String value, int width) {

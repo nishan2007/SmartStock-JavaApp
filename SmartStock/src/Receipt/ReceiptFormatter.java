@@ -134,9 +134,15 @@ public class ReceiptFormatter {
     }
 
     private static void appendCentered(StringBuilder builder, String value, int width) {
-        String text = trimToWidth(value, width);
-        int padding = Math.max((width - text.length()) / 2, 0);
-        builder.append(" ".repeat(padding)).append(text).append('\n');
+        for (String line : normalizedLines(value)) {
+            String text = trimToWidth(line, width);
+            int padding = Math.max((width - text.length()) / 2, 0);
+            builder.append(" ".repeat(padding)).append(text).append('\n');
+        }
+    }
+
+    private static String[] normalizedLines(String value) {
+        return (value == null ? "" : value).replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
     }
 
     private static void appendPair(StringBuilder builder, String label, String value, int width) {
@@ -222,11 +228,17 @@ public class ReceiptFormatter {
         if (!ReceiptBarcodeRenderer.hasScannableReceiptNumber(receipt)) {
             return;
         }
-        BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(receipt.getReceiptNumber(), 384, 88);
+        appendEscPosBarcode(out, receipt.getReceiptNumber());
+    }
+
+    static void appendEscPosBarcode(ByteArrayOutputStream out, String barcodeText) {
+        if (!ReceiptBarcodeRenderer.hasScannableText(barcodeText)) return;
+        String value = barcodeText.trim();
+        BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(value, 384, 88);
         write(out, 0x1B, 0x61, 0x01);
         appendEscPosRasterImage(out, barcode);
         writeAscii(out, "\n");
-        writeAscii(out, receipt.getReceiptNumber() + "\n");
+        writeAscii(out, value + "\n");
         write(out, 0x1B, 0x61, 0x00);
     }
 

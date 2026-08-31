@@ -82,6 +82,8 @@ try {
     New-Item -ItemType Directory -Force -Path $DependencyDir | Out-Null
     Copy-Item -LiteralPath $Jar.FullName -Destination $InputDir
     Copy-Item -Path (Join-Path $Target "dependency\*") -Destination $DependencyDir -Recurse
+    # Both the app image and updater ZIP carry the same pinned tunnel executable.
+    & (Join-Path $PSScriptRoot 'stage-cloudflared.ps1') -Destination (Join-Path $DependencyDir 'cloudflared\windows-amd64')
     $ServerLauncherProperties = Join-Path $Work "SmartStockServer.properties"
     Set-Content -LiteralPath $ServerLauncherProperties -Encoding ASCII -Value @(
         "main-jar=$($Jar.Name)",
@@ -142,6 +144,9 @@ try {
         if (-not ($ArchiveNames | Where-Object { $_ -like "dependency/*.jar" })) {
             throw "The Windows updater archive does not contain root-level dependencies."
         }
+        if ($ArchiveNames -notcontains 'dependency/cloudflared/windows-amd64/cloudflared.exe') {
+            throw 'The updater archive is missing its pinned Cloudflare client.'
+        }
         if ($ArchiveNames | Where-Object { $_ -like "SmartStock/*" }) {
             throw "The Windows updater archive contains an incompatible nested SmartStock app image."
         }
@@ -181,9 +186,6 @@ SetupIconFile=$WindowsIcon
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
-[InstallDelete]
-Type: files; Name: "{app}\app\inventory-management-*.jar"
-
 [Files]
 Source: "$AppImage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -193,6 +195,32 @@ Name: "{autodesktop}\SmartStock"; Filename: "{app}\SmartStock.exe"; Tasks: deskt
 
 [Run]
 Filename: "{app}\SmartStock.exe"; Description: "Launch SmartStock"; Flags: nowait skipifsilent runasoriginaluser
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  FindRec: TFindRec;
+  Candidate: String;
+begin
+  { Delete superseded JARs only after the complete new payload is installed. }
+  if CurStep = ssPostInstall then
+  begin
+    if FindFirst(ExpandConstant('{app}\app\inventory-management-*.jar'), FindRec) then
+    begin
+      try
+        repeat
+          if CompareText(FindRec.Name, '$($Jar.Name)') <> 0 then
+          begin
+            Candidate := ExpandConstant('{app}\app\') + FindRec.Name;
+            DeleteFile(Candidate);
+          end;
+        until not FindNext(FindRec);
+      finally
+        FindClose(FindRec);
+      end;
+    end;
+  end;
+end;
 "@
 
     & iscc $InstallerScript
@@ -213,5 +241,11 @@ Filename: "{app}\SmartStock.exe"; Description: "Launch SmartStock"; Flags: nowai
     Write-Host "Installer SHA-256: $InstallerHash"
     Write-Host "The server package includes Java. PostgreSQL is installed through Guided Setup."
 } finally {
-    if (Test-Path $Work) { Remove-Item -LiteralPath $Work -Recurse -Force }
+    $ResolvedWork = [System.IO.Path]::GetFullPath($Work)
+    $TempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+    if (-not $ResolvedWork.StartsWith($TempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        -not ([System.IO.Path]::GetFileName($ResolvedWork) -match '^smartstock-windows-[a-f0-9-]{36}$')) {
+        throw 'Refusing cleanup outside the verified packaging temporary directory.'
+    }
+    if (Test-Path -LiteralPath $ResolvedWork) { Remove-Item -LiteralPath $ResolvedWork -Recurse -Force }
 }

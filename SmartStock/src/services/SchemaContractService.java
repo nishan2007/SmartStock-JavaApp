@@ -47,7 +47,17 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql",
             "database/migrations/v1_after/20260820170000_first_admin_setup_state.sql",
             "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql",
-            "database/migrations/v1_after/20260823123000_optional_new_item_cost_price.sql"
+            "database/migrations/v1_after/20260823123000_optional_new_item_cost_price.sql",
+            "database/migrations/v1_after/20260824160000_effective_dated_pay_rates.sql",
+            "database/migrations/v1_after/20260824170000_backfill_missing_payroll_baselines.sql",
+            "database/migrations/v1_after/20260826120000_configurable_twenty_dollar_rounding.sql"
+            ,"database/migrations/v1_after/20260826180000_misc_sale_items.sql"
+            ,"database/migrations/v1_after/20260827130000_customer_type_receipt_printing.sql"
+            ,"database/migrations/v1_after/20260827150000_customer_card_templates.sql"
+            ,"database/migrations/v1_after/20260827160000_share_card_and_badge_templates.sql"
+            ,"database/migrations/v1_after/20260827170000_rename_individual_customer_template.sql"
+            ,"database/migrations/v1_after/20260828190000_scheduler_web_app.sql"
+            ,"database/migrations/v1_after/20260830120000_customer_photos_card_expiry_government.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -70,7 +80,8 @@ public final class SchemaContractService {
             "SET_CREDIT_LIMIT", "EDIT_ACCOUNT_NUMBER", "VIEW_ITEM_DETAILS",
             "EMPLOYEE_MANAGEMENT", "ROLE_MANAGEMENT", "VIEW_REPORTS", "CHANGE_STORE",
             "COMPANY_CUSTOMIZATION", "LOCAL_DEVICE_SETTINGS", "CUSTOM_ORDER_PRICE_OVERRIDE",
-            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS");
+            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM");
+
 
     private SchemaContractService() {
     }
@@ -180,6 +191,225 @@ public final class SchemaContractService {
         } finally { connection.setAutoCommit(auto); }
     }
 
+    public static void ensureConfigurableTwentyDollarRoundingUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "company_customization")
+                || (columnExists(connection, "public", "company_customization", "round_sales_to_nearest_twenty")
+                && columnExists(connection, "public", "company_customization", "round_custom_orders_to_nearest_twenty"))) return;
+        String storedResource = null, storedCatalog = null;
+        if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setInt(1, BASELINE_VERSION);
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) { storedResource=rs.getString(1); storedCatalog=rs.getString(2); } }
+            }
+        }
+        String actual = catalogFingerprint(connection, List.of("public"), false);
+        if (storedCatalog != null && !actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic rounding-preference installation is blocked.", "55000");
+        String expected;
+        try { expected = resourceFingerprint(localContractResources()); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        boolean auto = connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource("database/migrations/v1_after/20260826120000_configurable_twenty_dollar_rounding.sql"));
+            if (storedResource != null) try (PreparedStatement ps = connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")) {
+                ps.setString(1, expected); ps.setString(2, catalogFingerprint(connection,List.of("public"),false));
+                ps.setInt(3, BASELINE_VERSION); ps.setString(4, storedResource);
+                if (ps.executeUpdate()!=1) throw new SQLException("Local schema metadata changed during rounding-preference installation.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback(); if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The rounding preferences could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureEffectiveDatedPayRatesUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "employee_payroll_settings")
+                || columnExists(connection, "public", "employee_payroll_settings", "pay_rate")) return;
+        String storedResource = null, storedCatalog = null;
+        if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setInt(1, BASELINE_VERSION);
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) { storedResource=rs.getString(1); storedCatalog=rs.getString(2); } }
+            }
+        }
+        String actual = catalogFingerprint(connection, List.of("public"), false);
+        if (storedCatalog != null && !actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic pay-rate history installation is blocked.", "55000");
+        String expected;
+        try { expected = resourceFingerprint(localContractResources()); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        boolean auto = connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource("database/migrations/v1_after/20260824160000_effective_dated_pay_rates.sql"));
+            if (storedResource != null) try (PreparedStatement ps = connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")) {
+                ps.setString(1, expected); ps.setString(2, catalogFingerprint(connection,List.of("public"),false));
+                ps.setInt(3, BASELINE_VERSION); ps.setString(4, storedResource);
+                if (ps.executeUpdate()!=1) throw new SQLException("Local schema metadata changed during pay-rate history installation.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback(); if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The pay-rate history schema could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureMissingPayrollBaselinesUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "employee_payroll_settings")
+                || !columnExists(connection, "public", "employee_payroll_settings", "pay_rate")) return;
+        String storedResource = null, storedCatalog = null;
+        if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setInt(1, BASELINE_VERSION);
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) { storedResource=rs.getString(1); storedCatalog=rs.getString(2); } }
+            }
+        }
+        String actual = catalogFingerprint(connection, List.of("public"), false);
+        if (storedCatalog != null && !actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic payroll baseline repair is blocked.", "55000");
+        String expected;
+        try { expected = resourceFingerprint(localContractResources()); }
+        catch (Exception ex) { throw new SQLException("The packaged local schema is unreadable.", ex); }
+        boolean auto = connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260824170000_backfill_missing_payroll_baselines.sql"));
+            if (storedResource != null) try (PreparedStatement ps = connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")) {
+                ps.setString(1, expected); ps.setString(2, catalogFingerprint(connection,List.of("public"),false));
+                ps.setInt(3, BASELINE_VERSION); ps.setString(4, storedResource);
+                if (ps.executeUpdate()!=1) throw new SQLException("Local schema metadata changed during payroll baseline repair.");
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback(); if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("The payroll baseline repair could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureMiscSaleItemsUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","sale_items")
+                || (columnExists(connection,"public","sale_items","item_name")
+                && columnExists(connection,"public","sale_items","is_misc_item")
+                && columnExists(connection,"public","held_cart_items","is_misc_item")
+                && columnExists(connection,"public","sync_cross_store_sale_items_cache","is_misc_item")
+                && miscSaleDataInstalled(connection))) return;
+        String storedResource=null,storedCatalog=null;
+        if(tableExists(connection,"public","smartstock_schema_metadata")){
+            try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}
+            }
+        }
+        String actual=catalogFingerprint(connection,List.of("public"),false);
+        if(storedCatalog!=null&&!actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic misc-sale-item installation is blocked.","55000");
+        String expected;
+        try{expected=resourceFingerprint(localContractResources());}
+        catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260826180000_misc_sale_items.sql"));
+            if(storedResource!=null)try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);
+                if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during misc-sale-item installation.");
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The misc sale item schema could not be installed.",ex);}
+        finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomerTypeReceiptPrintingUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","customer_types")
+                || columnExists(connection,"public","customer_types","auto_print_sale_receipt")) return;
+        String storedResource=null,storedCatalog=null;
+        if(tableExists(connection,"public","smartstock_schema_metadata")){
+            try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}
+            }
+        }
+        String actual=catalogFingerprint(connection,List.of("public"),false);
+        if(storedCatalog!=null&&!actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic customer-type receipt preference installation is blocked.","55000");
+        String expected;
+        try{expected=resourceFingerprint(localContractResources());}
+        catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260827130000_customer_type_receipt_printing.sql"));
+            if(storedResource!=null)try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);
+                if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during customer-type receipt preference installation.");
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The customer-type receipt preference could not be installed.",ex);}
+        finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomerCardTemplatesUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","company_customization")||!tableExists(connection,"public","customer_types")) return;
+        boolean installed=columnExists(connection,"public","company_customization","customer_card_template_layout_data")
+                && columnExists(connection,"public","customer_types","customer_card_template_slot")
+                && columnExists(connection,"public","customer_accounts","customer_since");
+        String storedResource=null,storedCatalog=null;
+        if(tableExists(connection,"public","smartstock_schema_metadata")){
+            try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}
+            }
+        }
+        String actual=catalogFingerprint(connection,List.of("public"),false),expected;
+        try{expected=resourceFingerprint(localContractResources());}
+        catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        if(installed&&actual.equals(storedCatalog)&&expected.equals(storedResource))return;
+        if(storedCatalog!=null&&!actual.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic customer-card template installation is blocked.","55000");
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260827150000_customer_card_templates.sql"));
+            if(storedResource!=null)try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);
+                if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during customer-card template installation.");
+            }
+            connection.commit();
+        } catch(Exception ex) {
+            connection.rollback();
+            if(ex instanceof SQLException sql) throw sql;
+            throw new SQLException("Customer-card templates could not be installed.",ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureSharedCardAndBadgeTemplatesUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","company_info")||!tableExists(connection,"public","company_customization"))return;
+        boolean installed=columnExists(connection,"public","company_info","company_template_sharing_version");
+        if(installed)try(PreparedStatement ps=connection.prepareStatement("SELECT COALESCE(company_template_sharing_version,0) FROM company_info WHERE company_info_id=1");ResultSet rs=ps.executeQuery()){if(rs.next()&&rs.getInt(1)>=1)return;}
+        String storedResource=null,storedCatalog=null;if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}}
+        String actual=catalogFingerprint(connection,List.of("public"),false);if(storedCatalog!=null&&!actual.equals(storedCatalog))throw new SQLException("The local schema has drifted; automatic shared-template installation is blocked.","55000");
+        String expected;try{expected=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260827160000_share_card_and_badge_templates.sql"));
+            if(storedResource!=null)try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during shared-template installation.");}connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Shared card and badge templates could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureIndividualCustomerTemplateRename(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","company_info")||!tableExists(connection,"public","company_customization")||!tableExists(connection,"public","customer_types"))return;
+        boolean installed=columnExists(connection,"public","company_info","individual_customer_template_rename_version");
+        if(installed)try(PreparedStatement ps=connection.prepareStatement("SELECT COALESCE(individual_customer_template_rename_version,0) FROM company_info WHERE company_info_id=1");ResultSet rs=ps.executeQuery()){if(rs.next()&&rs.getInt(1)>=1)return;}
+        String storedResource=null,storedCatalog=null;if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(rs.next()){storedResource=rs.getString(1);storedCatalog=rs.getString(2);}}}
+        String actual=catalogFingerprint(connection,List.of("public"),false);if(storedCatalog!=null&&!actual.equals(storedCatalog))throw new SQLException("The local schema has drifted; automatic Individual customer-template rename is blocked.","55000");
+        String expected;try{expected=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260827170000_rename_individual_customer_template.sql"));
+            if(storedResource!=null)try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during the Individual customer-template rename.");}connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The Individual customer-template rename could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    private static boolean miscSaleDataInstalled(Connection connection)throws SQLException{
+        try(PreparedStatement ps=connection.prepareStatement("""
+                SELECT EXISTS(SELECT 1 FROM public.permissions WHERE permission_key='ADD_MISC_SALE_ITEM'),
+                       EXISTS(SELECT 1 FROM public.products WHERE sku='SMARTSTOCK-MISC'
+                         AND product_type='NON_INVENTORY' AND is_active=FALSE)
+                """);ResultSet rs=ps.executeQuery()){
+            return rs.next()&&rs.getBoolean(1)&&rs.getBoolean(2);
+        }
+    }
+
     /** Blocks database-dependent work unless this database matches the packaged v1 baseline. */
     public static void requireLocalReady(Connection connection) throws SQLException {
         ensureFirstAdminSetupUpgrade(connection);
@@ -197,9 +427,59 @@ public final class SchemaContractService {
         ensureMobileItemWebUpgrade(connection);
         ensureOneDriveImageUpgrade(connection);
         ensureBuiltinPermissionsUpgrade(connection);
+        ensureMiscSaleItemsUpgrade(connection);
+        ensureCustomerTypeReceiptPrintingUpgrade(connection);
+        ensureCustomerCardTemplatesUpgrade(connection);
+        ensureSharedCardAndBadgeTemplatesUpgrade(connection);
+        ensureIndividualCustomerTemplateRename(connection);
+        ensureSchedulerWebUpgrade(connection);
+        ensureCustomerPhotoCardExpiryUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    public static void ensureCustomerPhotoCardExpiryUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","customer_accounts")||!tableExists(connection,"public","customer_types"))return;
+        if(columnExists(connection,"public","customer_accounts","customer_photo_url")
+                &&columnExists(connection,"public","customer_accounts","customer_card_issued_on")
+                &&columnExists(connection,"public","customer_accounts","customer_card_expires_on"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260830120000_customer_photos_card_expiry_government.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Customer photos and card expiry could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    /** Installs the owner scheduler through the ordered local migration and advances metadata. */
+    public static void ensureSchedulerWebUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","smartstock_schema_metadata")
+                || !tableExists(connection,"public","mobile_permissions")
+                || !tableExists(connection,"public","role_mobile_permissions")) return;
+        boolean installed=tableExists(connection,"public","scheduler_web_runtime")
+                && tableExists(connection,"public","scheduler_web_sessions")
+                && tableExists(connection,"public","scheduler_web_auth_attempts")
+                && tableExists(connection,"public","scheduler_web_idempotency");
+        String storedResource,storedCatalog;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;storedResource=rs.getString(1);storedCatalog=rs.getString(2);}
+        }
+        String expected;try{expected=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
+        String actual=catalogFingerprint(connection,List.of("public"),false);
+        if(installed&&expected.equals(storedResource)&&actual.equals(storedCatalog))return;
+        if(!actual.equals(storedCatalog))throw new SQLException("The local schema has drifted; automatic scheduler web installation is blocked.","55000");
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260828190000_scheduler_web_app.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
+                ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);
+                if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during scheduler web installation.");
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The scheduler web schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     /** Repairs the incomplete v1 permission seed and advances existing local metadata. */
@@ -468,15 +748,19 @@ public final class SchemaContractService {
     }
 
     private static void upgradeCustomOrderCreditSeparation(Connection connection)throws SQLException{
-        if(!tableExists(connection,"public","customer_account_transactions")||columnExists(connection,"public","customer_account_transactions","credit_applied_amount"))return;
+        if(!tableExists(connection,"public","customer_account_transactions"))return;
+        boolean transactionReady=columnExists(connection,"public","customer_account_transactions","credit_applied_amount");
+        boolean cacheCreditReady=columnExists(connection,"public","sync_cross_store_customer_history_cache","credit_applied_amount");
+        boolean cacheBalanceReady=columnExists(connection,"public","sync_cross_store_customer_history_cache","document_balance");
+        if(transactionReady&&cacheCreditReady&&cacheBalanceReady)return;
         String stored,catalog;try(PreparedStatement ps=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
             ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){if(!rs.next())return;stored=rs.getString(1);catalog=rs.getString(2);}}
         if(!catalogFingerprint(connection,List.of("public"),false).equals(catalog))throw new SQLException("The local schema has drifted; automatic custom-order credit separation is blocked.","55000");
         String resource;try{resource=resourceFingerprint(localContractResources());}catch(Exception ex){throw new SQLException("The packaged local schema is unreadable.",ex);}
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try(Statement s=connection.createStatement()){
-            s.execute("ALTER TABLE customer_account_transactions ADD COLUMN credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN document_balance numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("ALTER TABLE customer_account_transactions ADD COLUMN IF NOT EXISTS credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN IF NOT EXISTS credit_applied_amount numeric(12,2) NOT NULL DEFAULT 0");
+            s.execute("ALTER TABLE sync_cross_store_customer_history_cache ADD COLUMN IF NOT EXISTS document_balance numeric(12,2) NOT NULL DEFAULT 0");
             s.execute("UPDATE customer_account_transactions SET transaction_type='CUSTOM_ORDER_BALANCE',credit_applied_amount=0 WHERE transaction_type='CUSTOM_ORDER_CREDIT'");
             s.execute("UPDATE customer_account_transactions t SET credit_applied_amount=CASE WHEN t.transaction_type='PAYMENT' AND t.custom_order_id IS NULL THEN GREATEST(ABS(COALESCE(t.amount,0))-COALESCE((SELECT SUM(a.amount) FROM customer_account_payment_allocations a WHERE a.payment_transaction_id=t.transaction_id AND a.custom_order_id IS NOT NULL),0),0) ELSE 0 END");
             s.execute("UPDATE customer_account_transactions SET transaction_type='CUSTOM_ORDER_PAYMENT',credit_applied_amount=0 WHERE transaction_type='PAYMENT' AND custom_order_id IS NOT NULL");

@@ -30,9 +30,11 @@ final class LanHeldCartService {
         boolean departmentVat = false;
         BigDecimal fixedVatRate = BigDecimal.ZERO;
         BigDecimal discountLimit = BigDecimal.valueOf(5);
+        boolean roundToNearestTwenty = true;
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT COALESCE(vat_enabled,FALSE),COALESCE(vat_use_department_rates,FALSE),
-                       COALESCE(vat_fixed_rate_percent,0),COALESCE(sale_discount_limit_percent,5)
+                       COALESCE(vat_fixed_rate_percent,0),COALESCE(sale_discount_limit_percent,5),
+                       COALESCE(round_sales_to_nearest_twenty,TRUE)
                 FROM company_customization WHERE location_id=?
                 """)) {
             ps.setInt(1, locationId);
@@ -42,6 +44,7 @@ final class LanHeldCartService {
                     departmentVat = rs.getBoolean(2);
                     fixedVatRate = percent(rs.getBigDecimal(3));
                     discountLimit = percent(rs.getBigDecimal(4));
+                    roundToNearestTwenty = rs.getBoolean(5);
                 }
             }
         }
@@ -58,6 +61,10 @@ final class LanHeldCartService {
         result.put("departmentVat", departmentVat);
         result.put("fixedVatRate", fixedVatRate);
         result.put("discountLimit", discountLimit);
+        result.put("roundToNearestTwenty", roundToNearestTwenty);
+        try(PreparedStatement ps=connection.prepareStatement("SELECT product_id FROM products WHERE sku='SMARTSTOCK-MISC' LIMIT 1");ResultSet rs=ps.executeQuery()){
+            result.put("miscProductId",rs.next()?rs.getInt(1):null);
+        }
         result.put("departmentRates", rates);
         return result;
     }
@@ -89,8 +96,11 @@ final class LanHeldCartService {
         BigDecimal afterLineDiscounts = BigDecimal.ZERO;
         for (CreateLine line : request.lines()) {
             CatalogLine catalog = loadCatalog(connection, line.productId());
-            BigDecimal unitPrice = money(line.unitPrice());
-            if (unitPrice.compareTo(catalog.price()) != 0 && !canChangePrice) {
+            String miscName = validateMiscLine(connection,userId,line,catalog);
+            BigDecimal unitPrice = normalizeHeldUnitPrice(line.unitPrice(), line.miscItem());
+            if (!line.miscItem()
+                    && unitPrice.compareTo(normalizeHeldUnitPrice(catalog.price(), false)) != 0
+                    && !canChangePrice) {
                 approvals.consume(line.priceApprovalToken(), "CHANGE_SALE_ITEM_PRICE",
                         "Price Override", line.priceOverrideReason());
             }
@@ -105,7 +115,7 @@ final class LanHeldCartService {
                     .divide(HUNDRED, 2, RoundingMode.HALF_UP)).max(BigDecimal.ZERO));
             gross = gross.add(lineGross);
             afterLineDiscounts = afterLineDiscounts.add(lineNet);
-            lines.add(new ValidatedLine(catalog, line.quantity(), unitPrice, discount));
+            lines.add(new ValidatedLine(catalog, line.quantity(), unitPrice, discount,miscName,line.miscItem()));
         }
         BigDecimal saleDiscountAmount = money(afterLineDiscounts.multiply(saleDiscount)
                 .divide(HUNDRED, 2, RoundingMode.HALF_UP));
@@ -129,16 +139,16 @@ final class LanHeldCartService {
             }
         }
         try (PreparedStatement ps = connection.prepareStatement("""
-                INSERT INTO held_cart_items(held_cart_id,product_id,product_name,description,sku,
+                INSERT INTO held_cart_items(held_cart_id,product_id,product_name,is_misc_item,description,sku,
                   unit_price,quantity,discount_percent,product_type)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 """)) {
             for (ValidatedLine line : lines) {
                 ps.setInt(1, heldCartId); ps.setInt(2, line.catalog().productId());
-                ps.setString(3, line.catalog().name()); ps.setString(4, line.catalog().description());
-                ps.setString(5, line.catalog().sku()); ps.setBigDecimal(6, line.unitPrice());
-                ps.setInt(7, line.quantity()); ps.setBigDecimal(8, line.discountPercent());
-                ps.setString(9, line.catalog().productType()); ps.addBatch();
+                ps.setString(3, line.displayName()); ps.setBoolean(4,line.miscItem());
+                ps.setString(5, line.catalog().description()); ps.setString(6, line.catalog().sku());
+                ps.setBigDecimal(7, line.unitPrice()); ps.setInt(8, line.quantity());
+                ps.setBigDecimal(9, line.discountPercent()); ps.setString(10, line.catalog().productType()); ps.addBatch();
             }
             ps.executeBatch();
         }
@@ -194,9 +204,9 @@ final class LanHeldCartService {
         List<Map<String, Object>> items = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT hci.product_id,hci.product_name,hci.description,hci.sku,hci.unit_price,hci.quantity,
-                       COALESCE(hci.discount_percent,0),COALESCE(hci.product_type,'INVENTORY'),p.category_id,
-                       COALESCE(p.price,0)
+                SELECT hci.product_id,hci.product_name,COALESCE(p.size,''),hci.description,hci.sku,
+                       hci.unit_price,hci.quantity,COALESCE(hci.discount_percent,0),
+                       COALESCE(hci.product_type,'INVENTORY'),p.category_id,COALESCE(p.price,0),hci.is_misc_item
                 FROM held_cart_items hci JOIN products p ON p.product_id=hci.product_id
                 WHERE hci.held_cart_id=? ORDER BY hci.held_cart_item_id
                 """)) {
@@ -205,13 +215,15 @@ final class LanHeldCartService {
                 while (rs.next()) {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("productId", rs.getInt(1)); item.put("productName", rs.getString(2));
-                    item.put("description", rs.getString(3)); item.put("sku", rs.getString(4));
-                    item.put("unitPrice", rs.getBigDecimal(5)); item.put("quantity", rs.getInt(6));
-                    item.put("discountPercent", rs.getBigDecimal(7)); item.put("productType", rs.getString(8));
-                    item.put("categoryId", rs.getObject(9)); item.put("catalogPrice", rs.getBigDecimal(10));
+                    item.put("size", rs.getString(3)); item.put("description", rs.getString(4));
+                    item.put("sku", rs.getString(5)); item.put("unitPrice", rs.getBigDecimal(6));
+                    item.put("quantity", rs.getInt(7)); item.put("discountPercent", rs.getBigDecimal(8));
+                    item.put("productType", rs.getString(9)); item.put("categoryId", rs.getObject(10));
+                    item.put("catalogPrice", rs.getBigDecimal(11));
+                    item.put("miscItem",rs.getBoolean(12));
                     items.add(item);
-                    BigDecimal line = money(rs.getBigDecimal(5).multiply(BigDecimal.valueOf(rs.getInt(6))));
-                    total = total.add(line.subtract(line.multiply(rs.getBigDecimal(7))
+                    BigDecimal line = money(rs.getBigDecimal(6).multiply(BigDecimal.valueOf(rs.getInt(7))));
+                    total = total.add(line.subtract(line.multiply(rs.getBigDecimal(8))
                             .divide(HUNDRED, 2, RoundingMode.HALF_UP)));
                 }
             }
@@ -257,6 +269,20 @@ final class LanHeldCartService {
                 return rs.next() ? percent(rs.getBigDecimal(1)) : BigDecimal.valueOf(5);
             }
         }
+    }
+
+    private static String validateMiscLine(Connection c,int userId,CreateLine line,CatalogLine catalog)throws Exception{
+        if(!line.miscItem()){
+            if("SMARTSTOCK-MISC".equals(catalog.sku()))throw rule(400,"VALIDATION_ERROR","The miscellaneous item reference requires a misc sale item.");
+            return null;
+        }
+        requirePermission(c,userId,"ADD_MISC_SALE_ITEM");
+        if(!"SMARTSTOCK-MISC".equals(catalog.sku())||!"NON_INVENTORY".equals(catalog.productType()))
+            throw rule(400,"VALIDATION_ERROR","The miscellaneous item reference is invalid.");
+        String name=clean(line.miscItemName());
+        if(name.isEmpty()||name.length()>200)throw rule(400,"VALIDATION_ERROR","Misc item name is required and must be 200 characters or fewer.");
+        if(money(line.unitPrice()).signum()<=0)throw rule(400,"VALIDATION_ERROR","Misc item price must be greater than zero.");
+        return name;
     }
 
     private static void validateCreate(CreateRequest request) throws RuleViolation {
@@ -316,6 +342,9 @@ final class LanHeldCartService {
     }
 
     private static BigDecimal money(BigDecimal value) { return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP); }
+    static BigDecimal normalizeHeldUnitPrice(BigDecimal value, boolean miscItem) {
+        return miscItem ? money(value) : utils.CurrencyFormatter.normalize(value);
+    }
     private static BigDecimal percent(BigDecimal value) { return (value == null ? BigDecimal.ZERO : value).max(BigDecimal.ZERO).min(HUNDRED).setScale(2, RoundingMode.HALF_UP); }
     private static String clean(String value) { return value == null ? "" : value.trim(); }
     private static void setInt(PreparedStatement ps, int index, Integer value) throws SQLException {
@@ -345,9 +374,12 @@ final class LanHeldCartService {
                          List<CreateLine> lines) { }
     record CreateLine(int productId, int quantity, BigDecimal unitPrice, BigDecimal discountPercent,
                       String priceApprovalToken, String priceOverrideReason,
-                      String discountApprovalToken, String discountOverrideReason) { }
+                      String discountApprovalToken, String discountOverrideReason,
+                      String miscItemName,boolean miscItem) { }
     private record CatalogLine(int productId, String name, String description, String sku,
                                BigDecimal price, String productType) { }
     private record ValidatedLine(CatalogLine catalog, int quantity, BigDecimal unitPrice,
-                                 BigDecimal discountPercent) { }
+                                 BigDecimal discountPercent,String miscItemName,boolean miscItem) {
+        String displayName(){return miscItem?miscItemName:catalog.name();}
+    }
 }

@@ -36,9 +36,17 @@ public final class CashDrawerCloseReceiptPrinter {
 
     public static void print(CashDrawerSession session, BigDecimal cashInHand,
                              BigDecimal floatCash, List<BreakdownLine> breakdown,
-                             List<String> cashHandlers,
+                             List<String> cashHandlers,BigDecimal returnedAmount,
                              HardwareSettingsManager.PosPrinter printer)
             throws PrintException {
+        HardwareSettingsManager.PrintFormat format = printer == null
+                ? HardwareSettingsManager.PrintFormat.RECEIPT_40
+                : printer.printFormat();
+        CompanyCustomizationManager.ReceiptSettings settings = loadReceiptSettings();
+        String text = formatText(session, cashInHand, floatCash, breakdown, cashHandlers, returnedAmount, settings);
+        byte[] escPosContent = formatEscPos(text, settings);
+        if (format == HardwareSettingsManager.PrintFormat.RECEIPT_40
+                && NativeEscPosTransport.sendIfEnabled(escPosContent) != null) return;
         PrintService service = printer == null
                 ? PrintServiceLookup.lookupDefaultPrintService()
                 : HardwareSettingsManager.findPrintService(printer.systemName());
@@ -47,34 +55,38 @@ public final class CashDrawerCloseReceiptPrinter {
                     ? "No default printer is configured."
                     : "Configured printer was not found: " + printer.systemName());
         }
-        HardwareSettingsManager.PrintFormat format = printer == null
-                ? HardwareSettingsManager.PrintFormat.RECEIPT_40
-                : printer.printFormat();
-        CompanyCustomizationManager.ReceiptSettings settings = loadReceiptSettings();
-        String text = formatText(session, cashInHand, floatCash, breakdown, cashHandlers, settings);
         if (format == HardwareSettingsManager.PrintFormat.LETTER) {
             printLetter(service, text, settings == null ? null
                     : CompanyCustomizationManager.loadReceiptLogo(settings));
             return;
         }
+        DocPrintJob job = service.createPrintJob();
+        job.print(new SimpleDoc(escPosContent, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+    }
+
+    private static byte[] formatEscPos(String text, CompanyCustomizationManager.ReceiptSettings settings) {
         ByteArrayOutputStream content = new ByteArrayOutputStream();
         content.writeBytes("\u001b@".getBytes(StandardCharsets.US_ASCII));
         content.writeBytes(ReceiptLogoSupport.escPosLogo(settings == null ? null
                 : CompanyCustomizationManager.loadReceiptLogo(settings)));
         content.writeBytes((text + "\n\n\n\u001dVB\0").getBytes(StandardCharsets.US_ASCII));
-        DocPrintJob job = service.createPrintJob();
-        job.print(new SimpleDoc(content.toByteArray(), DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+        return content.toByteArray();
     }
 
     public static String formatText(CashDrawerSession session, BigDecimal cashInHand,
                                     BigDecimal floatCash, List<BreakdownLine> breakdown,
                                     List<String> cashHandlers) {
-        return formatText(session, cashInHand, floatCash, breakdown, cashHandlers, loadReceiptSettings());
+        return formatText(session, cashInHand, floatCash, breakdown, cashHandlers, BigDecimal.ZERO, loadReceiptSettings());
+    }
+
+    public static String formatText(CashDrawerSession session,BigDecimal cashInHand,BigDecimal floatCash,
+                                    List<BreakdownLine> breakdown,List<String> cashHandlers,BigDecimal returnedAmount){
+        return formatText(session,cashInHand,floatCash,breakdown,cashHandlers,returnedAmount,loadReceiptSettings());
     }
 
     private static String formatText(CashDrawerSession session, BigDecimal cashInHand,
                                      BigDecimal floatCash, List<BreakdownLine> breakdown,
-                                     List<String> cashHandlers,
+                                     List<String> cashHandlers,BigDecimal returnedAmount,
                                      CompanyCustomizationManager.ReceiptSettings settings) {
         String companyName = settings == null ? "SmartStock" : settings.companyName();
         String footerLine = settings == null ? "" : settings.footerLine();
@@ -105,6 +117,8 @@ public final class CashDrawerCloseReceiptPrinter {
         receipt.append("----------------------------------------\n");
         pair(receipt, "Set Cash", money(session.openingCash()));
         pair(receipt, "Expected Cash", money(session.expectedCash()));
+        pair(receipt, "Total Expected CIH", money(defaultZero(session.expectedCash()).subtract(defaultZero(session.openingCash()))));
+        pair(receipt, "Returned Amount", money(returnedAmount));
         pair(receipt, "Counted Cash", money(session.countedCash()));
         pair(receipt, "Variance", money(session.variance()));
         pair(receipt, "CIH", money(cashInHand));
@@ -152,10 +166,14 @@ public final class CashDrawerCloseReceiptPrinter {
         return CURRENCY.format(amount == null ? BigDecimal.ZERO : amount);
     }
 
+    private static BigDecimal defaultZero(BigDecimal amount){return amount==null?BigDecimal.ZERO:amount;}
+
     private static void center(StringBuilder text, String value, int width) {
-        String clean = trim(value, width);
-        text.append(" ".repeat(Math.max((width - clean.length()) / 2, 0)))
-                .append(clean).append('\n');
+        for (String line : (value == null ? "" : value).replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
+            String clean = trim(line, width);
+            text.append(" ".repeat(Math.max((width - clean.length()) / 2, 0)))
+                    .append(clean).append('\n');
+        }
     }
 
     private static void pair(StringBuilder text, String label, String value) {

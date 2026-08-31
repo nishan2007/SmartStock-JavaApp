@@ -37,6 +37,17 @@ class EpsonReceiptPrintServiceTest {
         assertFalse(indexOf(job, new byte[]{0x1B, 0x70}) >= 0);
     }
 
+    @Test
+    void drawerOnlyJobPulsesWithoutPrintingOrCutting() {
+        HardwareSettingsManager.EpsonSettings settings =
+                new HardwareSettingsManager.EpsonSettings(true, true, true, 1, 120, 240, true);
+
+        byte[] job = EpsonReceiptPrintService.composeDrawerJob(settings);
+
+        assertArrayEquals(new byte[]{0x1B, 0x40, 0x1B, 0x70, 0x01, 60, 120}, job);
+        assertFalse(indexOf(job, new byte[]{0x1D, 0x56}) >= 0);
+    }
+
     private static int indexOf(byte[] data, byte[] pattern) {
         outer:
         for (int i = 0; i <= data.length - pattern.length; i++) {

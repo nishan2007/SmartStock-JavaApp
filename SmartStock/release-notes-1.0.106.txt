@@ -1,0 +1,7 @@
+SmartStock 1.0.106
+
+- Opens the configured cash drawer for cash sales completed with Checkout Only, without printing or cutting receipt paper.
+- Adds a dedicated Size column to the Make a Sale cart and retains item sizes when held carts are resumed.
+- Makes the Size column narrower and the Description column wider in the Make a Sale search dropdown.
+- Allows Service items to be created without an image while retaining the image requirement for Inventory and Non-Inventory items.
+- Includes the complete Make a Sale catalog-cache fix and configurable nearest-$20 rounding features from the preceding updates.

@@ -243,7 +243,13 @@ public final class PostgresRuntimeService {
 
     public static CommandResult startPostgres() throws Exception {
         if (isWindows()) {
-            return runPowerShell("$ErrorActionPreference='Stop'; $services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; if(-not $services){throw 'PostgreSQL Windows service was not found.'}; $services | Start-Service; $services | Format-Table Name,Status -AutoSize", Duration.ofMinutes(2));
+            return runPowerShell("$ErrorActionPreference='Stop'; "
+                    + "$services=Get-Service 'postgresql*' -ErrorAction SilentlyContinue; "
+                    + "if(-not $services){throw 'PostgreSQL Windows service was not found.'}; "
+                    + "$stopped=@($services | Where-Object {$_.Status -ne 'Running'}); "
+                    + "if($stopped.Count -gt 0){$stopped | Start-Service -ErrorAction Stop}; "
+                    + "$services=Get-Service 'postgresql*'; "
+                    + "$services | Format-Table Name,Status -AutoSize", Duration.ofMinutes(2));
         }
         DatabaseConfig config = DatabaseConfig.load();
         int port = config.serverPort() <= 0 ? 5432 : config.serverPort();
@@ -774,14 +780,41 @@ public final class PostgresRuntimeService {
                   if ($RemainingServers.Count -gt 0) {
                     throw 'The existing SmartStock server process did not stop before update.'
                   }
+                  $TunnelPath = [IO.Path]::GetFullPath((Join-Path $ServiceAppDir 'dependency\\cloudflared\\windows-amd64\\cloudflared.exe'))
+                  $ExistingTunnels = @(Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object {
+                      $_.ExecutablePath -and
+                      [IO.Path]::GetFullPath($_.ExecutablePath).Equals(
+                        $TunnelPath,[StringComparison]::OrdinalIgnoreCase)
+                    })
+                  foreach ($Tunnel in $ExistingTunnels) {
+                    Stop-Process -Id $Tunnel.ProcessId -Force -ErrorAction Stop
+                  }
                   Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
                     -Confirm:$false -ErrorAction SilentlyContinue
-                  Remove-Item -Force (Join-Path $ServiceAppDir 'inventory-management-*.jar') -ErrorAction SilentlyContinue
-                  Copy-Item -LiteralPath $Jar -Destination $ServiceAppDir -Force
-                  $TargetDependencies = Join-Path $ServiceAppDir 'dependency'
-                  Remove-Item -Recurse -Force $TargetDependencies -ErrorAction SilentlyContinue
-                  New-Item -ItemType Directory -Force -Path $TargetDependencies | Out-Null
-                  Copy-Item -Path (Join-Path $Dependencies '*') -Destination $TargetDependencies -Recurse -Force
+                  if (-not (Test-Path $Dependencies -PathType Container)) {
+                    throw 'The SmartStock dependency payload is missing.'
+                  }
+                  $StagedAppDir = Join-Path $ServiceDir ('.app-staged-' + [guid]::NewGuid())
+                  $PreviousAppDir = Join-Path $ServiceDir ('.app-previous-' + [guid]::NewGuid())
+                  New-Item -ItemType Directory -Force -Path $StagedAppDir | Out-Null
+                  Copy-Item -LiteralPath $Jar -Destination $StagedAppDir -Force
+                  Copy-Item -LiteralPath $Dependencies -Destination (Join-Path $StagedAppDir 'dependency') -Recurse -Force
+                  if (-not (Get-ChildItem (Join-Path $StagedAppDir 'dependency') -Filter 'postgresql-*.jar' -File)) {
+                    throw 'The staged SmartStock server payload is missing the PostgreSQL driver.'
+                  }
+                  try {
+                    Move-Item -LiteralPath $ServiceAppDir -Destination $PreviousAppDir -Force
+                    try {
+                      Move-Item -LiteralPath $StagedAppDir -Destination $ServiceAppDir -Force
+                    } catch {
+                      Move-Item -LiteralPath $PreviousAppDir -Destination $ServiceAppDir -Force
+                      throw
+                    }
+                    Remove-Item -LiteralPath $PreviousAppDir -Recurse -Force
+                  } finally {
+                    Remove-Item -LiteralPath $StagedAppDir -Recurse -Force -ErrorAction SilentlyContinue
+                  }
                   $JarName = Split-Path -Leaf $Jar
                   $ServiceArguments = %s
                   if (-not [string]::IsNullOrWhiteSpace($ServiceArguments) -and
@@ -796,9 +829,8 @@ public final class PostgresRuntimeService {
                   $Shortcut.WorkingDirectory = $ServiceAppDir
                   $Shortcut.WindowStyle = 7
                   $Shortcut.Save()
-                  $TaskAction = New-ScheduledTaskAction `
-                    -Execute (Join-Path $env:WINDIR 'explorer.exe') `
-                    -Argument ('"' + $ServiceShortcut + '"')
+                  $TaskAction = New-ScheduledTaskAction -Execute $ServiceExecutable `
+                    -Argument $ServiceArguments -WorkingDirectory $ServiceAppDir
                   $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $ServiceUser
                   $TaskPrincipal = New-ScheduledTaskPrincipal `
                     -UserId $ServiceUser `

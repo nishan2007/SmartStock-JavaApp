@@ -27,10 +27,14 @@ class CashDrawerCloseReceiptPrinterTest {
                 session, new BigDecimal("84500"), new BigDecimal("40000"), List.of(
                         new CashDrawerCloseReceiptPrinter.BreakdownLine(5000, 10, 2, 8),
                         new CashDrawerCloseReceiptPrinter.BreakdownLine(1000, 20, 10, 10)
-                ), List.of("Alice", "Bob", "Carol"));
+                ), List.of("Alice", "Bob", "Carol"),new BigDecimal("5500"));
 
         assertTrue(receipt.contains("Set Cash"));
         assertTrue(receipt.contains("Expected Cash"));
+        assertTrue(receipt.contains("Total Expected CIH"));
+        assertTrue(receipt.contains("$85,000"));
+        assertTrue(receipt.contains("Returned Amount"));
+        assertTrue(receipt.contains("$5,500"));
         assertTrue(receipt.contains("Counted Cash"));
         assertTrue(receipt.contains("Variance"));
         assertTrue(receipt.contains("CIH"));

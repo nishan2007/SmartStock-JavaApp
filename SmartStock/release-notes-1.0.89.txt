@@ -1,0 +1,6 @@
+Badge Template Editor sizing:
+- Makes the Badge Template Editor freely resizable.
+- Opens the editor at a larger size while respecting the usable screen bounds.
+- Allows the editor panes to expand with the window.
+- Keeps the complete toolbar reachable with horizontal scrolling on smaller displays.
+- Retains vertical scrolling for element settings and visibility controls.

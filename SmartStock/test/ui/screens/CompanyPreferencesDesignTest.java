@@ -68,4 +68,13 @@ class CompanyPreferencesDesignTest {
         assertTrue(source.contains("blank cost price is saved as $0.00"));
         assertTrue(source.contains("requireCostPriceOnNewItem()"));
     }
+
+    @Test
+    void badgeTemplateEditorIsResizableAndAdaptsToTheScreen() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/CompanyCustomization.java"));
+        assertTrue(source.contains("dialog.setResizable(true)"));
+        assertTrue(source.contains("getMaximumWindowBounds()"));
+        assertTrue(source.contains("ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED"));
+        assertTrue(source.contains("panel.setPreferredSize(new Dimension(1080, 760))"));
+    }
 }

@@ -1,0 +1,5 @@
+SmartStock 1.0.91
+
+- Adds an always-accessible Configure Register Connection button to the Welcome screen.
+- Opens the complete connection form directly in Client mode without returning through Guided Setup.
+- Allows administrators to repair an incorrect saved mode, server host, HTTPS port, and store assignment before pairing.

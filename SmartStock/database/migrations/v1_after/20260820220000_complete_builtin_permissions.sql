@@ -17,6 +17,7 @@ INSERT INTO public.permissions (
 )
 VALUES
     ('MAKE_SALE', 'Make Sale', 'Allows creating and completing sales transactions.', 'Point of Sale', 'Checkout', CURRENT_TIMESTAMP),
+    ('ADD_MISC_SALE_ITEM', 'Add Misc Sale Item', 'Allows adding an arbitrary named and priced non-inventory item to a sale.', 'Point of Sale', 'Checkout', CURRENT_TIMESTAMP),
     ('VIEW_SALES', 'View Sales', 'Allows viewing sales history and transaction details.', 'Point of Sale', 'Sales History', CURRENT_TIMESTAMP),
     ('VIEW_INVENTORY', 'View Inventory', 'Allows viewing item and stock information.', 'Inventory', 'Item Visibility', CURRENT_TIMESTAMP),
     ('NEW_ITEM', 'New Item', 'Allows creating inventory items.', 'Inventory', 'Items', CURRENT_TIMESTAMP),

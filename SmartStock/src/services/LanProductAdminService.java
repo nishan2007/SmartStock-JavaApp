@@ -43,7 +43,7 @@ final class LanProductAdminService {
                 LEFT JOIN product_shelf_assignments psa ON psa.product_id=p.product_id AND psa.location_id=?
                 LEFT JOIN shelf_locations sl ON sl.shelf_location_id=psa.shelf_location_id
                 LEFT JOIN shelf_locations ssl ON ssl.shelf_location_id=psa.storage_shelf_location_id
-                WHERE %s ORDER BY p.name LIMIT 300
+                WHERE p.sku<>'SMARTSTOCK-MISC' AND %s ORDER BY p.name LIMIT 300
                 """.formatted(ProductSearchHelper.predicate("p", locationId, query));
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
@@ -63,6 +63,53 @@ final class LanProductAdminService {
         return rows;
     }
 
+    static List<Map<String,Object>> nonRoundedPrices(Connection connection,int userId)throws Exception{
+        requirePermission(connection,userId,"EDIT_ITEM");
+        List<Map<String,Object>> rows=new ArrayList<>();
+        try(PreparedStatement ps=connection.prepareStatement("""
+                SELECT product_id,COALESCE(sku,''),COALESCE(name,''),COALESCE(size,''),COALESCE(price,0)
+                FROM products WHERE MOD(COALESCE(price,0),20)<>0
+                ORDER BY name,product_id LIMIT 2000
+                """);ResultSet rs=ps.executeQuery()){
+            while(rs.next()){
+                BigDecimal current=rs.getBigDecimal(5)==null?BigDecimal.ZERO:rs.getBigDecimal(5);
+                rows.add(map("productId",rs.getInt(1),"sku",rs.getString(2),"name",rs.getString(3),
+                        "size",rs.getString(4),"currentPrice",current,
+                        "suggestedPrice",utils.CurrencyFormatter.roundToNearestTwenty(current)));
+            }
+        }
+        return rows;
+    }
+
+    static Map<String,Object> updateRoundedPrices(Connection connection,JsonObject body,UUID deviceId,
+                                                   int userId,int locationId)throws Exception{
+        requireDeviceId(deviceId);requirePermission(connection,userId,"EDIT_ITEM");
+        PriceRoundingRequest request=GSON.fromJson(body,PriceRoundingRequest.class);
+        if(request==null||request.lines()==null||request.lines().isEmpty())
+            throw rule(400,"VALIDATION_ERROR","Select at least one item to update.");
+        if(request.lines().size()>2000)throw rule(400,"VALIDATION_ERROR","Too many item prices were submitted.");
+        Set<Integer> seen=new LinkedHashSet<>();int updated=0;
+        for(PriceRoundingLine line:request.lines()){
+            if(line==null||line.productId()<=0||line.expectedPrice()==null||line.newPrice()==null||line.newPrice().signum()<0)
+                throw rule(400,"VALIDATION_ERROR","Every selected item requires valid current and new prices.");
+            if(!seen.add(line.productId()))throw rule(400,"VALIDATION_ERROR","An item was submitted more than once.");
+            BigDecimal expected=line.expectedPrice();
+            BigDecimal replacement=utils.CurrencyFormatter.normalize(line.newPrice());
+            if(replacement.remainder(BigDecimal.valueOf(20)).signum()!=0)
+                throw rule(400,"VALIDATION_ERROR","Every new price must be a multiple of $20.");
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE products SET price=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=? AND COALESCE(price,0)=?")){
+                ps.setBigDecimal(1,replacement);ps.setInt(2,line.productId());ps.setBigDecimal(3,expected);
+                if(ps.executeUpdate()!=1)throw rule(409,"PRICE_CHANGED","An item price changed after this review was opened. Reload the price review and try again.");
+            }
+            SyncOutboxService.recordEvent(connection,"PRODUCT_UPDATED",map("product_id",line.productId(),
+                    "location_id",locationId,"user_id",userId),locationId,deviceId.toString(),userId);
+            audit(connection,"LAN_PRODUCT_PRICE_ROUNDED",deviceId,userId,"product_id="+line.productId()
+                    +"; location_id="+locationId+"; old_price="+expected+"; new_price="+replacement);
+            updated++;
+        }
+        return map("updatedCount",updated);
+    }
+
     static List<Map<String, Object>> priceTagItems(Connection connection, String search,
                                                     int userId, int locationId) throws Exception {
         requireAnyPermission(connection, userId, "VIEW_INVENTORY", "EDIT_ITEM", "NEW_ITEM", "MAKE_SALE");
@@ -71,7 +118,7 @@ final class LanProductAdminService {
                 SELECT item_type,name,size,description,code,price,item_id FROM (
                   SELECT 'Product' item_type,p.name,COALESCE(p.size,'') size,COALESCE(p.description,'') description,
                     COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id) code,
-                    COALESCE(p.price,0) price,p.product_id item_id FROM products p WHERE %s
+                    COALESCE(p.price,0) price,p.product_id item_id FROM products p WHERE p.sku<>'SMARTSTOCK-MISC' AND %s
                   UNION ALL
                   SELECT 'Custom item',coi.item_name,'',COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
@@ -119,6 +166,20 @@ final class LanProductAdminService {
         }
         return map("encodedTemplates", "", "showCompany", true, "showSku", true,
                 "showBarcode", true, "widthInches", 2.25d, "heightInches", 1.25d);
+    }
+
+    static Map<String,Object> priceTagItem(Connection connection,String itemType,long itemId,
+                                           int userId,int locationId)throws Exception{
+        requireAnyPermission(connection,userId,"VIEW_INVENTORY","EDIT_ITEM","NEW_ITEM","MAKE_SALE");
+        String normalized=clean(itemType,20).toLowerCase(java.util.Locale.ROOT);String sql=switch(normalized){
+            case "product"->"SELECT p.name,COALESCE(p.size,''),COALESCE(p.description,''),COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id),COALESCE(p.price,0) FROM products p WHERE p.product_id=? AND p.sku<>'SMARTSTOCK-MISC'";
+            case "custom"->"SELECT coi.item_name,'',COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE";
+            case "variant"->"SELECT coi.item_name||' - '||v.variant_name,v.variant_name,COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND v.is_active=TRUE";
+            default->throw rule(400,"VALIDATION_ERROR","The saved item type is invalid.");};
+        try(PreparedStatement ps=connection.prepareStatement(sql)){ps.setLong(1,itemId);try(ResultSet rs=ps.executeQuery()){
+            if(!rs.next())throw rule(404,"ITEM_NOT_FOUND","The saved item could not be loaded for printing.");
+            return map("name",rs.getString(1),"size",rs.getString(2),"description",rs.getString(3),"code",rs.getString(4),"price",rs.getBigDecimal(5));
+        }}
     }
 
     static Map<String, Object> create(Connection connection, JsonObject body, UUID deviceId,
@@ -171,10 +232,12 @@ final class LanProductAdminService {
         if (request.productId() == null || request.productId() <= 0)
             throw rule(400, "VALIDATION_ERROR", "Select an item to update.");
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT 1 FROM products WHERE product_id=? FOR UPDATE")) {
+                "SELECT sku FROM products WHERE product_id=? FOR UPDATE")) {
             ps.setInt(1, request.productId());
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw rule(404, "PRODUCT_NOT_FOUND", "Item was not found.");
+                if("SMARTSTOCK-MISC".equals(rs.getString(1)))
+                    throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be edited.");
             }
         }
         ValidatedProduct product = validate(connection, request, locationId);
@@ -223,11 +286,16 @@ final class LanProductAdminService {
         return map("productId", request.productId(), "quantity", adjust ? request.quantity() : inventory.quantity());
     }
 
+    private record PriceRoundingRequest(List<PriceRoundingLine> lines){}
+    private record PriceRoundingLine(int productId,BigDecimal expectedPrice,BigDecimal newPrice){}
+
     private static ValidatedProduct validate(Connection connection, ProductRequest request,
                                               int locationId) throws Exception {
         String name = required(request.name(), 300, "Item name is required.");
         String barcode = required(request.barcode(), 300, "Primary barcode is required.");
         String sku = clean(request.sku(), 300);
+        if("SMARTSTOCK-MISC".equalsIgnoreCase(sku))
+            throw rule(409,"RESERVED_SKU","SMARTSTOCK-MISC is reserved for the system miscellaneous sale item.");
         if (request.productId() == null && request.costPrice() == null && requiresCostPrice(connection, locationId))
             throw rule(400, "VALIDATION_ERROR", "Cost price is required by Company Preferences.");
         BigDecimal cost = request.costPrice() == null ? BigDecimal.ZERO : request.costPrice();

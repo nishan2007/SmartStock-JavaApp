@@ -129,8 +129,8 @@ final class LanSalesHistoryService {
     private static List<Map<String, Object>> queryItems(Connection c, int saleId) throws SQLException {
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("""
-                SELECT COALESCE(p.product_id,0),COALESCE(p.name,'Deleted Item')||
-                  CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,
+                SELECT COALESCE(p.product_id,0),CASE WHEN si.is_misc_item THEN COALESCE(si.item_name,'Misc Item') ELSE COALESCE(p.name,'Deleted Item')||
+                  CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END END,
                   COALESCE(si.quantity,0),COALESCE(SUM(sri.quantity),0),
                   COALESCE(si.original_unit_price,si.unit_price,0),COALESCE(si.discount_percent,0),
                   COALESCE(si.discount_amount,0),COALESCE(si.unit_price,0),
@@ -138,7 +138,7 @@ final class LanSalesHistoryService {
                 FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id=si.sale_item_id
                 WHERE si.sale_id=?
-                GROUP BY si.sale_item_id,p.product_id,p.name,p.size,si.quantity,si.original_unit_price,
+                GROUP BY si.sale_item_id,p.product_id,p.name,p.size,si.item_name,si.is_misc_item,si.quantity,si.original_unit_price,
                   si.discount_percent,si.discount_amount,si.unit_price ORDER BY si.sale_item_id
                 """)) {
             ps.setInt(1, saleId);

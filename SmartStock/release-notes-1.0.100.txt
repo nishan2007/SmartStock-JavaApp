@@ -1,0 +1,7 @@
+SmartStock 1.0.100
+
+- Employee breaks remain open until the employee explicitly ends them; SmartStock no longer automatically stops a break after a time limit.
+- Pay-rate and compensation-type changes now apply from the start of the employee's current open pay period.
+- Closed and older pay periods retain the rate that was effective when their hours were worked.
+- Manual clock-out, automatic clock-out, time-clock corrections, payroll reporting, and cross-store synchronization all use effective-dated pay rates.
+- The store server automatically installs and backfills the pay-rate history migration during startup after this update.

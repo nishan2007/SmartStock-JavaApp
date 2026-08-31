@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#17324d">
+  <title>SmartStock Scheduler</title>
+  <link rel="manifest" href="/scheduler/manifest.webmanifest">
+  <link rel="stylesheet" href="/scheduler/app.css">
+</head>
+<body data-device="auto">
+<header class="site-header">
+  <div><small>SMARTSTOCK</small><h1>Scheduler</h1></div>
+  <div class="header-actions"><div class="device-switch" role="group" aria-label="Display version"><button id="desktopMode" class="mode-button" type="button">Browser</button><button id="phoneMode" class="mode-button" type="button">Phone</button></div><button id="logout" class="ghost hidden" type="button">Sign out</button></div>
+</header>
+<main>
+  <section id="notice" class="notice hidden" role="alert"></section>
+  <section id="login" class="card auth"><h2>SmartStock sign in</h2><p>Use your SmartStock username or email and password.</p><form id="loginForm"><label>Username or email<input id="identifier" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button>Continue</button></form></section>
+  <section id="mfa" class="card auth hidden"><h2>Authenticator code</h2><p id="mfaHelp">Enter the six-digit code from your authenticator app.</p><div id="enroll" class="hidden"><img id="mfaQr" alt="Authenticator enrollment QR code"><p>Manual key: <code id="mfaSecret"></code></p></div><form id="mfaForm"><label>Code<input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label><button>Verify</button></form></section>
+  <section id="app" class="hidden">
+    <div class="scheduler-heading">
+      <div><h2>Employee Schedule</h2><p id="scheduleHelp">Assign employees to a shift and lunch time for each day.</p></div>
+      <div class="schedule-controls"><label>Store<select id="location"></select></label><label>View<select id="periodMode"><option value="semi">Semi-monthly</option><option value="week">Weekly</option></select></label><label>Layout<select id="detailMode"><option value="detailed">Detailed</option><option value="compact">Compact</option></select></label><button id="auto" type="button">Auto Schedule</button><button id="shifts" class="ghost" type="button">Manage Shifts</button><button id="clear" class="danger" type="button">Clear Schedule</button></div>
+      <div class="period-controls"><strong id="range"></strong><div><button id="prev" class="ghost" type="button">Previous</button><button id="today" class="ghost" type="button">Current</button><button id="next" class="ghost" type="button">Next</button></div></div>
+    </div>
+    <div id="days" class="days" aria-live="polite"></div><p id="scheduleStatus" class="schedule-status"></p>
+    <nav class="phone-nav" aria-label="Schedule actions"><button id="phoneShifts" class="ghost" type="button">Shifts</button><button id="holiday" class="ghost" type="button">Holiday</button><button id="phoneAuto" type="button">Auto Schedule</button><button id="phoneClear" class="danger" type="button">Clear</button></nav>
+  </section>
+</main>
+<dialog id="dialog"><form method="dialog"><h2 id="dialogTitle"></h2><div id="dialogBody"></div><div class="actions"><button value="cancel" class="ghost">Cancel</button><button id="dialogSave" value="default">Save</button></div></form></dialog>
+<script src="/scheduler/app.js" defer></script>
+</body>
+</html>

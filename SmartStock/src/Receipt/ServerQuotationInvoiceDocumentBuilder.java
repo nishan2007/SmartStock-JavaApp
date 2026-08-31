@@ -849,9 +849,11 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     }
 
     private static void appendCentered(StringBuilder out, String value) {
-        String text = trim(clean(value), WIDTH);
-        int left = Math.max((WIDTH - text.length()) / 2, 0);
-        out.append(" ".repeat(left)).append(text).append('\n');
+        for (String line : (value == null ? "" : value).replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
+            String text = trim(clean(line), WIDTH);
+            int left = Math.max((WIDTH - text.length()) / 2, 0);
+            out.append(" ".repeat(left)).append(text).append('\n');
+        }
     }
 
     private static void appendWrapped(StringBuilder out, String value) {

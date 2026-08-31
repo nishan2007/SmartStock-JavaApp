@@ -56,6 +56,16 @@ do {
 if ($remainingServers.Count -gt 0) {
     throw "The existing SmartStock server process did not stop before update."
 }
+$tunnelPath = [IO.Path]::GetFullPath((Join-Path $serviceAppDir "dependency\cloudflared\windows-amd64\cloudflared.exe"))
+$existingTunnels = @(Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.ExecutablePath -and
+        [IO.Path]::GetFullPath($_.ExecutablePath).Equals(
+            $tunnelPath, [StringComparison]::OrdinalIgnoreCase)
+    })
+foreach ($tunnel in $existingTunnels) {
+    Stop-Process -Id $tunnel.ProcessId -Force -ErrorAction Stop
+}
 Unregister-ScheduledTask -TaskName SmartStockBackgroundSync `
     -Confirm:$false -ErrorAction SilentlyContinue
 
@@ -65,16 +75,29 @@ $jar = Get-ChildItem -Path (Join-Path $AppDir "target") -Filter "inventory-manag
 if ($null -eq $jar) {
     throw "No SmartStock jar found in $AppDir\target. Run mvn package first."
 }
-Get-ChildItem $serviceAppDir -Filter "inventory-management-*.jar" -ErrorAction SilentlyContinue |
-    Remove-Item -Force
-Copy-Item -LiteralPath $jar.FullName -Destination $serviceAppDir -Force
 $sourceDependency = Join-Path $AppDir "target\dependency"
-$targetDependency = Join-Path $serviceAppDir "dependency"
-if (Test-Path $sourceDependency) {
-    Remove-Item -Recurse -Force $targetDependency -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $targetDependency | Out-Null
-    Copy-Item -Path (Join-Path $sourceDependency "*") `
-        -Destination $targetDependency -Recurse -Force
+if (-not (Test-Path $sourceDependency -PathType Container)) {
+    throw "The SmartStock dependency payload is missing."
+}
+$stagedAppDir = Join-Path $serviceDir (".app-staged-" + [guid]::NewGuid())
+$previousAppDir = Join-Path $serviceDir (".app-previous-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Force -Path $stagedAppDir | Out-Null
+Copy-Item -LiteralPath $jar.FullName -Destination $stagedAppDir -Force
+Copy-Item -LiteralPath $sourceDependency -Destination (Join-Path $stagedAppDir "dependency") -Recurse -Force
+if (-not (Get-ChildItem (Join-Path $stagedAppDir "dependency") -Filter "postgresql-*.jar" -File)) {
+    throw "The staged SmartStock server payload is missing the PostgreSQL driver."
+}
+try {
+    Move-Item -LiteralPath $serviceAppDir -Destination $previousAppDir -Force
+    try {
+        Move-Item -LiteralPath $stagedAppDir -Destination $serviceAppDir -Force
+    } catch {
+        Move-Item -LiteralPath $previousAppDir -Destination $serviceAppDir -Force
+        throw
+    }
+    Remove-Item -LiteralPath $previousAppDir -Recurse -Force
+} finally {
+    Remove-Item -LiteralPath $stagedAppDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $jarName = Split-Path -Leaf $jar.FullName
@@ -94,8 +117,8 @@ $shortcut.WorkingDirectory = $serviceAppDir
 $shortcut.WindowStyle = 7
 $shortcut.Save()
 
-$taskAction = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR "explorer.exe") `
-    -Argument ("`"$serviceShortcut`"")
+$taskAction = New-ScheduledTaskAction -Execute $java -Argument $serviceArguments `
+    -WorkingDirectory $serviceAppDir
 $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $ServiceUser
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId $ServiceUser `
     -LogonType Interactive -RunLevel Limited

@@ -56,6 +56,7 @@ public final class ServerImageAssetService {
             new ReferenceSource("custom_order_items", "custom_item_id", "image_url", "CUSTOM_ITEM"),
             new ReferenceSource("custom_order_item_variants", "custom_variant_id", "image_url", "CUSTOM_VARIANT"),
             new ReferenceSource("users", "user_id", "employee_photo_url", "EMPLOYEE_PHOTO"),
+            new ReferenceSource("customer_accounts", "customer_id", "customer_photo_url", "CUSTOMER_PHOTO"),
             new ReferenceSource("company_info", "company_info_id", "company_logo_url", "COMPANY_LOGO"),
             new ReferenceSource("company_customization", "location_id", "badge_template_logo_url", "BADGE_LOGO")
     );
@@ -244,7 +245,8 @@ public final class ServerImageAssetService {
         for (CloudPrefix source : List.of(
                 new CloudPrefix("Product Images", "products/", "PRODUCT", "PUBLIC"),
                 new CloudPrefix("Product Images", "company/", "COMPANY_LOGO", "PUBLIC"),
-                new CloudPrefix("employee files", "employee photos/", "EMPLOYEE_PHOTO", "AUTHENTICATED"))) {
+                new CloudPrefix("employee files", "employee photos/", "EMPLOYEE_PHOTO", "AUTHENTICATED"),
+                new CloudPrefix("customer files", "customer photos/", "CUSTOMER_PHOTO", "AUTHENTICATED"))) {
             int offset = 0;
             while (true) {
                 try {
@@ -695,7 +697,7 @@ public final class ServerImageAssetService {
 
     private static boolean isOneDriveCategory(String category){
         return "PRODUCT".equalsIgnoreCase(category)||"CUSTOM_ITEM".equalsIgnoreCase(category)
-                ||"CUSTOM_VARIANT".equalsIgnoreCase(category);
+                ||"CUSTOM_VARIANT".equalsIgnoreCase(category)||"CUSTOMER_PHOTO".equalsIgnoreCase(category);
     }
 
     private static boolean needsCloudWork(AssetRow row,OneDrivePhase phase){

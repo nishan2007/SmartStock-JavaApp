@@ -95,6 +95,7 @@ public class MainMenu extends JFrame {
     private final List<MenuIconRequest> pendingMenuIcons = new ArrayList<>();
     private RibbonHeaderPanel ribbonHeaderPanel;
     private JLabel companyLogoLabel;
+    private JLabel mainGreetingLabel;
     private boolean customCompanyLogoApplied;
     private Timer notificationRefreshTimer;
     private boolean navigationInProgress;
@@ -118,11 +119,11 @@ public class MainMenu extends JFrame {
         mainPanel.setBorder(new EmptyBorder(0, 0, 24, 0));
         mainPanel.setBackground(backgroundColor);
 
-        JLabel titleLabel = new JLabel(WelcomeGreetingHelper.currentGreeting().title());
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
-        titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        titleLabel.setForeground(RIBBON_TITLE);
-        titleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
+        mainGreetingLabel = new JLabel(WelcomeGreetingHelper.currentGreeting().title());
+        mainGreetingLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        mainGreetingLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        mainGreetingLabel.setForeground(RIBBON_TITLE);
+        mainGreetingLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
         JLabel subtitleLabel = new JLabel("Choose a section to continue");
         subtitleLabel.setFont(new Font("SansSerif", Font.PLAIN, 16));
@@ -130,7 +131,7 @@ public class MainMenu extends JFrame {
         subtitleLabel.setForeground(RIBBON_SUBTITLE);
         subtitleLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
 
-        JPanel headerPanel = createHeaderPanel(titleLabel, subtitleLabel);
+        JPanel headerPanel = createHeaderPanel(mainGreetingLabel, subtitleLabel);
 
         makeSaleButton = createMenuButtonLazy("Make a Sale", "Create a new sale transaction", "src/ICONS/MainMenuMakeSale.png");
         returnSaleButton = createMenuButtonLazy("Returns", "Return items from a completed sale", "src/ICONS/MainMenuReturns.png");
@@ -488,15 +489,20 @@ public class MainMenu extends JFrame {
                 .ifPresent(cached->setLogoImage(companyLogoLabel,cached.value(),280,100));
         UiTaskRunner.submit(this,"main-menu.company-logo",()->{
                 CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
-                return CompanyCustomizationManager.loadCompanyLogo(settings);
-            },logo->{
-                    if (logo != null) {
+                return new CompanyBranding(settings.companyName(), CompanyCustomizationManager.loadCompanyLogo(settings));
+            },branding->{
+                    String companyName = WelcomeGreetingHelper.displayName(branding.companyName());
+                    mainGreetingLabel.setText(WelcomeGreetingHelper.currentGreeting(companyName).title());
+                    setTitle(companyName + " - Main Menu");
+                    if (branding.logo() != null) {
                         customCompanyLogoApplied = true;
-                        SessionDataCache.put("main-menu.company-logo",logo);
-                        setLogoImage(companyLogoLabel, logo, 280, 100);
+                        SessionDataCache.put("main-menu.company-logo",branding.logo());
+                        setLogoImage(companyLogoLabel, branding.logo(), 280, 100);
                     }
             },ignored->{ });
     }
+
+    private record CompanyBranding(String companyName, BufferedImage logo) { }
 
     private void setLogoImage(JLabel logoLabel, Image image, int maxWidth, int maxHeight) {
         Image scaled = scaleToFit(image, maxWidth, maxHeight);

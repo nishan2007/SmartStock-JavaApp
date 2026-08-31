@@ -5,7 +5,13 @@ import com.google.zxing.BarcodeFormat;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.oned.Code128Writer;
 import managers.CompanyCustomizationManager;
+import managers.HardwareSettingsManager;
+import Receipt.NativeEscPosTransport;
 
+import javax.print.DocFlavor;
+import javax.print.PrintException;
+import javax.print.PrintService;
+import javax.print.SimpleDoc;
 import javax.print.attribute.HashPrintRequestAttributeSet;
 import javax.print.attribute.PrintRequestAttributeSet;
 import javax.print.attribute.standard.MediaPrintableArea;
@@ -16,6 +22,7 @@ import java.awt.print.PageFormat;
 import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterJob;
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -86,6 +93,84 @@ public final class PriceTagPrintService {
         PageFormat page = pageFormat(job, settings); job.setPrintable(new TagsPrintable(images), page);
         PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet(); attrs.add(new MediaPrintableArea(0, 0, (float) settings.widthInches(), (float) settings.heightInches(), MediaPrintableArea.INCH));
         if (job.printDialog(attrs)) job.print(attrs);
+    }
+
+    public static String printOnReceiptPrinter(List<PriceTagItem> items,
+                                               CompanyCustomizationManager.PriceTagTemplateSettings settings)
+            throws Exception {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Add at least one price tag before printing.");
+        }
+        if (settings == null) {
+            throw new IllegalArgumentException("Select a price-tag template first.");
+        }
+        List<BufferedImage> images = new ArrayList<>();
+        for (PriceTagItem item : items) images.add(fitForReceiptPrinter(render(item, settings), 384));
+        byte[] jobBytes = formatReceiptPrinterJob(images);
+
+        String endpoint = NativeEscPosTransport.sendIfEnabled(jobBytes);
+        if (endpoint != null) return "Temporary price tags sent to Ethernet receipt printer " + endpoint + ".";
+
+        HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+        if (printer == null) throw new PrintException("No receipt printer is configured.");
+        if (printer.printFormat() != HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            throw new PrintException("The configured receipt printer is not a 40-column receipt printer.");
+        }
+        PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
+        if (service == null) {
+            throw new PrintException("Configured receipt printer is unavailable: " + printer.displayName());
+        }
+        service.createPrintJob().print(new SimpleDoc(jobBytes, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+        return "Temporary price tags submitted to receipt printer " + service.getName() + ".";
+    }
+
+    static byte[] formatReceiptPrinterJob(List<BufferedImage> images) {
+        if (images == null || images.isEmpty()) throw new IllegalArgumentException("At least one tag image is required.");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (BufferedImage image : images) {
+            if (image == null) throw new IllegalArgumentException("Tag image is required.");
+            out.writeBytes(new byte[]{0x1B, 0x40, 0x1B, 0x61, 0x01});
+            appendEscPosRaster(out, image);
+            out.writeBytes(new byte[]{0x0A, 0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00});
+        }
+        return out.toByteArray();
+    }
+
+    private static BufferedImage fitForReceiptPrinter(BufferedImage source, int maxWidth) {
+        double scale = Math.min(1.0, maxWidth / (double) source.getWidth());
+        int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        BufferedImage fitted = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = fitted.createGraphics();
+        try {
+            graphics.setColor(Color.WHITE);
+            graphics.fillRect(0, 0, width, height);
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        return fitted;
+    }
+
+    private static void appendEscPosRaster(ByteArrayOutputStream out, BufferedImage image) {
+        int bytesPerRow = (image.getWidth() + 7) / 8;
+        out.writeBytes(new byte[]{0x1D, 0x76, 0x30, 0x00,
+                (byte) (bytesPerRow & 0xFF), (byte) ((bytesPerRow >> 8) & 0xFF),
+                (byte) (image.getHeight() & 0xFF), (byte) ((image.getHeight() >> 8) & 0xFF)});
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int xByte = 0; xByte < bytesPerRow; xByte++) {
+                int value = 0;
+                for (int bit = 0; bit < 8; bit++) {
+                    int x = xByte * 8 + bit;
+                    if (x >= image.getWidth()) continue;
+                    Color color = new Color(image.getRGB(x, y));
+                    double luminance = color.getRed() * 0.299 + color.getGreen() * 0.587 + color.getBlue() * 0.114;
+                    if (luminance < 160) value |= 0x80 >> bit;
+                }
+                out.write(value);
+            }
+        }
     }
 
     private static PageFormat pageFormat(PrinterJob job, CompanyCustomizationManager.PriceTagTemplateSettings s) {

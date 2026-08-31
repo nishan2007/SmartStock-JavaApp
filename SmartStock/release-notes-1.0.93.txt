@@ -1,0 +1,5 @@
+SmartStock 1.0.93
+
+- Fixes successful register logins that cleared the password but remained on the Login screen.
+- Moves best-effort stay-signed-in file persistence off Swing's UI thread.
+- Preserves the authenticated session immediately while saving captured access and refresh tokens safely in the background.

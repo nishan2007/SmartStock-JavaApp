@@ -177,7 +177,7 @@ public final class LanApiClient {
 
     public static ServiceHealth checkHealth() throws Exception {
         Probe probe = probeUntrusted(baseUri());
-        return new ServiceHealth(true, probe.certificateFingerprint());
+        return new ServiceHealth(true, probe.certificateFingerprint(), probe.companyName());
     }
 
     public static boolean isServerReachable(String host,int port,String expectedFingerprint){
@@ -690,6 +690,19 @@ public final class LanApiClient {
         return saveProduct("/v1/products/update", request, idempotencyKey);
     }
 
+    public static List<NonRoundedPriceItem> loadNonRoundedProductPrices()throws Exception{
+        JsonObject data=post("/v1/products/non-rounded-prices",new JsonObject(),true,true);
+        NonRoundedPriceItem[] items=GSON.fromJson(data.getAsJsonArray("items"),NonRoundedPriceItem[].class);
+        return items==null?List.of():List.of(items);
+    }
+
+    public static PriceRoundingResult updateRoundedProductPrices(List<PriceRoundingLine> lines,String idempotencyKey)throws Exception{
+        requireIdempotencyKey(idempotencyKey,"Price-rounding idempotency key is required.");
+        JsonObject request=new JsonObject();request.add("lines",GSON.toJsonTree(lines));
+        return GSON.fromJson(post("/v1/products/round-prices",request,true,true,
+                Map.of("Idempotency-Key",idempotencyKey)),PriceRoundingResult.class);
+    }
+
     public static SyncStatusSnapshot loadSyncStatus() throws Exception {
         return GSON.fromJson(post("/v1/sync/status", new JsonObject(), true, true), SyncStatusSnapshot.class);
     }
@@ -702,6 +715,9 @@ public final class LanApiClient {
     public static MobileItemWebStatus startMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/start",new JsonObject(),true,true),MobileItemWebStatus.class);}
     public static MobileItemWebStatus stopMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/stop",new JsonObject(),true,true),MobileItemWebStatus.class);}
     public static MobileItemWebStatus renewMobileItemWebActivation()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/activation",new JsonObject(),true,true),MobileItemWebStatus.class);}
+    public static SchedulerWebStatus schedulerWebStatus()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/status",new JsonObject(),true,true),SchedulerWebStatus.class);}
+    public static SchedulerWebStatus startSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/start",new JsonObject(),true,true),SchedulerWebStatus.class);}
+    public static SchedulerWebStatus stopSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/stop",new JsonObject(),true,true),SchedulerWebStatus.class);}
 
     public static void resolveSyncConflict(long conflictId) throws Exception {
         JsonObject request = new JsonObject(); request.addProperty("conflictId", conflictId);
@@ -729,6 +745,14 @@ public final class LanApiClient {
     public static CustomerAccountRecord loadCustomerAccountDetails(int customerId)throws Exception{
         JsonObject request=new JsonObject();request.addProperty("customerId",customerId);
         return GSON.fromJson(post("/v1/customer-accounts/details",request,true,true),CustomerAccountRecord.class);
+    }
+    public static void auditCustomerCardOutput(int customerId,int templateSlot,String action)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("customerId",customerId);request.addProperty("templateSlot",templateSlot);request.addProperty("action",action);
+        post("/v1/customer-accounts/card-audit",request,true,true);
+    }
+    public static CustomerCardDates issueCustomerCard(int customerId,java.time.LocalDate expiresOn,boolean renewal)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("customerId",customerId);request.addProperty("expiresOn",expiresOn.toString());request.addProperty("renewal",renewal);
+        return GSON.fromJson(post("/v1/customer-accounts/card-issue",request,true,true),CustomerCardDates.class);
     }
     public static SavedCustomerAccount saveCustomerAccount(CustomerAccountSaveRequest request,String key)throws Exception{
         requireIdempotencyKey(key,"Customer account idempotency key is required.");
@@ -1146,7 +1170,8 @@ public final class LanApiClient {
         Integer locationId = data.has("locationId") && !data.get("locationId").isJsonNull()
                 ? data.get("locationId").getAsInt() : null;
         return new Probe(advertised, optionalString(data, "pairingProof"),
-                optionalString(data, "previousPairingProof"), locationId);
+                optionalString(data, "previousPairingProof"), locationId,
+                optionalString(data, "companyName"));
     }
 
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth) throws Exception {
@@ -1416,7 +1441,7 @@ public final class LanApiClient {
     }
 
     private record Probe(String certificateFingerprint, String pairingProof,
-                         String previousPairingProof, Integer locationId) { }
+                         String previousPairingProof, Integer locationId, String companyName) { }
     public record PairingResult(String status, boolean employeeActionRequired) { }
     public record DiscoveredServer(String service, String host, int port,
                                    String environment, Integer locationId, String storeName, String storeCode,
@@ -1450,7 +1475,7 @@ public final class LanApiClient {
                     + host + ":" + port + " — " + profile + " — ID " + id;
         }
     }
-    public record ServiceHealth(boolean online, String certificateFingerprint) { }
+    public record ServiceHealth(boolean online, String certificateFingerprint, String companyName) { }
     public record RegisterTransfer(String transferId,String deviceId,Integer sourceLocationId,int destinationLocationId,String sourceStoreName,String destinationStoreName,String status,boolean emergency,String reason,String preparedAt,String expiresAt) { }
     public record LoginResult(String sessionToken, String expiresAt, User user, String[] permissions,
                               String deviceId, String supabaseAccessToken, String supabaseRefreshToken,
@@ -1464,7 +1489,7 @@ public final class LanApiClient {
     public record BadgeStatus(boolean pinConfigured, boolean pinRequired) { }
     public record CatalogProduct(int productId, String name, String size, String description, String sku,
                                  BigDecimal price, String productType, Integer categoryId,
-                                 int quantityOnHand, String searchableText) { }
+                                 int quantityOnHand, String brandName, String imageUrl, String searchableText) { }
     public record CatalogIdentifierLookup(String status, String normalizedIdentifier,
                                           List<CatalogProduct> products) {
         public CatalogIdentifierLookup {
@@ -1478,7 +1503,8 @@ public final class LanApiClient {
     public record CashDrawerStatus(Long cashDrawerId, String drawerName, Long sessionId,
                                    boolean assigned, boolean activeSession) { }
     public record SalesSettings(boolean vatEnabled, boolean departmentVat, BigDecimal fixedVatRate,
-                                BigDecimal discountLimit, List<DepartmentVatRate> departmentRates) { }
+                                 BigDecimal discountLimit, boolean roundToNearestTwenty,
+                                 Integer miscProductId,List<DepartmentVatRate> departmentRates) { }
     public record DepartmentVatRate(int categoryId, BigDecimal ratePercent) { }
     public record HeldCartCreateRequest(String holdName, String paymentMethod, Integer customerId,
                                         BigDecimal saleDiscountPercent,
@@ -1489,16 +1515,16 @@ public final class LanApiClient {
                                      BigDecimal discountPercent,
                                      String priceApprovalToken, String priceOverrideReason,
                                      String discountApprovalToken,
-                                     String discountOverrideReason) { }
+                                     String discountOverrideReason, String miscItemName, boolean miscItem) { }
     public record HeldCartCreated(int heldCartId, BigDecimal total, int itemCount) { }
     public record HeldCartSummary(int heldCartId, long createdAtEpochMillis, String holdName,
                                   String userName, String customerName, int itemCount, BigDecimal total) { }
     public record HeldCartPayload(int heldCartId, Integer customerId, String paymentMethod,
                                   BigDecimal saleDiscountPercent, List<HeldCartItem> items) { }
-    public record HeldCartItem(int productId, String productName, String description, String sku,
+    public record HeldCartItem(int productId, String productName, String size, String description, String sku,
                                BigDecimal unitPrice, BigDecimal catalogPrice,
                                int quantity, BigDecimal discountPercent,
-                               String productType, Integer categoryId) { }
+                               String productType, Integer categoryId, boolean miscItem) { }
     public record SalesHistoryRow(String transactionType, int saleId, Long returnId, String receiptNumber,String returnReceiptNumber,
                                   long createdAtEpochMillis, String cashierName, String storeName, int itemCount,
                                   String paymentMethod, String paymentStatus, BigDecimal amountPaid,
@@ -1572,8 +1598,10 @@ public final class LanApiClient {
     public record VendorSaveRequest(Integer vendorId,String name,String contactName,String phone,String email,
                                     String address,String notes,boolean active) { }
     public record SavedVendor(int vendorId,String name) { }
-    public record CustomerTypeRecord(int customerTypeId,String name,String description,boolean active) { }
-    public record CustomerTypeSaveRequest(Integer customerTypeId,String name,String description,boolean active) { }
+    public record CustomerTypeRecord(int customerTypeId,String name,String description,boolean active,
+                                     boolean autoPrintSaleReceipt,int customerCardTemplateSlot) { }
+    public record CustomerTypeSaveRequest(Integer customerTypeId,String name,String description,boolean active,
+                                          boolean autoPrintSaleReceipt,int customerCardTemplateSlot) { }
     public record SavedCustomerType(int customerTypeId,String name) { }
     public record EditableProduct(int productId,String name,String size,String sku,String barcode,String description,
                                   BigDecimal costPrice,BigDecimal price,String productType,int quantity,int reorderLevel,
@@ -1590,6 +1618,10 @@ public final class LanApiClient {
                                      List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
                                      boolean adjustQuantity) { }
     public record SavedProduct(int productId,String sku,int quantity) { }
+    public record NonRoundedPriceItem(int productId,String sku,String name,String size,
+                                      BigDecimal currentPrice,BigDecimal suggestedPrice) { }
+    public record PriceRoundingLine(int productId,BigDecimal expectedPrice,BigDecimal newPrice) { }
+    public record PriceRoundingResult(int updatedCount) { }
     public record SyncStatusSnapshot(boolean cloudReachable,String message,long lastSuccessEpochMillis,
                                      int lastPushed,int pendingCount,int failedCount,int conflictCount,
                                      String lastError,boolean lockRunning,String lockOwner,
@@ -1610,10 +1642,17 @@ public final class LanApiClient {
                                         BigDecimal creditLimit,BigDecimal currentBalance,BigDecimal availableCredit,
                                         BigDecimal customOrderDue,BigDecimal totalDue,
                                         boolean business,boolean active,String accountNotes,Integer customerTypeId,
-                                        String customerTypeName) { }
+                                        String customerTypeName,int customerCardTemplateSlot,Integer customerSince,
+                                        String customerPhotoUrl,java.time.LocalDate customerCardIssuedOn,java.time.LocalDate customerCardExpiresOn) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                              String phone,String email,BigDecimal creditLimit,boolean business,
-                                             boolean active,String accountNotes) { }
+                                             boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl) {
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
+                                          String phone,String email,BigDecimal creditLimit,boolean business,
+                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null);}
+    }
+    public record CustomerCardDates(java.time.LocalDate issuedOn,java.time.LocalDate expiresOn) { }
     public record SavedCustomerAccount(int customerId,String accountNumber) { }
     public record CustomerAccountAdjustmentRequest(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,
                                                    List<CustomerPaymentAllocationRequest> allocations) { }
@@ -1644,7 +1683,7 @@ public final class LanApiClient {
                                            BigDecimal chargePaid,String paymentStatus,long chargeDateEpochMillis) { }
     public record ChangeBasketState(String storeName,BigDecimal targetAmount) { }
     public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix) { }
-    public record CashDrawerCloseResult(CashDrawerSession session,List<String>handlers) { }
+    public record CashDrawerCloseResult(CashDrawerSession session,List<String>handlers,BigDecimal returnedAmount) { }
     public record CashDrawerAdminState(List<CashDrawerService.StoreOption>stores,List<CashDrawerService.DeviceOption>devices,
                                        List<CashDrawer>drawers,List<CashDrawerAssignment>assignments,BigDecimal changeBasketTarget) { }
     public record CashDrawerSaveRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,
@@ -1696,10 +1735,11 @@ public final class LanApiClient {
                                   List<CheckoutLine> lines) { }
     public record CheckoutLine(int productId, int quantity, BigDecimal unitPrice, BigDecimal discountPercent,
                                String priceApprovalToken, String priceOverrideReason,
-                               String discountApprovalToken, String discountOverrideReason) { }
+                               String discountApprovalToken, String discountOverrideReason,
+                               String miscItemName, boolean miscItem) { }
     public record CheckoutResult(int saleId, String receiptNumber, BigDecimal total,
                                  BigDecimal cashCollected, BigDecimal changeDue,
-                                 String cashDrawerName) { }
+                                 String cashDrawerName, boolean autoPrintSaleReceipt) { }
     public record SaleSearchResult(int saleId, String receiptNumber, long createdAtEpochMillis,
                                    BigDecimal totalAmount, String cashierName, String deviceId,
                                    Integer sourceLocationId,String storeName,long cacheRefreshedAtEpochMillis,String cacheStatus) { }
@@ -1718,6 +1758,7 @@ public final class LanApiClient {
         }
     }
     public record MobileItemWebStatus(boolean enabled,boolean running,boolean uiRunning,boolean apiRunning,int uiPort,int apiPort,String url,String activationUrl,String activationExpiresAt){}
+    public record SchedulerWebStatus(boolean enabled,boolean running,int port,String url,String changedAt){}
     public record RefundLine(int saleItemId,int quantity,String disposition,Integer destinationLocationId,String dispositionReason) {
         public RefundLine(int saleItemId,int quantity){this(saleItemId,quantity,null,null,null);}
     }

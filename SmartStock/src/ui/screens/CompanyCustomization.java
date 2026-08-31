@@ -16,6 +16,7 @@ import managers.PermissionManager;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.BadgePrintService;
+import services.CustomerCardService;
 import services.PriceTagPrintService;
 import services.CompanyBackupService;
 import services.CompanyBackupScheduler;
@@ -61,6 +62,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.Instant;
@@ -100,6 +102,15 @@ public class CompanyCustomization extends JFrame {
         return labels;
     }
 
+    private static JTextArea receiptTextArea() {
+        JTextArea area = new JTextArea(3, 24);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        area.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+        return area;
+    }
+
     private final JTextField companyNameField = new JTextField();
     private final JTextField companyAddressLine1Field = new JTextField();
     private final JTextField companyAddressLine2Field = new JTextField();
@@ -110,8 +121,8 @@ public class CompanyCustomization extends JFrame {
     private final JTextField companyEmailLine2Field = new JTextField();
     private final JTextField companyMottoLine1Field = new JTextField();
     private final JTextField companyMottoLine2Field = new JTextField();
-    private final JTextField headerLineField = new JTextField();
-    private final JTextField footerLineField = new JTextField();
+    private final JTextArea headerLineField = receiptTextArea();
+    private final JTextArea footerLineField = receiptTextArea();
     private final JTextField receiptStartCounterField = new JTextField("1");
     private final JTextField logoPathField = new JTextField();
     private final JTextField configPathField = new JTextField();
@@ -149,8 +160,10 @@ public class CompanyCustomization extends JFrame {
     private final JTextField saleDiscountLimitPercentField = new JTextField("5", 8);
     private final JTextField saleReturnApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox requireCostPriceOnNewItemBox = new JCheckBox("Require cost price when adding a new inventory item", true);
+    private final JCheckBox roundSalesToNearestTwentyBox = new JCheckBox("Round final sale total to nearest $20", true);
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
+    private final JCheckBox roundCustomOrdersToNearestTwentyBox = new JCheckBox("Round custom-order line prices to nearest $20", true);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
     private final JCheckBox slipAutoPrintBox = new JCheckBox("Always print order slip");
     private final JTextField slipTitleField = new JTextField("CUSTOMER'S ORDER SLIP");
@@ -805,9 +818,63 @@ public class CompanyCustomization extends JFrame {
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
         top.add(buildBadgeSecurityPanel());
         top.add(buildBadgeEditorLaunchPanel());
+        top.add(buildCustomerCardEditorLaunchPanel());
         contentPanel.add(top, BorderLayout.NORTH);
         contentPanel.add(buildBadgeMagStripePanel(), BorderLayout.CENTER);
         return contentPanel;
+    }
+
+    private JPanel buildCustomerCardEditorLaunchPanel() {
+        JPanel panel=new JPanel(new BorderLayout(12,6));panel.setOpaque(false);
+        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(229,231,235)),new EmptyBorder(14,14,14,14)));
+        JLabel text=new JLabel("<html><b>Customer Card Templates</b><br>Edit the five landscape CR80 customer-card slots used by Customer Accounts.</html>");
+        JButton button=new JButton("Open Customer Card Template Editor");button.addActionListener(e->openCustomerCardTemplateEditor());
+        panel.add(text,BorderLayout.CENTER);panel.add(button,BorderLayout.EAST);return panel;
+    }
+
+    private void openCustomerCardTemplateEditor() {
+        List<CustomerCardService.Template> templates=new ArrayList<>(CustomerCardService.load());
+        JDialog dialog=new JDialog(this,"Customer Card Template Editor",true);dialog.setSize(980,720);dialog.setLocationRelativeTo(this);
+        JComboBox<String> slot=new JComboBox<>();for(int i=0;i<templates.size();i++)slot.addItem((i+1)+" — "+templates.get(i).name());
+        JTextField name=new JTextField();JCheckBox configured=new JCheckBox("Template configured and available for printing");
+        JButton background=new JButton("Background Color"),header=new JButton("Header Color"),image=new JButton("Background Image"),clearImage=new JButton("Clear Image");final Color[] chosen={Color.WHITE},headerChosen={new Color(255,112,0)};final String[] backgroundImage={""};
+        CustomerCardLayoutCanvas preview=new CustomerCardLayoutCanvas();
+        Runnable load=()->{CustomerCardService.Template t=templates.get(slot.getSelectedIndex());name.setText(t.name());configured.setSelected(t.configured());var c=t.background();chosen[0]=new Color(c.red(),c.green(),c.blue());var h=t.header()==null?new CustomerCardService.ColorData(255,112,0):t.header();headerChosen[0]=new Color(h.red(),h.green(),h.blue());backgroundImage[0]=t.backgroundImage()==null?"":t.backgroundImage();background.setBackground(chosen[0]);header.setBackground(headerChosen[0]);refreshCustomerCardEditorPreview(preview,t);};
+        Runnable apply=()->{int i=slot.getSelectedIndex();Color c=chosen[0],h=headerChosen[0];CustomerCardService.Template t=new CustomerCardService.Template(name.getText().trim(),configured.isSelected(),new CustomerCardService.ColorData(c.getRed(),c.getGreen(),c.getBlue()),new CustomerCardService.ColorData(h.getRed(),h.getGreen(),h.getBlue()),backgroundImage[0],preview.layoutData());templates.set(i,t);slot.insertItemAt((i+1)+" — "+t.name(),i);slot.removeItemAt(i+1);slot.setSelectedIndex(i);refreshCustomerCardEditorPreview(preview,t);};
+        JPanel toolbar=new JPanel(new GridLayout(3,3,8,8));toolbar.add(new JLabel("Template slot:"));toolbar.add(slot);toolbar.add(configured);toolbar.add(new JLabel("Template name:"));toolbar.add(name);toolbar.add(background);toolbar.add(header);toolbar.add(image);toolbar.add(clearImage);
+        JButton previewButton=new JButton("Preview Changes"),reset=new JButton("Reset Defaults"),save=new JButton("Save All Templates"),close=new JButton("Close");
+        JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT));actions.add(previewButton);actions.add(reset);actions.add(save);actions.add(close);
+        background.addActionListener(e->{Color c=JColorChooser.showDialog(dialog,"Customer Card Background",chosen[0]);if(c!=null){chosen[0]=c;background.setBackground(c);}});
+        header.addActionListener(e->{Color c=JColorChooser.showDialog(dialog,"Customer Card Header",headerChosen[0]);if(c!=null){headerChosen[0]=c;header.setBackground(c);}});
+        image.addActionListener(e->{JFileChooser chooser=new JFileChooser();if(chooser.showOpenDialog(dialog)==JFileChooser.APPROVE_OPTION)try{byte[] bytes=Files.readAllBytes(chooser.getSelectedFile().toPath());if(bytes.length>5_000_000)throw new IllegalArgumentException("Background image must be 5 MB or smaller.");backgroundImage[0]=Base64.getEncoder().encodeToString(bytes);apply.run();}catch(Exception ex){JOptionPane.showMessageDialog(dialog,ex.getMessage(),"Background Image",JOptionPane.ERROR_MESSAGE);}});
+        clearImage.addActionListener(e->{backgroundImage[0]="";apply.run();});
+        previewButton.addActionListener(e->apply.run());slot.addActionListener(e->load.run());
+        reset.addActionListener(e->{templates.clear();templates.addAll(CustomerCardService.defaults());load.run();});
+        save.addActionListener(e->{try{apply.run();CustomerCardService.save(templates);JOptionPane.showMessageDialog(dialog,"All five customer-card templates were saved.");}catch(Exception ex){JOptionPane.showMessageDialog(dialog,ex.getMessage(),"Save Failed",JOptionPane.ERROR_MESSAGE);}});
+        close.addActionListener(e->dialog.dispose());
+        JLabel help=new JLabel("Click an element and drag to move it. Drag the orange bottom-right handle to resize it.");
+        JPanel previewArea=new JPanel(new BorderLayout(0,6));previewArea.add(help,BorderLayout.NORTH);previewArea.add(preview,BorderLayout.CENTER);
+        JPanel body=new JPanel(new BorderLayout(12,12));body.setBorder(new EmptyBorder(14,14,14,14));body.add(toolbar,BorderLayout.NORTH);body.add(previewArea,BorderLayout.CENTER);body.add(actions,BorderLayout.SOUTH);dialog.setContentPane(body);load.run();dialog.setVisible(true);
+    }
+
+    private void refreshCustomerCardEditorPreview(CustomerCardLayoutCanvas preview,CustomerCardService.Template template) {
+        preview.setTemplate(template);
+    }
+
+    private static final class CustomerCardLayoutCanvas extends JPanel {
+        private static final int PREVIEW_WIDTH=810,PREVIEW_HEIGHT=510,HANDLE=12;
+        private final CustomerCardService.CardData sample=new CustomerCardService.CardData(0,"Sample Customer","Customer Type","CUST-00001","592-555-0100","customer@example.com",2020,1);
+        private CustomerCardService.Template template;private String selected;private Point press;private Rectangle start;private boolean resizing;
+        CustomerCardLayoutCanvas(){setPreferredSize(new Dimension(PREVIEW_WIDTH,PREVIEW_HEIGHT));setMinimumSize(new Dimension(640,400));setBackground(new Color(226,232,240));
+            MouseAdapter mouse=new MouseAdapter(){public void mousePressed(MouseEvent e){if(template==null||!template.configured())return;selected=hit(e.getPoint());if(selected==null){repaint();return;}press=toCard(e.getPoint());start=new Rectangle(CustomerCardService.layoutRects(template.layoutData()).get(selected));Rectangle shown=toPreview(start);resizing=shown!=null&&e.getX()>=shown.x+shown.width-HANDLE&&e.getY()>=shown.y+shown.height-HANDLE;repaint();}
+                public void mouseDragged(MouseEvent e){if(selected==null||press==null||start==null)return;Point p=toCard(e.getPoint());Rectangle updated=new Rectangle(start);if(resizing){updated.width+=p.x-press.x;updated.height+=p.y-press.y;}else{updated.x+=p.x-press.x;updated.y+=p.y-press.y;}String layout=CustomerCardService.updateLayoutRect(template.layoutData(),selected,updated);template=new CustomerCardService.Template(template.name(),template.configured(),template.background(),template.header(),template.backgroundImage(),layout);repaint();}
+                public void mouseReleased(MouseEvent e){press=null;start=null;resizing=false;}};addMouseListener(mouse);addMouseMotionListener(mouse);}
+        void setTemplate(CustomerCardService.Template value){template=value;selected=null;repaint();}
+        String layoutData(){return template==null?"":template.layoutData();}
+        private String hit(Point p){for(var e:CustomerCardService.layoutRects(template.layoutData()).entrySet())if(toPreview(e.getValue()).contains(p))return e.getKey();return null;}
+        private Point toCard(Point p){double sx=getWidth()/(double)CustomerCardService.WIDTH,sy=getHeight()/(double)CustomerCardService.HEIGHT;return new Point((int)Math.round(p.x/sx),(int)Math.round(p.y/sy));}
+        private Rectangle toPreview(Rectangle r){double sx=getWidth()/(double)CustomerCardService.WIDTH,sy=getHeight()/(double)CustomerCardService.HEIGHT;return new Rectangle((int)Math.round(r.x*sx),(int)Math.round(r.y*sy),Math.max(1,(int)Math.round(r.width*sx)),Math.max(1,(int)Math.round(r.height*sy)));}
+        protected void paintComponent(Graphics g){super.paintComponent(g);if(template==null)return;if(!template.configured()){g.setColor(Color.DARK_GRAY);g.drawString("This slot is intentionally blank and cannot be printed.",24,40);return;}BufferedImage image=CustomerCardService.render(sample,template);g.drawImage(image,0,0,getWidth(),getHeight(),null);Graphics2D g2=(Graphics2D)g.create();for(var e:CustomerCardService.layoutRects(template.layoutData()).entrySet()){Rectangle r=toPreview(e.getValue());boolean active=e.getKey().equals(selected);g2.setColor(active?new Color(255,112,0):new Color(0,85,145));g2.setStroke(new BasicStroke(active?3:1));g2.draw(r);if(active)g2.fillRect(r.x+r.width-HANDLE,r.y+r.height-HANDLE,HANDLE,HANDLE);}g2.dispose();}
     }
 
     private JPanel buildBadgeSecurityPanel() {
@@ -1092,6 +1159,7 @@ public class CompanyCustomization extends JFrame {
     private void openBadgeTemplateEditorDialog() {
         JDialog dialog = new JDialog(this, "Badge Template Editor", Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        dialog.setResizable(true);
         dialog.setLayout(new BorderLayout(12, 12));
         dialog.getRootPane().setBorder(new EmptyBorder(14, 14, 14, 14));
         dialog.add(buildBadgePreviewPanel(), BorderLayout.CENTER);
@@ -1113,15 +1181,19 @@ public class CompanyCustomization extends JFrame {
         refreshBadgePreview();
         saveButton.setEnabled(canEditCompanyPreferences());
         dialog.pack();
-        dialog.setSize(new Dimension(760, 760));
+        Rectangle available = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        dialog.setMinimumSize(new Dimension(Math.min(900, available.width), Math.min(620, available.height)));
+        dialog.setSize(new Dimension(
+                Math.min(1180, Math.max(760, available.width - 80)),
+                Math.min(900, Math.max(620, available.height - 80))));
         dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
     }
 
     private JPanel buildBadgePreviewPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
-        panel.setPreferredSize(new Dimension(520, 680));
-        panel.setMinimumSize(new Dimension(500, 640));
+        panel.setPreferredSize(new Dimension(1080, 760));
+        panel.setMinimumSize(new Dimension(720, 520));
         panel.setBackground(Color.WHITE);
         panel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(220, 224, 230)),
@@ -1133,7 +1205,13 @@ public class CompanyCustomization extends JFrame {
         JPanel headerPanel = new JPanel(new BorderLayout(12, 8));
         headerPanel.setOpaque(false);
         headerPanel.add(sectionLabel, BorderLayout.NORTH);
-        headerPanel.add(buildBadgeGroupAlignmentToolbar(), BorderLayout.SOUTH);
+        JScrollPane toolbarScrollPane = new JScrollPane(buildBadgeGroupAlignmentToolbar(),
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        toolbarScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        toolbarScrollPane.setOpaque(false);
+        toolbarScrollPane.getViewport().setOpaque(false);
+        headerPanel.add(toolbarScrollPane, BorderLayout.SOUTH);
         panel.add(headerPanel, BorderLayout.NORTH);
 
         JTabbedPane previewTabs = new JTabbedPane();
@@ -2205,7 +2283,9 @@ public class CompanyCustomization extends JFrame {
                 ? "Refunds above this amount require approval permission. Use 0 to disable."
                 : "Requires Custom Order Refund Approval Settings permission.");
 
-        return new CustomOrderDepositPanel(customOrderMinimumDepositPercentField, customOrderRefundApprovalLimitField);
+        roundCustomOrdersToNearestTwentyBox.setEnabled(canEditDeposit || canEditRefundLimit);
+        return new CustomOrderDepositPanel(customOrderMinimumDepositPercentField,
+                customOrderRefundApprovalLimitField, roundCustomOrdersToNearestTwentyBox);
     }
 
     private JPanel buildReceiptFormattingPanel() {
@@ -2232,6 +2312,7 @@ public class CompanyCustomization extends JFrame {
                 configPathField,
                 saleDiscountLimitPercentField,
                 saleReturnApprovalLimitField,
+                roundSalesToNearestTwentyBox,
                 alwaysPrintSaleReceiptBox,
                 showLogoBox,
                 showSaleIdBox,
@@ -2529,10 +2610,12 @@ public class CompanyCustomization extends JFrame {
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
         saleReturnApprovalLimitField.setText(utils.CurrencyFormatter.normalize(saleSafetySettings.returnApprovalLimit()).toPlainString());
         requireCostPriceOnNewItemBox.setSelected(saleSafetySettings.requireCostPriceOnNewItem());
+        roundSalesToNearestTwentyBox.setSelected(saleSafetySettings.roundToNearestTwenty());
         CompanyCustomizationManager.CustomOrderSettings customOrderSettings = all.customOrder();
         loadedCustomOrderSettings=customOrderSettings;
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
         customOrderRefundApprovalLimitField.setText(utils.CurrencyFormatter.normalize(customOrderSettings.refundApprovalLimit()).toPlainString());
+        roundCustomOrdersToNearestTwentyBox.setSelected(customOrderSettings.roundToNearestTwenty());
         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = all.customOrderSlip();
         loadSlipFields(slipSettings);
         CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = all.quotationInvoice();
@@ -2567,8 +2650,8 @@ public class CompanyCustomization extends JFrame {
         try {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             var receipt=getSettingsFromFields();
-            var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled()||requireCostPriceOnNewItemBox.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
-            var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
+            var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled()||requireCostPriceOnNewItemBox.isEnabled()||roundSalesToNearestTwentyBox.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
+            var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled()||roundCustomOrdersToNearestTwentyBox.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
             var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
             var badgeSecurity=new CompanyCustomizationManager.BadgeSecuritySettings(requireBadgePinLoginBox.isSelected());
             var clock=new AutoCloseSettings(
@@ -2762,7 +2845,9 @@ public class CompanyCustomization extends JFrame {
         }
         BigDecimal savedPercent = customOrderMinimumDepositPercentField.isEnabled() ? percent : existingSettings.minimumDepositPercent();
         BigDecimal savedRefundLimit = customOrderRefundApprovalLimitField.isEnabled() ? refundApprovalLimit : existingSettings.refundApprovalLimit();
-        return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit);
+        boolean roundToTwenty = roundCustomOrdersToNearestTwentyBox.isEnabled()
+                ? roundCustomOrdersToNearestTwentyBox.isSelected() : existingSettings.roundToNearestTwenty();
+        return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit, roundToTwenty);
     }
 
     private CompanyCustomizationManager.SaleSafetySettings getSaleSafetySettingsFromFields(CompanyCustomizationManager.SaleSafetySettings existingSettings) {
@@ -2780,7 +2865,10 @@ public class CompanyCustomization extends JFrame {
         BigDecimal savedReturnLimit = saleReturnApprovalLimitField.isEnabled() ? returnApprovalLimit : existingSettings.returnApprovalLimit();
         boolean requireCostPrice = requireCostPriceOnNewItemBox.isEnabled()
                 ? requireCostPriceOnNewItemBox.isSelected() : existingSettings.requireCostPriceOnNewItem();
-        return new CompanyCustomizationManager.SaleSafetySettings(savedDiscountLimit, savedReturnLimit, requireCostPrice);
+        boolean roundToTwenty = roundSalesToNearestTwentyBox.isEnabled()
+                ? roundSalesToNearestTwentyBox.isSelected() : existingSettings.roundToNearestTwenty();
+        return new CompanyCustomizationManager.SaleSafetySettings(savedDiscountLimit, savedReturnLimit,
+                requireCostPrice, roundToTwenty);
     }
 
     private CompanyCustomizationManager.ReceiptSettings getSettingsFromFields() {

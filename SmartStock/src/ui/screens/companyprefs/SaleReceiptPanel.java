@@ -5,12 +5,13 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
 public class SaleReceiptPanel extends JPanel {
-    public SaleReceiptPanel(JTextField headerLineField,
-                            JTextField footerLineField,
+    public SaleReceiptPanel(JTextArea headerLineField,
+                            JTextArea footerLineField,
                             JTextField receiptStartCounterField,
                             JTextField configPathField,
                             JTextField saleDiscountLimitPercentField,
                             JTextField saleReturnApprovalLimitField,
+                            JCheckBox roundSalesToNearestTwentyBox,
                             JCheckBox alwaysPrintSaleReceiptBox,
                             JCheckBox showLogoBox,
                             JCheckBox showSaleIdBox,
@@ -33,8 +34,8 @@ public class SaleReceiptPanel extends JPanel {
         sectionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
         addWide(this, sectionLabel, 0);
 
-        addRow(this, 1, "Header Line", headerLineField);
-        addRow(this, 2, "Footer Line", footerLineField);
+        addMultilineRow(this, 1, "Header Lines", headerLineField);
+        addMultilineRow(this, 2, "Footer Lines", footerLineField);
         addRow(this, 3, "Receipt Counter Start", receiptStartCounterField);
         addRow(this, 4, "Discount Limit (%)", saleDiscountLimitPercentField);
         addRow(this, 5, "Return Approval Over", saleReturnApprovalLimitField);
@@ -44,6 +45,7 @@ public class SaleReceiptPanel extends JPanel {
         JPanel optionsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
         optionsPanel.setOpaque(false);
         optionsPanel.add(alwaysPrintSaleReceiptBox);
+        optionsPanel.add(roundSalesToNearestTwentyBox);
         optionsPanel.add(showLogoBox);
         optionsPanel.add(showSaleIdBox);
         optionsPanel.add(showDeviceBox);
@@ -75,6 +77,14 @@ public class SaleReceiptPanel extends JPanel {
         fieldConstraints.weightx = 1;
         fieldConstraints.fill = GridBagConstraints.HORIZONTAL;
         panel.add(field, fieldConstraints);
+    }
+
+    private static void addMultilineRow(JPanel panel, int row, String label, JTextArea field) {
+        JScrollPane scrollPane = new JScrollPane(field);
+        scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.setPreferredSize(new Dimension(320, 72));
+        addRow(panel, row, label, scrollPane);
     }
 
     private static void addWide(JPanel panel, JComponent component, int row) {

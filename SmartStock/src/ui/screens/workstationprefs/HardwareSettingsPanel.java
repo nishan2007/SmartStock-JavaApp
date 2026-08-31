@@ -25,6 +25,14 @@ public class HardwareSettingsPanel extends JPanel {
     private final JCheckBox automaticCutBox = new JCheckBox("Automatic cut", true);
     private final JCheckBox cashDrawerBox = new JCheckBox("Cash drawer");
     private final JCheckBox dialogFallbackBox = new JCheckBox("Print dialog fallback", true);
+    private final JCheckBox nativeEthernetBox = new JCheckBox("Native Ethernet ESC/POS");
+    private final JTextField ethernetHostField = new JTextField("10.1.1.23", 11);
+    private final JSpinner ethernetPortSpinner = new JSpinner(new SpinnerNumberModel(9100, 1, 65535, 1));
+    private final JCheckBox badgePrinterEnabledBox = new JCheckBox("Enable Magicard badge printing");
+    private final JComboBox<String> badgePrinterQueueBox = new JComboBox<>();
+    private final JCheckBox badgeDuplexBox = new JCheckBox("Magicard 600 Duo", true);
+    private final JCheckBox badgePrintDialogBox = new JCheckBox("Show print dialog", true);
+    private final JLabel badgePrinterStatusLabel = new JLabel("Not configured");
     private final JComboBox<String> drawerPinBox = new JComboBox<>(new String[]{"Pin 2", "Pin 5"});
     private final JSpinner drawerOnSpinner = new JSpinner(new SpinnerNumberModel(120, 2, 510, 2));
     private final JSpinner drawerOffSpinner = new JSpinner(new SpinnerNumberModel(240, 2, 510, 2));
@@ -81,12 +89,37 @@ public class HardwareSettingsPanel extends JPanel {
         epsonPanel.add(drawerOffSpinner);
         epsonPanel.add(dialogFallbackBox);
 
+        JPanel ethernetPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        ethernetPanel.setOpaque(false);
+        ethernetPanel.setBorder(BorderFactory.createTitledBorder("Native Ethernet receipt printer"));
+        ethernetPanel.add(nativeEthernetBox);
+        ethernetPanel.add(new JLabel("Host:"));
+        ethernetPanel.add(ethernetHostField);
+        ethernetPanel.add(new JLabel("Port:"));
+        ethernetPanel.add(ethernetPortSpinner);
+
+        JPanel badgePrinterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        badgePrinterPanel.setOpaque(false);
+        badgePrinterPanel.setBorder(BorderFactory.createTitledBorder("Badge printer (Magicard 600)"));
+        badgePrinterQueueBox.setPrototypeDisplayValue("Magicard 600 Network Printer Queue");
+        badgePrinterPanel.add(badgePrinterEnabledBox);
+        badgePrinterPanel.add(new JLabel("Windows queue:"));
+        badgePrinterPanel.add(badgePrinterQueueBox);
+        badgePrinterPanel.add(badgeDuplexBox);
+        badgePrinterPanel.add(badgePrintDialogBox);
+        badgePrinterPanel.add(badgePrinterStatusLabel);
+
         configPathField.setEditable(false);
         configPathField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         configPathField.setText(HardwareSettingsManager.getConfigPath().toString());
         JPanel localSettingsPanel = new JPanel(new BorderLayout(0, 6));
         localSettingsPanel.setOpaque(false);
-        localSettingsPanel.add(epsonPanel, BorderLayout.CENTER);
+        JPanel printerControls = new JPanel(new GridLayout(0, 1, 0, 6));
+        printerControls.setOpaque(false);
+        printerControls.add(epsonPanel);
+        printerControls.add(ethernetPanel);
+        printerControls.add(badgePrinterPanel);
+        localSettingsPanel.add(printerControls, BorderLayout.CENTER);
         localSettingsPanel.add(configPathField, BorderLayout.SOUTH);
         bottomPanel.add(localSettingsPanel, BorderLayout.NORTH);
 
@@ -101,6 +134,8 @@ public class HardwareSettingsPanel extends JPanel {
         JButton testReceiptButton = new JButton("Test Receipt");
         JButton testCutButton = new JButton("Test Cutter");
         JButton testDrawerButton = new JButton("Test Drawer");
+        JButton testBadgeButton = new JButton("Test Badge");
+        buttonPanel.add(testBadgeButton);
         buttonPanel.add(testReceiptButton);
         buttonPanel.add(testCutButton);
         buttonPanel.add(testDrawerButton);
@@ -125,6 +160,7 @@ public class HardwareSettingsPanel extends JPanel {
         testReceiptButton.addActionListener(e -> testReceipt());
         testCutButton.addActionListener(e -> testControl(Receipt.EpsonReceiptPrintService.ControlAction.CUT));
         testDrawerButton.addActionListener(e -> testControl(Receipt.EpsonReceiptPrintService.ControlAction.DRAWER));
+        testBadgeButton.addActionListener(e -> testBadgePrinter());
 
         loadHardware();
     }
@@ -158,14 +194,18 @@ public class HardwareSettingsPanel extends JPanel {
                     var installed=UiTaskRunner.supplyAsync(HardwareSettingsManager::getAvailablePrinterNames);
                     var configured=UiTaskRunner.supplyAsync(HardwareSettingsManager::getConfiguredPrinters);
                     var epson=UiTaskRunner.supplyAsync(HardwareSettingsManager::getEpsonSettings);
-                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join());
-                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());});
+                    var ethernet=UiTaskRunner.supplyAsync(HardwareSettingsManager::getNativeEthernetPrinterSettings);
+                    var badge=UiTaskRunner.supplyAsync(HardwareSettingsManager::getBadgePrinterSettings);
+                    var badgeSettings=badge.join();
+                    boolean badgeAvailable=badgeSettings.enabled() && installed.join().contains(badgeSettings.systemName());
+                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join(),ethernet.join(),badgeSettings,badgeAvailable);
+                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyInstalledBadgePrinters(snapshot.installed());applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());applyEthernetSettings(snapshot.ethernet());applyBadgePrinterSettings(snapshot.badge(),snapshot.badgeAvailable());});
     }
 
     private void loadConfiguredPrinters() {
         try {
             applyConfiguredPrinters(HardwareSettingsManager.getConfiguredPrinters());
-        } catch (IOException ex) {
+        } catch (IOException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -250,10 +290,12 @@ public class HardwareSettingsPanel extends JPanel {
         try {
             HardwareSettingsManager.saveConfiguredPrinters(printers);
             HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+            HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
+            HardwareSettingsManager.saveBadgePrinterSettings(readBadgePrinterSettings());
             SessionDataCache.invalidate("workstation:hardware");
             JOptionPane.showMessageDialog(this, "Hardware settings saved.");
             loadHardware();
-        } catch (IOException ex) {
+        } catch (IOException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, "Failed to save hardware settings.\n\n" + ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -276,6 +318,62 @@ public class HardwareSettingsPanel extends JPanel {
         dialogFallbackBox.setSelected(value.printDialogFallback());
     }
 
+    private HardwareSettingsManager.NativeEthernetPrinterSettings readEthernetSettings() {
+        return new HardwareSettingsManager.NativeEthernetPrinterSettings(nativeEthernetBox.isSelected(),
+                ethernetHostField.getText(), ((Number) ethernetPortSpinner.getValue()).intValue(), 3000);
+    }
+
+    private void applyEthernetSettings(HardwareSettingsManager.NativeEthernetPrinterSettings settings) {
+        HardwareSettingsManager.NativeEthernetPrinterSettings value = settings == null
+                ? HardwareSettingsManager.NativeEthernetPrinterSettings.defaults() : settings;
+        nativeEthernetBox.setSelected(value.enabled());
+        ethernetHostField.setText(value.host());
+        ethernetPortSpinner.setValue(value.port());
+    }
+
+    private HardwareSettingsManager.BadgePrinterSettings readBadgePrinterSettings() {
+        Object selected = badgePrinterQueueBox.getSelectedItem();
+        return new HardwareSettingsManager.BadgePrinterSettings(badgePrinterEnabledBox.isSelected(),
+                selected == null ? "" : selected.toString(), HardwareSettingsManager.BadgePrinterSettings.MAGICARD_600,
+                badgeDuplexBox.isSelected(), badgePrintDialogBox.isSelected());
+    }
+
+    private void applyInstalledBadgePrinters(List<String> installed) {
+        Object selected = badgePrinterQueueBox.getSelectedItem();
+        badgePrinterQueueBox.removeAllItems();
+        installed.forEach(badgePrinterQueueBox::addItem);
+        if (selected != null) badgePrinterQueueBox.setSelectedItem(selected);
+    }
+
+    private void applyBadgePrinterSettings(HardwareSettingsManager.BadgePrinterSettings settings, boolean available) {
+        HardwareSettingsManager.BadgePrinterSettings value = settings == null
+                ? HardwareSettingsManager.BadgePrinterSettings.defaults() : settings;
+        badgePrinterEnabledBox.setSelected(value.enabled());
+        badgeDuplexBox.setSelected(value.duplex());
+        badgePrintDialogBox.setSelected(value.showPrintDialog());
+        if (!value.systemName().isBlank()) {
+            boolean found = false;
+            for (int i = 0; i < badgePrinterQueueBox.getItemCount(); i++) {
+                if (value.systemName().equals(badgePrinterQueueBox.getItemAt(i))) { found = true; break; }
+            }
+            if (!found) badgePrinterQueueBox.addItem(value.systemName());
+            badgePrinterQueueBox.setSelectedItem(value.systemName());
+        }
+        badgePrinterStatusLabel.setText(!value.enabled() ? "Disabled"
+                : available ? "Queue available" : "Queue missing - install/restore the Magicard Windows queue");
+        badgePrinterStatusLabel.setForeground(available || !value.enabled() ? new Color(32, 92, 0) : Color.RED.darker());
+    }
+
+    private void testBadgePrinter() {
+        try {
+            HardwareSettingsManager.BadgePrinterSettings settings = readBadgePrinterSettings();
+            HardwareSettingsManager.saveBadgePrinterSettings(settings);
+            services.BadgePrintService.printTestBadge(this);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Magicard Badge Test", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private HardwareSettingsManager.PosPrinter selectedConfiguredPrinter() {
         int viewRow = configuredPrinterTable.getSelectedRow();
         if (viewRow < 0) {
@@ -293,10 +391,11 @@ public class HardwareSettingsPanel extends JPanel {
     private void testControl(Receipt.EpsonReceiptPrintService.ControlAction action) {
         try {
             HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+            HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
             var result = Receipt.EpsonReceiptPrintService.testControl(selectedConfiguredPrinter(), action);
             JOptionPane.showMessageDialog(this, result.message(), "Epson " + action + " Test",
                     result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
-        } catch (IOException ex) {
+        } catch (IOException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -312,10 +411,11 @@ public class HardwareSettingsPanel extends JPanel {
                         java.math.BigDecimal.TEN)));
         try {
             HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+            HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
             var result = Receipt.EpsonReceiptPrintService.print(sample, selectedConfiguredPrinter(), false, false);
             JOptionPane.showMessageDialog(this, result.message(), "Epson Receipt Test",
                     result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
-        } catch (IOException ex) {
+        } catch (IOException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -341,5 +441,8 @@ public class HardwareSettingsPanel extends JPanel {
 
     private record HardwareSnapshot(List<String> installed,
                                     List<HardwareSettingsManager.PosPrinter> configured,
-                                    HardwareSettingsManager.EpsonSettings epson) { }
+                                    HardwareSettingsManager.EpsonSettings epson,
+                                    HardwareSettingsManager.NativeEthernetPrinterSettings ethernet,
+                                    HardwareSettingsManager.BadgePrinterSettings badge,
+                                    boolean badgeAvailable) { }
 }

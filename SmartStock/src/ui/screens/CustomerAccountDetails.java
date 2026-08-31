@@ -3,6 +3,7 @@ package ui.screens;
 import utils.CurrencyFormatter;
 import managers.PermissionManager;
 import services.LanApiClient;
+import services.CustomerPhotoService;
 import ui.components.CustomerTypeSelector;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
@@ -10,6 +11,8 @@ import ui.helpers.SessionDataCache;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
+import ui.helpers.CustomerCardActions;
+import ui.helpers.ProductImageHelper;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -34,6 +37,9 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField nameField;
     private JTextField phoneField;
     private JTextField emailField;
+    private JTextField customerSinceField;
+    private JTextField customerPhotoField;
+    private JLabel customerPhotoPreview;
     private CustomerTypeSelector customerTypeSelector;
     private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
@@ -50,6 +56,7 @@ public class CustomerAccountDetails extends JFrame {
     private String pendingSaveKey;
     private String pendingFingerprint;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private LanApiClient.CustomerAccountRecord currentAccount;
 
     public CustomerAccountDetails(int customerId, Runnable afterSave) {
         this.customerId = customerId;
@@ -84,14 +91,20 @@ public class CustomerAccountDetails extends JFrame {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         JButton refreshButton = new JButton("Refresh");
         JButton paymentHistoryButton = new JButton("Payment History");
+        JButton previewCardButton=new JButton("Preview Card"),printCardButton=new JButton("Print Card"),pdfCardButton=new JButton("Save Card PDF"),renewCardButton=new JButton("Renew Card");
         buttonPanel.add(refreshButton);
         buttonPanel.add(paymentHistoryButton);
+        buttonPanel.add(previewCardButton);buttonPanel.add(printCardButton);buttonPanel.add(pdfCardButton);buttonPanel.add(renewCardButton);
 
         refreshButton.addActionListener(e -> {
             SessionDataCache.invalidate("customer-account:" + customerId);
             loadAccountSnapshot();
         });
         paymentHistoryButton.addActionListener(e -> openPaymentHistory());
+        previewCardButton.addActionListener(e->CustomerCardActions.run(this,currentAccount,CustomerCardActions.Action.PREVIEW));
+        printCardButton.addActionListener(e->CustomerCardActions.run(this,currentAccount,CustomerCardActions.Action.PRINT));
+        pdfCardButton.addActionListener(e->CustomerCardActions.run(this,currentAccount,CustomerCardActions.Action.PDF));
+        renewCardButton.addActionListener(e->renewCard());
 
         headerPanel.add(titleLabel, BorderLayout.WEST);
         headerPanel.add(buttonPanel, BorderLayout.EAST);
@@ -120,6 +133,9 @@ public class CustomerAccountDetails extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         emailField = new JTextField();
+        customerSinceField = new JTextField();
+        customerPhotoField = new JTextField();customerPhotoField.setEditable(false);
+        customerPhotoPreview=ProductImageHelper.createImagePreview("",140,140);
         customerTypeSelector = new CustomerTypeSelector();
         businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active");
@@ -142,9 +158,13 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 4, 0, "Custom Order Due:", customOrderDueLabel);
         addInfoField(grid, gbc, 4, 1, "Total Due:", totalDueLabel);
         addInfoField(grid, gbc, 5, 0, "Available Credit:", availableCreditLabel);
+        addInfoField(grid, gbc, 5, 1, "Customer Since (year):", customerSinceField);
+        JButton choosePhoto=new JButton("Choose Photo / Logo");choosePhoto.addActionListener(e->chooseCustomerPhoto());
+        JPanel photoPanel=new JPanel(new BorderLayout(6,0));photoPanel.add(customerPhotoField,BorderLayout.CENTER);photoPanel.add(choosePhoto,BorderLayout.EAST);
+        addInfoField(grid,gbc,6,0,"Photo / Logo:",photoPanel);
 
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         gbc.weightx = 0;
         grid.add(new JLabel("Credit Limit:"), gbc);
         gbc.gridx = 1;
@@ -156,6 +176,7 @@ public class CustomerAccountDetails extends JFrame {
         notesArea.setWrapStyleWord(true);
 
         panel.add(grid, BorderLayout.CENTER);
+        JPanel photoPreviewPanel=new JPanel(new BorderLayout());photoPreviewPanel.setBorder(BorderFactory.createTitledBorder("Customer Photo / Logo"));photoPreviewPanel.add(customerPhotoPreview,BorderLayout.CENTER);panel.add(photoPreviewPanel,BorderLayout.EAST);
         panel.add(new JScrollPane(notesArea), BorderLayout.SOUTH);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -240,6 +261,7 @@ public class CustomerAccountDetails extends JFrame {
 
     private void applyAccountSnapshot(AccountSnapshot snapshot) {
                 LanApiClient.CustomerAccountRecord account = snapshot.account();
+                currentAccount=account;
                 String accountNumber=text(account.accountNumber());String name=text(account.name());
                 customerLabel = accountNumber.isBlank() ? name : accountNumber + " - " + name;
 
@@ -250,6 +272,9 @@ public class CustomerAccountDetails extends JFrame {
                         account.customerTypeId(),account.customerTypeName()
                 );
                 phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());
+                customerSinceField.setText(account.customerSince()==null?"":String.valueOf(account.customerSince()));
+                customerPhotoField.setText(text(account.customerPhotoUrl()));
+                ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);
                 activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));customOrderDueLabel.setText(money(account.customOrderDue()));totalDueLabel.setText(money(account.totalDue()));availableCreditLabel.setText(money(account.availableCredit()));
                 creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
         transactionModel.setRowCount(0);
@@ -269,6 +294,7 @@ public class CustomerAccountDetails extends JFrame {
         String phone = phoneField.getText().trim();
         String email = emailField.getText().trim();
         String notes = notesArea.getText().trim();
+        Integer customerSince=parseCustomerSince(customerSinceField.getText());if(!customerSinceField.getText().trim().isEmpty()&&customerSince==null)return;
         Integer customerTypeId = customerTypeSelector.getSelectedCustomerTypeId();
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
@@ -295,14 +321,17 @@ public class CustomerAccountDetails extends JFrame {
             }
         }
 
+        String photoInput=customerPhotoField.getText().trim();
+        final BigDecimal savedCreditLimit=creditLimit;
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
-                    customerTypeId,phone,email,creditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes);
+                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput);
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
         String saveKey = pendingSaveKey;
         saveButton.setEnabled(false);
         UiTaskRunner.submit(this, "customer-account.save", () -> {
-            LanApiClient.saveCustomerAccount(request, saveKey);
+            String uploaded=CustomerPhotoService.uploadLocalPhotoIfNeeded(photoInput,name);
+            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded), saveKey);
             return null;
         }, ignored -> {
             pendingSaveKey=null;pendingFingerprint=null;
@@ -318,6 +347,11 @@ public class CustomerAccountDetails extends JFrame {
             loadingState.failed(failure.getMessage(), true, this::saveAccountDetails);
         });
     }
+
+    private void chooseCustomerPhoto(){JFileChooser chooser=new JFileChooser();chooser.setDialogTitle("Choose Customer Photo or Business Logo");if(chooser.showOpenDialog(this)==JFileChooser.APPROVE_OPTION){customerPhotoField.setText(chooser.getSelectedFile().getAbsolutePath());ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);}}
+    private void renewCard(){if(currentAccount==null)return;String value=JOptionPane.showInputDialog(this,"New expiry date (YYYY-MM-DD):",java.time.LocalDate.now().plusYears(2));if(value==null)return;try{LanApiClient.issueCustomerCard(customerId,java.time.LocalDate.parse(value.trim()),true);SessionDataCache.invalidate("customer-account:"+customerId);loadAccountSnapshot();JOptionPane.showMessageDialog(this,"Customer card renewed.");}catch(Exception ex){JOptionPane.showMessageDialog(this,ex.getMessage(),"Renew Customer Card",JOptionPane.ERROR_MESSAGE);}}
+
+    private Integer parseCustomerSince(String value){String text=value==null?"":value.trim();if(text.isEmpty())return null;try{int year=Integer.parseInt(text),current=java.time.Year.now().getValue();if(text.length()!=4||year<1900||year>current)throw new NumberFormatException();return year;}catch(NumberFormatException ex){JOptionPane.showMessageDialog(this,"Customer Since must be a four-digit year from 1900 through "+java.time.Year.now().getValue()+".");return null;}}
 
     private void openPaymentHistory() {
         CustomerPaymentHistory paymentHistory = new CustomerPaymentHistory(customerId, customerLabel);

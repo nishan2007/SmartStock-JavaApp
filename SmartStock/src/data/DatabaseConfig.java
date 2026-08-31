@@ -71,30 +71,30 @@ public record DatabaseConfig(
             jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
         }
 
-        String user = firstNonBlank(
+        boolean apiClient = mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN;
+        // Register setup must never touch server database credentials. Besides preserving
+        // the API-only boundary, this keeps a slow or unavailable OS credential provider
+        // from freezing the final "Connect this Register" setup transition.
+        String user = apiClient ? "" : firstNonBlank(
                 System.getProperty("smartstock.db.user"),
                 System.getenv("SMARTSTOCK_DB_USER"),
                 readProfileSecret(PRIMARY_DB_USER_SECRET),
                 props.getProperty("db.user")
         );
-        String password = firstNonBlank(
+        String password = apiClient ? "" : firstNonBlank(
                 System.getProperty("smartstock.db.password"),
                 System.getenv("SMARTSTOCK_DB_PASSWORD"),
                 readProfileSecret(PRIMARY_DB_PASSWORD_SECRET),
                 props.getProperty("db.password")
         );
-        if (mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN) {
-            user = "";
-            password = "";
-        }
 
-        DatabaseCredentials savedCredentials = DatabaseCredentials.load();
+        DatabaseCredentials savedCredentials = apiClient ? null : DatabaseCredentials.load();
 
         return new DatabaseConfig(
                 mode,
                 firstNonBlank(jdbcUrl, ""),
-                firstNonBlank(savedCredentials.resolve(user), ""),
-                firstNonBlank(savedCredentials.resolve(password), ""),
+                apiClient ? "" : firstNonBlank(savedCredentials.resolve(user), ""),
+                apiClient ? "" : firstNonBlank(savedCredentials.resolve(password), ""),
                 host,
                 port,
                 parseNullableInt(props.getProperty("location.id")),

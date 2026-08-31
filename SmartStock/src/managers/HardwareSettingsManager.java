@@ -94,6 +94,59 @@ public class HardwareSettingsManager {
         }
     }
 
+    public static NativeEthernetPrinterSettings getNativeEthernetPrinterSettings() throws IOException {
+        Properties p = loadProperties();
+        return new NativeEthernetPrinterSettings(
+                Boolean.parseBoolean(p.getProperty("escpos.ethernet.enabled", "false")),
+                p.getProperty("escpos.ethernet.host", "10.1.1.23"),
+                parseInt(p.getProperty("escpos.ethernet.port"), 9100),
+                parseInt(p.getProperty("escpos.ethernet.connect_timeout_ms"), 3000));
+    }
+
+    public static void saveNativeEthernetPrinterSettings(NativeEthernetPrinterSettings settings) throws IOException {
+        NativeEthernetPrinterSettings clean = settings == null ? NativeEthernetPrinterSettings.defaults() : settings;
+        Properties p = loadProperties();
+        p.setProperty("escpos.ethernet.enabled", String.valueOf(clean.enabled()));
+        p.setProperty("escpos.ethernet.host", clean.host());
+        p.setProperty("escpos.ethernet.port", String.valueOf(clean.port()));
+        p.setProperty("escpos.ethernet.connect_timeout_ms", String.valueOf(clean.connectTimeoutMillis()));
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            p.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
+    public static BadgePrinterSettings getBadgePrinterSettings() throws IOException {
+        return readBadgePrinterSettings(loadProperties());
+    }
+
+    static BadgePrinterSettings readBadgePrinterSettings(Properties p) {
+        return new BadgePrinterSettings(
+                Boolean.parseBoolean(p.getProperty("badge_printer.enabled", "false")),
+                p.getProperty("badge_printer.system_name", ""),
+                p.getProperty("badge_printer.model", BadgePrinterSettings.MAGICARD_600),
+                Boolean.parseBoolean(p.getProperty("badge_printer.duplex", "true")),
+                Boolean.parseBoolean(p.getProperty("badge_printer.show_print_dialog", "true")));
+    }
+
+    public static void saveBadgePrinterSettings(BadgePrinterSettings settings) throws IOException {
+        BadgePrinterSettings clean = settings == null ? BadgePrinterSettings.defaults() : settings;
+        Properties p = loadProperties();
+        writeBadgePrinterSettings(p, clean);
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            p.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
+    static void writeBadgePrinterSettings(Properties p, BadgePrinterSettings clean) {
+        p.setProperty("badge_printer.enabled", String.valueOf(clean.enabled()));
+        p.setProperty("badge_printer.system_name", clean.systemName());
+        p.setProperty("badge_printer.model", clean.model());
+        p.setProperty("badge_printer.duplex", String.valueOf(clean.duplex()));
+        p.setProperty("badge_printer.show_print_dialog", String.valueOf(clean.showPrintDialog()));
+    }
+
     public static List<String> getAvailablePrinterNames() {
         PrintService[] services = PrintServiceLookup.lookupPrintServices(null, null);
         List<String> printerNames = new ArrayList<>();
@@ -119,17 +172,23 @@ public class HardwareSettingsManager {
     }
 
     public static PrintService findPrintService(String systemName) {
+        return findPrintService(systemName, PrintServiceLookup.lookupPrintServices(null, null));
+    }
+
+    static PrintService findPrintService(String systemName, PrintService[] services) {
         if (systemName == null || systemName.isBlank()) {
             return null;
         }
-
-        PrintService[] services = PrintServiceLookup.lookupPrintServices(null, null);
         for (PrintService service : services) {
             if (systemName.equals(service.getName())) {
                 return service;
             }
         }
         return null;
+    }
+
+    public static boolean isBadgePrinterAvailable(BadgePrinterSettings settings) {
+        return settings != null && settings.enabled() && findPrintService(settings.systemName()) != null;
     }
 
     private static List<PosPrinter> normalizePrinters(List<PosPrinter> printers) {
@@ -230,6 +289,48 @@ public class HardwareSettingsManager {
 
         private static int clampPulse(int value, int fallback) {
             return value < 2 || value > 510 ? fallback : value;
+        }
+    }
+
+    public record NativeEthernetPrinterSettings(boolean enabled, String host, int port,
+                                                 int connectTimeoutMillis) {
+        public NativeEthernetPrinterSettings {
+            host = Objects.requireNonNullElse(host, "").trim();
+            if (enabled && host.isBlank()) {
+                throw new IllegalArgumentException("Ethernet printer host is required.");
+            }
+            if (port < 1 || port > 65535) {
+                throw new IllegalArgumentException("Ethernet printer port must be from 1 to 65535.");
+            }
+            if (connectTimeoutMillis < 250 || connectTimeoutMillis > 30000) {
+                throw new IllegalArgumentException("Ethernet printer timeout must be from 250 to 30000 ms.");
+            }
+        }
+
+        public static NativeEthernetPrinterSettings defaults() {
+            return new NativeEthernetPrinterSettings(false, "10.1.1.23", 9100, 3000);
+        }
+
+        public String endpoint() {
+            return host + ":" + port;
+        }
+    }
+
+    public record BadgePrinterSettings(boolean enabled, String systemName, String model,
+                                       boolean duplex, boolean showPrintDialog) {
+        public static final String MAGICARD_600 = "Magicard 600";
+
+        public BadgePrinterSettings {
+            systemName = Objects.requireNonNullElse(systemName, "").trim();
+            model = Objects.requireNonNullElse(model, MAGICARD_600).trim();
+            if (model.isBlank()) model = MAGICARD_600;
+            if (enabled && systemName.isBlank()) {
+                throw new IllegalArgumentException("Choose an installed Windows queue for the badge printer.");
+            }
+        }
+
+        public static BadgePrinterSettings defaults() {
+            return new BadgePrinterSettings(false, "", MAGICARD_600, true, true);
         }
     }
 

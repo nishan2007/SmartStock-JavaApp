@@ -789,6 +789,15 @@ public final class CashDrawerService {
         return total;
     }
 
+    public static BigDecimal calculateReturnedCash(Connection conn,long sessionId)throws SQLException{
+        ensureSchema(conn);BigDecimal total=BigDecimal.ZERO;
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM sale_returns WHERE cash_drawer_session_id=? AND refund_method='CASH'",sessionId));
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM cross_store_refund_requests WHERE cash_drawer_session_id=? AND refund_method='CASH' AND status NOT IN ('REJECTED','CANCELLED')",sessionId));
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM custom_order_payments WHERE cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM invoice_payments WHERE cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
+        return total;
+    }
+
     public static List<CashDrawerSession> listRecentSessions(Connection conn, Integer locationId, Long drawerId, boolean openOnly) throws SQLException {
         ensureSchema(conn);
         StringBuilder sql = new StringBuilder("SELECT * FROM cash_drawer_sessions WHERE 1=1 ");

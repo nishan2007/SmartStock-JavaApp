@@ -1,0 +1,7 @@
+SmartStock 1.0.105
+
+- Fixes Make a Sale product searches that could miss items outside the first 250 alphabetically cached products.
+- Loads the complete product catalog into the register's shared Make a Sale cache while retaining a 250-result cap only for interactive server search results.
+- Includes the independent Company Preferences switches for nearest-$20 sales and custom-order rounding introduced in 1.0.104.
+- Includes the View Inventory workflow for reviewing and selectively correcting catalog prices that are not multiples of $20.
+- Preserves server-side permission checks, stale-price protection, idempotency, auditing, and synchronization for price changes.

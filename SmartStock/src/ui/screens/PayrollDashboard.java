@@ -164,6 +164,12 @@ public class PayrollDashboard extends JFrame {
         summaryTable.setDefaultRenderer(Object.class, new PayrollCellRenderer());
         summarySorter = new TableRowSorter<>(summaryModel);
         summaryTable.setRowSorter(summarySorter);
+        summaryTable.setToolTipText("Double-click an employee to view every work session in this pay period.");
+        summaryTable.addMouseListener(new java.awt.event.MouseAdapter(){
+            @Override public void mouseClicked(java.awt.event.MouseEvent e){
+                if(e.getClickCount()==2&&SwingUtilities.isLeftMouseButton(e))showSelectedEmployeeSessions();
+            }
+        });
 
         detailModel = new DefaultTableModel(
                 new Object[]{"Clock ID", "Employee", "Role", "Date", "Clock In", "Lunch Start", "Lunch End", "Break Start", "Break End", "Clock Out", "Daily Hours", "Regular Hours", "OT Hours", "Regular Pay", "OT Pay", "Total Pay", "Pay Period", "Period Type", "Hour Limit", "Pay Date", "Location", "Clock Review"},
@@ -446,6 +452,24 @@ public class PayrollDashboard extends JFrame {
             JOptionPane.showMessageDialog(this, "Failed to add payroll bonus: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+    private void showSelectedEmployeeSessions(){
+        int viewRow=summaryTable.getSelectedRow();if(viewRow<0)return;int modelRow=summaryTable.convertRowIndexToModel(viewRow);
+        if(modelRow<0||modelRow>=renderedSummaries.size())return;PayrollSummary summary=renderedSummaries.get(modelRow);
+        DefaultTableModel model=new DefaultTableModel(new Object[]{"Session","Work Date","Clock In","Lunch Start","Lunch End","Break Start","Break End","Clock Out","Hours","Regular","Overtime","Location","Review"},0){@Override public boolean isCellEditable(int r,int c){return false;}};
+        for(TimeClockRow row:allRows){if(row.userId()!=summary.userId()||!row.payPeriodStart().equals(summary.payPeriodStart())||!row.payPeriodEnd().equals(summary.payPeriodEnd()))continue;
+            model.addRow(new Object[]{row.clockId(),row.workDate().format(DATE_FORMAT),formatDateTime(row.clockIn()),formatDateTime(row.lunchStart()),formatDateTime(row.lunchEnd()),formatDateTime(row.breakStart()),formatDateTime(row.breakEnd()),formatDateTime(row.clockOut()),formatHours(row.dailyHours()),formatHours(row.regularHours()),formatHours(row.overtimeHours()),row.locationName(),clockReview(row)});}
+        JTable table=new JTable(model);table.setRowHeight(28);table.setAutoCreateRowSorter(true);DeckersSwing.styleTable(table,DeckersPalette.MAGENTA);
+        JPanel overview=new JPanel(new GridLayout(2,4,12,6));overview.setBorder(new EmptyBorder(10,10,10,10));
+        overview.add(detailMetric("Employee",summary.employeeName()));overview.add(detailMetric("Role",formatRole(summary.employeeRole())));overview.add(detailMetric("Pay Period",formatPayPeriod(summary.payPeriodStart(),summary.payPeriodEnd())));overview.add(detailMetric("Pay Date",summary.payDate().format(DATE_FORMAT)));
+        overview.add(detailMetric("Sessions",String.valueOf(summary.recordCount())));overview.add(detailMetric("Total Hours",formatHours(summary.totalHours())));overview.add(detailMetric("Regular Hours",formatHours(summary.regularHours())));overview.add(detailMetric("OT Hours",formatHours(summary.overtimeHours())));
+        JPanel content=new JPanel(new BorderLayout(0,10));content.add(overview,BorderLayout.NORTH);content.add(createTableScrollPane(table),BorderLayout.CENTER);
+        JDialog dialog=new JDialog(this,"Work Sessions — "+summary.employeeName(),true);dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);dialog.setContentPane(content);dialog.setSize(1320,520);dialog.setLocationRelativeTo(this);dialog.setVisible(true);
+    }
+
+    private static JLabel detailMetric(String label,String value){JLabel result=new JLabel("<html><b>"+label+"</b><br>"+(value==null?"":value)+"</html>");result.setBorder(new EmptyBorder(4,6,4,6));return result;}
+
+    private static String clockReview(TimeClockRow row){if(row.autoClockOut())return "Auto clock-out — "+(row.autoClockOutReviewStatus()==null?"Pending":row.autoClockOutReviewStatus());if(row.autoBreakEnd())return "Auto break end — "+(row.autoBreakEndReviewStatus()==null?"Pending":row.autoBreakEndReviewStatus());return "";}
 
     private void giveAllEmployeesBonus() {
         PayPeriodOption selectedPeriod = (PayPeriodOption) payPeriodBox.getSelectedItem();

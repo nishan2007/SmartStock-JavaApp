@@ -268,14 +268,17 @@ final class CrossStoreReferenceSyncService {
     private static void upsertPayrollSetting(Connection c,JsonObject r)throws SQLException{
         try(PreparedStatement p=c.prepareStatement("""
                 INSERT INTO employee_payroll_settings(setting_id,user_id,period_type,work_hour_limit,effective_from,
-                  created_by_user_id,created_by_name,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+                  compensation_type,pay_rate,created_by_user_id,created_by_name,created_at,updated_at)
+                VALUES(?,?,?,?,?,?::compensation_type_enum,?,?,?,?,?)
                 ON CONFLICT(setting_id) DO UPDATE SET period_type=EXCLUDED.period_type,
                   work_hour_limit=EXCLUDED.work_hour_limit,effective_from=EXCLUDED.effective_from,
+                  compensation_type=EXCLUDED.compensation_type,pay_rate=EXCLUDED.pay_rate,
                   created_by_user_id=EXCLUDED.created_by_user_id,created_by_name=EXCLUDED.created_by_name,
                   updated_at=EXCLUDED.updated_at WHERE employee_payroll_settings.updated_at<EXCLUDED.updated_at
                 """)){int i=1;p.setObject(i++,uuid(r,"setting_id"));p.setInt(i++,integer(r,"user_id"));
             p.setString(i++,text(r,"period_type"));p.setBigDecimal(i++,r.get("work_hour_limit").getAsBigDecimal());
-            p.setDate(i++,date(r,"effective_from"));nullableInt(p,i++,r,"created_by_user_id");
+            p.setDate(i++,date(r,"effective_from"));p.setString(i++,text(r,"compensation_type"));
+            p.setBigDecimal(i++,r.get("pay_rate").getAsBigDecimal());nullableInt(p,i++,r,"created_by_user_id");
             nullableText(p,i++,r,"created_by_name");p.setTimestamp(i++,timestamp(r,"created_at"));
             p.setTimestamp(i,timestamp(r,"updated_at"));p.executeUpdate();}
     }

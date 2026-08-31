@@ -22,7 +22,7 @@ class InitialSetupWizardArchitectureTest {
         assertTrue(source.contains("switchLanServiceEnvironment(startSelectedServer)"));
         assertTrue(source.contains("ServerSupabaseCredentials.isConfigured()"));
         assertTrue(source.contains("new ServerSetupWizard(owner == null ? this : owner)"));
-        assertTrue(source.contains("new DatabaseSetup(owner == null ? this : owner, selectedMode)"));
+        assertTrue(source.contains("RegisterConnectionSetup.open(this)"));
         assertTrue(source.contains("PostgreSQL and Maven are not installed"));
     }
 
@@ -30,6 +30,9 @@ class InitialSetupWizardArchitectureTest {
     void serverSetupIsAResumableTaskOrientedWizard() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/ServerSetupWizard.java"));
         String welcome = Files.readString(Path.of("src/ui/screens/WelcomeFrame.java"));
+        assertTrue(welcome.contains("Configure Register Connection"));
+        assertTrue(welcome.contains("RegisterConnectionSetup.open(this)"));
+        assertTrue(welcome.contains("serverAddressBtn.setVisible(true)"));
 
         assertTrue(source.contains("STEP_COUNT = 6"));
         assertTrue(source.contains("\"Connect Supabase\""));

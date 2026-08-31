@@ -21,6 +21,7 @@ public final class ImageCacheWarmupService {
         collectUrls(conn, urls, "custom_order_items", "image_url");
         collectUrls(conn, urls, "custom_order_item_variants", "image_url");
         collectUrls(conn, urls, "users", "employee_photo_url");
+        collectUrls(conn, urls, "customer_accounts", "customer_photo_url");
 
         int loaded = 0;
         for (String url : urls) {

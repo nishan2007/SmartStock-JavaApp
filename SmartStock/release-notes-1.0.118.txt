@@ -1,0 +1,5 @@
+SmartStock 1.0.118
+
+- Fixes Time Clock Review corrections showing only a generic server error.
+- Shows managers the specific safe validation reason for invalid clock-in, clock-out, lunch, break, or correction-reason entries.
+- Continues hiding internal database error details from register clients.

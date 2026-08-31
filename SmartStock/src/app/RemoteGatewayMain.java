@@ -4,6 +4,7 @@ import data.DB;
 import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.LanApiServer;
+import services.SchedulerWebRuntimeController;
 
 import java.sql.Connection;
 import java.util.concurrent.CountDownLatch;
@@ -19,7 +20,7 @@ public final class RemoteGatewayMain {
         System.setProperty("smartstock.remote.gateway", "true");
         DatabaseConfig config = DatabaseConfig.load();
         if (config.mode() != DatabaseMode.SERVER || !config.hasPrimaryConnection()) {
-            throw new IllegalStateException("The gateway host requires SERVER mode with a server-side cloud PostgreSQL connection.");
+            throw new IllegalStateException("The gateway host requires SERVER mode with the authoritative local PostgreSQL connection.");
         }
         try (Connection connection = DB.getConnection()) {
             // Fail closed before opening the listener if credentials or schema are invalid.
@@ -28,8 +29,9 @@ public final class RemoteGatewayMain {
             }
         }
         LanApiServer api = LanApiServer.start();
-        Runtime.getRuntime().addShutdownHook(new Thread(api::close, "smartstock-remote-gateway-shutdown"));
-        System.out.println("SmartStock Remote Admin gateway is ready.");
+        SchedulerWebRuntimeController scheduler = SchedulerWebRuntimeController.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> { scheduler.close(); api.close(); }, "smartstock-remote-gateway-shutdown"));
+        System.out.println("SmartStock Remote Admin gateway and owner scheduler are ready.");
         new CountDownLatch(1).await();
     }
 }

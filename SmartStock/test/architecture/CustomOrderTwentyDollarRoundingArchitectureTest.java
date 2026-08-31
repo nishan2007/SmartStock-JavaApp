@@ -14,12 +14,12 @@ class CustomOrderTwentyDollarRoundingArchitectureTest {
         String api = source("src/services/LanApiServer.java");
         String quotation = source("src/services/ServerQuotationInvoiceService.java");
 
-        assertTrue(screen.contains("lineTotal=CurrencyFormatter.roundToNearestTwenty("),
-                "The custom-order cart must display and submit a rounded line total.");
-        assertTrue(api.contains("roundedUnitPrice=utils.CurrencyFormatter.roundToNearestTwenty(line.unitPrice())"),
-                "The authenticated server must enforce rounding independently of the register.");
-        assertTrue(quotation.contains("each=utils.CurrencyFormatter.roundToNearestTwenty("),
-                "Quotation conversion must create rounded custom-order units.");
+        assertTrue(screen.contains("lineTotal=roundToNearestTwenty?CurrencyFormatter.roundToNearestTwenty(unrounded):unrounded"),
+                "The custom-order cart must honor the company rounding preference.");
+        assertTrue(api.contains("BigDecimal chargedUnitPrice=roundToNearestTwenty"),
+                "The authenticated server must enforce the preference independently of the register.");
+        assertTrue(quotation.contains("each=roundToNearestTwenty?utils.CurrencyFormatter.roundToNearestTwenty(unroundedEach):unroundedEach"),
+                "Quotation conversion must honor the custom-order rounding preference.");
         assertTrue(quotation.contains("customTotal=customTotal.add(each.multiply(BigDecimal.valueOf(quantity)))"),
                 "The converted order total must equal the sum of its rounded units.");
     }

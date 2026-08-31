@@ -13,11 +13,22 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.zip.CRC32;
 
 /** Direct PC/SC support for ACR122U-compatible readers and Type 2 NFC tags. */
 public final class PcscNfcService {
     private static final Duration CARD_TIMEOUT = Duration.ofSeconds(20);
     private static final byte[] MIME_TYPE = "application/vnd.smartstock.badge".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] CLASSIC_MAGIC = "SSC1".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] CLASSIC_FACTORY_KEY = {
+            (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff
+    };
+    private static final int CLASSIC_FIRST_DATA_BLOCK = 4;
+    private static final int CLASSIC_DATA_BLOCK_COUNT = 3;
+    private static final int CLASSIC_BLOCK_SIZE = 16;
+    private static final int CLASSIC_RECORD_SIZE = CLASSIC_DATA_BLOCK_COUNT * CLASSIC_BLOCK_SIZE;
+    private static final int CLASSIC_CRC_OFFSET = CLASSIC_RECORD_SIZE - Integer.BYTES;
+    private static final int CLASSIC_MAX_PAYLOAD_BYTES = CLASSIC_CRC_OFFSET - CLASSIC_MAGIC.length - 1;
 
     private PcscNfcService() {
     }
@@ -34,15 +45,23 @@ public final class PcscNfcService {
         byte[] expected = payload.getBytes(StandardCharsets.UTF_8);
         return withCard(channel -> {
             byte[] uid = getUid(channel);
-            byte[] ndef = encodeMimeNdef(expected);
-            byte[] tlv = wrapNdefTlv(ndef);
-            ensureType2Tag(channel);
-            writePages(channel, tlv);
-            byte[] actual = readSmartStockPayload(channel);
+            CardFamily family = cardFamily(channel.getCard().getATR().getBytes());
+            byte[] actual;
+            if (family == CardFamily.MIFARE_CLASSIC) {
+                writeClassicRecord(channel, expected);
+                actual = readClassicRecord(channel);
+            } else {
+                byte[] ndef = encodeMimeNdef(expected);
+                byte[] tlv = wrapNdefTlv(ndef);
+                ensureType2Tag(channel);
+                writePages(channel, tlv);
+                actual = readSmartStockPayload(channel);
+            }
             if (!Arrays.equals(expected, actual)) {
                 throw new IllegalStateException("The tag was written, but its read-back value did not match.");
             }
-            return "NFC badge written and read back successfully.\nReader: ACR122U / PC/SC\nCard UID: "
+            return "NFC badge written and read back successfully.\nReader: ACR122U / PC/SC\nCard type: "
+                    + family.label + "\nCard UID: "
                     + HexFormat.of().withUpperCase().formatHex(uid);
         });
     }
@@ -55,8 +74,15 @@ public final class PcscNfcService {
     public static ReadResult read(Duration timeout) throws Exception {
         return withCard(timeout, channel -> {
             byte[] uid = getUid(channel);
-            ensureType2Tag(channel);
-            String actual = new String(readSmartStockPayload(channel), StandardCharsets.UTF_8);
+            CardFamily family = cardFamily(channel.getCard().getATR().getBytes());
+            byte[] payload;
+            if (family == CardFamily.MIFARE_CLASSIC) {
+                payload = readClassicRecord(channel);
+            } else {
+                ensureType2Tag(channel);
+                payload = readSmartStockPayload(channel);
+            }
+            String actual = new String(payload, StandardCharsets.UTF_8);
             return new ReadResult(actual, HexFormat.of().withUpperCase().formatHex(uid));
         });
     }
@@ -100,6 +126,123 @@ public final class PcscNfcService {
 
     private static byte[] getUid(CardChannel channel) throws CardException {
         return transmit(channel, new byte[]{(byte) 0xff, (byte) 0xca, 0x00, 0x00, 0x00}, "read card UID");
+    }
+
+    static CardFamily cardFamily(byte[] atr) {
+        byte[] pcscStorageCardPrefix = {
+                (byte) 0xa0, 0x00, 0x00, 0x03, 0x06, 0x03, 0x00
+        };
+        for (int i = 0; i <= atr.length - pcscStorageCardPrefix.length - 1; i++) {
+            boolean matches = true;
+            for (int j = 0; j < pcscStorageCardPrefix.length; j++) {
+                if (atr[i + j] != pcscStorageCardPrefix[j]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                int cardCode = atr[i + pcscStorageCardPrefix.length] & 0xff;
+                if (cardCode == 0x01 || cardCode == 0x02) return CardFamily.MIFARE_CLASSIC;
+                if (cardCode == 0x03) return CardFamily.TYPE_2;
+            }
+        }
+        return CardFamily.UNKNOWN;
+    }
+
+    private static void writeClassicRecord(CardChannel channel, byte[] payload) throws CardException {
+        byte[] record = encodeClassicRecord(payload);
+        authenticateClassicSector(channel);
+        for (int i = 0; i < CLASSIC_DATA_BLOCK_COUNT; i++) {
+            int block = CLASSIC_FIRST_DATA_BLOCK + i;
+            byte[] data = Arrays.copyOfRange(record, i * CLASSIC_BLOCK_SIZE, (i + 1) * CLASSIC_BLOCK_SIZE);
+            byte[] command = new byte[5 + CLASSIC_BLOCK_SIZE];
+            command[0] = (byte) 0xff;
+            command[1] = (byte) 0xd6;
+            command[3] = (byte) block;
+            command[4] = CLASSIC_BLOCK_SIZE;
+            System.arraycopy(data, 0, command, 5, data.length);
+            transmit(channel, command, "write MIFARE Classic block " + block);
+        }
+    }
+
+    private static byte[] readClassicRecord(CardChannel channel) throws CardException {
+        authenticateClassicSector(channel);
+        ByteArrayOutputStream record = new ByteArrayOutputStream(CLASSIC_RECORD_SIZE);
+        for (int i = 0; i < CLASSIC_DATA_BLOCK_COUNT; i++) {
+            int block = CLASSIC_FIRST_DATA_BLOCK + i;
+            record.writeBytes(transmit(channel,
+                    new byte[]{(byte) 0xff, (byte) 0xb0, 0x00, (byte) block, CLASSIC_BLOCK_SIZE},
+                    "read MIFARE Classic block " + block));
+        }
+        return decodeClassicRecord(record.toByteArray());
+    }
+
+    private static void authenticateClassicSector(CardChannel channel) throws CardException {
+        byte[] loadKey = new byte[5 + CLASSIC_FACTORY_KEY.length];
+        loadKey[0] = (byte) 0xff;
+        loadKey[1] = (byte) 0x82;
+        loadKey[4] = (byte) CLASSIC_FACTORY_KEY.length;
+        System.arraycopy(CLASSIC_FACTORY_KEY, 0, loadKey, 5, CLASSIC_FACTORY_KEY.length);
+        transmit(channel, loadKey, "load the MIFARE Classic authentication key");
+        try {
+            transmit(channel, new byte[]{(byte) 0xff, (byte) 0x86, 0x00, 0x00, 0x05,
+                    0x01, 0x00, (byte) CLASSIC_FIRST_DATA_BLOCK, 0x60, 0x00},
+                    "authenticate MIFARE Classic sector 1");
+        } catch (IllegalStateException ex) {
+            throw new IllegalStateException("MIFARE Classic sector 1 could not be authenticated with its factory key. "
+                    + "This card may already be personalized or locked; SmartStock did not write it.", ex);
+        }
+    }
+
+    static byte[] encodeClassicRecord(byte[] payload) {
+        if (payload.length > CLASSIC_MAX_PAYLOAD_BYTES) {
+            throw new IllegalArgumentException("MIFARE Classic badge payload must be "
+                    + CLASSIC_MAX_PAYLOAD_BYTES + " bytes or less.");
+        }
+        byte[] record = new byte[CLASSIC_RECORD_SIZE];
+        System.arraycopy(CLASSIC_MAGIC, 0, record, 0, CLASSIC_MAGIC.length);
+        record[CLASSIC_MAGIC.length] = (byte) payload.length;
+        System.arraycopy(payload, 0, record, CLASSIC_MAGIC.length + 1, payload.length);
+        int checksum = checksum(record, 0, CLASSIC_CRC_OFFSET);
+        writeInt(record, CLASSIC_CRC_OFFSET, checksum);
+        return record;
+    }
+
+    static byte[] decodeClassicRecord(byte[] record) {
+        if (record.length != CLASSIC_RECORD_SIZE
+                || !Arrays.equals(CLASSIC_MAGIC, Arrays.copyOf(record, CLASSIC_MAGIC.length))) {
+            throw new IllegalStateException("This MIFARE Classic card does not contain a SmartStock employee badge record.");
+        }
+        int length = record[CLASSIC_MAGIC.length] & 0xff;
+        if (length > CLASSIC_MAX_PAYLOAD_BYTES) {
+            throw new IllegalStateException("The MIFARE Classic SmartStock badge record has an invalid length.");
+        }
+        int expectedChecksum = readInt(record, CLASSIC_CRC_OFFSET);
+        int actualChecksum = checksum(record, 0, CLASSIC_CRC_OFFSET);
+        if (expectedChecksum != actualChecksum) {
+            throw new IllegalStateException("The MIFARE Classic SmartStock badge record failed its integrity check.");
+        }
+        return Arrays.copyOfRange(record, CLASSIC_MAGIC.length + 1, CLASSIC_MAGIC.length + 1 + length);
+    }
+
+    private static int checksum(byte[] data, int offset, int length) {
+        CRC32 crc = new CRC32();
+        crc.update(data, offset, length);
+        return (int) crc.getValue();
+    }
+
+    private static void writeInt(byte[] target, int offset, int value) {
+        target[offset] = (byte) (value >>> 24);
+        target[offset + 1] = (byte) (value >>> 16);
+        target[offset + 2] = (byte) (value >>> 8);
+        target[offset + 3] = (byte) value;
+    }
+
+    private static int readInt(byte[] source, int offset) {
+        return ((source[offset] & 0xff) << 24)
+                | ((source[offset + 1] & 0xff) << 16)
+                | ((source[offset + 2] & 0xff) << 8)
+                | (source[offset + 3] & 0xff);
     }
 
     private static void ensureType2Tag(CardChannel channel) throws CardException {
@@ -211,4 +354,16 @@ public final class PcscNfcService {
 
     @FunctionalInterface
     private interface CardAction<T> { T run(CardChannel channel) throws Exception; }
+
+    enum CardFamily {
+        TYPE_2("NTAG / MIFARE Ultralight"),
+        MIFARE_CLASSIC("MIFARE Classic"),
+        UNKNOWN("NFC Type 2 compatible");
+
+        private final String label;
+
+        CardFamily(String label) {
+            this.label = label;
+        }
+    }
 }

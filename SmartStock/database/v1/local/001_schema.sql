@@ -2040,8 +2040,10 @@ CREATE TABLE public.company_customization (
     account_payment_receipt_show_barcode boolean DEFAULT true CONSTRAINT company_customization_account_payment_receipt_show_bar_not_null NOT NULL,
     custom_order_minimum_deposit_percent numeric(7,4) DEFAULT 0 CONSTRAINT company_customization_custom_order_minimum_deposit_per_not_null NOT NULL,
     custom_order_refund_approval_limit numeric(12,2) DEFAULT 0 CONSTRAINT company_customization_custom_order_refund_approval_lim_not_null NOT NULL,
+    round_custom_orders_to_nearest_twenty boolean DEFAULT true NOT NULL,
     custom_order_slip_enabled boolean DEFAULT true NOT NULL,
     custom_order_slip_auto_print boolean DEFAULT true NOT NULL,
+    customer_card_template_layout_data text DEFAULT '{"version":1,"templates":[{"name":"Teachers","configured":true,"background":{"red":239,"green":246,"blue":255}},{"name":"Business","configured":true,"background":{"red":255,"green":247,"blue":237}},{"name":"School","configured":true,"background":{"red":240,"green":253,"blue":244}},{"name":"Individual","configured":true,"background":{"red":250,"green":245,"blue":255}},{"name":"Government","configured":true,"background":{"red":241,"green":245,"blue":249},"header":{"red":15,"green":76,"blue":92}}]}' NOT NULL,
     custom_order_slip_title text DEFAULT 'CUSTOMER''S ORDER SLIP'::text NOT NULL,
     custom_order_slip_contact_line text DEFAULT ''::text NOT NULL,
     custom_order_slip_email_line text DEFAULT ''::text NOT NULL,
@@ -2093,6 +2095,7 @@ CREATE TABLE public.company_customization (
     sale_discount_limit_percent numeric(7,4) DEFAULT 5 NOT NULL,
     sale_return_approval_limit numeric(12,2) DEFAULT 0 NOT NULL,
     require_cost_price_on_new_item boolean DEFAULT true NOT NULL,
+    round_sales_to_nearest_twenty boolean DEFAULT true NOT NULL,
     next_quotation_counter integer DEFAULT 1 NOT NULL,
     next_invoice_counter integer DEFAULT 1 NOT NULL,
     next_invoice_delivery_counter integer DEFAULT 1 NOT NULL,
@@ -2143,6 +2146,8 @@ CREATE TABLE public.company_info (
     company_motto_line1 text DEFAULT ''::text NOT NULL,
     company_motto_line2 text DEFAULT ''::text NOT NULL,
     company_logo_url text DEFAULT ''::text NOT NULL,
+    company_template_sharing_version integer DEFAULT 1 NOT NULL,
+    individual_customer_template_rename_version integer DEFAULT 1 NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT company_info_singleton_chk CHECK ((company_info_id = 1))
 );
@@ -3152,10 +3157,20 @@ CREATE TABLE public.customer_accounts (
     is_business boolean DEFAULT false NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     account_notes text,
+    customer_since integer,
+    customer_photo_url text,
+    customer_card_issued_on date,
+    customer_card_expires_on date,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     sync_uuid uuid DEFAULT gen_random_uuid() NOT NULL
 );
+
+ALTER TABLE ONLY public.customer_accounts
+    ADD CONSTRAINT customer_accounts_customer_since_chk CHECK ((customer_since IS NULL) OR ((customer_since >= 1900) AND (customer_since <= 9999)));
+
+ALTER TABLE ONLY public.customer_accounts
+    ADD CONSTRAINT customer_accounts_card_dates_chk CHECK ((customer_card_expires_on IS NULL) OR ((customer_card_issued_on IS NOT NULL) AND (customer_card_expires_on >= customer_card_issued_on)));
 
 
 --
@@ -3187,7 +3202,10 @@ CREATE TABLE public.customer_types (
     name text NOT NULL,
     description text,
     is_active boolean DEFAULT true NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    auto_print_sale_receipt boolean DEFAULT true NOT NULL,
+    customer_card_template_slot integer DEFAULT 4 NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT customer_types_card_template_slot_chk CHECK (customer_card_template_slot BETWEEN 1 AND 5)
 );
 
 
@@ -3443,12 +3461,15 @@ CREATE TABLE public.employee_payroll_settings (
     period_type text DEFAULT 'SEMI_MONTHLY'::text NOT NULL,
     work_hour_limit numeric(8,2) DEFAULT 80.00 NOT NULL,
     effective_from date NOT NULL,
+    compensation_type public.compensation_type_enum NOT NULL,
+    pay_rate numeric(12,2) NOT NULL,
     created_by_user_id integer,
     created_by_name text,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT employee_payroll_settings_hour_limit_chk CHECK ((work_hour_limit > (0)::numeric)),
-    CONSTRAINT employee_payroll_settings_period_type_chk CHECK ((period_type = ANY (ARRAY['SEMI_MONTHLY'::text, 'WEEKLY'::text, 'FOUR_MONTH_BLOCKS'::text])))
+    CONSTRAINT employee_payroll_settings_period_type_chk CHECK ((period_type = ANY (ARRAY['SEMI_MONTHLY'::text, 'WEEKLY'::text, 'FOUR_MONTH_BLOCKS'::text]))),
+    CONSTRAINT employee_payroll_settings_pay_rate_chk CHECK ((pay_rate >= (0)::numeric))
 );
 
 
@@ -3667,6 +3688,7 @@ CREATE TABLE public.held_cart_items (
     held_cart_id bigint NOT NULL,
     product_id integer NOT NULL,
     product_name text,
+    is_misc_item boolean DEFAULT false NOT NULL,
     description text,
     sku text,
     unit_price numeric(12,2) DEFAULT 0 NOT NULL,
@@ -5378,6 +5400,8 @@ CREATE TABLE public.sale_items (
     sale_item_id integer NOT NULL,
     sale_id integer NOT NULL,
     product_id integer NOT NULL,
+    item_name text,
+    is_misc_item boolean DEFAULT false NOT NULL,
     quantity integer DEFAULT 1 NOT NULL,
     unit_price numeric(12,2) DEFAULT 0 NOT NULL,
     original_unit_price numeric(12,2) DEFAULT 0 NOT NULL,
@@ -5897,6 +5921,7 @@ CREATE TABLE public.sync_cross_store_sale_items_cache (
     product_id integer NOT NULL,
     sku text,
     product_name text NOT NULL,
+    is_misc_item boolean DEFAULT false NOT NULL,
     product_type text DEFAULT 'INVENTORY'::text NOT NULL,
     quantity integer DEFAULT 0 NOT NULL,
     unit_price numeric(14,2) DEFAULT 0 NOT NULL,
@@ -14079,3 +14104,51 @@ CREATE TABLE IF NOT EXISTS public.image_cloud_configuration (
 );
 ALTER TABLE public.image_cloud_configuration ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.image_cloud_configuration FROM PUBLIC;
+
+-- Owner-only public scheduler web sessions. Supabase tokens are never stored here.
+CREATE TABLE IF NOT EXISTS public.scheduler_web_runtime (
+    runtime_id smallint PRIMARY KEY DEFAULT 1 CHECK (runtime_id = 1),
+    enabled boolean NOT NULL DEFAULT false,
+    generation uuid NOT NULL DEFAULT gen_random_uuid(),
+    gateway_running boolean NOT NULL DEFAULT false,
+    gateway_heartbeat_at timestamp with time zone,
+    public_origin text,
+    changed_by_user_id integer REFERENCES public.users(user_id) ON DELETE SET NULL,
+    changed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO public.scheduler_web_runtime(runtime_id,enabled) VALUES(1,false) ON CONFLICT(runtime_id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS public.scheduler_web_sessions (
+    session_id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_hash text NOT NULL UNIQUE,
+    csrf_hash text NOT NULL,
+    user_id integer NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE,
+    auth_user_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    absolute_expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    revoked_at timestamp with time zone
+);
+CREATE TABLE IF NOT EXISTS public.scheduler_web_auth_attempts (
+    attempt_id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    identifier_hash text NOT NULL,
+    remote_address text,
+    succeeded boolean DEFAULT false NOT NULL,
+    attempted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.scheduler_web_idempotency (
+    session_id uuid NOT NULL REFERENCES public.scheduler_web_sessions(session_id) ON DELETE CASCADE,
+    idempotency_key text NOT NULL,
+    operation_key text NOT NULL,
+    request_hash text NOT NULL,
+    response_json jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    PRIMARY KEY(session_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS scheduler_web_sessions_user_active_idx ON public.scheduler_web_sessions(user_id,expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS scheduler_web_auth_attempts_rate_idx ON public.scheduler_web_auth_attempts(identifier_hash,attempted_at DESC);
+ALTER TABLE public.scheduler_web_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scheduler_web_auth_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scheduler_web_idempotency ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scheduler_web_runtime ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.scheduler_web_runtime,public.scheduler_web_sessions,public.scheduler_web_auth_attempts,public.scheduler_web_idempotency FROM PUBLIC;

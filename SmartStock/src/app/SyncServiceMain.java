@@ -7,12 +7,14 @@ import services.SyncServiceStatusService;
 import services.SyncWorker;
 import services.LanApiServer;
 import services.ServerRoleGuard;
+import services.SchedulerWebRuntimeController;
 
 import java.sql.Connection;
 
 public final class SyncServiceMain {
     private static volatile boolean running = true;
     private static volatile LanApiServer lanApiServer;
+    private static volatile SchedulerWebRuntimeController schedulerWeb;
 
     private SyncServiceMain() {
     }
@@ -20,6 +22,7 @@ public final class SyncServiceMain {
     public static void main(String[] args) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
+            if (schedulerWeb != null) schedulerWeb.close();
             if (lanApiServer != null) {
                 lanApiServer.close();
             }
@@ -89,6 +92,7 @@ public final class SyncServiceMain {
             if (lanApiServer != null) return;
             try {
                 lanApiServer = LanApiServer.start();
+                schedulerWeb = SchedulerWebRuntimeController.start();
                 SyncServiceStatusService.mark("Running",
                         "SmartStock LAN service is online on HTTPS port " + LanApiServer.DEFAULT_PORT + ".");
             } catch (Exception ex) {
@@ -100,6 +104,10 @@ public final class SyncServiceMain {
 
     private static void stopLanApiForInactiveRole() {
         synchronized (SyncServiceMain.class) {
+            if (schedulerWeb != null) {
+                schedulerWeb.close();
+                schedulerWeb = null;
+            }
             if (lanApiServer != null) {
                 lanApiServer.close();
                 lanApiServer = null;

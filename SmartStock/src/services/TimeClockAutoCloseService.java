@@ -193,7 +193,6 @@ public final class TimeClockAutoCloseService {
         try {
             ensureSchema(conn);
             snapshotLegacyOpenPunches(conn);
-            processOverdueBreaks(conn);
             int closed = processDuePunches(conn, Instant.now());
             if (ownsTransaction) conn.commit();
             return closed;
@@ -202,41 +201,6 @@ public final class TimeClockAutoCloseService {
             throw ex;
         } finally {
             if (ownsTransaction) conn.setAutoCommit(true);
-        }
-    }
-
-    static int processOverdueBreaks(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("""
-                WITH closed_breaks AS (
-                    UPDATE employee_time_clock
-                    SET break_end = break_start + INTERVAL '15 minutes',
-                        auto_break_end = TRUE,
-                        auto_break_end_detected_at = CURRENT_TIMESTAMP,
-                        auto_break_end_review_status = 'PENDING',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE clock_out IS NULL
-                      AND break_start IS NOT NULL
-                      AND break_end IS NULL
-                      AND CURRENT_TIMESTAMP > break_start + INTERVAL '20 minutes'
-                    RETURNING clock_id, user_id, clock_in, lunch_start, lunch_end,
-                              break_start, break_end, clock_out, total_hours_worked
-                )
-                INSERT INTO employee_time_clock_adjustments (
-                    adjustment_id, clock_id, user_id, action_type,
-                    before_clock_in, before_lunch_start, before_lunch_end,
-                    before_break_start, before_break_end, before_clock_out, before_hours,
-                    after_clock_in, after_lunch_start, after_lunch_end,
-                    after_break_start, after_break_end, after_clock_out, after_hours,
-                    reason, actor_name
-                )
-                SELECT gen_random_uuid(), clock_id, user_id, 'BREAK_AUTO_END',
-                       clock_in, lunch_start, lunch_end, break_start, NULL, clock_out, total_hours_worked,
-                       clock_in, lunch_start, lunch_end, break_start, break_end, clock_out, total_hours_worked,
-                       '10-minute break left open beyond 20 minutes; automatically ended at 15 minutes.',
-                       'SmartStock automatic time clock'
-                FROM closed_breaks
-                """)) {
-            return ps.executeUpdate();
         }
     }
 
@@ -250,13 +214,20 @@ public final class TimeClockAutoCloseService {
                        COALESCE(NULLIF(l.timezone, ''), 'America/New_York') AS timezone,
                        tc.work_date, tc.clock_in, tc.lunch_start, tc.lunch_end,
                        tc.break_start, tc.break_end,
-                       COALESCE(u.compensation_type::text, 'HOURLY') AS compensation_type,
-                       COALESCE(u.salary, 0) AS rate,
+                       COALESCE(pay.compensation_type::text, u.compensation_type::text, 'HOURLY') AS compensation_type,
+                       COALESCE(pay.pay_rate, u.salary, 0) AS rate,
                        COALESCE(tc.auto_close_rule_snapshot, 'UNSCHEDULED') AS auto_rule,
                        tc.auto_close_detection_at,
                        COALESCE(tc.auto_close_max_work_hours, 8) AS max_work_hours
                 FROM employee_time_clock tc
                 JOIN users u ON u.user_id = tc.user_id
+                LEFT JOIN LATERAL (
+                    SELECT compensation_type, pay_rate
+                    FROM employee_payroll_settings
+                    WHERE user_id = tc.user_id AND effective_from <= tc.work_date
+                    ORDER BY effective_from DESC, updated_at DESC
+                    LIMIT 1
+                ) pay ON TRUE
                 LEFT JOIN locations l ON l.location_id = tc.location_id
                 WHERE tc.clock_out IS NULL
                   AND tc.auto_close_enabled_snapshot
@@ -458,8 +429,16 @@ public final class TimeClockAutoCloseService {
                 BigDecimal rate;
                 LocalDate workDate;
                 try (PreparedStatement ps = conn.prepareStatement("""
-                        SELECT COALESCE(u.compensation_type::text, 'HOURLY'), COALESCE(u.salary, 0), tc.work_date
+                        SELECT COALESCE(pay.compensation_type::text, u.compensation_type::text, 'HOURLY'),
+                               COALESCE(pay.pay_rate, u.salary, 0), tc.work_date
                         FROM employee_time_clock tc JOIN users u ON u.user_id = tc.user_id
+                        LEFT JOIN LATERAL (
+                            SELECT compensation_type, pay_rate
+                            FROM employee_payroll_settings
+                            WHERE user_id = tc.user_id AND effective_from <= tc.work_date
+                            ORDER BY effective_from DESC, updated_at DESC
+                            LIMIT 1
+                        ) pay ON TRUE
                         WHERE tc.clock_id = ?
                         """)) {
                     ps.setLong(1, clockId);

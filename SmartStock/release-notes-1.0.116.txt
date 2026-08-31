@@ -1,0 +1,6 @@
+SmartStock 1.0.116
+
+- Renames the Personal / Regular customer-card template to Individual.
+- Preserves existing template designs and customer-account assignments during the rename.
+- Fixes blank item-type, brand, vendor, and shelf suggestions in the Mobile Item Web App.
+- Prevents notification refreshes from failing while the application menu is being rebuilt.

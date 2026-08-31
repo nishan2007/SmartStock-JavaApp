@@ -74,12 +74,13 @@ public class DatabaseSetup extends JFrame {
         setLocationRelativeTo(owner);
 
         DatabaseConfig config = DatabaseConfig.load();
-        modeBox.setSelectedItem(requestedMode == null ? config.mode() : requestedMode);
+        DatabaseMode initialMode = requestedMode == null ? config.mode() : requestedMode;
+        modeBox.setSelectedItem(initialMode);
         jdbcUrlField.setText(config.jdbcUrl());
         dbUserField.setText(config.dbUser());
         dbPasswordField.setText(config.dbPassword());
-        serverHostField.setText(config.serverHost());
-        serverPortSpinner.setValue(config.mode() == DatabaseMode.SERVER ? config.serverPort() : LanApiClient.baseUri().getPort());
+        serverHostField.setText(registerSetupHost(initialMode, config.serverHost()));
+        serverPortSpinner.setValue(initialMode == DatabaseMode.SERVER ? config.serverPort() : 8443);
         locationIdField.setText(config.locationId() == null ? "" : String.valueOf(config.locationId()));
         SupabaseProjectConfig publicCloudConfig = SupabaseProjectConfig.load();
         supabaseProjectUrlField.setText(publicCloudConfig.url());
@@ -226,6 +227,15 @@ public class DatabaseSetup extends JFrame {
         setContentPane(root);
         ThemeManager.applyToWindow(this);
         updateModeVisibility();
+    }
+
+    static String registerSetupHost(DatabaseMode mode, String configuredHost) {
+        String host = configuredHost == null ? "" : configuredHost.trim();
+        if (mode == DatabaseMode.CLIENT
+                && (host.isBlank() || "127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))) {
+            return "POS-SERVER";
+        }
+        return host;
     }
 
     private JPanel serviceSection(String title, JLabel state, String explanation, JPanel... operations) {

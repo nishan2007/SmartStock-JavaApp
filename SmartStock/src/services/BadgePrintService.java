@@ -5,6 +5,7 @@ import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.oned.Code128Writer;
 import managers.CompanyCustomizationManager;
+import managers.HardwareSettingsManager;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -17,6 +18,9 @@ import javax.print.attribute.HashPrintRequestAttributeSet;
 import javax.print.attribute.PrintRequestAttributeSet;
 import javax.print.attribute.standard.MediaPrintableArea;
 import javax.print.attribute.standard.OrientationRequested;
+import javax.print.attribute.standard.PrinterIsAcceptingJobs;
+import javax.print.attribute.standard.Sides;
+import javax.print.PrintService;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.font.FontRenderContext;
@@ -631,19 +635,64 @@ public final class BadgePrintService {
     }
 
     public static void printBadge(Component parent, EmployeeBadgeData employee, CompanyCustomizationManager.BadgeTemplateSettings settings, BadgePrintSide side, LocalDate expiryDate) throws Exception {
+        printBadge(parent, employee, settings, side, expiryDate, true);
+    }
+
+    private static void printBadge(Component parent, EmployeeBadgeData employee,
+                                   CompanyCustomizationManager.BadgeTemplateSettings settings,
+                                   BadgePrintSide side, LocalDate expiryDate,
+                                   boolean updatePrintCount) throws Exception {
         BadgePrintSide printSide = side == null ? BadgePrintSide.BOTH : side;
         LocalDate badgeExpiryDate = expiryDate == null ? defaultExpiryDate() : expiryDate;
+        HardwareSettingsManager.BadgePrinterSettings printerSettings = HardwareSettingsManager.getBadgePrinterSettings();
+        PrintService printService = requireBadgePrintService(printerSettings);
+        if (printSide == BadgePrintSide.BOTH && !printerSettings.duplex()) {
+            throw new IllegalStateException("Front-and-back badge printing requires Magicard 600 Duo to be enabled in Hardware Settings.");
+        }
         PrinterJob job = PrinterJob.getPrinterJob();
+        job.setPrintService(printService);
         job.setJobName("Employee Badge " + printSide.label() + " - " + employee.displayName());
         job.setPrintable(new BadgePrintable(employee, settings, printSide, badgeExpiryDate), createBadgePageFormat(job));
 
-        PrintRequestAttributeSet attributes = new HashPrintRequestAttributeSet();
+        PrintRequestAttributeSet attributes = createPrintAttributes(printSide, printerSettings.duplex());
+        boolean accepted = !printerSettings.showPrintDialog() || job.printDialog(attributes);
+        if (!accepted) return;
+        job.print(attributes);
+        if (updatePrintCount) incrementBadgePrintCount(employee.userId());
+    }
+
+    static PrintRequestAttributeSet createPrintAttributes(BadgePrintSide side, boolean duplexEnabled) {
+        BadgePrintSide printSide = side == null ? BadgePrintSide.BOTH : side;
+        HashPrintRequestAttributeSet attributes = new HashPrintRequestAttributeSet();
         attributes.add(OrientationRequested.PORTRAIT);
-        attributes.add(new MediaPrintableArea(0, 0, (float) CARD_WIDTH_INCHES, (float) CARD_HEIGHT_INCHES, MediaPrintableArea.INCH));
-        if (job.printDialog(attributes)) {
-            job.print(attributes);
-            incrementBadgePrintCount(employee.userId());
+        attributes.add(new MediaPrintableArea(0, 0, (float) CARD_WIDTH_INCHES, (float) CARD_HEIGHT_INCHES,
+                MediaPrintableArea.INCH));
+        attributes.add(printSide == BadgePrintSide.BOTH && duplexEnabled
+                ? Sides.TWO_SIDED_LONG_EDGE : Sides.ONE_SIDED);
+        return attributes;
+    }
+
+    static PrintService requireBadgePrintService(HardwareSettingsManager.BadgePrinterSettings settings) {
+        if (settings == null || !settings.enabled()) {
+            throw new IllegalStateException("Badge printing is disabled. Configure the Magicard 600 in Hardware Settings.");
         }
+        PrintService service = HardwareSettingsManager.findPrintService(settings.systemName());
+        if (service == null) {
+            throw new IllegalStateException("The configured Magicard Windows queue is unavailable: "
+                    + settings.systemName() + ". Install or restore the queue, then refresh Hardware Settings.");
+        }
+        PrinterIsAcceptingJobs accepting = service.getAttribute(PrinterIsAcceptingJobs.class);
+        if (PrinterIsAcceptingJobs.NOT_ACCEPTING_JOBS.equals(accepting)) {
+            throw new IllegalStateException("The configured Magicard printer is not accepting jobs: " + settings.systemName());
+        }
+        return service;
+    }
+
+    public static void printTestBadge(Component parent) throws Exception {
+        EmployeeBadgeData sample = new EmployeeBadgeData(0, "TEST", "SmartStock Test Badge", "SmartStock", "", "Test Badge",
+                "", "", "TEST-600-DUO", "", 0, "TEST", "This workstation");
+        printBadge(parent, sample, CompanyCustomizationManager.loadBadgeTemplateSettings(), BadgePrintSide.BOTH,
+                defaultExpiryDate(), false);
     }
 
     public static void saveBadgePdf(Path outputPath, EmployeeBadgeData employee, CompanyCustomizationManager.BadgeTemplateSettings settings, BadgePrintSide side, LocalDate expiryDate) throws IOException {
@@ -1405,7 +1454,8 @@ public final class BadgePrintService {
         int maxSize = Math.max(cleanStyle.minSize(), cleanStyle.maxSize());
         FontRenderContext context = g.getFontRenderContext();
         for (int size = maxSize; size >= cleanStyle.minSize(); size--) {
-            Font candidate = createBadgeFont(cleanStyle, size);
+            Font candidate = fontWithGlyphFallback(createBadgeFont(cleanStyle, size), lines, size,
+                    cleanStyle.style());
             FontMetrics metrics = g.getFontMetrics(candidate);
             int totalHeight = metrics.getHeight() * Math.max(1, lines.size());
             boolean fits = totalHeight <= Math.max(1, height);
@@ -1419,7 +1469,28 @@ public final class BadgePrintService {
                 return candidate;
             }
         }
-        return createBadgeFont(cleanStyle, cleanStyle.minSize());
+        return fontWithGlyphFallback(createBadgeFont(cleanStyle, cleanStyle.minSize()), lines,
+                cleanStyle.minSize(), cleanStyle.style());
+    }
+
+    private static Font fontWithGlyphFallback(Font preferred, List<String> lines, int size, int style) {
+        for (String line : lines) {
+            if (preferred.canDisplayUpTo(Objects.requireNonNullElse(line, "")) >= 0) {
+                return new Font(Font.SANS_SERIF, style, size);
+            }
+        }
+        return preferred;
+    }
+
+    static BufferedImage flattenForPrinter(BufferedImage source) {
+        BufferedImage flattened = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = flattened.createGraphics();
+        configure(g);
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, flattened.getWidth(), flattened.getHeight());
+        g.drawImage(source, 0, 0, null);
+        g.dispose();
+        return flattened;
     }
 
     private static Font createBadgeFont(BadgeTextStyle style, int size) {
@@ -1880,13 +1951,13 @@ public final class BadgePrintService {
             if (pageIndex >= side.pageCount()) {
                 return NO_SUCH_PAGE;
             }
-            BufferedImage image = switch (side) {
+            BufferedImage image = flattenForPrinter(switch (side) {
                 case FRONT -> renderFront(employee, settings, PRINT_RENDER_SCALE);
                 case BACK -> renderBack(employee, settings, expiryDate, PRINT_RENDER_SCALE);
                 case BOTH -> pageIndex == 0
                         ? renderFront(employee, settings, PRINT_RENDER_SCALE)
                         : renderBack(employee, settings, expiryDate, PRINT_RENDER_SCALE);
-            };
+            });
             Graphics2D g = (Graphics2D) graphics.create();
             configure(g);
             double scale = Math.min(pageFormat.getImageableWidth() / CARD_WIDTH, pageFormat.getImageableHeight() / CARD_HEIGHT);

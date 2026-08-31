@@ -218,6 +218,7 @@ public final class AppUpdateService {
         manifest.setProperty("java.bin", javaBinary().toString());
         manifest.setProperty("sync.service.app.dir", Path.of(System.getProperty("user.home"), ".smartstock", "sync-service", "app").toString());
         manifest.setProperty("sync.service.task.name", "SmartStockServerService");
+        manifest.setProperty("sync.service.user", windowsServiceUser());
         manifest.setProperty("sync.service.launch.agent.label", "com.smartstock.sync");
         manifest.setProperty("relaunch", "true");
         Path manifestPath = stagingDir.resolve("update.properties");
@@ -253,7 +254,9 @@ public final class AppUpdateService {
         try (var entries = Files.list(updateRoot)) {
             for (Path entry : entries.toList()) {
                 String name = entry.getFileName().toString();
-                if (Files.isDirectory(entry) && name.startsWith("staged-")) {
+                if (Files.isDirectory(entry) && name.startsWith("staged-")
+                        && Files.getLastModifiedTime(entry).toInstant()
+                        .isBefore(java.time.Instant.now().minus(Duration.ofHours(24)))) {
                     deleteRecursively(entry);
                 }
             }
@@ -328,7 +331,18 @@ public final class AppUpdateService {
             process = new ProcessBuilder(java.toString(), "-cp", runner.toString(),
                     "app.SmartStockUpdater", manifestPath.toString());
         }
-        process.directory(manifestPath.getParent().toFile()).start();
+        Process launched = process.directory(manifestPath.getParent().toFile()).start();
+        if (detectPlatform().equals("windows")) {
+            try {
+                if (launched.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                        && launched.exitValue() != 0) {
+                    throw new IOException("Windows administrator approval was cancelled or rejected.");
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IOException("The updater launch was interrupted.", ex);
+            }
+        }
         System.exit(0);
     }
 
@@ -340,9 +354,21 @@ public final class AppUpdateService {
                 + quotePowerShell(workingDirectory.toString())
                 + "' -ArgumentList @('-cp','" + quotePowerShell(runner.toString())
                 + "','app.SmartStockUpdater','" + quotePowerShell(manifestPath.toString())
-                + "') -PassThru; if ($null -eq $p) { exit 1 }";
-        return List.of("powershell.exe", "-NoProfile", "-NonInteractive",
+                + "') -Wait -PassThru; if ($null -eq $p) { exit 1 }; exit $p.ExitCode";
+        return List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", command);
+    }
+
+    private static String windowsPowerShellExecutable() {
+        String windows = System.getenv().getOrDefault("WINDIR", "C:\\Windows");
+        return Path.of(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+                .toString();
+    }
+
+    static String windowsServiceUser() {
+        String user = System.getenv().getOrDefault("USERNAME", System.getProperty("user.name", ""));
+        String domain = System.getenv().getOrDefault("USERDOMAIN", "");
+        return domain.isBlank() || user.contains("\\") ? user : domain + "\\" + user;
     }
 
     private static Path windowsUpdaterJavaBinary() {

@@ -1,0 +1,5 @@
+SmartStock 1.0.90
+
+- Prevents the final Register Setup transition from waiting on server-only database credentials.
+- Defaults a new register connection to POS-SERVER on the secure SmartStock HTTPS port 8443 instead of loopback PostgreSQL settings.
+- Preserves explicitly configured register hosts and keeps POS-SERVER's own local database configuration unchanged.

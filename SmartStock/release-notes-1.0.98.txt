@@ -1,0 +1,7 @@
+SmartStock 1.0.98
+
+- Adds dedicated Magicard 600 Duo badge-printer settings, Windows queue selection, CR80 front/back duplex printing, queue health guidance, and a test-card action.
+- Fixes employee creation in production by using the server's protected Supabase Auth administrator credential instead of missing Edge Functions or client credentials.
+- Makes employee email optional. SmartStock creates a unique login alias in the manager's mailbox when no employee email is supplied, while preserving real addresses when entered.
+- Adds quick temporary price-tag printing through the configured Ethernet or Windows receipt printer, with one cut per tag.
+- Improves workstation setup, company greeting, and hardware configuration behavior included in this update.

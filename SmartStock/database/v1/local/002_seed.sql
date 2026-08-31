@@ -55,7 +55,7 @@ INSERT INTO public.custom_order_design_placements (design_placement_id, placemen
 -- Data for Name: customer_types; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.customer_types (customer_type_id, name, description, is_active, created_at) VALUES (1, 'General', 'Default customer category', true, '2026-08-09 13:36:57.843435-04');
+INSERT INTO public.customer_types (customer_type_id, name, description, is_active, auto_print_sale_receipt, created_at, customer_card_template_slot) VALUES (1, 'General', 'Default customer category', true, true, '2026-08-09 13:36:57.843435-04', 4);
 
 
 --
@@ -304,6 +304,15 @@ SELECT pg_catalog.setval('public.permissions_permission_id_seq', 72, true);
 --
 
 SELECT pg_catalog.setval('public.roles_role_id_seq', 3, true);
+
+INSERT INTO public.mobile_permissions(permission_key,permission_name,description,permission_group,permission_subgroup,created_at)
+VALUES ('ACCESS_SCHEDULER_WEB','Access Scheduler Web','Allows signing in to the owner-only scheduler web app.','People','Scheduling',CURRENT_TIMESTAMP)
+ON CONFLICT (permission_key) DO UPDATE SET permission_name=EXCLUDED.permission_name,description=EXCLUDED.description,
+ permission_group=EXCLUDED.permission_group,permission_subgroup=EXCLUDED.permission_subgroup;
+INSERT INTO public.role_mobile_permissions(role_id,permission_key,updated_at)
+SELECT r.role_id,p.permission_key,CURRENT_TIMESTAMP FROM public.roles r CROSS JOIN public.mobile_permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='ACCESS_SCHEDULER_WEB'
+ON CONFLICT (role_id,permission_key) DO NOTHING;
 
 
 --

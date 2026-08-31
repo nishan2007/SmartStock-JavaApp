@@ -1,0 +1,5 @@
+SmartStock 1.0.127
+
+- Fixes a Windows updater regression that could terminate the elevated updater together with SmartStock before installation or recovery completed.
+- Preserves the 1.0.126 customer-card and scheduler web enhancements.
+- Adds a Use Last Saved Details button to the Add Item web app for restoring the previous department, item type, brand, and sales shelf.

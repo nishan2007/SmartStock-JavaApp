@@ -20,6 +20,8 @@ public class CustomerTypeList extends JFrame {
     private final JTextField nameField = new JTextField();
     private final JTextArea descriptionArea = new JTextArea(4, 24);
     private final JCheckBox activeBox = new JCheckBox("Active", true);
+    private final JCheckBox autoPrintSaleReceiptBox = new JCheckBox("Automatically print sale receipts", true);
+    private final JComboBox<String> customerCardTemplateBox=new JComboBox<>(new String[]{"Teachers","Business","School","Individual","Template 5"});
     private final DefaultTableModel tableModel;
     private final JTable typeTable;
     private Integer selectedTypeId;
@@ -37,7 +39,7 @@ public class CustomerTypeList extends JFrame {
         root.setBorder(new EmptyBorder(18, 18, 18, 18));
         root.setBackground(new Color(245, 247, 250));
 
-        tableModel = new DefaultTableModel(new Object[]{"ID", "Customer Type", "Description", "Active"}, 0) {
+        tableModel = new DefaultTableModel(new Object[]{"ID", "Customer Type", "Description", "Active", "Auto Print Receipt","Card Template"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -48,6 +50,7 @@ public class CustomerTypeList extends JFrame {
         typeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         typeTable.getColumnModel().getColumn(0).setMaxWidth(70);
         typeTable.getColumnModel().getColumn(3).setMaxWidth(80);
+        typeTable.getColumnModel().getColumn(4).setPreferredWidth(125);
         typeTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 selectCurrentRow();
@@ -127,6 +130,8 @@ public class CustomerTypeList extends JFrame {
         addFormRow(panel, gbc, 1, "Name:", nameField);
         addFormRow(panel, gbc, 2, "Description:", new JScrollPane(descriptionArea));
         addFormRow(panel, gbc, 3, "Status:", activeBox);
+        addFormRow(panel, gbc, 4, "Sale receipts:", autoPrintSaleReceiptBox);
+        addFormRow(panel,gbc,5,"Customer card:",customerCardTemplateBox);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttonPanel.setOpaque(false);
@@ -135,7 +140,7 @@ public class CustomerTypeList extends JFrame {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 6;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -171,7 +176,8 @@ public class CustomerTypeList extends JFrame {
         String search=searchField.getText().trim();CachedUiLoader.load(this,"customer-types.search","customer-types:"+search,CustomerTypeSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->new CustomerTypeSnapshot(LanApiClient.loadCustomerTypes(search,false)),snapshot->{tableModel.setRowCount(0);
             for (LanApiClient.CustomerTypeRecord type : snapshot.types()) {
                 tableModel.addRow(new Object[]{type.customerTypeId(), type.name(),
-                        type.description(), type.active()});
+                        type.description(), type.active(), type.autoPrintSaleReceipt(),
+                        type.customerCardTemplateSlot()>=1&&type.customerCardTemplateSlot()<=5?type.customerCardTemplateSlot():4});
             }
         });
     }
@@ -188,6 +194,8 @@ public class CustomerTypeList extends JFrame {
         nameField.setText(String.valueOf(tableModel.getValueAt(modelRow, 1)));
         descriptionArea.setText(String.valueOf(tableModel.getValueAt(modelRow, 2)));
         activeBox.setSelected(Boolean.TRUE.equals(tableModel.getValueAt(modelRow, 3)));
+        autoPrintSaleReceiptBox.setSelected(Boolean.TRUE.equals(tableModel.getValueAt(modelRow, 4)));
+        customerCardTemplateBox.setSelectedIndex(Math.max(0,Math.min(4,Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow,5)))-1)));
     }
 
     private void saveCustomerType() {
@@ -200,7 +208,8 @@ public class CustomerTypeList extends JFrame {
 
         try {
             LanApiClient.CustomerTypeSaveRequest request = new LanApiClient.CustomerTypeSaveRequest(
-                    selectedTypeId, name, description, activeBox.isSelected());
+                    selectedTypeId, name, description, activeBox.isSelected(),
+                    autoPrintSaleReceiptBox.isSelected(),customerCardTemplateBox.getSelectedIndex()+1);
             String fingerprint = request.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
                 pendingSaveFingerprint = fingerprint;
@@ -220,6 +229,8 @@ public class CustomerTypeList extends JFrame {
         nameField.setText("");
         descriptionArea.setText("");
         activeBox.setSelected(true);
+        autoPrintSaleReceiptBox.setSelected(true);
+        customerCardTemplateBox.setSelectedIndex(3);
         nameField.requestFocusInWindow();
     }
 }

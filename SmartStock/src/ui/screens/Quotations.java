@@ -10,6 +10,7 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.ResponsiveTask;
 import ui.helpers.SessionDataCache;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
 
@@ -366,7 +367,7 @@ public class Quotations extends JFrame {
         styleButton(button, BUTTON_PRIMARY, Color.WHITE);
     }
 
-    static void styleSecondaryButton(JButton button) {
+    public static void styleSecondaryButton(JButton button) {
         styleButton(button, BUTTON_SECONDARY, Color.WHITE);
     }
 
@@ -616,6 +617,7 @@ public class Quotations extends JFrame {
             });
             createButton.addActionListener(e -> createQuotation());
             cancelButton.addActionListener(e -> dispose());
+            ThemeManager.applyToWindow(this);
         }
 
         private JPanel catalogSearchPanel() {
@@ -1373,6 +1375,7 @@ public class Quotations extends JFrame {
             JButton addAddon=new JButton("Add Print Add-on"),remove=new JButton("Remove Add-on"),save=new JButton("Add Custom Item"),cancel=new JButton("Cancel");JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));buttons.add(addAddon);buttons.add(remove);buttons.add(save);buttons.add(cancel);center.add(buttons,BorderLayout.SOUTH);add(center);
             styleSecondaryButton(addAddon);styleSecondaryButton(remove);stylePrimaryButton(save);styleSecondaryButton(cancel);
             itemBox.addActionListener(e->loadVariantsAndPrice());addAddon.addActionListener(e->addAddon());remove.addActionListener(e->{int r=addonTable.getSelectedRow();if(r>=0)addons.removeRow(addonTable.convertRowIndexToModel(r));});save.addActionListener(e->save());cancel.addActionListener(e->dispose());
+            ThemeManager.applyToWindow(this);
             try{for(var item:ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems))itemBox.addItem(item);if(existing!=null)loadExisting(existing);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
         }
         private void loadExisting(LineInput existing){var c=existing.custom();for(int i=0;i<itemBox.getItemCount();i++)if(java.util.Objects.equals(itemBox.getItemAt(i).customItemId(),c.customItemId())){itemBox.setSelectedIndex(i);break;}loadVariantsAndPrice();for(int i=0;i<variantBox.getItemCount();i++)if(java.util.Objects.equals(variantBox.getItemAt(i).variantId(),c.customVariantId())){variantBox.setSelectedIndex(i);break;}qty.setText(String.valueOf(existing.quantity()));price.setText(c.areaPrice()==null?existing.unitPrice().toPlainString():c.areaPrice().toPlainString());width.setText(c.widthValue()==null?"":c.widthValue().toPlainString());length.setText(c.lengthValue()==null?"":c.lengthValue().toPlainString());discount.setText(existing.discountPercent().toPlainString());delivery.setSelectedItem(existing.deliveryMethod());design.setText(c.customizationDetails());instructions.setText(c.orderInstructions());if(c.printAddons()!=null)for(var a:c.printAddons())addons.addRow(new Object[]{a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()});}

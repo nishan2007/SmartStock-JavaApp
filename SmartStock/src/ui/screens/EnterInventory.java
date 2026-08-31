@@ -43,6 +43,7 @@ public class EnterInventory extends JFrame {
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
+    private String displayedSearchText;
     private String pendingReceiveKey;
     private String pendingReceiveFingerprint;
 
@@ -180,7 +181,15 @@ public class EnterInventory extends JFrame {
 
         searchBtn.addActionListener(e -> searchProducts());
         addBarcodeBtn.addActionListener(e -> addBarcodeToSelectedItem());
-        searchField.addActionListener(e -> addSelectedSearchResultToInventory());
+        searchField.addActionListener(e -> {
+            String searchText = searchField.getText().trim();
+            if (searchPopup != null && searchPopup.isVisible()
+                    && searchText.equals(displayedSearchText)) {
+                addSelectedSearchResultToInventory();
+            } else {
+                searchProducts(true, true);
+            }
+        });
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             private void restartSearchDebounce() {
                 if (searchDebounceTimer == null) {
@@ -410,6 +419,10 @@ public class EnterInventory extends JFrame {
     }
 
     private void searchProducts(boolean showMessages) {
+        searchProducts(showMessages, false);
+    }
+
+    private void searchProducts(boolean showMessages, boolean addSingleResult) {
         String searchText = searchField.getText().trim();
 
         if (SessionManager.getCurrentLocationId() == null) {
@@ -434,6 +447,9 @@ public class EnterInventory extends JFrame {
             }
             return rows;
         },rows->{
+            if (!searchText.equals(searchField.getText().trim())) {
+                return;
+            }
             if (rows.isEmpty()) {
                 closeSearchPopup();
                 if (showMessages) {
@@ -442,6 +458,9 @@ public class EnterInventory extends JFrame {
                 return;
             }
             showSearchResultsPopup(rows);
+            if (addSingleResult && rows.size() == 1) {
+                addSelectedSearchResultToInventory();
+            }
         },failure->{if(showMessages)JOptionPane.showMessageDialog(this,"SmartStock server error: "+failure.getMessage());});
     }
 
@@ -500,6 +519,7 @@ public class EnterInventory extends JFrame {
         if (searchResultsTable.getRowCount() > 0) {
             searchResultsTable.setRowSelectionInterval(0, 0);
         }
+        displayedSearchText = searchField.getText().trim();
 
         searchResultsScrollPane.setPreferredSize(new Dimension(Math.max(searchField.getWidth(), 500), 220));
         searchResultsTable.getColumnModel().getColumn(0).setPreferredWidth(90);
@@ -552,9 +572,20 @@ public class EnterInventory extends JFrame {
         }
 
         addToInventoryTable(itemType, itemId, name, description, sku, currentStock, qty);
-        closeSearchPopup();
+        clearSearchForNextItem();
         searchField.requestFocusInWindow();
-        searchField.selectAll();
+    }
+
+    private void clearSearchForNextItem() {
+        if (searchDebounceTimer != null) {
+            searchDebounceTimer.stop();
+        }
+        closeSearchPopup();
+        displayedSearchText = null;
+        if (searchResultsTable != null) {
+            ((DefaultTableModel) searchResultsTable.getModel()).setRowCount(0);
+        }
+        searchField.setText("");
     }
 
     private void closeSearchPopup() {

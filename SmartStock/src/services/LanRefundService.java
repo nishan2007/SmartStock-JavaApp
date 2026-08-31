@@ -122,7 +122,7 @@ final class LanRefundService {
                 FROM sale_items si
                 LEFT JOIN products p ON p.product_id = si.product_id
                 JOIN sales s ON s.sale_id = si.sale_id
-                WHERE si.sale_id = ? AND s.location_id = ?
+                WHERE si.sale_id = ? AND s.location_id = ? AND NOT si.is_misc_item
                 ORDER BY si.sale_item_id
                 """)) {
             ps.setInt(1, saleId);
@@ -327,7 +327,7 @@ final class LanRefundService {
                                  WHERE sri.sale_item_id = si.sale_item_id), 0)
                 FROM sale_items si
                 LEFT JOIN products p ON p.product_id = si.product_id
-                WHERE si.sale_id = ?
+                WHERE si.sale_id = ? AND NOT si.is_misc_item
                 ORDER BY si.sale_item_id
                 FOR UPDATE OF si
                 """)) {

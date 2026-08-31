@@ -1,0 +1,7 @@
+SmartStock 1.0.117
+
+- Speeds up checkout for carts containing multiple items by reducing repeated database permission, product, inventory, movement, and audit work.
+- Improves Make a Sale search results by putting Brand first, hiding the internal product number, and formatting prices with a dollar sign.
+- Makes receipt header and footer settings multiline and preserves entered line breaks on printed receipts and documents.
+- Adds the return receipt number as a Code 128 barcode to receipt-roll and letter-size return receipts.
+- Makes Reprint Receipt in View Sales reproduce the selected return receipt instead of the original sale, marked as a duplicate/reprint.

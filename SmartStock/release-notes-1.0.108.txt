@@ -1,0 +1,6 @@
+SmartStock 1.0.108
+
+- Sorts Quick Pick Service Items by total quantity sold at the current store, from most used to least used.
+- Uses item name and product ID as stable tie-breakers, with never-used services listed alphabetically after used services.
+- Keeps normal catalog searches alphabetically ordered.
+- Includes the service-image workflow corrections, Checkout Only cash-drawer fix, Make a Sale Size improvements, complete catalog-cache loading, and configurable nearest-$20 rounding from the preceding updates.

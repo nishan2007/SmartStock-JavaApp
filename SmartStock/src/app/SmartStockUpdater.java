@@ -35,6 +35,7 @@ public final class SmartStockUpdater {
             log("Updater failed: " + rootMessage(ex));
             ex.printStackTrace();
             try {
+                restartServiceAfterFailure(Path.of(args[0]));
                 relaunchAfterFailure(Path.of(args[0]));
             } catch (Exception relaunchError) {
                 log("Updater recovery relaunch failed: " + rootMessage(relaunchError));
@@ -87,17 +88,16 @@ public final class SmartStockUpdater {
             if (newJar == null) {
                 throw new IOException("Release zip must contain a SmartStock inventory-management jar.");
             }
+            validateApplicationPayload(payloadDir);
 
             backupCurrentApp(appDir, backupDir);
             stopSyncService(props);
             try {
                 replaceApp(appDir, payloadDir);
                 updateNativeLauncherConfigs(appDir, newJar.getFileName().toString());
-                try {
-                    updateSyncServiceCopy(appDir, props);
-                } catch (IOException syncError) {
-                    log("Background service update deferred: " + rootMessage(syncError));
-                }
+                // A mixed desktop/service release can fail schema and API contracts.
+                // Let the existing rollback path restore both if either copy fails.
+                updateSyncServiceCopy(appDir, props);
             } catch (Exception ex) {
                 restoreBackup(appDir, backupDir);
                 try {
@@ -141,10 +141,44 @@ public final class SmartStockUpdater {
         log("Relaunched SmartStock after updater failure.");
     }
 
+    private static void restartServiceAfterFailure(Path manifestPath) {
+        try {
+            Properties props = new Properties();
+            try (InputStream input = Files.newInputStream(manifestPath)) {
+                props.load(input);
+            }
+            startSyncService(props);
+        } catch (Exception ex) {
+            log("Background service recovery failed: " + rootMessage(ex));
+        }
+    }
+
     private static void backupMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
-        prepareSingleRollbackDirectory(backupDir);
-        if (Files.exists(currentBundle)) {
-            copyMacBundle(currentBundle, backupDir.resolve(currentBundle.getFileName().toString()));
+        if (!Files.isDirectory(currentBundle)) {
+            throw new IOException("The installed SmartStock app bundle is missing.");
+        }
+        Path parent = backupDir.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException("The rollback directory has no parent.");
+        Files.createDirectories(parent);
+        Path staged = parent.resolve("." + backupDir.getFileName() + "-staged-" + UUID.randomUUID());
+        Path previous = parent.resolve("." + backupDir.getFileName() + "-previous-" + UUID.randomUUID());
+        Files.createDirectories(staged);
+        try {
+            Path stagedBundle = staged.resolve(currentBundle.getFileName().toString());
+            copyMacBundle(currentBundle, stagedBundle);
+            validateMacBundle(stagedBundle);
+            if (Files.exists(backupDir)) Files.move(backupDir, previous);
+            try {
+                Files.move(staged, backupDir);
+            } catch (IOException ex) {
+                if (Files.exists(previous) && !Files.exists(backupDir)) {
+                    Files.move(previous, backupDir);
+                }
+                throw ex;
+            }
+            deleteRecursivelyQuietly(previous);
+        } finally {
+            deleteRecursivelyQuietly(staged);
         }
     }
 
@@ -261,9 +295,11 @@ public final class SmartStockUpdater {
 
     private static void restoreMacAppBundle(Path currentBundle, Path backupDir) throws IOException {
         Path backedUpBundle = backupDir.resolve(currentBundle.getFileName().toString());
-        if (Files.exists(backedUpBundle)) {
-            replaceMacAppBundle(currentBundle, backedUpBundle);
+        if (!Files.isDirectory(backedUpBundle)) {
+            throw new IOException("The SmartStock rollback app bundle is missing.");
         }
+        validateMacBundle(backedUpBundle);
+        replaceMacAppBundle(currentBundle, backedUpBundle);
     }
 
     private static void copyMacBundle(Path source, Path target) throws IOException {
@@ -289,14 +325,34 @@ public final class SmartStockUpdater {
     }
 
     static void backupCurrentApp(Path appDir, Path backupDir) throws IOException {
-        prepareSingleRollbackDirectory(backupDir);
-        try (Stream<Path> stream = Files.list(appDir)) {
-            for (Path source : stream.toList()) {
-                String name = source.getFileName().toString();
-                if (isRollbackArtifact(name)) {
-                    copyRecursively(source, backupDir.resolve(name));
+        Path parent = backupDir.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException("The rollback directory has no parent.");
+        Files.createDirectories(parent);
+        Path staged = parent.resolve("." + backupDir.getFileName() + "-staged-" + UUID.randomUUID());
+        Path previous = parent.resolve("." + backupDir.getFileName() + "-previous-" + UUID.randomUUID());
+        Files.createDirectories(staged);
+        try {
+            try (Stream<Path> stream = Files.list(appDir)) {
+                for (Path source : stream.toList()) {
+                    String name = source.getFileName().toString();
+                    if (isRollbackArtifact(name)) {
+                        copyRecursively(source, staged.resolve(name));
+                    }
                 }
             }
+            validateRollbackPayload(staged);
+            if (Files.exists(backupDir)) Files.move(backupDir, previous);
+            try {
+                Files.move(staged, backupDir);
+            } catch (IOException ex) {
+                if (Files.exists(previous) && !Files.exists(backupDir)) {
+                    Files.move(previous, backupDir);
+                }
+                throw ex;
+            }
+            deleteRecursivelyQuietly(previous);
+        } finally {
+            deleteRecursivelyQuietly(staged);
         }
     }
 
@@ -327,6 +383,7 @@ public final class SmartStockUpdater {
     }
 
     static void restoreBackup(Path appDir, Path backupDir) throws IOException {
+        validateRollbackPayload(backupDir);
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path target : stream.toList()) {
                 String name = target.getFileName().toString();
@@ -334,9 +391,6 @@ public final class SmartStockUpdater {
                     deleteRecursively(target);
                 }
             }
-        }
-        if (!Files.exists(backupDir)) {
-            return;
         }
         try (Stream<Path> stream = Files.list(backupDir)) {
             for (Path source : stream.toList()) {
@@ -388,6 +442,7 @@ public final class SmartStockUpdater {
                 }
             }
         }
+        validateApplicationPayload(staged);
         try {
             Files.move(syncServiceAppDir, previous);
             try {
@@ -407,6 +462,34 @@ public final class SmartStockUpdater {
         deleteRecursivelyQuietly(previous);
     }
 
+    private static void validateApplicationPayload(Path stagedAppDir) throws IOException {
+        if (findReleaseJar(stagedAppDir) == null) {
+            throw new IOException("The staged SmartStock server copy is missing its application JAR.");
+        }
+        Path dependencies = stagedAppDir.resolve("dependency");
+        boolean hasPostgres;
+        if (!Files.isDirectory(dependencies)) {
+            hasPostgres = false;
+        } else {
+            try (Stream<Path> files = Files.list(dependencies)) {
+                hasPostgres = files.anyMatch(path -> Files.isRegularFile(path)
+                        && path.getFileName().toString().startsWith("postgresql-")
+                        && path.getFileName().toString().endsWith(".jar"));
+            }
+        }
+        if (!hasPostgres) {
+            throw new IOException("The staged SmartStock server copy is missing the PostgreSQL driver.");
+        }
+    }
+
+    private static void validateRollbackPayload(Path backupDir) throws IOException {
+        if (backupDir == null || !Files.isDirectory(backupDir)
+                || findReleaseJar(backupDir) == null
+                || !Files.isDirectory(backupDir.resolve("dependency"))) {
+            throw new IOException("The SmartStock rollback copy is missing or incomplete.");
+        }
+    }
+
     private static void deleteRecursivelyQuietly(Path path) {
         try {
             deleteRecursively(path);
@@ -424,32 +507,42 @@ public final class SmartStockUpdater {
         Path javaBin = Path.of(javaBinValue);
         Path javaw = javaBin.resolveSibling("javaw.exe");
         Path serviceJava = Files.isRegularFile(javaw) ? javaw : javaBin;
+        String serviceUser = props.getProperty("sync.service.user", "").trim();
         runRequiredCommand(windowsSyncTaskUpdateCommand(
-                taskName, serviceJava, syncServiceAppDir, jarName),
+                taskName, serviceJava, syncServiceAppDir, jarName, serviceUser),
                 "Could not update the SmartStock background service task");
     }
 
     static List<String> windowsSyncTaskUpdateCommand(
-            String taskName, Path javaBin, Path syncServiceAppDir, String jarName) {
+            String taskName, Path javaBin, Path syncServiceAppDir, String jarName,
+            String serviceUser) {
         Path serviceDir = syncServiceAppDir.getParent();
         Path smartstockDir = serviceDir == null ? null : serviceDir.getParent();
         Path userHome = smartstockDir == null ? null : smartstockDir.getParent();
         if (serviceDir == null || userHome == null) {
             throw new IllegalArgumentException("The SmartStock service profile path is invalid.");
         }
-        Path shortcut = serviceDir.resolve("SmartStockServer.lnk");
-        String script = "$shell=New-Object -ComObject WScript.Shell;"
-                + "$shortcut=$shell.CreateShortcut('" + powerShellQuote(shortcut.toString()) + "');"
-                + "$shortcut.TargetPath='" + powerShellQuote(javaBin.toString()) + "';"
-                + "$shortcut.Arguments='-Duser.home=\"" + powerShellQuote(userHome.toString())
-                + "\" -jar \"" + powerShellQuote(jarName) + "\" --sync-service';"
-                + "$shortcut.WorkingDirectory='" + powerShellQuote(syncServiceAppDir.toString()) + "';"
-                + "$shortcut.WindowStyle=7;$shortcut.Save();"
-                + "$action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'explorer.exe') "
-                + "-Argument ('\"' + '" + powerShellQuote(shortcut.toString()) + "' + '\"');"
-                + "Set-ScheduledTask -TaskName '" + powerShellQuote(taskName)
-                + "' -Action $action -ErrorAction Stop | Out-Null";
-        return List.of("powershell.exe", "-NoProfile", "-NonInteractive",
+        String serviceArguments = "-Duser.home=\"" + powerShellQuote(userHome.toString())
+                + "\" -jar \"" + powerShellQuote(jarName) + "\" --sync-service";
+        String selectedUser = serviceUser == null || serviceUser.isBlank()
+                ? "$env:USERNAME" : "'" + powerShellQuote(serviceUser.trim()) + "'";
+        String script = "$action=New-ScheduledTaskAction -Execute '"
+                + powerShellQuote(javaBin.toString()) + "' -Argument '"
+                + serviceArguments + "' -WorkingDirectory '"
+                + powerShellQuote(syncServiceAppDir.toString()) + "';"
+                + "$task=Get-ScheduledTask -TaskName '" + powerShellQuote(taskName)
+                + "' -ErrorAction SilentlyContinue;"
+                + "if($task){Set-ScheduledTask -TaskName '" + powerShellQuote(taskName)
+                + "' -Action $action -ErrorAction Stop | Out-Null}else{"
+                + "$serviceUser=" + selectedUser + ";"
+                + "$trigger=New-ScheduledTaskTrigger -AtLogOn -User $serviceUser;"
+                + "$principal=New-ScheduledTaskPrincipal -UserId $serviceUser "
+                + "-LogonType Interactive -RunLevel Limited;"
+                + "Register-ScheduledTask -TaskName '" + powerShellQuote(taskName)
+                + "' -Action $action -Trigger $trigger -Principal $principal "
+                + "-Description 'SmartStock HTTPS LAN and synchronization service' "
+                + "-Force -ErrorAction Stop | Out-Null}";
+        return List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", script);
     }
 
@@ -645,10 +738,11 @@ public final class SmartStockUpdater {
             runMacLaunchctl("bootout", props.getProperty("sync.service.launch.agent.label"));
             return;
         }
-        runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
         terminateWindowsApplicationProcessTree();
+        runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
         terminateWindowsServerProcessTree();
         terminateWindowsJavaSyncProcesses(props);
+        terminateWindowsSyncServiceCloudflareProcesses(props);
     }
 
     private static void startSyncService(Properties props) {
@@ -721,7 +815,10 @@ public final class SmartStockUpdater {
     }
 
     static List<String> windowsApplicationTerminationCommand() {
-        return List.of("taskkill", "/F", "/T", "/IM", "SmartStock.exe");
+        // The elevated updater is launched from SmartStock.exe. Using /T here
+        // kills the updater itself as a descendant before it can install or
+        // execute its recovery/relaunch path.
+        return List.of("taskkill", "/F", "/IM", "SmartStock.exe");
     }
 
     private static void terminateWindowsApplicationProcessTree() {
@@ -774,6 +871,64 @@ public final class SmartStockUpdater {
                         process.info().command().orElse(null),
                         process.info().arguments().orElse(null), javaBin))
                 .toList();
+    }
+
+    private static void terminateWindowsSyncServiceCloudflareProcesses(Properties props) {
+        if (!isWindows()) return;
+        String serviceAppDirValue = props.getProperty("sync.service.app.dir", "").trim();
+        if (serviceAppDirValue.isEmpty()) return;
+        Path serviceAppDir = Path.of(serviceAppDirValue);
+        try {
+            runRequiredCommand(windowsCloudflareTerminationCommand(serviceAppDir),
+                    "Could not stop the SmartStock Scheduler tunnel");
+        } catch (IOException ex) {
+            log("SmartStock tunnel helper unavailable; verifying processes directly: "
+                    + rootMessage(ex));
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12);
+        while (System.nanoTime() < deadline) {
+            List<ProcessHandle> matches = ProcessHandle.allProcesses()
+                    .filter(process -> process.pid() != ProcessHandle.current().pid())
+                    .filter(process -> isWindowsSyncServiceCloudflareProcess(
+                            process.info().command().orElse(null), serviceAppDir))
+                    .toList();
+            if (matches.isEmpty()) return;
+            matches.forEach(ProcessHandle::destroy);
+            waitForProcessExit(matches, 1_500);
+            matches.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+            waitForProcessExit(matches, 3_000);
+        }
+        throw new IllegalStateException(
+                "The SmartStock Scheduler tunnel did not stop for the update.");
+    }
+
+    static List<String> windowsCloudflareTerminationCommand(Path serviceAppDir) {
+        Path tunnel = serviceAppDir.toAbsolutePath().normalize()
+                .resolve("dependency/cloudflared/windows-amd64/cloudflared.exe");
+        String script = "$target=[IO.Path]::GetFullPath('"
+                + powerShellQuote(tunnel.toString()) + "');"
+                + "Get-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" "
+                + "-ErrorAction SilentlyContinue|Where-Object{$_.ExecutablePath-and"
+                + "[IO.Path]::GetFullPath($_.ExecutablePath).Equals($target,"
+                + "[StringComparison]::OrdinalIgnoreCase)}|ForEach-Object{"
+                + "$result=Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction Stop;"
+                + "if($result.ReturnValue-ne 0){throw ('Tunnel termination failed with code '+$result.ReturnValue)}}";
+        return List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", script);
+    }
+
+    private static String windowsPowerShellExecutable() {
+        String windows = System.getenv().getOrDefault("WINDIR", "C:\\Windows");
+        return Path.of(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+                .toString();
+    }
+
+    static boolean isWindowsSyncServiceCloudflareProcess(String command, Path serviceAppDir) {
+        if (command == null || serviceAppDir == null) return false;
+        String executable = windowsPath(command);
+        String serviceRoot = windowsPath(serviceAppDir.toAbsolutePath().normalize().toString());
+        return executable.equals(serviceRoot
+                + "/dependency/cloudflared/windows-amd64/cloudflared.exe");
     }
 
     private static void sleepQuietly(long millis) {

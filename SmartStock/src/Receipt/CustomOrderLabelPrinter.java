@@ -73,6 +73,11 @@ public final class CustomOrderLabelPrinter {
             }
         }
         if (printer == null) throw new PrintException("No order label or receipt printer is configured.");
+        if (receiptPrinterFallback
+                && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            byte[] content = formatEscPosReceiptLabels(data, count);
+            if (NativeEscPosTransport.sendIfEnabled(content) != null) return;
+        }
         PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
         if (service == null) {
             throw new PrintException("The configured " + (receiptPrinterFallback ? "receipt" : "custom order label")

@@ -1,0 +1,8 @@
+SmartStock 1.0.119
+
+- Adds the phone-friendly Scheduler web app with week navigation, assignments, shifts, lunches, holidays, period clearing, and Auto Schedule preview/apply.
+- Adds an owner-controlled Scheduler Web switch and status link, including temporary Cloudflare tunnel support.
+- Uses server-side authentication, permissions, sessions, CSRF protection, throttling, idempotency, conflict detection, and audit events.
+- Keeps PostgreSQL on the store server as the live scheduling authority; browser scheduling requires the store server and internet connection to be online.
+- Starts with password-only scheduler sign-in. Existing authenticator enrollment is unchanged, and scheduler MFA can be enabled later.
+- Improves Windows updater rollback handling and bundles the verified Cloudflare tunnel dependency for the desktop and background service.

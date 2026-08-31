@@ -11,7 +11,7 @@ class MakeASaleItemSearchResetTest {
     @Test void successfulItemAddClearsSearchAndInvalidatesPendingResults() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
 
-        assertTrue(source.contains("addToCart(productId, displayNameWithSize"));
+        assertTrue(source.contains("addToCart(productId, name, size, description"));
         assertTrue(source.contains("resetProductSearchAfterAdd();"));
         assertTrue(source.contains("productSearchGeneration++;"));
         assertTrue(source.contains("searchField.setText(\"\");"));

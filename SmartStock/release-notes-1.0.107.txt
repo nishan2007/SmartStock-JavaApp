@@ -1,0 +1,5 @@
+SmartStock 1.0.107
+
+- Allows Service items to be edited and saved without an image, including when an existing item is changed to the Service type.
+- Retains the image requirement for Inventory and Non-Inventory items in both New Item and Edit Item.
+- Includes the Checkout Only cash-drawer fix, Make a Sale Size display improvements, complete catalog-cache loading, and configurable nearest-$20 rounding from the preceding updates.

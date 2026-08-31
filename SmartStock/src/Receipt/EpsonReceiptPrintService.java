@@ -17,42 +17,83 @@ public final class EpsonReceiptPrintService {
     public static PrintResult print(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer,
                                     boolean openDrawer, boolean reprint) {
         if (receipt == null) return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "", "Receipt data is required.");
-        if (printer == null) return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "", "No receipt printer is configured.");
-        PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
-        if (service == null) {
-            return PrintResult.failure(PrintStatus.QUEUE_MISSING, printer.systemName(),
-                    "Configured printer is unavailable: " + printer.systemName());
-        }
         try {
             HardwareSettingsManager.EpsonSettings settings = HardwareSettingsManager.getEpsonSettings();
             byte[] receiptBytes = ReceiptFormatter.formatEscPos(receipt,
                     managers.CompanyCustomizationManager.loadReceiptSettings(), reprint);
             byte[] jobBytes = composeJob(receiptBytes, settings, openDrawer && !reprint);
+            String endpoint = NativeEscPosTransport.sendIfEnabled(jobBytes);
+            if (endpoint != null) return PrintResult.sent(endpoint);
+            if (printer == null) {
+                return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "",
+                        "No receipt printer is configured. Enable the Ethernet printer or select a Windows receipt queue.");
+            }
+            PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
+            if (service == null) {
+                return PrintResult.failure(PrintStatus.QUEUE_MISSING, printer.systemName(),
+                        "Configured printer is unavailable: " + printer.systemName());
+            }
             submit(service, jobBytes, "SmartStock receipt " + receipt.getReceiptNumber());
             return PrintResult.queued(service.getName());
         } catch (PrintException ex) {
-            return PrintResult.failure(PrintStatus.JOB_REJECTED, service.getName(), safeMessage(ex, "Windows rejected the print job."));
+            return PrintResult.failure(PrintStatus.TRANSPORT_FAILURE, printerName(printer), safeMessage(ex, "Printer transport failed."));
         } catch (Exception ex) {
-            return PrintResult.failure(PrintStatus.TRANSPORT_FAILURE, service.getName(), safeMessage(ex, "Printer transport failed."));
+            return PrintResult.failure(PrintStatus.TRANSPORT_FAILURE, printerName(printer), safeMessage(ex, "Printer transport failed."));
+        }
+    }
+
+    public static PrintResult openDrawer(HardwareSettingsManager.PosPrinter printer) {
+        try {
+            HardwareSettingsManager.EpsonSettings settings = HardwareSettingsManager.getEpsonSettings();
+            if (!settings.enabled() || !settings.cashDrawerEnabled()) {
+                return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, printerName(printer),
+                        "Cash drawer control is not enabled in Workstation Preferences.");
+            }
+            byte[] jobBytes = composeDrawerJob(settings);
+            String endpoint = NativeEscPosTransport.sendIfEnabled(jobBytes);
+            if (endpoint != null) return PrintResult.sent(endpoint);
+            if (printer == null) {
+                return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "",
+                        "No receipt printer is configured. Enable the Ethernet printer or select a Windows receipt queue.");
+            }
+            PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
+            if (service == null) {
+                return PrintResult.failure(PrintStatus.QUEUE_MISSING, printer.systemName(),
+                        "Configured printer is unavailable: " + printer.systemName());
+            }
+            submit(service, jobBytes, "SmartStock cash drawer");
+            return PrintResult.queued(service.getName());
+        } catch (Exception ex) {
+            return PrintResult.failure(ex instanceof PrintException ? PrintStatus.JOB_REJECTED : PrintStatus.TRANSPORT_FAILURE,
+                    printerName(printer), safeMessage(ex, "Cash drawer command failed."));
         }
     }
 
     public static PrintResult testControl(HardwareSettingsManager.PosPrinter printer, ControlAction action) {
-        if (printer == null) return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "", "Select a configured printer first.");
-        PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
-        if (service == null) return PrintResult.failure(PrintStatus.QUEUE_MISSING, printer.systemName(), "Configured printer is unavailable.");
         try {
             HardwareSettingsManager.EpsonSettings settings = HardwareSettingsManager.getEpsonSettings();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             out.writeBytes(new byte[]{0x1B, 0x40});
             if (action == ControlAction.DRAWER) appendDrawer(out, settings);
             if (action == ControlAction.CUT) appendCut(out);
+            String endpoint = NativeEscPosTransport.sendIfEnabled(out.toByteArray());
+            if (endpoint != null) return PrintResult.sent(endpoint);
+            if (printer == null) {
+                return PrintResult.failure(PrintStatus.INVALID_CONFIGURATION, "",
+                        "Enable the Ethernet printer or select a configured Windows receipt queue first.");
+            }
+            PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
+            if (service == null) return PrintResult.failure(PrintStatus.QUEUE_MISSING, printer.systemName(), "Configured printer is unavailable.");
             submit(service, out.toByteArray(), "SmartStock Epson " + action.name().toLowerCase() + " test");
             return PrintResult.queued(service.getName());
         } catch (Exception ex) {
             return PrintResult.failure(ex instanceof PrintException ? PrintStatus.JOB_REJECTED : PrintStatus.TRANSPORT_FAILURE,
-                    service.getName(), safeMessage(ex, "Epson hardware test failed."));
+                    printerName(printer), safeMessage(ex, "Epson hardware test failed."));
         }
+    }
+
+    private static String printerName(HardwareSettingsManager.PosPrinter printer) {
+        return printer == null ? "" : printer.systemName();
     }
 
     static byte[] composeJob(byte[] receiptBytes, HardwareSettingsManager.EpsonSettings settings, boolean openDrawer) {
@@ -61,6 +102,13 @@ public final class EpsonReceiptPrintService {
         if (settings.enabled() && openDrawer && settings.cashDrawerEnabled()) appendDrawer(out, settings);
         // Preserve the legacy receipt behavior (automatic cut) until Epson controls are explicitly enabled.
         if (!settings.enabled() || settings.automaticCut()) appendCut(out);
+        return out.toByteArray();
+    }
+
+    static byte[] composeDrawerJob(HardwareSettingsManager.EpsonSettings settings) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[]{0x1B, 0x40});
+        appendDrawer(out, settings);
         return out.toByteArray();
     }
 
@@ -88,10 +136,13 @@ public final class EpsonReceiptPrintService {
     }
 
     public enum ControlAction { CUT, DRAWER }
-    public enum PrintStatus { QUEUED, QUEUE_MISSING, JOB_REJECTED, TRANSPORT_FAILURE, INVALID_CONFIGURATION }
+    public enum PrintStatus { SENT, QUEUED, QUEUE_MISSING, JOB_REJECTED, TRANSPORT_FAILURE, INVALID_CONFIGURATION }
 
     public record PrintResult(PrintStatus status, String printerName, String message) {
-        public boolean successful() { return status == PrintStatus.QUEUED; }
+        public boolean successful() { return status == PrintStatus.SENT || status == PrintStatus.QUEUED; }
+        public static PrintResult sent(String endpoint) {
+            return new PrintResult(PrintStatus.SENT, endpoint, "Receipt sent directly to Ethernet printer " + endpoint + ".");
+        }
         public static PrintResult queued(String printer) {
             return new PrintResult(PrintStatus.QUEUED, printer, "Receipt submitted to the Windows print queue.");
         }

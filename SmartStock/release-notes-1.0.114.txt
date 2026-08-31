@@ -1,0 +1,8 @@
+SmartStock 1.0.114
+
+- Adds five landscape customer-account card templates with customer-type assignments.
+- Adds customer-card preview, one-sided Magicard printing, and landscape PDF export.
+- Adds customer-type control over automatic sale-receipt printing.
+- Adds miscellaneous non-inventory sale items with server-side permission enforcement.
+- Improves sale-total rounding and inventory price rounding workflows.
+- Includes schema-upgrade, compatibility, receipt-printer, and deployment reliability fixes.

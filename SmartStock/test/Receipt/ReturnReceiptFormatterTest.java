@@ -35,5 +35,8 @@ class ReturnReceiptFormatterTest {
         assertTrue(text.contains("Work Shirt"));
         assertTrue(text.contains("Refund Total"));
         assertTrue(text.contains("Wrong size"));
+
+        String reprint = ReturnReceiptFormatter.formatText(receipt, settings, true);
+        assertTrue(reprint.contains("DUPLICATE / REPRINT"));
     }
 }

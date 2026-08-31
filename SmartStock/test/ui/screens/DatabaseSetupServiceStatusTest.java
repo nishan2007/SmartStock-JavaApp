@@ -1,14 +1,24 @@
 package ui.screens;
 
+import data.DatabaseMode;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DatabaseSetupServiceStatusTest {
+
+    @Test
+    void registerSetupReplacesLoopbackWithStoreServerAndKeepsExplicitHosts() {
+        assertEquals("POS-SERVER", DatabaseSetup.registerSetupHost(DatabaseMode.CLIENT, "127.0.0.1"));
+        assertEquals("POS-SERVER", DatabaseSetup.registerSetupHost(DatabaseMode.CLIENT, "localhost"));
+        assertEquals("10.0.0.20", DatabaseSetup.registerSetupHost(DatabaseMode.CLIENT, "10.0.0.20"));
+        assertEquals("127.0.0.1", DatabaseSetup.registerSetupHost(DatabaseMode.SERVER, "127.0.0.1"));
+    }
     @Test
     void recognizesMacAndWindowsServiceStates() {
         assertTrue(DatabaseSetup.serviceLooksRunning("postgresql@17 started nishan", "postgres"));

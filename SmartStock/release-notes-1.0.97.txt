@@ -1,0 +1,6 @@
+SmartStock 1.0.97
+
+- Adds native Ethernet ESC/POS receipt printing for the commissioned NS8360L at 10.1.1.23:9100 while preserving existing Windows print queues.
+- Supports direct Ethernet receipts, returns, account payments, drawer-close receipts, receipt-printer order labels, cutter tests, and cash-drawer tests.
+- Makes the Company Preferences location-details form vertically scrollable so every location, email, Gmail, timezone, and action field remains accessible on shorter displays.
+- Keeps the personalized company greeting readable on the Main Menu ribbon and updates it when company branding loads.

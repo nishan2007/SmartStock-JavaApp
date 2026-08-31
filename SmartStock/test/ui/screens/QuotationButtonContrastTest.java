@@ -22,4 +22,17 @@ class QuotationButtonContrastTest {
         assertTrue(button.isContentAreaFilled());
         assertTrue(ThemeManager.contrastRatio(button.getForeground(), button.getBackground()) >= 4.5);
     }
+
+    @Test
+    void secondaryQuotationButtonRemainsPaintedAndReadableAfterThemePass() {
+        JButton button = new JButton("Add Custom Item");
+        Quotations.styleSecondaryButton(button);
+
+        ThemeManager.applyToComponent(button);
+
+        assertInstanceOf(BasicButtonUI.class, button.getUI());
+        assertTrue(button.isOpaque());
+        assertTrue(button.isContentAreaFilled());
+        assertTrue(ThemeManager.contrastRatio(button.getForeground(), button.getBackground()) >= 4.5);
+    }
 }

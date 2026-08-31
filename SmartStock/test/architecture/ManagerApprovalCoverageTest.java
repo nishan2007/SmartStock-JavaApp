@@ -41,7 +41,10 @@ final class ManagerApprovalCoverageTest {
             assertTrue(compactCheckout.contains(action), "Checkout is missing " + action);
             assertTrue(compactHeld.contains(action), "Held carts are missing " + action);
         }
-        assertTrue(held.contains("unitPrice.compareTo(catalog.price()) != 0"));
+        assertTrue(held.contains(
+                "unitPrice.compareTo(normalizeHeldUnitPrice(catalog.price(), false)) != 0"));
+        assertTrue(checkout.contains(
+                "enteredPrice.compareTo(normalizeCheckoutUnitPrice(catalog.catalogPrice(), false)) != 0"));
         assertTrue(held.contains("item.put(\"catalogPrice\""));
     }
 

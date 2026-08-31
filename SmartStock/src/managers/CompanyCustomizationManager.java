@@ -77,6 +77,9 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
         save("BADGE_TEMPLATE", settings);
     }
 
+    public static String loadCustomerCardTemplates(){return read("CUSTOMER_CARD_TEMPLATES",String.class);}
+    public static void saveCustomerCardTemplates(String value)throws IOException,SQLException{save("CUSTOMER_CARD_TEMPLATES",value);}
+
     public static BadgeSecuritySettings loadBadgeSecuritySettings() {
         return read("BADGE_SECURITY", BadgeSecuritySettings.class);
     }

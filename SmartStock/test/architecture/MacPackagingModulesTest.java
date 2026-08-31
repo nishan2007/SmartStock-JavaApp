@@ -65,9 +65,10 @@ class MacPackagingModulesTest {
                 "The installed executable and shortcuts must use the SmartStock icon");
         assertTrue(windowsScript.contains("SetupIconFile=$WindowsIcon"),
                 "The native Windows installer must use the SmartStock icon");
-        assertTrue(windowsScript.contains("[InstallDelete]")
+        assertTrue(!windowsScript.contains("[InstallDelete]")
+                        && windowsScript.contains("if CurStep = ssPostInstall then")
                         && windowsScript.contains("inventory-management-*.jar"),
-                "Windows upgrades must remove stale versioned application JARs");
+                "Windows upgrades must remove stale JARs only after installing the new payload");
         assertTrue(windowsScript.contains("Split-Path -Parent $IconPath"),
                 "The Windows icon builder must recreate its temporary output directory if needed");
         assertTrue(windowsScript.contains("runtime\\bin\\java.exe"),

@@ -1,6 +1,5 @@
 package ui.screens;
 
-import managers.SupabaseSessionManager;
 import managers.SessionManager;
 import managers.CompanyCustomizationManager;
 import services.BadgeEncoderService;
@@ -245,6 +244,7 @@ public class EmployeeManagement extends JFrame {
         lastNameField = new JTextField();
         nicknameField = new JTextField();
         emailField = new JTextField();
+        emailField.setToolTipText("Optional. If blank, SmartStock creates a unique alias using the manager's email mailbox.");
         phoneField = new JTextField();
         employeePhotoField = new JTextField();
         employeePhotoField.setColumns(24);
@@ -364,7 +364,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 6;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Email *:"), gbc);
+        formPanel.add(new JLabel("Email (optional):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -1401,7 +1401,7 @@ public class EmployeeManagement extends JFrame {
         boolean isActive = activeCheckBox.isSelected();
 
         List<String> missingFields = missingRequiredEmployeeFields(
-                true, password, firstName, lastName, email, salaryAmountField.getText(), role);
+                true, password, firstName, lastName, salaryAmountField.getText(), role);
         if (!missingFields.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Complete the required fields: " + String.join(", ", missingFields) + ".");
             return;
@@ -1421,8 +1421,7 @@ public class EmployeeManagement extends JFrame {
         UiTaskRunner.submit(this,"employees.create",()->{
                 String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
                 String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
-                String token=cloudOrServerCredential();
-                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,token);
+                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,null);
                 int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey).get("userId").getAsInt();
                 return new EmployeeSaveResult(newUserId,uploadedPhoto,uploadedDocument);
         },result->{
@@ -1469,7 +1468,7 @@ public class EmployeeManagement extends JFrame {
         boolean isActive = activeCheckBox.isSelected();
 
         List<String> missingFields = missingRequiredEmployeeFields(
-                false, password, firstName, lastName, email, salaryAmountField.getText(), role);
+                false, password, firstName, lastName, salaryAmountField.getText(), role);
         if (!missingFields.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Complete the required fields: " + String.join(", ", missingFields) + ".");
             return;
@@ -1490,11 +1489,10 @@ public class EmployeeManagement extends JFrame {
         UiTaskRunner.submit(this,"employees.update",()->{
             String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
             String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
-            String token = cloudOrServerCredential();
             LanEmployeeAdminService.SaveRequest request = new LanEmployeeAdminService.SaveRequest(
                     requestedUsername, password, firstName, middleName, lastName, fullName, nickname, email, phoneNumber,
                     uploadedPhoto, uploadedDocument, dateOfBirth, hireDate, compensationType, salary,
-                    role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, token);
+                    role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, null);
             LanApiClient.updateEmployeeAdmin("UPDATE",targetUserId,request,null,null,mutationKey);
             return new EmployeeSaveResult(targetUserId,uploadedPhoto,uploadedDocument);
         },result->{
@@ -1508,12 +1506,11 @@ public class EmployeeManagement extends JFrame {
 
     private static List<String> missingRequiredEmployeeFields(boolean creating, String password,
                                                                String firstName, String lastName,
-                                                               String email, String salary, String role) {
+                                                               String salary, String role) {
         List<String> missing = new ArrayList<>();
         if (creating && password.isBlank()) missing.add("Password");
         if (firstName.isBlank()) missing.add("First Name");
         if (lastName.isBlank()) missing.add("Last Name");
-        if (email.isBlank()) missing.add("Email");
         if (salary.isBlank()) missing.add("Hourly Rate / Salary");
         if (role.isBlank()) missing.add("Role");
         return missing;
@@ -1691,6 +1688,14 @@ public class EmployeeManagement extends JFrame {
     private static String getFriendlyEmployeeError(Throwable ex) {
         if (isDuplicateBadgeError(ex)) {
             return "That badge ID is already assigned to another employee.";
+        }
+        Throwable current = ex;
+        while (current != null) {
+            if (current instanceof LanApiClient.LanApiException api
+                    && "EMPLOYEE_AUTH_CONFLICT".equals(api.code())) {
+                return "An employee login already uses that email address. Use a different email or update the existing employee.";
+            }
+            current = current.getCause();
         }
         return ex.getMessage();
     }
@@ -2033,22 +2038,13 @@ public class EmployeeManagement extends JFrame {
         }
 
         Integer userId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
-        UiTaskRunner.submit(this,"employees.deactivate",()->{String token=cloudOrServerCredential();LanApiClient.updateEmployeeAdmin("DEACTIVATE",userId,null,null,token,mutationKey);return Boolean.TRUE;},ignored->{
+        UiTaskRunner.submit(this,"employees.deactivate",()->{LanApiClient.updateEmployeeAdmin("DEACTIVATE",userId,null,null,null,mutationKey);return Boolean.TRUE;},ignored->{
             SessionDataCache.invalidate("employee-admin:");
             JOptionPane.showMessageDialog(this,
                     "Employee deactivated successfully. Their history was kept for reporting and audit records.");
             clearFields();
             loadEmployees();
         },ex->JOptionPane.showMessageDialog(this,"Failed to deactivate employee: "+ex.getMessage()));
-    }
-
-    private static String cloudOrServerCredential() {
-        try {
-            String token = SupabaseSessionManager.getValidAccessToken();
-            return token == null || token.isBlank() ? "SERVER_CREDENTIAL" : token;
-        } catch (Exception ignored) {
-            return "SERVER_CREDENTIAL";
-        }
     }
 
     private void applyEmployeeFilter() {

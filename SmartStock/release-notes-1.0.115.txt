@@ -1,0 +1,9 @@
+SmartStock 1.0.115
+
+- Widens the sale item-search results popup without changing the search field size.
+- Adds product brand information to sale search results.
+- Adds a delayed product-image preview when hovering over a sale search result.
+- Keeps image loading off the user-interface thread and safely handles missing or unavailable images.
+- Shares customer-card template designs across every company location.
+- Shares the existing employee-badge template across every store without resetting its design.
+- Propagates future customer-card and employee-badge template edits company-wide.

@@ -221,6 +221,253 @@ Confirmed findings:
   - R2 object: `windows/1.0.88/smartstock-windows-1.0.88.zip`
   - The remote download matched the exact local byte size and SHA-256 before metadata publication.
 
+## 2026-08-23 resizable badge template editor release 1.0.89
+
+- Replaced the Badge Template Editor's fixed `760×760` size with a larger screen-aware default up to `1180×900`.
+- Made the modal dialog explicitly resizable with a practical screen-constrained minimum size.
+- Added horizontal scrolling for the complete alignment/layer toolbar on narrower displays while retaining vertical control scrolling.
+- Full Maven tests, repository security checks, JavaScript syntax validation, Windows packaging, packaged-class validation, and `git diff --check` passed.
+- Windows 1.0.89 artifacts:
+  - `smartstock-windows-1.0.89.zip`: 34,170,213 bytes, SHA-256 `314F66C41389E7508FD7B22BF4360D6366513A152F156E8C147C7BE4DDBA2DD5`
+  - `smartstock-windows-setup-1.0.89.exe`: 52,413,858 bytes, SHA-256 `7A372B6CA69266918FC1090896CB06B78D7CEDB69C016DA4FB94852C46558DE0`
+- Published SmartStock 1.0.89 build 10089 to the development update channel (Supabase release ID 93).
+  - R2 object: `windows/1.0.89/smartstock-windows-1.0.89.zip`
+  - The downloaded remote object matched the exact local size and SHA-256 before metadata publication.
+
+## 2026-08-24 native Ethernet printing and location form release 1.0.97
+
+- Added native raw-TCP ESC/POS printing for the commissioned NS8360L at `10.1.1.23:9100` while preserving Windows print queues for fallback, letter-size output, and dedicated label printers.
+- Routed receipt, return, account-payment, drawer-close, receipt-label, cutter-test, and cash-drawer-test ESC/POS jobs through the enabled Ethernet transport.
+- Made the Company Preferences location-details editor vertically scrollable so all contact, email, Gmail, timezone, and action controls remain accessible on shorter displays.
+- Updated the Main Menu ribbon contrast regression for the personalized company greeting field.
+- Full Maven tests, targeted layout and printer tests, Windows packaging, updater ZIP layout validation, remote R2 byte-for-byte verification, and `git diff --check` passed. The Bash security script could not start in this Windows session because Git Bash could not create its signal pipe and WSL service startup was denied.
+- Windows 1.0.97 artifacts:
+  - `smartstock-windows-1.0.97.zip`: 34,182,465 bytes, SHA-256 `19AEA335D6123062A3E9105A25C6E33CAA710A400C6D6D98D4A71E1CF9D62354`
+  - `smartstock-windows-setup-1.0.97.exe`: 52,424,352 bytes, SHA-256 `AEE91F0933EFD253A37526AF862DC48238A4BF9DCF7C9A739421F3324BD7B1B0`
+- Published SmartStock 1.0.97 build 10097 to the development update channel (Supabase release ID 94).
+  - R2 object: `windows/1.0.97/smartstock-windows-1.0.97.zip`
+  - Independent Supabase readback returned exactly one published row matching version, build, platform, object path, size, and SHA-256.
+
+## 2026-08-24 Magicard, employee Auth, and quick price-tag release 1.0.98
+
+- Added dedicated Magicard 600 Duo workstation settings, Windows queue selection, CR80 front/back duplex printing, queue health guidance, and a duplex test-card action.
+- Replaced the missing employee Auth Edge Function dependency with direct server-side Supabase Auth Admin calls using the workstation's protected server credential.
+- Made employee email optional. Blank addresses receive a unique plus alias in the manager's mailbox; supplied employee addresses remain unchanged.
+- Added quick temporary price-tag printing through the configured Ethernet or Windows 40-column receipt printer, cutting each tag separately.
+- Full Maven tests, repository security checks through Git Bash, Windows packaging, updater ZIP layout validation, and `git diff --check` passed.
+- Windows 1.0.98 artifacts:
+  - `smartstock-windows-1.0.98.zip`: 34,191,633 bytes, SHA-256 `374DAD3D46154B8C323128B32F9835923DE9094DD002DAE4A79F42DA034B52BC`
+  - `smartstock-windows-setup-1.0.98.exe`: 52,437,489 bytes, SHA-256 `B63EAF19E41DD1DCB40EE7B3037D73D6A6826B3D08AE3025BE147292B7A3C3AB`
+- Published SmartStock 1.0.98 build 10098 for Windows to both development and production.
+  - R2 object: `windows/1.0.98/smartstock-windows-1.0.98.zip`
+  - Each Supabase project independently returned exactly one matching published release row.
+  - A final independent R2 download matched the exact local byte size and SHA-256 after both publications.
+- Live installed-app, Magicard badge, receipt price-tag, cash-drawer, and NFC checks remain separate hardware validation steps.
+
+## 2026-08-24 Ethernet-only receipt-printer hotfix 1.0.99
+
+- Fixed direct Ethernet ESC/POS receipt printing when no Windows receipt-printer queue is installed or selected.
+- Test Receipt, Test Cutter, and Test Drawer now attempt the configured Ethernet endpoint before requiring a Windows fallback queue.
+- Full Maven tests, repository security checks through Git Bash, Windows packaging, updater ZIP layout validation, and `git diff --check` passed.
+- Windows 1.0.99 artifacts:
+  - `smartstock-windows-1.0.99.zip`: 34,191,847 bytes, SHA-256 `A5CABC3F986E494705C949529BF8CC7F67A85DAC434936F91A2ECAC2E8F80064`
+  - `smartstock-windows-setup-1.0.99.exe`: 52,436,498 bytes, SHA-256 `A780FBC48271258B1055BA208C5895CFA911CC04A5F43A8D197E8A6C2F7990C1`
+- Published SmartStock 1.0.99 build 10099 for Windows to both development and production.
+  - R2 object: `windows/1.0.99/smartstock-windows-1.0.99.zip`
+  - Each Supabase project independently returned exactly one matching published release row.
+  - A final independent R2 download matched the local updater ZIP exactly after both publications.
+- A physical receipt, cutter, and cash-drawer test remains a separate hardware validation step.
+
+## 2026-08-24 manual breaks and effective-dated payroll release 1.0.100
+
+- Removed automatic employee break ending; employees explicitly start and stop their breaks.
+- Added effective-dated compensation type and pay-rate history using the employee's current pay-period boundary.
+- Rate changes affect all hours in the current open period while older closed periods retain the previously effective rate.
+- Added an automatic local schema migration and backfill that runs during LAN API server startup before schema validation.
+- Routed manual clock-out, automatic clock-out, time-clock corrections, payroll reports, and cross-store reference synchronization through the effective rate for each work date.
+- Full Maven tests, repository security checks through Git Bash, Windows packaging, updater ZIP layout validation, and `git diff --check` passed.
+- Windows 1.0.100 artifacts:
+  - `smartstock-windows-1.0.100.zip`: 34,194,803 bytes, SHA-256 `7254980DEAE66F95E1817CD000FEF0260001AC5DDD53E8BB9179BF87F02A9139`
+  - `smartstock-windows-setup-1.0.100.exe`: 52,440,150 bytes, SHA-256 `92E06C245E5CDCF39AC27468F55B836EDAC26028A01394341373E22647603A18`
+- Published SmartStock 1.0.100 build 10100 for Windows to both development and production.
+  - R2 object: `windows/1.0.100/smartstock-windows-1.0.100.zip`
+  - Each Supabase project independently returned exactly one matching published release row.
+  - A final independent R2 download matched the local updater ZIP exactly.
+- Live installed-app and production-database migration verification remains an operational check after updating the store server.
+
+## 2026-08-24 payroll baseline repair release 1.0.101
+
+- Added an idempotent follow-up migration that creates the effective pay-rate baseline for any employee missing one while preserving all existing history.
+- Production was repaired and verified with all 6 active employees covered, zero missing baselines, and zero incomplete history rows.
+- Full Maven tests, repository security checks through Git Bash, Windows packaging, updater ZIP validation, and `git diff --check` passed.
+- Windows 1.0.101 artifacts:
+  - `smartstock-windows-1.0.101.zip`: 34,195,564 bytes, SHA-256 `A67615F0A268AE095F5DD5781CD2989C478A1CCDF9BD6F984DA3D17B28642D4D`
+  - `smartstock-windows-setup-1.0.101.exe`: 52,439,322 bytes, SHA-256 `B876862CACCA3AD5FD9FC9DEDCD45D28241C5AF07E27649BB1925749014538FA`
+- Published SmartStock 1.0.101 build 10101 for Windows to development and production.
+  - R2 object: `windows/1.0.101/smartstock-windows-1.0.101.zip`
+  - Both release projects returned exactly one matching row, and the final R2 download matched the local ZIP.
+
+## 2026-08-25 badge printing and mobile item printing release 1.0.102
+
+- Fixed missing or rectangular Position and Badge ID characters when employee badges are printed through Bodno/Magicard Windows drivers.
+- Physical badge pages are flattened to opaque RGB, with a safe system-font fallback for unsupported configured glyphs.
+- Added Mobile Item Web App Save and Print and direct Ethernet ESC/POS fallback improvements included in the 1.0.102 release notes.
+- Full Maven tests, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.102 artifacts:
+  - `smartstock-windows-1.0.102.zip`: 34,198,687 bytes, SHA-256 `123686F5FDD09DAB412C04FEEC8FF21B09D40DA1663156D0B27E5049E29A8B49`
+  - `smartstock-windows-setup-1.0.102.exe`: 52,442,639 bytes, SHA-256 `B6FA60E15619E9A7A9CF08637F5101DB322D872566947B8A2B5BB67941328734`
+- Published SmartStock 1.0.102 build 10102 for Windows to production.
+  - R2 object: `windows/1.0.102/smartstock-windows-1.0.102.zip`
+  - Supabase returned exactly one matching published release row, and the downloaded R2 object matched the local updater ZIP.
+- A physical Bodno/Magicard badge print remains a separate hardware verification step.
+
+## 2026-08-25 dual NFC-card release 1.0.103
+
+- Added automatic MIFARE Classic 1K support alongside the existing NTAG and MIFARE Ultralight NFC Type 2 path.
+- Classic badge records use authenticated sector 1 data blocks 4-6 with CRC integrity validation; trailer block 7 is never written.
+- A live read-only ACR122U check authenticated the physical MIFARE Classic 1K card and correctly identified that it did not yet contain a SmartStock record.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.103 artifacts:
+  - `smartstock-windows-1.0.103.zip`: 34,201,838 bytes, SHA-256 `E611D469D015452251CB0AAD66EACF6309055CA272ABCCEB6B6B57B6DA5EC6F0`
+  - `smartstock-windows-setup-1.0.103.exe`: 52,446,158 bytes, SHA-256 `3BD9836B86A40D70EFF9ACAA61837C73BD349903D6F1DF5C13199D7AE6B0FD9E`
+- Published SmartStock 1.0.103 build 10103 for Windows to production.
+  - R2 object: `windows/1.0.103/smartstock-windows-1.0.103.zip`
+  - Supabase returned exactly one matching published release row, and the downloaded R2 object matched the local updater ZIP.
+- Live write/read-back, login, time-clock, and manager-authorization checks with a programmed Classic card remain physical verification steps after updating the workstation.
+
+## 2026-08-26 configurable rounding and inventory price review release 1.0.104
+
+- Added independent Company Preferences switches for nearest-$20 rounding in sales and custom orders.
+- Added the View Inventory price-review workflow for finding and selectively correcting catalog prices that are not multiples of $20.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.104 artifacts:
+  - `smartstock-windows-1.0.104.zip`: 34,217,288 bytes, SHA-256 `520566A5FEAB91AE432D9F0411A3CD67637F98C761781A379D02AA20516E06CB`
+  - `smartstock-windows-setup-1.0.104.exe`: 52,459,895 bytes, SHA-256 `7644D503EFFC1D5EB9DC824B46EABBABC11CD4ED2AFFE2DE62E650310B8A0F05`
+- Published SmartStock 1.0.104 build 10104 for Windows to production.
+  - R2 object: `windows/1.0.104/smartstock-windows-1.0.104.zip`
+  - Supabase returned exactly one published row matching version, build, platform, object path, size, and SHA-256.
+- Live installed-app, database migration, printer, cash-drawer, badge, and NFC checks remain separate verification steps.
+
+## 2026-08-26 complete Make a Sale catalog release 1.0.105
+
+- Fixed Make a Sale searches that could miss products outside the first 250 alphabetically cached items.
+- The register now loads the complete catalog into its shared Make a Sale cache; non-empty interactive server searches retain a 250-result response cap.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.105 artifacts:
+  - `smartstock-windows-1.0.105.zip`: 34,217,462 bytes, SHA-256 `6D9807B1E4B8F391914327E7ECEE1196363890C371F73878BF9214F844EF542E`
+  - `smartstock-windows-setup-1.0.105.exe`: 52,459,436 bytes, SHA-256 `74744C6ACC4B29F7165D6A9DDAF7C018E307BFB3EF56287A46F0636609A9E2C9`
+- Published SmartStock 1.0.105 build 10105 for Windows to production.
+  - R2 object: `windows/1.0.105/smartstock-windows-1.0.105.zip`
+  - Supabase independently returned exactly one published row matching version, build, platform, bucket reference, object path, size, and SHA-256.
+- Both the store server and registers must update to 1.0.105 for the complete-catalog Make a Sale fix; live installed-app verification remains outstanding.
+
+## 2026-08-26 checkout drawer and Make a Sale display release 1.0.106
+
+- Added a drawer-only ESC/POS operation so cash sales completed with Checkout Only open the configured drawer without printing or cutting paper.
+- Added a dedicated Size column to the Make a Sale cart, including resumed held carts, and rebalanced the search dropdown to provide more Description space.
+- Made product images optional when creating Service items while retaining the requirement for Inventory and Non-Inventory items.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.106 artifacts:
+  - `smartstock-windows-1.0.106.zip`: 34,218,266 bytes, SHA-256 `0102024C5E2EB94388CB6E4280B555FC816A20F865BEFE04CDD0182CFC78D5C4`
+  - `smartstock-windows-setup-1.0.106.exe`: 52,460,328 bytes, SHA-256 `C12DE4CF09DBCC125208A29734C185F20419C26E282D3E1925E66A9F4C6E0C93`
+- Published SmartStock 1.0.106 build 10106 for Windows to production.
+  - R2 object: `windows/1.0.106/smartstock-windows-1.0.106.zip`
+  - Supabase independently returned exactly one published row matching version, build, platform, bucket reference, object path, size, and SHA-256.
+- Live installed-app and physical cash-drawer behavior remain separate verification steps.
+
+## 2026-08-26 Edit Item service-image correction release 1.0.107
+
+- Updated Edit Item so Service items can be saved without an image, including when an existing item is changed to Service.
+- Inventory and Non-Inventory items continue to require images in both New Item and Edit Item.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.107 artifacts:
+  - `smartstock-windows-1.0.107.zip`: 34,218,358 bytes, SHA-256 `835ED5398F98A6346EADEE2483FA6BDF6D17810F27DFBDFE70FDD641AA001A7C`
+  - `smartstock-windows-setup-1.0.107.exe`: 52,461,474 bytes, SHA-256 `317BC64CDBC2FFF11DB4450BF1741D9A6EF396A48ADD326CC408E24CE6ACFEF9`
+- Published SmartStock 1.0.107 build 10107 for Windows to production.
+  - R2 object: `windows/1.0.107/smartstock-windows-1.0.107.zip`
+  - Supabase independently returned exactly one published row matching version, build, platform, bucket reference, object path, size, and SHA-256.
+- Live installed-app verification remains outstanding.
+
+## 2026-08-26 usage-sorted Service Quick Picks release 1.0.108
+
+- Quick Pick Service Items now sort by total quantity sold at the current store, descending, with stable name and product-ID tie-breakers.
+- Never-used services follow used services alphabetically, while normal catalog searches remain alphabetic.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.108 artifacts:
+  - `smartstock-windows-1.0.108.zip`: 34,218,799 bytes, SHA-256 `7CA307F92E44F7C8BEC6D571E29F1812BA843E03D7016BAD42520A46A22B510A`
+  - `smartstock-windows-setup-1.0.108.exe`: 52,460,697 bytes, SHA-256 `0AB6FEBB576F76DF014B136301578E76A2AE01CD705835C46CCB63A5170854B8`
+- Published SmartStock 1.0.108 build 10108 for Windows to production.
+  - R2 object: `windows/1.0.108/smartstock-windows-1.0.108.zip`
+  - Supabase independently returned exactly one published row matching version, build, platform, bucket reference, object path, size, and SHA-256.
+- Both the server and registers must update for the usage-sorted Quick Picks; live installed-app verification remains outstanding.
+
+## 2026-08-26 customer payment balance compatibility release 1.0.109
+
+- Fixed open customer-balance loading on servers with a partially upgraded cross-store customer-credit cache schema.
+- Added backward-compatible balance calculation and complete partial-upgrade detection/repair.
+- Full Maven tests, repository security checks, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, and `git diff --check` passed.
+- Windows 1.0.109 artifacts:
+  - `smartstock-windows-1.0.109.zip`: 34,219,223 bytes, SHA-256 `A27BE7AE455E2775514C78FBF97161DD8E1528387EA00D60A8A22D87AEE8718C`
+  - `smartstock-windows-setup-1.0.109.exe`: 52,461,848 bytes, SHA-256 `D167AD49156B24A23A30366EF6F484E41A24423787A3B352BA5B198FDA4C6160`
+- Published SmartStock 1.0.109 build 10109 for Windows to production.
+  - R2 object: `windows/1.0.109/smartstock-windows-1.0.109.zip`
+  - Supabase independently returned exactly one fully matching published row.
+- The server must update and restart for the customer-balance fix; live payment verification remains outstanding.
+
+## 2026-08-26 customer open-balances SQL fix release 1.0.110
+
+- Fixed the customer payment window failing to load open balances because the first branch of the UNION did not expose the `document_number` alias requested by the outer query.
+- Added `CustomerOpenBalancesSqlArchitectureTest` to guard the required result alias.
+- Validation passed: full Maven tests, repository security check, and `git diff --check`.
+- Windows 1.0.110 artifacts:
+  - `smartstock-windows-1.0.110.zip`: 34,219,280 bytes, SHA-256 `852FBA8D7E61838E882C32A55EAA1C812F7785C5E5552D71634B7AD2914652FB`
+  - `smartstock-windows-setup-1.0.110.exe`: 52,460,254 bytes, SHA-256 `EA466ABCA397DAB25A07FE8D7ABC41B8BC651772D7168F31E305496772DDBD29`
+- Published SmartStock 1.0.110 build 10110 for Windows to production.
+  - R2 object: `windows/1.0.110/smartstock-windows-1.0.110.zip`
+  - The publisher downloaded the object and verified its size and SHA-256 before creating release metadata.
+- The server and register must update to 1.0.110, and the server service must restart before live payment verification.
+
+## 2026-08-26 Balance C/F customer-payment release 1.0.111
+
+- Updated every live Balance C/F calculation to include customer-account payments while keeping receivable collections separate from new Income.
+- Updated saved balance-sheet recalculation so customer payments remain included after an edit.
+- Added `BalanceSheetAccountPaymentsCfArchitectureTest`; the screenshot example now calculates `$79,912 + $83,460 = $163,372` before expenses and payables.
+- Validation passed: targeted regression test, full Maven tests, repository security check, and `git diff --check`.
+- Windows 1.0.111 artifacts:
+  - `smartstock-windows-1.0.111.zip`: 34,219,104 bytes, SHA-256 `09616F4555ADC7C033A938242E9FD208841165253A0AC401F166B272B03B4BDC`
+  - `smartstock-windows-setup-1.0.111.exe`: 52,460,627 bytes, SHA-256 `8EEEDB7E3A2FEEEE5071AEC568E83E10C35AB7919862FA9F466A17033D41D155`
+- Published SmartStock 1.0.111 build 10111 for Windows to production.
+  - R2 object: `windows/1.0.111/smartstock-windows-1.0.111.zip`
+  - The publisher downloaded and verified the stored ZIP before Supabase returned the matching release record.
+- The server must update and restart for the Balance C/F calculation change; live installed-app verification remains outstanding.
+
+## 2026-08-27 miscellaneous sale item release 1.0.112
+
+- Added permission-controlled miscellaneous sale items with cashier-entered names, unit prices, and whole-number quantities.
+- Miscellaneous lines are non-inventory, zero-VAT, preserved through held carts, receipts, history, reports, and synchronization, and excluded from returns.
+- Existing store databases automatically receive the ordered schema upgrade and protected non-inventory catalog anchor before schema validation.
+- Validation passed: full Maven tests, repository security check, clean PostgreSQL 17 migration/schema integration, updater ZIP layout validation, Windows packaging, and `git diff --check`.
+- Windows 1.0.112 artifacts:
+  - `smartstock-windows-1.0.112.zip`: 34,224,754 bytes, SHA-256 `0763546B4E0D0B5654A52ADFC5DD029A73DC92CF95ABA48C041F2A4D51A16DAB`
+  - `smartstock-windows-setup-1.0.112.exe`: 52,467,905 bytes, SHA-256 `D350EC98BC775DBC0395022725EDF43195F19AB4CFDD20B79BFD1B5459D27FFF`
+- Published SmartStock 1.0.112 build 10112 for Windows to production.
+  - R2 object: `windows/1.0.112/smartstock-windows-1.0.112.zip`
+  - The publisher downloaded the stored ZIP and verified its size and SHA-256 before publication; an independent Supabase read returned exactly one matching published row.
+- The server and registers must update to 1.0.112. Live installed-app, database, printer, drawer, and NFC verification remains outstanding.
+
+## 2026-08-27 catalog-price normalization release 1.0.113
+
+- Fixed false manager price-override prompts when a fractional catalog price is displayed and charged using SmartStock's canonical whole-currency normalization.
+- Direct checkout and held-cart validation now compare the same normalized catalog price; miscellaneous items retain two-decimal precision.
+- Validation passed: targeted rounding regression tests, all 431 Maven tests, repository security check, Windows packaging, updater ZIP layout validation, R2 byte-for-byte verification, independent Supabase release-row verification, and `git diff --check`.
+- Windows 1.0.113 artifacts:
+  - `smartstock-windows-1.0.113.zip`: 34,224,945 bytes, SHA-256 `C6F5A48E2EE23E6B4B8A629E3DC2A63B302DFA4A53C49A75C65D57C0D8E3A9AC`
+  - `smartstock-windows-setup-1.0.113.exe`: 52,468,982 bytes, SHA-256 `302EEE0092AC1CB975D7039BEFEAC2D1E52E65357FDEBC3D5FD37441470A3FC4`
+- Published SmartStock 1.0.113 build 10113 for Windows to production.
+  - R2 object: `windows/1.0.113/smartstock-windows-1.0.113.zip`
+  - The publisher downloaded and verified the stored ZIP before publication; Supabase independently returned exactly one matching published row.
+- The server and registers must update to 1.0.113 for the rounding fix. Live installed-app checkout verification remains outstanding.
+
 ## Remaining work
 
 1. Restart the server service so the connection pool and credential cache become active.

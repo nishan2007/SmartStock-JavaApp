@@ -1,0 +1,7 @@
+SmartStock 1.0.103
+
+- Adds automatic MIFARE Classic 1K support alongside NTAG213/215/216 and MIFARE Ultralight employee badges.
+- Programs and reads the same employee Badge ID for login, time clock, badge testing, and manager authorization workflows.
+- Stores Classic badge records only in sector 1 data blocks 4-6 and never writes the sector trailer containing keys and access controls.
+- Authenticates Classic cards before access, validates stored records with an integrity checksum, and safely rejects locked or previously re-keyed cards.
+- Improves badge programming results by reporting the detected NFC card family after successful write-and-read-back verification.

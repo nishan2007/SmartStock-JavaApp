@@ -26,6 +26,16 @@ public final class PerformanceDiagnostics {
                 safe(category), safe(operation), elapsedMillis, success, count);
     }
 
+    /** Records an operation even when it is fast, for low-volume business-critical paths. */
+    public static void recordAlways(String category, String operation, long startedNanos,
+                                    boolean success, int resultCount) {
+        long elapsedMillis = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+        String count = resultCount < 0 ? "" : " count=" + resultCount;
+        System.err.printf(Locale.ROOT,
+                "SmartStock timing category=%s operation=%s durationMs=%d success=%s%s%n",
+                safe(category), safe(operation), elapsedMillis, success, count);
+    }
+
     public static void cacheHit(String operation, boolean fresh) {
         System.err.printf(Locale.ROOT,
                 "SmartStock timing category=cache operation=%s hit=true fresh=%s%n",

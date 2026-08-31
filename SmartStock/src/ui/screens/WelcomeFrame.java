@@ -4,7 +4,6 @@ import data.DatabaseConfig;
 import data.DatabaseMode;
 import data.EnvironmentProfile;
 import services.LanApiClient;
-import services.LanApiServer;
 import services.PcscNfcService;
 import services.PostgresRuntimeService;
 import services.ServerStoreSetupService;
@@ -66,12 +65,13 @@ public class WelcomeFrame extends JFrame {
     private final JLabel modeLabel = new JLabel();
     private final JLabel deckersLogoLabel = new JLabel("Deckers", SwingConstants.CENTER);
     private final JLabel smartStockLogoLabel = new JLabel("SmartStock", SwingConstants.CENTER);
+    private final JLabel helperLabel = new JLabel();
     private final JButton refreshStatusBtn = new JButton(createRefreshIcon());
     private final JButton startProcessesBtn = new JButton("Start Server Processes");
     private final JButton setupBtn = new JButton("Guided Setup");
     private final JButton environmentBtn = new JButton("Switch Environment");
     private final JButton pairRegisterBtn = new JButton("Administrator: Pair This Register");
-    private final JButton serverAddressBtn = new JButton("Set SmartStock Server Address");
+    private final JButton serverAddressBtn = new JButton("Configure Register Connection");
     private final JButton recoverRegisterBtn = new JButton("Recover at Another Store");
     private final JButton syncStatusBtn = new JButton("Sync Status");
     private final JButton continueBtn = new JButton("Log In");
@@ -84,6 +84,7 @@ public class WelcomeFrame extends JFrame {
     private volatile boolean loginAvailable;
     private final boolean openedAfterConnectionLoss;
     private String lastGreetingKey = "";
+    private String companyDisplayName = "SmartStock";
     private record SystemStatus(String localStatus, String onlineStatus, String message,
                                 boolean canLogin, boolean setupRequired,
                                 boolean setupVisible) {}
@@ -156,21 +157,25 @@ public class WelcomeFrame extends JFrame {
         pairRegisterBtn.setVisible(apiClientMode && !LanApiClient.isPaired());
         LanApiClient.RegisterTransfer transfer=LanApiClient.transferState();
         if(LanApiClient.isTransferPending()&&transfer!=null){pairRegisterBtn.setText("Pair at "+(transfer.destinationStoreName()==null||transfer.destinationStoreName().isBlank()?"Destination Store":transfer.destinationStoreName()));statusLabel.setText("Status: Transfer pending. Connect this register to the destination store network and pair it.");}
-        serverAddressBtn.setVisible(apiClientMode);
+        // Keep a direct escape hatch available even when a register accidentally saved
+        // SERVER mode. Otherwise the client configuration control hides itself and the
+        // administrator is forced back through the setup wizard that failed.
+        serverAddressBtn.setVisible(true);
         recoverRegisterBtn.setVisible(apiClientMode&&LanApiClient.isPaired()&&!LanApiClient.isTransferPending());
         setupBtn.setVisible(isInitialSetupRequired(DatabaseConfig.load()));
         startProcessesBtn.setVisible(false);
         refreshModeLabel();
         refreshSystemStats();
         updateGreeting();
+        loadCompanyDisplayName();
         startDisplayRefreshTimer();
         startSystemStatusRefreshTimer();
         wireWindowTimers();
         wireActions();
         continueBtn.setEnabled(false);
         if (openedAfterConnectionLoss) {
-            setTitle("SmartStock Welcome - Server Connection Lost");
-            statusLabel.setText("Status: Connection lost. SmartStock is locked until the server reconnects.");
+            setTitle(companyDisplayName + " Welcome - Server Connection Lost");
+            statusLabel.setText("Status: Connection lost. " + companyDisplayName + " is locked until the server reconnects.");
         }
         ThemeManager.applyToWindow(this);
         if (DatabaseConfig.hasConfigFile()) {
@@ -266,7 +271,7 @@ public class WelcomeFrame extends JFrame {
         readyLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         readyLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JLabel helperLabel = new JLabel("Sign in to open SmartStock and continue working.");
+        helperLabel.setText("Sign in to open " + companyDisplayName + " and continue working.");
         helperLabel.setFont(new Font("SansSerif", Font.PLAIN, 14));
         helperLabel.setForeground(DeckersPalette.muted());
         helperLabel.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
@@ -339,7 +344,7 @@ public class WelcomeFrame extends JFrame {
         setupBtn.addActionListener(e -> openGuidedSetup());
         environmentBtn.addActionListener(e -> openEnvironmentSetup());
         pairRegisterBtn.addActionListener(e -> pairRegister());
-        serverAddressBtn.addActionListener(e -> configureServerAddress());
+        serverAddressBtn.addActionListener(e -> openRegisterConnectionSetup());
         recoverRegisterBtn.addActionListener(e -> recoverAtAnotherStore());
         syncStatusBtn.addActionListener(e -> new SyncStatus().setVisible(true));
         continueBtn.addActionListener(e -> openLogin());
@@ -350,7 +355,7 @@ public class WelcomeFrame extends JFrame {
         String phrase = JOptionPane.showInputDialog(
                 this,
                 (remote ? "On the Remote Admin gateway, obtain the current enrollment phrase.\n"
-                        : "On the SmartStock server, open Device Management > Security Status.\n")
+                        : "On the " + companyDisplayName + " server, open Device Management > Security Status.\n")
                         + "Enter the temporary administrator pairing phrase shown there:",
                 remote ? "One-Time Remote Admin Enrollment" : "One-Time Register Pairing",
                 JOptionPane.PLAIN_MESSAGE
@@ -377,7 +382,7 @@ public class WelcomeFrame extends JFrame {
                         statusLabel.setText("Status: Waiting for administrator device approval.");
                         JOptionPane.showMessageDialog(WelcomeFrame.this,
                                 "Enrollment was sent. Approve this register from Device Management on the server.\n"
-                                        + "SmartStock will claim approval automatically.");
+                                        + companyDisplayName + " will claim approval automatically.");
                     }
                 } catch (Exception ex) {
                     Throwable cause = ex.getCause() == null ? ex : ex.getCause();
@@ -393,27 +398,8 @@ public class WelcomeFrame extends JFrame {
         }.execute();
     }
 
-    private void configureServerAddress() {
-        String current = LanApiClient.baseUri().getHost() + ":" + LanApiClient.baseUri().getPort();
-        String value = JOptionPane.showInputDialog(
-                this,
-                "Enter the SmartStock server address shown on the server Mac.\n"
-                        + "Example: 192.168.10.47:8443",
-                current);
-        if (value == null || value.isBlank()) return;
-        String clean = value.trim();
-        int separator = clean.lastIndexOf(':');
-        String host = separator > 0 ? clean.substring(0, separator).trim() : clean;
-        int port = LanApiServer.DEFAULT_PORT;
-        try {
-            if (separator > 0) port = Integer.parseInt(clean.substring(separator + 1).trim());
-            LanApiClient.configureEndpoint(host, port);
-            statusLabel.setText("Status: SmartStock server set to " + host + ":" + port + ". Refreshing...");
-            refreshSystemStatus();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, getRootCauseMessage(ex),
-                    "SmartStock Server Address", JOptionPane.ERROR_MESSAGE);
-        }
+    private void openRegisterConnectionSetup() {
+        if (RegisterConnectionSetup.open(this)) refreshAfterSetup();
     }
 
     private void recoverAtAnotherStore(){
@@ -553,9 +539,34 @@ public class WelcomeFrame extends JFrame {
             return;
         }
         lastGreetingKey = key;
-        WelcomeGreetingHelper.Greeting greeting = WelcomeGreetingHelper.currentGreeting();
+        WelcomeGreetingHelper.Greeting greeting = WelcomeGreetingHelper.currentGreeting(companyDisplayName);
         greetingLabel.setText(greeting.title());
         subtitleLabel.setText(greeting.subtitle());
+    }
+
+    private void loadCompanyDisplayName() {
+        new SwingWorker<String, Void>() {
+            @Override protected String doInBackground() throws Exception {
+                return LanApiClient.checkHealth().companyName();
+            }
+
+            @Override protected void done() {
+                try {
+                    companyDisplayName = WelcomeGreetingHelper.displayName(get());
+                    lastGreetingKey = "";
+                    updateGreeting();
+                    helperLabel.setText("Sign in to open " + companyDisplayName + " and continue working.");
+                    if (openedAfterConnectionLoss) {
+                        setTitle(companyDisplayName + " Welcome - Server Connection Lost");
+                        statusLabel.setText("Status: Connection lost. " + companyDisplayName + " is locked until the server reconnects.");
+                    } else {
+                        setTitle(companyDisplayName + " Welcome");
+                    }
+                } catch (Exception ignored) {
+                    companyDisplayName = "SmartStock";
+                }
+            }
+        }.execute();
     }
 
     private void refreshModeLabel() {
@@ -757,7 +768,7 @@ public class WelcomeFrame extends JFrame {
                     updateStatusLabel(localDbLabel, connectionLabel + result.localStatus(), result.localStatus());
                     updateStatusLabel(onlineDbLabel, "Online DB: " + result.onlineStatus(), result.onlineStatus());
                     if (openedAfterConnectionLoss && !result.canLogin()) {
-                        statusLabel.setText("Status: Connection lost. SmartStock is locked until the server reconnects.");
+                        statusLabel.setText("Status: Connection lost. " + companyDisplayName + " is locked until the server reconnects.");
                     } else if (openedAfterConnectionLoss) {
                         statusLabel.setText("Status: Server connection restored. Log in to continue.");
                     } else {

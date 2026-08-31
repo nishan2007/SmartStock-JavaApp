@@ -14,7 +14,7 @@ class MainMenuRibbonContrastTest {
     void greetingUsesLightColorsOnTheAlwaysDarkRibbon() throws Exception {
         String source = Files.readString(SOURCE);
 
-        assertTrue(source.contains("titleLabel.setForeground(RIBBON_TITLE)"));
+        assertTrue(source.contains("mainGreetingLabel.setForeground(RIBBON_TITLE)"));
         assertTrue(source.contains("subtitleLabel.setForeground(RIBBON_SUBTITLE)"));
         assertTrue(source.contains("g.setColor(RIBBON_BACKGROUND)"));
     }

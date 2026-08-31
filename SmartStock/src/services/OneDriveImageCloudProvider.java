@@ -94,7 +94,8 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
 
     static String remotePath(UUID id,String category,String sourcePath){
         String folder=switch(category==null?"":category.toUpperCase(Locale.ROOT)){
-            case "CUSTOM_ITEM"->"custom-items"; case "CUSTOM_VARIANT"->"custom-variants"; default->"products";};
+            case "CUSTOM_ITEM"->"custom-items"; case "CUSTOM_VARIANT"->"custom-variants";
+            case "CUSTOMER_PHOTO"->"customer-photos"; default->"products";};
         return folder+"/"+filename(sourcePath);
     }
 

@@ -1,0 +1,5 @@
+SmartStock 1.0.110
+
+- Fixes the customer payment window failing to load open balances.
+- Corrects the open-balance SQL result alias used for account sales, invoices, and custom orders.
+- Includes the customer-balance compatibility improvements and all preceding checkout, catalog, rounding, and item-workflow fixes.

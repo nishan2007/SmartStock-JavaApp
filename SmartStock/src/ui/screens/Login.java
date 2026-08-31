@@ -160,12 +160,8 @@ public class Login extends JFrame {
                 try {
                     LanApiClient.LoginResult result = get();
                     applySession(result);
-                    JOptionPane.showMessageDialog(Login.this,
-                            "Login successful.\nUser: " + SessionManager.getCurrentUserDisplayName()
-                                    + "\nRole: " + SessionManager.getCurrentRole()
-                                    + "\nStore: " + SessionManager.getCurrentLocationName());
                     openMainMenu();
-                } catch (Exception ex) {
+                } catch (Exception | LinkageError ex) {
                     authenticationInProgress.set(false);
                     SessionManager.clearSessionState();
                     JOptionPane.showMessageDialog(Login.this,
@@ -233,11 +229,12 @@ public class Login extends JFrame {
         if (result.supabaseAccessToken() != null && !result.supabaseAccessToken().isBlank()) {
             SessionManager.setCurrentAccessToken(result.supabaseAccessToken());
             SessionManager.setCurrentRefreshToken(result.supabaseRefreshToken());
-            SupabaseSessionManager.setSession(result.supabaseAccessToken(), result.supabaseRefreshToken());
             if (result.persistentLoginAllowed()) {
-                SupabaseSessionManager.savePersistedSession(user.userId(), user.locationId());
+                // File-system permission checks can stall on some Windows registers.
+                // Persistence is best-effort and must never block the authenticated UI transition.
+                SupabaseSessionManager.savePersistedSessionAsync(user.userId(), user.locationId());
             } else {
-                SupabaseSessionManager.clearPersistedSession();
+                SupabaseSessionManager.clearPersistedSessionAsync();
             }
         } else {
             // A restored LAN employee session does not contain Supabase tokens. Keep the
@@ -485,7 +482,7 @@ public class Login extends JFrame {
         NavigationManager.showMainMenuAfterLogin(this);
     }
 
-    private static String rootCauseMessage(Exception exception) {
+    private static String rootCauseMessage(Throwable exception) {
         Throwable cause = exception;
         while (cause.getCause() != null) cause = cause.getCause();
         return cause.getMessage() == null || cause.getMessage().isBlank()

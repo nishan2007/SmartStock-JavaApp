@@ -40,6 +40,7 @@ public class ViewInventory extends JFrame {
     private JLabel totalProductsLabel;
     private JLabel locationLabel;
     private JButton viewDetailsButton;
+    private JButton reviewPricesButton;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private LanApiClient.InventoryLookups allInventoryLookups;
     private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
@@ -316,10 +317,20 @@ public class ViewInventory extends JFrame {
         viewDetailsButton = new JButton("View Details");
         viewDetailsButton.setEnabled(PermissionManager.hasPermission("VIEW_ITEM_DETAILS"));
         viewDetailsButton.addActionListener(e -> showSelectedItemDetails());
+        reviewPricesButton = new JButton("Review $20 Prices");
+        reviewPricesButton.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
+        reviewPricesButton.setToolTipText(reviewPricesButton.isEnabled()
+                ? "Find item prices that are not multiples of $20."
+                : "Requires Edit Item permission.");
+        reviewPricesButton.addActionListener(e -> new InventoryPriceRoundingDialog(this, () -> {
+            SessionDataCache.invalidate("inventory-");
+            loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem());
+        }).setVisible(true));
 
         footerPanel.add(totalProductsLabel);
         footerPanel.add(totalItemsLabel);
         footerPanel.add(viewDetailsButton);
+        footerPanel.add(reviewPricesButton);
         footerPanel.add(loadingState);
 
         return footerPanel;

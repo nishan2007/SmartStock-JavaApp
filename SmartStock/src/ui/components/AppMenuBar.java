@@ -25,6 +25,7 @@ import ui.screens.EmployeeManagement;
 import ui.screens.MaintenanceManagement;
 import ui.screens.MainMenu;
 import ui.screens.MobileItemWebDialog;
+import ui.screens.SchedulerWebDialog;
 import ui.screens.MakeASale;
 import ui.screens.OrdersManagerDashboard;
 import ui.screens.MachineManagement;
@@ -708,6 +709,7 @@ public class AppMenuBar {
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
         JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
+        JMenuItem schedulerWebItem = new JMenuItem("Scheduler Web App…");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
         JMenuItem refreshInventoryItem = new JMenuItem("Refresh Inventory List");
         JMenuItem closeItem = new JMenuItem("Close");
@@ -756,6 +758,14 @@ public class AppMenuBar {
         mobileItemWebItem.setVisible(canViewMobileWeb || canControlMobileWeb);
         mobileItemWebItem.setEnabled(canViewMobileWeb || canControlMobileWeb);
         mobileItemWebItem.addActionListener(e -> new MobileItemWebDialog(parent).setVisible(true));
+        boolean canViewSchedulerWeb = mobileWebMode != DatabaseMode.REMOTE_ADMIN
+                && PermissionManager.hasPermission("ACCESS_SCHEDULER_WEB")
+                && PermissionManager.hasPermission("VIEW_EMPLOYEE_SCHEDULE");
+        boolean canControlSchedulerWeb = mobileWebMode == DatabaseMode.SERVER
+                && PermissionManager.hasPermission("DEVICE_MANAGEMENT");
+        schedulerWebItem.setVisible(canViewSchedulerWeb || canControlSchedulerWeb);
+        schedulerWebItem.setEnabled(canViewSchedulerWeb || canControlSchedulerWeb);
+        schedulerWebItem.addActionListener(e -> new SchedulerWebDialog(parent).setVisible(true));
         remoteQueueItem.addActionListener(e -> ui.helpers.UiTaskRunner.submit(parent, "remote-admin.commands",
                 LanApiClient::loadRemoteCommands, commands -> {
                     StringBuilder message = new StringBuilder("Recent changes for ")
@@ -809,6 +819,7 @@ public class AppMenuBar {
         statusMenu.add(syncStatusItem);
         statusMenu.add(remoteQueueItem);
         statusMenu.add(mobileItemWebItem);
+        statusMenu.add(schedulerWebItem);
         statusMenu.add(refreshInventoryItem);
         statusMenu.add(checkUpdatesItem);
 
@@ -877,6 +888,9 @@ public class AppMenuBar {
     }
 
     private static JMenuItem findNotificationMenuItem(MenuElement element) {
+        if (element == null) {
+            return null;
+        }
         if (element instanceof JMenuItem item
                 && Boolean.TRUE.equals(item.getClientProperty(NOTIFICATIONS_MENU_PROPERTY))) {
             return item;

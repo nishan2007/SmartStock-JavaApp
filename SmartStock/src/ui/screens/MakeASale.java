@@ -1,5 +1,6 @@
 package ui.screens;
 
+import Receipt.EpsonReceiptPrintService;
 import Receipt.ReceiptBuilder;
 import Receipt.ReceiptData;
 import Receipt.ReceiptPrinter;
@@ -18,9 +19,11 @@ import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
+import ui.helpers.PerformanceDiagnostics;
 import ui.design.DeckersLogoManager;
 import ui.design.DeckersPalette;
 import ui.design.DeckersSwing;
+import utils.ImageCacheManager;
 
 
 import javax.swing.*;
@@ -47,19 +50,22 @@ import java.util.UUID;
 public class MakeASale extends JFrame {
     private static final int CART_COL_ID = 0;
     private static final int CART_COL_NAME = 1;
-    private static final int CART_COL_DESCRIPTION = 2;
-    private static final int CART_COL_SKU = 3;
-    private static final int CART_COL_PRICE = 4;
-    private static final int CART_COL_QTY = 5;
-    private static final int CART_COL_ITEM_DISCOUNT = 6;
-    private static final int CART_COL_LINE_TOTAL = 7;
-    private static final int CART_COL_ORIGINAL_PRICE = 8;
-    private static final int CART_COL_PRODUCT_TYPE = 9;
-    private static final int CART_COL_DEPARTMENT_ID = 10;
+    private static final int CART_COL_SIZE = 2;
+    private static final int CART_COL_DESCRIPTION = 3;
+    private static final int CART_COL_SKU = 4;
+    private static final int CART_COL_PRICE = 5;
+    private static final int CART_COL_QTY = 6;
+    private static final int CART_COL_ITEM_DISCOUNT = 7;
+    private static final int CART_COL_LINE_TOTAL = 8;
+    private static final int CART_COL_ORIGINAL_PRICE = 9;
+    private static final int CART_COL_PRODUCT_TYPE = 10;
+    private static final int CART_COL_DEPARTMENT_ID = 11;
+    private static final int CART_COL_MISC = 12;
     private static final String APPLY_SALE_DISCOUNT_PERMISSION = "APPLY_SALE_DISCOUNT";
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
     private static final String SALE_DISCOUNT_OVERRIDE_PERMISSION = "SALE_DISCOUNT_OVERRIDE";
     private static final String MAKE_SALE_PERMISSION = "MAKE_SALE";
+    private static final String ADD_MISC_SALE_ITEM_PERMISSION = "ADD_MISC_SALE_ITEM";
     private static final String HOLD_CART_PERMISSION = "MAKE_SALE";
     private static final String RESUME_HOLD_PERMISSION = "MAKE_SALE";
     private static final int SEARCH_CONTROL_HEIGHT = 28;
@@ -88,6 +94,7 @@ public class MakeASale extends JFrame {
     private JButton holdCartBtn;
     private JButton resumeHeldCartBtn;
     private JButton quickPickItemsBtn;
+    private JButton addMiscItemBtn;
     private JButton removeCartItemBtn;
     private JLabel overrideStatusLabel;
     private JLabel selectedStoreLabel;
@@ -114,6 +121,12 @@ public class MakeASale extends JFrame {
     private String searchResultsQuery = "";
     private boolean productSearchSelectionNavigated;
     private boolean resettingProductSearch;
+    private javax.swing.Timer imagePreviewHoverTimer;
+    private SwingWorker<ImageIcon, Void> imagePreviewWorker;
+    private JWindow imagePreviewWindow;
+    private JLabel imagePreviewLabel;
+    private int imagePreviewHoveredRow = -1;
+    private long imagePreviewGeneration;
     private boolean suppressDiscountFieldEvents = false;
     private record PendingPriceApproval(BigDecimal approvedPrice, ManagerApprovalService.ApprovalResult approval) {}
     private record PendingDiscountApproval(BigDecimal approvedDiscountPercent, ManagerApprovalService.ApprovalResult approval) {}
@@ -133,7 +146,7 @@ public class MakeASale extends JFrame {
     private java.util.List<CustomerAccountOption> customerAccountOptions = new java.util.ArrayList<>();
     private boolean updatingCustomerAccountFilter = false;
     private LanApiClient.SalesSettings salesSettings = new LanApiClient.SalesSettings(
-            false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), java.util.List.of());
+            false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), true, null,java.util.List.of());
     private boolean salesSettingsLoaded;
     private boolean alwaysPrintSaleReceipt;
     private String pendingCheckoutKey;
@@ -280,7 +293,7 @@ public class MakeASale extends JFrame {
 
 	       // Cart table
 	       cartModel = new DefaultTableModel(
-	               new Object[]{"ID", "Name", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type", "Department ID"},
+	               new Object[]{"ID", "Name", "Size", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type", "Department ID", "Misc"},
 	               0
 	       ) {
 	           @Override
@@ -398,10 +411,12 @@ public class MakeASale extends JFrame {
        holdCartBtn = createActionUtilityButton("Hold Cart");
        resumeHeldCartBtn = createActionUtilityButton("Resume Hold");
        quickPickItemsBtn = createActionUtilityButton("Quick Pick Items");
+       addMiscItemBtn = createActionUtilityButton("Add Misc Item");
        removeCartItemBtn = createActionUtilityButton("Remove Item");
        removeCartItemBtn.setToolTipText("Remove the selected cart item. You can also press Delete.");
        removeCartItemBtn.setEnabled(false);
        actionPanel.add(quickPickItemsBtn);
+       actionPanel.add(addMiscItemBtn);
        actionPanel.add(removeCartItemBtn);
        actionPanel.add(holdCartBtn);
        actionPanel.add(resumeHeldCartBtn);
@@ -449,6 +464,7 @@ public class MakeASale extends JFrame {
            }
        });
        quickPickItemsBtn.addActionListener(e -> showServiceQuickPick());
+       addMiscItemBtn.addActionListener(e -> addMiscItem());
        editItemBtn.addActionListener(new ActionListener() {
            public void actionPerformed(ActionEvent e) {
                if (!PermissionManager.requirePermission("EDIT_ITEM", MakeASale.this, "Edit Item")) {
@@ -483,6 +499,7 @@ public class MakeASale extends JFrame {
                if (resettingProductSearch) {
                    return;
                }
+               hideImagePreview();
                if (searchDebounceTimer == null) {
                    searchDebounceTimer = new javax.swing.Timer(300, e -> searchProducts(false));
                    searchDebounceTimer.setRepeats(false);
@@ -668,7 +685,8 @@ public class MakeASale extends JFrame {
                                         java.util.List<LanApiClient.CustomerAccount> customers,
                                         boolean alwaysPrintSaleReceipt) { }
     private record CheckoutSnapshot(LanApiClient.CheckoutResult result, ReceiptData receipt,
-                                    String receiptError, String printError) { }
+                                    String receiptError, String printError, String printMessage,
+                                    String drawerError) { }
 
     private JButton createPrimaryButton(String text) {
         // Standard blue command button: text color, fill color, border color, and internal padding live here.
@@ -1295,6 +1313,10 @@ public class MakeASale extends JFrame {
             storeStockBtn.setEnabled(PermissionManager.hasPermission("VIEW_INVENTORY")
                     && PermissionManager.hasPermission("VIEW_MULTI_STORE_STOCK"));
         }
+        if(addMiscItemBtn!=null){
+            boolean allowed=PermissionManager.hasPermission(ADD_MISC_SALE_ITEM_PERMISSION);
+            addMiscItemBtn.setVisible(allowed);addMiscItemBtn.setEnabled(allowed);
+        }
 	        if (discountPercentField != null) {
                 discountPercentField.setEnabled(true);
                 discountPercentField.setToolTipText(canApplySaleDiscount()
@@ -1339,7 +1361,7 @@ public class MakeASale extends JFrame {
         if (row < 0 || row >= cartModel.getRowCount()) {
             return false;
         }
-        if (column == CART_COL_PRICE && canChangeSaleItemPrice()) {
+        if (column == CART_COL_PRICE && (isMiscRow(row) || canChangeSaleItemPrice())) {
             return true;
         }
         if (column == CART_COL_ITEM_DISCOUNT && canApplySaleDiscount()) {
@@ -1390,7 +1412,7 @@ public class MakeASale extends JFrame {
     }
 
     private void configureCartTableColumns() {
-        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 11) {
+        if (cartTable == null || cartTable.getColumnModel().getColumnCount() < 12) {
             return;
         }
 
@@ -1398,6 +1420,7 @@ public class MakeASale extends JFrame {
 
         int idWidth = fitColumnWidth(cartTable, CART_COL_ID, 45);
         int nameWidth = fitColumnWidth(cartTable, CART_COL_NAME, 120);
+        int sizeWidth = fitColumnWidth(cartTable, CART_COL_SIZE, 70);
         int skuWidth = fitColumnWidth(cartTable, CART_COL_SKU, 100);
         int priceWidth = fitColumnWidth(cartTable, CART_COL_PRICE, 75);
         int qtyWidth = fitColumnWidth(cartTable, CART_COL_QTY, 55);
@@ -1411,6 +1434,10 @@ public class MakeASale extends JFrame {
         columnModel.getColumn(CART_COL_NAME).setMinWidth(90);
         columnModel.getColumn(CART_COL_NAME).setMaxWidth(200);
         columnModel.getColumn(CART_COL_NAME).setPreferredWidth(nameWidth);
+
+        columnModel.getColumn(CART_COL_SIZE).setMinWidth(60);
+        columnModel.getColumn(CART_COL_SIZE).setMaxWidth(130);
+        columnModel.getColumn(CART_COL_SIZE).setPreferredWidth(sizeWidth);
 
         columnModel.getColumn(CART_COL_DESCRIPTION).setMinWidth(220);
         columnModel.getColumn(CART_COL_DESCRIPTION).setPreferredWidth(320);
@@ -1446,6 +1473,9 @@ public class MakeASale extends JFrame {
         columnModel.getColumn(CART_COL_DEPARTMENT_ID).setMinWidth(0);
         columnModel.getColumn(CART_COL_DEPARTMENT_ID).setMaxWidth(0);
         columnModel.getColumn(CART_COL_DEPARTMENT_ID).setPreferredWidth(0);
+        columnModel.getColumn(CART_COL_MISC).setMinWidth(0);
+        columnModel.getColumn(CART_COL_MISC).setMaxWidth(0);
+        columnModel.getColumn(CART_COL_MISC).setPreferredWidth(0);
 
         updateDescriptionRowHeights();
     }
@@ -1575,7 +1605,7 @@ public class MakeASale extends JFrame {
                 break;
             }
             Object[] row = catalogRow(product);
-            if (ProductSearchHelper.textMatches(rowValue(row, 9), searchText)) {
+            if (ProductSearchHelper.textMatches(rowValue(row, 11), searchText)) {
                 rows.add(row);
             }
         }
@@ -1596,7 +1626,7 @@ public class MakeASale extends JFrame {
     private static Object[] catalogRow(LanApiClient.CatalogProduct product) {
         return new Object[]{product.productId(), product.name(), product.size(), product.description(),
                 product.sku(), product.price(), product.productType(), product.categoryId(),
-                product.quantityOnHand(), product.searchableText()};
+                product.quantityOnHand(), product.brandName(), product.imageUrl(), product.searchableText()};
     }
 
 
@@ -1605,8 +1635,13 @@ public class MakeASale extends JFrame {
             searchPopup = new JPopupMenu();
             searchPopup.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
             searchPopup.setFocusable(false);
+            searchPopup.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+                @Override public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) { }
+                @Override public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { hideImagePreview(); }
+                @Override public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { hideImagePreview(); }
+            });
 
-            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock"};
+            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock", "Brand", "Image"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -1625,14 +1660,26 @@ public class MakeASale extends JFrame {
             header.setMinimumSize(new Dimension(0, 0));
             header.setMaximumSize(new Dimension(0, 0));
             header.setVisible(false);
-            searchResultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            java.awt.event.MouseAdapter searchMouseHandler = new java.awt.event.MouseAdapter() {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent e) {
                     if (e.getClickCount() == 2) {
                         addSelectedSearchResultToCart();
                     }
                 }
-            });
+
+                @Override
+                public void mouseMoved(java.awt.event.MouseEvent e) {
+                    updateImagePreviewHover(searchResultsTable.rowAtPoint(e.getPoint()), e.getLocationOnScreen());
+                }
+
+                @Override
+                public void mouseExited(java.awt.event.MouseEvent e) {
+                    hideImagePreview();
+                }
+            };
+            searchResultsTable.addMouseListener(searchMouseHandler);
+            searchResultsTable.addMouseMotionListener(searchMouseHandler);
 
             searchResultsScrollPane = new JScrollPane(searchResultsTable);
             searchResultsScrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -1656,24 +1703,53 @@ public class MakeASale extends JFrame {
             searchResultsTable.setRowSelectionInterval(0, 0);
         }
 
-        searchResultsScrollPane.setPreferredSize(new Dimension(Math.max(searchField.getWidth(), 500), 220));
+        Point fieldInWindow = SwingUtilities.convertPoint(searchField, 0, 0, getRootPane());
+        int availableRightWidth = Math.max(0, getRootPane().getWidth() - fieldInWindow.x);
+        searchResultsScrollPane.setPreferredSize(new Dimension(
+                Math.max(searchField.getWidth(), availableRightWidth), 220));
 
-        searchResultsTable.getColumnModel().getColumn(0).setPreferredWidth(50);
-        searchResultsTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-        searchResultsTable.getColumnModel().getColumn(2).setPreferredWidth(220);
-        searchResultsTable.getColumnModel().getColumn(3).setPreferredWidth(110);
-        searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(80);
-        searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(100);
-        searchResultsTable.getColumnModel().getColumn(6).setPreferredWidth(70);
-        searchResultsTable.getColumnModel().getColumn(7).setMinWidth(0);
-        searchResultsTable.getColumnModel().getColumn(7).setMaxWidth(0);
-        searchResultsTable.getColumnModel().getColumn(7).setPreferredWidth(0);
+        setSearchResultColumnWidth(0, 0, 0, 0);
+        setSearchResultColumnWidth(1, 50, Integer.MAX_VALUE, 140);
+        setSearchResultColumnWidth(2, 30, Integer.MAX_VALUE, 110);
+        setSearchResultColumnWidth(3, 50, Integer.MAX_VALUE, 220);
+        setSearchResultColumnWidth(4, 40, Integer.MAX_VALUE, 80);
+        setSearchResultColumnWidth(5, 50, Integer.MAX_VALUE, 100);
+        setSearchResultColumnWidth(6, 40, Integer.MAX_VALUE, 70);
+        setSearchResultColumnWidth(7, 0, 0, 0);
+        setSearchResultColumnWidth(8, 40, Integer.MAX_VALUE, 70);
+        setSearchResultColumnWidth(9, 60, Integer.MAX_VALUE, 140);
+        setSearchResultColumnWidth(10, 0, 0, 0);
+
+        int priceViewColumn = searchResultsTable.convertColumnIndexToView(5);
+        searchResultsTable.getColumnModel().getColumn(priceViewColumn).setCellRenderer(
+                new javax.swing.table.DefaultTableCellRenderer() {
+                    @Override
+                    protected void setValue(Object value) {
+                        setText(value instanceof Number number
+                                ? utils.CurrencyFormatter.format(number)
+                                : "");
+                    }
+                });
+
+        int brandViewColumn = searchResultsTable.convertColumnIndexToView(9);
+        if (brandViewColumn > 0) {
+            searchResultsTable.moveColumn(brandViewColumn, 0);
+        }
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);
         }
 
         searchPopup.show(searchField, 0, searchField.getHeight());
+    }
+
+    private void setSearchResultColumnWidth(int modelColumn, int minimumWidth,
+                                            int maximumWidth, int preferredWidth) {
+        int viewColumn = searchResultsTable.convertColumnIndexToView(modelColumn);
+        javax.swing.table.TableColumn column = searchResultsTable.getColumnModel().getColumn(viewColumn);
+        column.setMinWidth(minimumWidth);
+        column.setMaxWidth(maximumWidth);
+        column.setPreferredWidth(preferredWidth);
     }
 
     private void handleProductSearchEnter() {
@@ -1713,8 +1789,8 @@ public class MakeASale extends JFrame {
     }
 
     private void addCatalogProductToCart(LanApiClient.CatalogProduct product, int quantity) {
-        addToCart(product.productId(), displayNameWithSize(product.name(), product.size()),
-                product.description(), product.sku(), product.price().doubleValue(), quantity,
+        addToCart(product.productId(), product.name(), product.size(), product.description(),
+                product.sku(), product.price().doubleValue(), quantity,
                 normalizeProductType(product.productType()), product.categoryId());
     }
 
@@ -1750,7 +1826,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        addToCart(productId, displayNameWithSize(name, size), description, sku, price, qty, productType, departmentId);
+        addToCart(productId, name, size, description, sku, price, qty, productType, departmentId);
         resetProductSearchAfterAdd();
     }
 
@@ -1776,10 +1852,125 @@ public class MakeASale extends JFrame {
     }
 
     private void closeSearchPopup() {
+        hideImagePreview();
         if (searchPopup != null) {
             searchPopup.setVisible(false);
         }
         searchResultsQuery = "";
+    }
+
+    private void updateImagePreviewHover(int viewRow, Point mouseOnScreen) {
+        if (viewRow < 0 || searchResultsTable == null || viewRow >= searchResultsTable.getRowCount()) {
+            hideImagePreview();
+            return;
+        }
+        int modelRow = searchResultsTable.convertRowIndexToModel(viewRow);
+        if (modelRow == imagePreviewHoveredRow) {
+            return;
+        }
+        hideImagePreview();
+        imagePreviewHoveredRow = modelRow;
+        long generation = imagePreviewGeneration;
+        Point anchor = new Point(mouseOnScreen);
+        imagePreviewHoverTimer = new javax.swing.Timer(300,
+                e -> loadImagePreview(modelRow, anchor, generation));
+        imagePreviewHoverTimer.setRepeats(false);
+        imagePreviewHoverTimer.start();
+    }
+
+    private void loadImagePreview(int modelRow, Point anchor, long generation) {
+        if (!isCurrentImagePreview(modelRow, generation)) {
+            return;
+        }
+        Object value = searchResultsTable.getModel().getValueAt(modelRow, 10);
+        String imageUrl = value == null ? "" : String.valueOf(value).trim();
+        if (imageUrl.isBlank()) {
+            showImagePreview(null, "No Image", anchor, modelRow, generation);
+            return;
+        }
+        imagePreviewWorker = new SwingWorker<>() {
+            @Override
+            protected ImageIcon doInBackground() {
+                Image source = ImageCacheManager.loadImage(imageUrl);
+                if (source == null) return null;
+                int sourceWidth = source.getWidth(null);
+                int sourceHeight = source.getHeight(null);
+                if (sourceWidth <= 0 || sourceHeight <= 0) return null;
+                double scale = Math.min(200d / sourceWidth, 200d / sourceHeight);
+                int width = Math.max(1, (int) Math.round(sourceWidth * scale));
+                int height = Math.max(1, (int) Math.round(sourceHeight * scale));
+                return new ImageIcon(source.getScaledInstance(width, height, Image.SCALE_SMOOTH));
+            }
+
+            @Override
+            protected void done() {
+                if (!isCurrentImagePreview(modelRow, generation)) return;
+                ImageIcon icon = null;
+                try {
+                    if (!isCancelled()) icon = get();
+                } catch (Exception ignored) {
+                    // A failed hover preview must never interrupt the sale workflow.
+                }
+                showImagePreview(icon, icon == null ? "Image unavailable" : "", anchor, modelRow, generation);
+            }
+        };
+        imagePreviewWorker.execute();
+    }
+
+    private boolean isCurrentImagePreview(int modelRow, long generation) {
+        return generation == imagePreviewGeneration
+                && modelRow == imagePreviewHoveredRow
+                && searchPopup != null && searchPopup.isVisible()
+                && searchResultsTable != null && modelRow < searchResultsTable.getModel().getRowCount();
+    }
+
+    private void showImagePreview(ImageIcon icon, String message, Point anchor,
+                                  int modelRow, long generation) {
+        if (!isCurrentImagePreview(modelRow, generation)) return;
+        if (imagePreviewWindow == null) {
+            imagePreviewWindow = new JWindow(this);
+            imagePreviewWindow.setFocusableWindowState(false);
+            imagePreviewLabel = new JLabel("", SwingConstants.CENTER);
+            imagePreviewLabel.setPreferredSize(new Dimension(210, 210));
+            imagePreviewLabel.setOpaque(true);
+            imagePreviewLabel.setBackground(DeckersPalette.surface());
+            imagePreviewLabel.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)),
+                    BorderFactory.createEmptyBorder(5, 5, 5, 5)));
+            imagePreviewWindow.setContentPane(imagePreviewLabel);
+        }
+        imagePreviewLabel.setIcon(icon);
+        imagePreviewLabel.setText(icon == null ? message : "");
+        imagePreviewLabel.setForeground(icon == null ? DeckersPalette.muted() : searchResultsTable.getForeground());
+        imagePreviewWindow.pack();
+        positionImagePreview(anchor);
+        imagePreviewWindow.setVisible(true);
+    }
+
+    private void positionImagePreview(Point anchor) {
+        Rectangle screen = searchResultsTable.getGraphicsConfiguration().getBounds();
+        int width = imagePreviewWindow.getWidth();
+        int height = imagePreviewWindow.getHeight();
+        int x = anchor.x + 18;
+        if (x + width > screen.x + screen.width) x = anchor.x - width - 18;
+        x = Math.max(screen.x, Math.min(x, screen.x + screen.width - width));
+        int y = anchor.y - height / 2;
+        y = Math.max(screen.y, Math.min(y, screen.y + screen.height - height));
+        imagePreviewWindow.setLocation(x, y);
+    }
+
+    private void hideImagePreview() {
+        imagePreviewGeneration++;
+        imagePreviewHoveredRow = -1;
+        if (imagePreviewHoverTimer != null) {
+            imagePreviewHoverTimer.stop();
+            imagePreviewHoverTimer = null;
+        }
+        if (imagePreviewWorker != null) {
+            imagePreviewWorker.cancel(true);
+            imagePreviewWorker = null;
+        }
+        if (imagePreviewWindow != null) imagePreviewWindow.setVisible(false);
     }
 
     private String displayNameWithSize(String name, String size) {
@@ -1789,7 +1980,8 @@ public class MakeASale extends JFrame {
         return name + " (" + size + ")";
     }
 
-    private void addToCart(int productId, String name, String description, String sku, double price, int qty, String productType, Integer departmentId) {
+    private void addToCart(int productId, String name, String size, String description, String sku,
+                           double price, int qty, String productType, Integer departmentId) {
         for (int i = 0; i < cartModel.getRowCount(); i++) {
             int existingProductId = Integer.parseInt(cartModel.getValueAt(i, CART_COL_ID).toString());
 
@@ -1806,6 +1998,7 @@ public class MakeASale extends JFrame {
         cartModel.addRow(new Object[]{
                 productId,
                 name,
+                size,
                 description,
                 sku,
                 price,
@@ -1814,7 +2007,8 @@ public class MakeASale extends JFrame {
                 price * qty,
                 utils.CurrencyFormatter.normalize(BigDecimal.valueOf(price)),
                 normalizeProductType(productType),
-                departmentId
+                departmentId,
+                false
         });
         updateLineTotals();
         configureCartTableColumns();
@@ -1835,6 +2029,29 @@ public class MakeASale extends JFrame {
         }
     }
 
+    private void addMiscItem() {
+        if (!PermissionManager.requirePermission(ADD_MISC_SALE_ITEM_PERMISSION,this,"Add Misc Item")) return;
+        if (salesSettings == null || salesSettings.miscProductId() == null) {
+            JOptionPane.showMessageDialog(this,"The misc item is not configured on the store server.","Add Misc Item",JOptionPane.ERROR_MESSAGE); return;
+        }
+        JTextField nameField=new JTextField(24),priceField=new JTextField(10),quantityField=new JTextField("1",8);
+        DeckersSwing.styleField(nameField);DeckersSwing.styleField(priceField);DeckersSwing.styleField(quantityField);
+        JPanel form=new JPanel(new GridLayout(0,2,8,8));
+        form.add(new JLabel("Item name"));form.add(nameField);form.add(new JLabel("Unit price"));form.add(priceField);
+        form.add(new JLabel("Quantity"));form.add(quantityField);
+        while(JOptionPane.showConfirmDialog(this,form,"Add Misc Item",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)==JOptionPane.OK_OPTION){
+            String name=nameField.getText().trim();BigDecimal price;int quantity;
+            try{price=new BigDecimal(priceField.getText().trim()).setScale(2,RoundingMode.HALF_UP);quantity=Integer.parseInt(quantityField.getText().trim());}
+            catch(Exception ex){JOptionPane.showMessageDialog(this,"Enter a valid price and whole-number quantity.");continue;}
+            if(name.isEmpty()||name.length()>200||price.signum()<=0||quantity<1||quantity>100000){
+                JOptionPane.showMessageDialog(this,"Name must be 1–200 characters, price must be greater than zero, and quantity must be 1–100,000.");continue;
+            }
+            cartModel.addRow(new Object[]{salesSettings.miscProductId(),name,"","Miscellaneous sale item","SMARTSTOCK-MISC",
+                    price,quantity,BigDecimal.ZERO,price.multiply(BigDecimal.valueOf(quantity)),price,"NON_INVENTORY",null,true});
+            updateLineTotals();configureCartTableColumns();return;
+        }
+    }
+
     private String normalizeProductType(String value) {
         String normalized = value == null ? "" : value.trim().toUpperCase().replace(' ', '_');
         if ("SERVICE".equals(normalized) || "NON_INVENTORY".equals(normalized)) {
@@ -1847,6 +2064,11 @@ public class MakeASale extends JFrame {
         return "INVENTORY".equals(normalizeProductType(productType));
     }
 
+    private boolean isMiscRow(int row) {
+        return row >= 0 && row < cartModel.getRowCount()
+                && Boolean.parseBoolean(String.valueOf(cartModel.getValueAt(row, CART_COL_MISC)));
+    }
+
     private void handlePriceEditOverrideAtCart(int row) {
         if (row < 0 || row >= cartModel.getRowCount()) {
             return;
@@ -1855,6 +2077,7 @@ public class MakeASale extends JFrame {
         if (productId <= 0) {
             return;
         }
+        if (isMiscRow(row)) { pendingPriceOverrideApprovals.remove(productId); return; }
 
         BigDecimal enteredPrice = parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_PRICE));
         BigDecimal catalogPrice = parseMoneyOrZero(cartModel.getValueAt(row, CART_COL_ORIGINAL_PRICE));
@@ -2184,7 +2407,10 @@ public class MakeASale extends JFrame {
     private BigDecimal getFinalTotalAmount() {
         BigDecimal discountPercent = getDiscountPercent();
         BigDecimal preVatTotal = getPreVatSaleTotal(discountPercent);
-        return utils.CurrencyFormatter.normalize(preVatTotal.add(calculateVat(discountPercent).amount()));
+        BigDecimal total = utils.CurrencyFormatter.normalize(
+                preVatTotal.add(calculateVat(discountPercent).amount()));
+        return salesSettings == null || salesSettings.roundToNearestTwenty()
+                ? utils.CurrencyFormatter.roundToNearestTwenty(total) : total;
     }
 
     private BigDecimal getPreVatSaleTotal(BigDecimal discountPercent) {
@@ -2207,7 +2433,12 @@ public class MakeASale extends JFrame {
         }
         if (!settings.departmentVat()) {
             BigDecimal rate = settings.fixedVatRate() == null ? BigDecimal.ZERO : settings.fixedVatRate();
-            BigDecimal amount = preVatTotal.multiply(rate)
+            BigDecimal saleMultiplier=BigDecimal.ONE.subtract((saleDiscountPercent==null?BigDecimal.ZERO:saleDiscountPercent)
+                    .divide(BigDecimal.valueOf(100),6,RoundingMode.HALF_UP));
+            BigDecimal taxable=BigDecimal.ZERO;
+            for(int row=0;row<cartModel.getRowCount();row++)if(!isMiscRow(row))
+                taxable=taxable.add(parseMoneyOrZero(cartModel.getValueAt(row,CART_COL_LINE_TOTAL)).multiply(saleMultiplier));
+            BigDecimal amount = taxable.multiply(rate)
                     .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
             return new VatCalculation(amount, rate, "FIXED");
         }
@@ -2662,7 +2893,9 @@ public class MakeASale extends JFrame {
                     priceApproval == null ? null : priceApproval.approval().lanApprovalToken(),
                     priceApproval == null ? null : priceApproval.approval().reason(),
                     discountApproval == null ? null : discountApproval.approval().lanApprovalToken(),
-                    discountApproval == null ? null : discountApproval.approval().reason()
+                    discountApproval == null ? null : discountApproval.approval().reason(),
+                    isMiscRow(row)?String.valueOf(cartModel.getValueAt(row,CART_COL_NAME)):null,
+                    isMiscRow(row)
             ));
         }
         LanApiClient.CheckoutRequest request = new LanApiClient.CheckoutRequest(
@@ -2678,18 +2911,46 @@ public class MakeASale extends JFrame {
         checkoutPrintBtn.setEnabled(false);
         loadingState.loading(false, java.time.Instant.now());
         UiTaskRunner.submit(this, "sale.checkout", () -> {
-            LanApiClient.CheckoutResult result = LanApiClient.checkout(request, checkoutKey);
+            long checkoutStarted = System.nanoTime();
+            LanApiClient.CheckoutResult result;
+            try {
+                result = LanApiClient.checkout(request, checkoutKey);
+                PerformanceDiagnostics.recordAlways("checkout", "server-commit", checkoutStarted,
+                        true, lines.size());
+            } catch (Exception ex) {
+                PerformanceDiagnostics.recordAlways("checkout", "server-commit", checkoutStarted,
+                        false, lines.size());
+                throw ex;
+            }
             ReceiptData receipt = null;
             String receiptError = null;
             String printError = null;
-            if (showReceiptPreview) {
+            String printMessage = null;
+            String drawerError = null;
+            if ("CASH".equals(paymentMethod)) {
+                long drawerStarted = System.nanoTime();
+                HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+                EpsonReceiptPrintService.PrintResult drawerResult = EpsonReceiptPrintService.openDrawer(printer);
+                PerformanceDiagnostics.recordAlways("checkout", "drawer-command", drawerStarted,
+                        drawerResult.successful(), -1);
+                if (!drawerResult.successful()) drawerError = drawerResult.message();
+            }
+            boolean receiptPreviewRequired = showReceiptPreview || !result.autoPrintSaleReceipt();
+            if (receiptPreviewRequired) {
+                long receiptStarted = System.nanoTime();
                 try {
                     receipt = ReceiptBuilder.loadSaleReceipt(result.saleId(),
                             "CASH".equals(paymentMethod) ? result.cashCollected() : null,
                             "CASH".equals(paymentMethod) ? result.changeDue() : null);
-                    HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
-                    ReceiptPrinter.printToPosPrinter(receipt, printer, "CASH".equals(paymentMethod), false);
+                    if (showReceiptPreview && result.autoPrintSaleReceipt()) {
+                        HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+                        printMessage = ReceiptPrinter.printToPosPrinter(receipt, printer, false, false).message();
+                    }
+                    PerformanceDiagnostics.recordAlways("checkout", "receipt-load-print", receiptStarted,
+                            true, -1);
                 } catch (Exception ex) {
+                    PerformanceDiagnostics.recordAlways("checkout", "receipt-load-print", receiptStarted,
+                            false, -1);
                     if (receipt == null) {
                         receiptError = ex.getMessage();
                     } else {
@@ -2697,7 +2958,9 @@ public class MakeASale extends JFrame {
                     }
                 }
             }
-            return new CheckoutSnapshot(result, receipt, receiptError, printError);
+            PerformanceDiagnostics.recordAlways("checkout", "cashier-wait", checkoutStarted,
+                    true, lines.size());
+            return new CheckoutSnapshot(result, receipt, receiptError, printError, printMessage, drawerError);
         }, snapshot -> {
             LanApiClient.CheckoutResult result = snapshot.result();
             InventoryCatalogCache.refreshAfterMutation().exceptionally(failure -> null);
@@ -2719,8 +2982,14 @@ public class MakeASale extends JFrame {
             }
             if (snapshot.printError() != null) {
                 message += "\n\nReceipt printing failed: " + snapshot.printError();
-            } else if (showReceiptPreview) {
-                message += "\n\nReceipt submitted to the Windows print queue.";
+            } else if (showReceiptPreview && result.autoPrintSaleReceipt()) {
+                message += "\n\n" + (snapshot.printMessage() == null
+                        ? "Receipt printing completed." : snapshot.printMessage());
+            } else if (!result.autoPrintSaleReceipt()) {
+                message += "\n\nReceipt preview opened for manual letter-size printing.";
+            }
+            if (snapshot.drawerError() != null) {
+                message += "\n\nCash drawer did not open: " + snapshot.drawerError();
             }
             JOptionPane.showMessageDialog(this, message);
             cartModel.setRowCount(0);
@@ -2792,7 +3061,9 @@ public class MakeASale extends JFrame {
                     priceApproval == null ? null : priceApproval.approval().lanApprovalToken(),
                     priceApproval == null ? null : priceApproval.approval().reason(),
                     discountApproval == null ? null : discountApproval.approval().lanApprovalToken(),
-                    discountApproval == null ? null : discountApproval.approval().reason()));
+                    discountApproval == null ? null : discountApproval.approval().reason(),
+                    isMiscRow(row)?String.valueOf(cartModel.getValueAt(row,CART_COL_NAME)):null,
+                    isMiscRow(row)));
         }
         LanApiClient.HeldCartCreateRequest request = new LanApiClient.HeldCartCreateRequest(
                 holdName.trim(), selectedPaymentMethod, customer == null ? null : customer.customerId,
@@ -2901,9 +3172,9 @@ public class MakeASale extends JFrame {
                 BigDecimal gross = price.multiply(BigDecimal.valueOf(item.quantity()));
                 BigDecimal lineTotal = gross.subtract(gross.multiply(discount)
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)).max(BigDecimal.ZERO);
-                cartModel.addRow(new Object[]{item.productId(), item.productName(), item.description(), item.sku(),
+                cartModel.addRow(new Object[]{item.productId(), item.productName(), item.size(), item.description(), item.sku(),
                         price, item.quantity(), discount, lineTotal, catalogPrice,
-                        normalizeProductType(item.productType()), item.categoryId()});
+                        normalizeProductType(item.productType()), item.categoryId(),item.miscItem()});
             }
         } finally {
             updatingCart = false;
@@ -2971,6 +3242,9 @@ public class MakeASale extends JFrame {
         BigDecimal vatAmount = vat.amount();
         BigDecimal total = utils.CurrencyFormatter.normalize(
                 subtotal.subtract(discountAmount).max(BigDecimal.ZERO).add(vatAmount));
+        if (salesSettings == null || salesSettings.roundToNearestTwenty()) {
+            total = utils.CurrencyFormatter.roundToNearestTwenty(total);
+        }
 
         if (subtotalLabel != null) {
             subtotalLabel.setText("Subtotal: " + utils.CurrencyFormatter.format(subtotal));

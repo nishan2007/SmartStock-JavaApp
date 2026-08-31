@@ -21,9 +21,6 @@ import utils.SecureFilePermissions;
 
 public final class SupabaseSessionManager {
 
-    private static final SupabaseProjectConfig SUPABASE_CONFIG = SupabaseProjectConfig.load();
-    private static final String SUPABASE_URL = SUPABASE_CONFIG.url();
-    private static final String SUPABASE_PUBLISHABLE_KEY = SUPABASE_CONFIG.publishableKey();
     private static final Path SESSION_PATH = EnvironmentProfile.active().file("session.properties");
     // Refresh shortly before expiry so callers never send a known-expired JWT to /auth/v1/user.
     private static final long ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
@@ -78,13 +75,28 @@ public final class SupabaseSessionManager {
     }
 
     public static synchronized void savePersistedSession(Integer userId, Integer locationId) {
+        savePersistedSession(SessionManager.getCurrentAccessToken(),
+                SessionManager.getCurrentRefreshToken(), userId, locationId);
+    }
+
+    public static void savePersistedSessionAsync(Integer userId, Integer locationId) {
+        String accessToken = SessionManager.getCurrentAccessToken();
         String refreshToken = SessionManager.getCurrentRefreshToken();
+        Thread writer = new Thread(() -> savePersistedSession(
+                accessToken, refreshToken, userId, locationId),
+                "smartstock-session-persistence");
+        writer.setDaemon(true);
+        writer.start();
+    }
+
+    private static synchronized void savePersistedSession(String accessToken, String refreshToken,
+                                                           Integer userId, Integer locationId) {
         if (refreshToken == null || refreshToken.isBlank() || userId == null || locationId == null) {
             return;
         }
 
         Properties properties = new Properties();
-        properties.setProperty("access_token", SessionManager.getCurrentAccessToken() == null ? "" : SessionManager.getCurrentAccessToken());
+        properties.setProperty("access_token", accessToken == null ? "" : accessToken);
         properties.setProperty("refresh_token", refreshToken);
         properties.setProperty("user_id", String.valueOf(userId));
         properties.setProperty("location_id", String.valueOf(locationId));
@@ -109,6 +121,13 @@ public final class SupabaseSessionManager {
         }
     }
 
+    public static void clearPersistedSessionAsync() {
+        Thread cleaner = new Thread(SupabaseSessionManager::clearPersistedSession,
+                "smartstock-session-cleanup");
+        cleaner.setDaemon(true);
+        cleaner.start();
+    }
+
     public static synchronized String getAccessToken() {
         return SessionManager.getCurrentAccessToken();
     }
@@ -118,11 +137,11 @@ public final class SupabaseSessionManager {
     }
 
     public static String getSupabaseUrl() {
-        return SUPABASE_URL;
+        return requireConfig().url();
     }
 
     public static String getSupabasePublishableKey() {
-        return SUPABASE_PUBLISHABLE_KEY;
+        return requireConfig().publishableKey();
     }
 
     public static synchronized String getValidAccessToken() throws IOException, InterruptedException {
@@ -183,10 +202,11 @@ public final class SupabaseSessionManager {
     }
 
     private static void validateAccessToken(String accessToken) throws IOException, InterruptedException {
+        SupabaseProjectConfig config = requireConfig();
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SUPABASE_URL + "/auth/v1/user"))
+                .uri(URI.create(config.url() + "/auth/v1/user"))
                 .timeout(Duration.ofSeconds(20))
-                .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+                .header("apikey", config.publishableKey())
                 .header("Authorization", "Bearer " + accessToken)
                 .header("Accept", "application/json")
                 .GET()
@@ -217,10 +237,11 @@ public final class SupabaseSessionManager {
                 "\"refresh_token\":" + jsonValue(SessionManager.getCurrentRefreshToken()) +
                 "}";
 
+        SupabaseProjectConfig config = requireConfig();
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token"))
+                .uri(URI.create(config.url() + "/auth/v1/token?grant_type=refresh_token"))
                 .timeout(Duration.ofSeconds(20))
-                .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+                .header("apikey", config.publishableKey())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
@@ -258,12 +279,17 @@ public final class SupabaseSessionManager {
     }
 
     private static void ensureConfig() {
-        if (SUPABASE_URL == null || SUPABASE_URL.isBlank()) {
+        SupabaseProjectConfig config = requireConfig();
+        if (config.url() == null || config.url().isBlank()) {
             throw new IllegalStateException("Missing SUPABASE_URL configuration.");
         }
-        if (SUPABASE_PUBLISHABLE_KEY == null || SUPABASE_PUBLISHABLE_KEY.isBlank()) {
+        if (config.publishableKey() == null || config.publishableKey().isBlank()) {
             throw new IllegalStateException("Missing SUPABASE_PUBLISHABLE_KEY configuration.");
         }
+    }
+
+    private static SupabaseProjectConfig requireConfig() {
+        return SupabaseProjectConfig.load();
     }
 
     private static String blankToNull(String value) {

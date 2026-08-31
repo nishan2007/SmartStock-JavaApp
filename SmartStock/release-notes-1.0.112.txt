@@ -1,0 +1,6 @@
+SmartStock 1.0.112
+
+- Adds permission-controlled miscellaneous sale items with cashier-entered names, unit prices, and quantities.
+- Keeps miscellaneous items non-inventory and non-taxable, preserves their names on receipts, held carts, history, reports, and store synchronization, and excludes them from returns.
+- Automatically upgrades existing store databases before schema validation and safely provisions the protected system misc-item anchor.
+- Includes the latest payroll, configurable rounding, receipt-printer, register setup, inventory, and administrative workflow improvements from the current release branch.

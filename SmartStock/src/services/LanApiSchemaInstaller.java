@@ -11,6 +11,16 @@ public final class LanApiSchemaInstaller {
     public static void ensureSchema(Connection connection) throws SQLException {
         SchemaContractService.ensureMobileItemWebUpgrade(connection);
         SchemaContractService.ensureOptionalNewItemCostPriceUpgrade(connection);
+        SchemaContractService.ensureConfigurableTwentyDollarRoundingUpgrade(connection);
+        SchemaContractService.ensureEffectiveDatedPayRatesUpgrade(connection);
+        SchemaContractService.ensureMissingPayrollBaselinesUpgrade(connection);
+        SchemaContractService.ensureMiscSaleItemsUpgrade(connection);
+        SchemaContractService.ensureCustomerTypeReceiptPrintingUpgrade(connection);
+        SchemaContractService.ensureCustomerCardTemplatesUpgrade(connection);
+        SchemaContractService.ensureSharedCardAndBadgeTemplatesUpgrade(connection);
+        SchemaContractService.ensureIndividualCustomerTemplateRename(connection);
+        SchemaContractService.ensureSchedulerWebUpgrade(connection);
+        SchemaContractService.ensureCustomerPhotoCardExpiryUpgrade(connection);
         SchemaContractService.requireLocalReady(connection);
     }
 }

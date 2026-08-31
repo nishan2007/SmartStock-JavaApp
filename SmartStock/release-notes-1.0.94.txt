@@ -1,0 +1,5 @@
+SmartStock 1.0.94
+
+- Fixes non-persistent register logins that authenticated successfully but blocked behind the synchronized cloud-session manager.
+- Removes a redundant synchronized token assignment and performs stale-session cleanup off Swing's UI thread.
+- Transitions successful logins directly to Main Menu without relying on a modal confirmation dialog.

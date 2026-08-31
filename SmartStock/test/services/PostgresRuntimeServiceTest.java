@@ -12,6 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PostgresRuntimeServiceTest {
+
+    @Test
+    void windowsDatabaseStartupDoesNotRestartAnAlreadyRunningService() throws Exception {
+        String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
+
+        assertTrue(source.contains("Where-Object {$_.Status -ne 'Running'}"));
+        assertTrue(source.contains("if($stopped.Count -gt 0){$stopped | Start-Service"));
+    }
     @TempDir
     Path tempDir;
     @Test
@@ -88,7 +96,8 @@ class PostgresRuntimeServiceTest {
         assertTrue(script.contains("SmartStock.exe"));
         assertTrue(script.contains("--sync-service"));
         assertTrue(script.contains("CreateShortcut($ServiceShortcut)"));
-        assertTrue(script.contains("explorer.exe"));
+        assertTrue(script.contains("New-ScheduledTaskAction -Execute $ServiceExecutable"));
+        assertTrue(script.contains("-WorkingDirectory $ServiceAppDir"));
         assertTrue(script.contains("$ServiceArguments = '--sync-service'"));
         assertTrue(script.contains("$Shortcut.Arguments = $ServiceArguments"));
         assertTrue(script.contains("Unregister-ScheduledTask"));
@@ -98,6 +107,14 @@ class PostgresRuntimeServiceTest {
         assertTrue(script.contains("New-ScheduledTaskTrigger -AtLogOn"));
         assertTrue(script.contains("Get-CimInstance Win32_ComputerSystem"));
         assertTrue(script.contains("ProfileImagePath"));
+        assertTrue(script.contains("Name='cloudflared.exe'"));
+        assertTrue(script.contains("$TunnelPath"));
+        assertTrue(script.indexOf("existing SmartStock server process did not stop before update")
+                < script.indexOf("Stop-Process -Id $Tunnel.ProcessId"));
+        assertTrue(script.indexOf("Stop-Process -Id $Tunnel.ProcessId")
+                < script.indexOf("Move-Item -LiteralPath $ServiceAppDir"));
+        assertTrue(script.contains(".app-staged-"));
+        assertTrue(script.contains("missing the PostgreSQL driver"));
         assertTrue(script.contains("-Duser.home=\""));
         assertTrue(script.contains("-UserId $ServiceUser"));
         assertTrue(script.contains("-RunLevel Limited"));
@@ -144,11 +161,19 @@ class PostgresRuntimeServiceTest {
         assertTrue(service.contains("Get-CimInstance Win32_ComputerSystem"));
         assertTrue(service.contains("ProfileImagePath"));
         assertTrue(service.contains("CreateShortcut($serviceShortcut)"));
-        assertTrue(service.contains("explorer.exe"));
+        assertTrue(service.contains("New-ScheduledTaskAction -Execute $java"));
+        assertTrue(service.contains("-WorkingDirectory $serviceAppDir"));
         assertTrue(service.contains("New-ScheduledTaskTrigger -AtLogOn"));
         assertTrue(service.contains("-Duser.home="));
         assertTrue(service.contains("Invoke-CimMethod -InputObject $server -MethodName Terminate"));
         assertTrue(service.contains("existing SmartStock server process did not stop before update"));
+        assertTrue(service.contains("Name='cloudflared.exe'"));
+        assertTrue(service.indexOf("existing SmartStock server process did not stop before update")
+                < service.indexOf("Stop-Process -Id $tunnel.ProcessId"));
+        assertTrue(service.indexOf("Stop-Process -Id $tunnel.ProcessId")
+                < service.indexOf("Move-Item -LiteralPath $serviceAppDir"));
+        assertTrue(service.contains(".app-staged-"));
+        assertTrue(service.contains("missing the PostgreSQL driver"));
         assertFalse(service.contains("$env:USERPROFILE"));
         assertFalse(service.contains("schtasks /Create"));
         assertFalse(service.contains("/SC ONSTART"));
@@ -191,8 +216,8 @@ class PostgresRuntimeServiceTest {
         String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
 
         assertTrue(source.contains("return installWindowsServer(SupabaseProjectConfig.load(),"));
-        assertTrue(source.contains("$TargetDependencies = Join-Path $ServiceAppDir 'dependency'"));
-        assertTrue(source.contains("Copy-Item -Path (Join-Path $Dependencies '*')"));
+        assertTrue(source.contains("$StagedAppDir = Join-Path $ServiceDir"));
+        assertTrue(source.contains("Copy-Item -LiteralPath $Dependencies -Destination"));
         assertTrue(source.contains("Files.mismatch(currentJar, serviceJar)"));
         assertTrue(source.contains("StandardCopyOption.REPLACE_EXISTING"));
         assertTrue(source.contains("!isSyncServiceRunning(status.output())"));
@@ -241,7 +266,7 @@ class PostgresRuntimeServiceTest {
         assertTrue(body.contains("Invoke-CimMethod -InputObject $Server -MethodName Terminate"));
         assertTrue(body.contains("existing SmartStock server process did not stop before update"));
         assertTrue(body.indexOf("Invoke-CimMethod -InputObject $Server -MethodName Terminate")
-                < body.indexOf("Remove-Item -Force"));
+                < body.indexOf("Move-Item -LiteralPath $ServiceAppDir"));
     }
 
     @Test

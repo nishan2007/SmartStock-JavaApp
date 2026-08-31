@@ -279,12 +279,9 @@ public class ServerCompanyCustomizationRepository {
 
     public static BadgeTemplateSettings loadBadgeTemplateSettings() {
         Integer locationId = ServerRequestIdentity.locationId();
-        if (Objects.equals(locationId, cachedBadgeTemplateLocationId) && cachedBadgeTemplateSettings != null) {
-            return cachedBadgeTemplateSettings;
-        }
         if (locationId != null) {
             try {
-                BadgeTemplateSettings dbSettings = loadBadgeTemplateSettingsFromDb(locationId);
+                BadgeTemplateSettings dbSettings = loadBadgeTemplateSettingsFromDb(sharedBadgeTemplateLocationId(locationId));
                 if (dbSettings != null) {
                     saveLocalBadgeTemplateSettings(dbSettings);
                     cachedBadgeTemplateLocationId = locationId;
@@ -699,7 +696,8 @@ public class ServerCompanyCustomizationRepository {
     private static CustomOrderSettings loadCustomOrderSettingsFromDb(int locationId) throws SQLException {
         String sql = """
                 SELECT COALESCE(custom_order_minimum_deposit_percent, 0) AS custom_order_minimum_deposit_percent,
-                       COALESCE(custom_order_refund_approval_limit, 0) AS custom_order_refund_approval_limit
+                       COALESCE(custom_order_refund_approval_limit, 0) AS custom_order_refund_approval_limit,
+                       COALESCE(round_custom_orders_to_nearest_twenty, TRUE) AS round_custom_orders_to_nearest_twenty
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -713,7 +711,8 @@ public class ServerCompanyCustomizationRepository {
                 }
                 return new CustomOrderSettings(
                         rs.getBigDecimal("custom_order_minimum_deposit_percent"),
-                        rs.getBigDecimal("custom_order_refund_approval_limit")
+                        rs.getBigDecimal("custom_order_refund_approval_limit"),
+                        rs.getBoolean("round_custom_orders_to_nearest_twenty")
                 );
             }
         }
@@ -726,12 +725,14 @@ public class ServerCompanyCustomizationRepository {
                     location_id,
                     custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit,
+                    round_custom_orders_to_nearest_twenty,
                     updated_at
                 )
-                VALUES (?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_minimum_deposit_percent = EXCLUDED.custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit = EXCLUDED.custom_order_refund_approval_limit,
+                    round_custom_orders_to_nearest_twenty = EXCLUDED.round_custom_orders_to_nearest_twenty,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -739,6 +740,7 @@ public class ServerCompanyCustomizationRepository {
             ps.setInt(1, locationId);
             ps.setBigDecimal(2, settings.minimumDepositPercent());
             ps.setBigDecimal(3, settings.refundApprovalLimit());
+            ps.setBoolean(4, settings.roundToNearestTwenty());
             ps.executeUpdate();
         }
     }
@@ -747,7 +749,8 @@ public class ServerCompanyCustomizationRepository {
         String sql = """
                 SELECT COALESCE(sale_discount_limit_percent, 5) AS sale_discount_limit_percent,
                        COALESCE(sale_return_approval_limit, 0) AS sale_return_approval_limit,
-                       COALESCE(require_cost_price_on_new_item, TRUE) AS require_cost_price_on_new_item
+                       COALESCE(require_cost_price_on_new_item, TRUE) AS require_cost_price_on_new_item,
+                       COALESCE(round_sales_to_nearest_twenty, TRUE) AS round_sales_to_nearest_twenty
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -761,7 +764,8 @@ public class ServerCompanyCustomizationRepository {
                 return new SaleSafetySettings(
                         rs.getBigDecimal("sale_discount_limit_percent"),
                         rs.getBigDecimal("sale_return_approval_limit"),
-                        rs.getBoolean("require_cost_price_on_new_item")
+                        rs.getBoolean("require_cost_price_on_new_item"),
+                        rs.getBoolean("round_sales_to_nearest_twenty")
                 );
             }
         }
@@ -774,13 +778,15 @@ public class ServerCompanyCustomizationRepository {
                     sale_discount_limit_percent,
                     sale_return_approval_limit,
                     require_cost_price_on_new_item,
+                    round_sales_to_nearest_twenty,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     sale_discount_limit_percent = EXCLUDED.sale_discount_limit_percent,
                     sale_return_approval_limit = EXCLUDED.sale_return_approval_limit,
                     require_cost_price_on_new_item = EXCLUDED.require_cost_price_on_new_item,
+                    round_sales_to_nearest_twenty = EXCLUDED.round_sales_to_nearest_twenty,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -789,6 +795,7 @@ public class ServerCompanyCustomizationRepository {
             ps.setBigDecimal(2, settings.discountLimitPercent());
             ps.setBigDecimal(3, settings.returnApprovalLimit());
             ps.setBoolean(4, settings.requireCostPriceOnNewItem());
+            ps.setBoolean(5, settings.roundToNearestTwenty());
             ps.executeUpdate();
         }
     }
@@ -1059,6 +1066,12 @@ public class ServerCompanyCustomizationRepository {
             }
         }
 
+    private static int sharedBadgeTemplateLocationId(int fallbackLocationId)throws SQLException{
+        try(Connection conn=DB.getConnection();PreparedStatement ps=conn.prepareStatement("SELECT location_id FROM company_customization WHERE BTRIM(COALESCE(badge_template_layout_data,''))<>'' ORDER BY updated_at DESC NULLS LAST,location_id LIMIT 1");ResultSet rs=ps.executeQuery()){
+            return rs.next()?rs.getInt(1):fallbackLocationId;
+        }
+    }
+
     private static void saveBadgeTemplateSettingsToDb(int locationId, BadgeTemplateSettings settings) throws SQLException {
         String sql = """
                 INSERT INTO company_customization (
@@ -1136,6 +1149,21 @@ public class ServerCompanyCustomizationRepository {
             ps.setString(21, settings.nfcVerifyCommand());
             ps.setString(22, settings.layoutData());
             ps.executeUpdate();
+            try(PreparedStatement shared=conn.prepareStatement("""
+                    UPDATE company_customization target SET
+                      badge_template_company_name=source.badge_template_company_name,badge_template_logo_url=source.badge_template_logo_url,
+                      badge_template_quote=source.badge_template_quote,badge_template_signatory_name=source.badge_template_signatory_name,
+                      badge_template_signatory_title=source.badge_template_signatory_title,badge_template_back_instructions=source.badge_template_back_instructions,
+                      badge_template_show_quote=source.badge_template_show_quote,badge_template_show_employee_id=source.badge_template_show_employee_id,
+                      badge_template_show_issue_date=source.badge_template_show_issue_date,badge_template_show_barcode=source.badge_template_show_barcode,
+                      badge_template_show_badge_text=source.badge_template_show_badge_text,badge_template_magstripe_enabled=source.badge_template_magstripe_enabled,
+                      badge_template_magstripe_track1=source.badge_template_magstripe_track1,badge_template_magstripe_track2=source.badge_template_magstripe_track2,
+                      badge_template_magstripe_track3=source.badge_template_magstripe_track3,badge_template_magstripe_command=source.badge_template_magstripe_command,
+                      badge_template_nfc_enabled=source.badge_template_nfc_enabled,badge_template_nfc_payload=source.badge_template_nfc_payload,
+                      badge_template_nfc_writer_command=source.badge_template_nfc_writer_command,badge_template_nfc_verify_command=source.badge_template_nfc_verify_command,
+                      badge_template_layout_data=source.badge_template_layout_data,updated_at=NOW()
+                    FROM company_customization source WHERE source.location_id=? AND target.location_id<>?
+                    """)){shared.setInt(1,locationId);shared.setInt(2,locationId);shared.executeUpdate();}
         }
     }
 
@@ -1203,7 +1231,8 @@ public class ServerCompanyCustomizationRepository {
         }
         return new CustomOrderSettings(
                 parsePercent(properties.getProperty("custom_orders.minimum_deposit_percent", "0")),
-                parseMoney(properties.getProperty("custom_orders.refund_approval_limit", "0"))
+                parseMoney(properties.getProperty("custom_orders.refund_approval_limit", "0")),
+                Boolean.parseBoolean(properties.getProperty("custom_orders.round_to_nearest_twenty", "true"))
         );
     }
 
@@ -1272,7 +1301,8 @@ public class ServerCompanyCustomizationRepository {
         return new SaleSafetySettings(
                 parsePercent(properties.getProperty("sales.discount_limit_percent", "5")),
                 parseMoney(properties.getProperty("sales.return_approval_limit", "0")),
-                Boolean.parseBoolean(properties.getProperty("inventory.require_cost_price_on_new_item", "true"))
+                Boolean.parseBoolean(properties.getProperty("inventory.require_cost_price_on_new_item", "true")),
+                Boolean.parseBoolean(properties.getProperty("sales.round_to_nearest_twenty", "true"))
         );
     }
 
@@ -1372,6 +1402,7 @@ public class ServerCompanyCustomizationRepository {
         }
         properties.setProperty("custom_orders.minimum_deposit_percent", settings.minimumDepositPercent().toPlainString());
         properties.setProperty("custom_orders.refund_approval_limit", settings.refundApprovalLimit().toPlainString());
+        properties.setProperty("custom_orders.round_to_nearest_twenty", String.valueOf(settings.roundToNearestTwenty()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -1441,6 +1472,7 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("sales.discount_limit_percent", settings.discountLimitPercent().toPlainString());
         properties.setProperty("sales.return_approval_limit", settings.returnApprovalLimit().toPlainString());
         properties.setProperty("inventory.require_cost_price_on_new_item", String.valueOf(settings.requireCostPriceOnNewItem()));
+        properties.setProperty("sales.round_to_nearest_twenty", String.valueOf(settings.roundToNearestTwenty()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -2053,7 +2085,9 @@ public class ServerCompanyCustomizationRepository {
         }
     }
 
-    public record CustomOrderSettings(java.math.BigDecimal minimumDepositPercent, java.math.BigDecimal refundApprovalLimit) {
+    public record CustomOrderSettings(java.math.BigDecimal minimumDepositPercent,
+                                      java.math.BigDecimal refundApprovalLimit,
+                                      boolean roundToNearestTwenty) {
         public CustomOrderSettings {
             minimumDepositPercent = minimumDepositPercent == null ? java.math.BigDecimal.ZERO : minimumDepositPercent;
             refundApprovalLimit = refundApprovalLimit == null ? java.math.BigDecimal.ZERO : refundApprovalLimit;
@@ -2061,7 +2095,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     public record SaleSafetySettings(java.math.BigDecimal discountLimitPercent, java.math.BigDecimal returnApprovalLimit,
-                                     boolean requireCostPriceOnNewItem) {
+                                      boolean requireCostPriceOnNewItem, boolean roundToNearestTwenty) {
         public SaleSafetySettings {
             discountLimitPercent = discountLimitPercent == null ? java.math.BigDecimal.valueOf(5) : discountLimitPercent;
             if (discountLimitPercent.compareTo(java.math.BigDecimal.ZERO) < 0) {

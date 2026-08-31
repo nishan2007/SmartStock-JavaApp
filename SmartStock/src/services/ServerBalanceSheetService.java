@@ -30,6 +30,7 @@ public final class ServerBalanceSheetService {
     private static final long SCHEMA_LOCK_KEY = 7_340_210_001L;
     private static final DateTimeFormatter ACCOUNT_PAYMENT_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd h:mm a");
     private static final Gson GSON = LanJson.create();
+    private static final String OTHER_CASH_CIH_LABEL = "Other cash sales";
     private static final Set<String> SCHEMA_READY = ConcurrentHashMap.newKeySet();
 
     private ServerBalanceSheetService() {
@@ -508,7 +509,8 @@ public final class ServerBalanceSheetService {
             List<SheetLine> receivables = loadReceivables(conn, locationId);
             List<SheetLine> expenses = loadExpenses(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds, "PAID");
             List<SheetLine> payables = loadExpenses(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds, "UNPAID");
-            List<SheetLine> drawerCash = loadDrawerCash(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
+            List<SheetLine> drawerCash = includeOtherCashInDrawerCash(
+                    loadDrawerCash(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds), income);
             List<SheetLine> deviceSales = loadDeviceSales(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> deviceOrders = loadDeviceOrders(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
             List<SheetLine> devicePayments = loadDevicePayments(conn, from, to, storeZoneId, locationId, cashDrawerSessionIds);
@@ -528,7 +530,8 @@ public final class ServerBalanceSheetService {
             if (balanceBf == null) {
                 balanceBf = BigDecimal.ZERO;
             }
-            BigDecimal balanceCf = balanceBf.add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
+            BigDecimal balanceCf = balanceBf.add(totalIncome).add(total(accountPayments))
+                    .subtract(totalExpenses).subtract(totalPayables);
             return new BalanceSheet(null, null, null, null, null, null,
                     income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, devicePayments, accountPayments, bankTransactions, pendingCheques, drawerChecks, cashInHand,
                     balanceBf, totalIncome, totalReceivables, totalExpenses, totalPayables, balanceCf);
@@ -784,8 +787,8 @@ public final class ServerBalanceSheetService {
 
     public static BalanceSheet loadBalanceSheet(Connection conn,LocalDate from,LocalDate to,String zone,List<Long>sessionIds)throws SQLException{
         ensureSchema(conn);Integer locationId=ServerRequestIdentity.locationId();syncPaidPayrollExpenses(conn,zone,locationId);
-        List<SheetLine>income=loadIncome(conn,from,to,zone,locationId,sessionIds),receivables=loadReceivables(conn,locationId),expenses=loadExpenses(conn,from,to,zone,locationId,sessionIds,"PAID"),payables=loadExpenses(conn,from,to,zone,locationId,sessionIds,"UNPAID"),drawerCash=loadDrawerCash(conn,from,to,zone,locationId,sessionIds),deviceSales=loadDeviceSales(conn,from,to,zone,locationId,sessionIds),deviceOrders=loadDeviceOrders(conn,from,to,zone,locationId,sessionIds),devicePayments=loadDevicePayments(conn,from,to,zone,locationId,sessionIds),accountPayments=loadAccountPayments(conn,from,to,zone,locationId,sessionIds),drawerChecks=loadDrawerMatchChecks(conn,from,to,zone,locationId,sessionIds);
-        List<BankTransactionLine>bank=loadBankTransactions(conn,from,to,locationId);List<ChequeDepositOption>cheques=loadPendingChequeDeposits(conn,locationId);BigDecimal cash=total(drawerCash),totalIncome=total(income),totalReceivables=total(receivables),totalExpenses=total(expenses),totalPayables=total(payables),bf=loadPreviousBalanceCf(conn,from,locationId);if(bf==null)bf=BigDecimal.ZERO;BigDecimal cf=bf.add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
+        List<SheetLine>income=loadIncome(conn,from,to,zone,locationId,sessionIds),receivables=loadReceivables(conn,locationId),expenses=loadExpenses(conn,from,to,zone,locationId,sessionIds,"PAID"),payables=loadExpenses(conn,from,to,zone,locationId,sessionIds,"UNPAID"),drawerCash=includeOtherCashInDrawerCash(loadDrawerCash(conn,from,to,zone,locationId,sessionIds),income),deviceSales=loadDeviceSales(conn,from,to,zone,locationId,sessionIds),deviceOrders=loadDeviceOrders(conn,from,to,zone,locationId,sessionIds),devicePayments=loadDevicePayments(conn,from,to,zone,locationId,sessionIds),accountPayments=loadAccountPayments(conn,from,to,zone,locationId,sessionIds),drawerChecks=loadDrawerMatchChecks(conn,from,to,zone,locationId,sessionIds);
+        List<BankTransactionLine>bank=loadBankTransactions(conn,from,to,locationId);List<ChequeDepositOption>cheques=loadPendingChequeDeposits(conn,locationId);BigDecimal cash=total(drawerCash),totalIncome=total(income),totalReceivables=total(receivables),totalExpenses=total(expenses),totalPayables=total(payables),bf=loadPreviousBalanceCf(conn,from,locationId);if(bf==null)bf=BigDecimal.ZERO;BigDecimal cf=bf.add(totalIncome).add(total(accountPayments)).subtract(totalExpenses).subtract(totalPayables);
         return new BalanceSheet(null,null,null,null,null,null,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bank,cheques,drawerChecks,cash,bf,totalIncome,totalReceivables,totalExpenses,totalPayables,cf);
     }
 
@@ -959,6 +962,7 @@ public final class ServerBalanceSheetService {
     }
 
     static List<SheetLine> replaceOtherCash(List<SheetLine> original,BigDecimal amount){List<SheetLine> out=new ArrayList<>();for(SheetLine line:original)if(!"OTHER CASH".equalsIgnoreCase(line.label()))out.add(line);if(amount.signum()!=0)out.add(new SheetLine("OTHER CASH",amount));return out;}
+    static List<SheetLine> includeOtherCashInDrawerCash(List<SheetLine> original,List<SheetLine> income){BigDecimal amount=BigDecimal.ZERO;for(SheetLine line:income)if("OTHER CASH".equalsIgnoreCase(line.label()))amount=amount.add(defaultZero(line.amount()));List<SheetLine> out=new ArrayList<>();for(SheetLine line:original)if(!OTHER_CASH_CIH_LABEL.equalsIgnoreCase(line.label())&&!(amount.signum()>0&&"No submitted drawer balances".equalsIgnoreCase(line.label())))out.add(line);if(amount.signum()!=0)out.add(new SheetLine(OTHER_CASH_CIH_LABEL,amount));return out;}
     private static BigDecimal totalOtherIncome(List<EditableOtherIncome> rows){BigDecimal value=BigDecimal.ZERO;for(EditableOtherIncome row:rows)value=value.add(defaultZero(row.amount()));return value;}
     static List<SheetLine> replaceManualExpenseLines(List<SheetLine> snapshot,List<EditableExpense> before,List<EditableExpense> after,String status,String emptyLabel){Map<String,BigDecimal> amounts=new LinkedHashMap<>();for(SheetLine line:snapshot)if(!emptyLabel.equals(line.label()))amounts.merge(line.label(),defaultZero(line.amount()),BigDecimal::add);for(var entry:manualExpenseTotals(before,status).entrySet())amounts.merge(entry.getKey(),entry.getValue().negate(),BigDecimal::add);for(var entry:manualExpenseTotals(after,status).entrySet())amounts.merge(entry.getKey(),entry.getValue(),BigDecimal::add);List<SheetLine> out=new ArrayList<>();for(var entry:amounts.entrySet())if(entry.getValue().signum()!=0)out.add(new SheetLine(entry.getKey(),entry.getValue()));if(out.isEmpty())out.add(new SheetLine(emptyLabel,BigDecimal.ZERO));return out;}
     private static Map<String,BigDecimal>manualExpenseTotals(List<EditableExpense>rows,String status){Map<String,BigDecimal>totals=new LinkedHashMap<>();for(EditableExpense row:rows)if(status.equalsIgnoreCase(row.status())){String detail=row.payee()==null||row.payee().isBlank()?(row.description()==null||row.description().isBlank()?row.category():row.description()):row.payee();totals.merge(row.category()+" - "+detail,defaultZero(row.amount()),BigDecimal::add);}return totals;}
@@ -998,30 +1002,33 @@ public final class ServerBalanceSheetService {
         List<EditableExpense> afterExpenses=editableExpenses(conn,locked);
         List<EditableOtherIncome> afterIncome=editableIncome(conn,locked);
         List<SheetLine> income = replaceOtherCash(beforeSheet.income(),totalOtherIncome(afterIncome));
+        List<SheetLine> drawerCash = includeOtherCashInDrawerCash(beforeSheet.drawerCash(), income);
         List<SheetLine> expenses = replaceManualExpenseLines(beforeSheet.expenses(),beforeExpenses,afterExpenses,"PAID","No expenses");
         List<SheetLine> payables = replaceManualExpenseLines(beforeSheet.payables(),beforeExpenses,afterExpenses,"UNPAID","No payables");
         BigDecimal totalIncome = total(income), totalExpenses = total(expenses), totalPayables = total(payables);
-        BigDecimal cf = beforeSheet.balanceBf().add(totalIncome).subtract(totalExpenses).subtract(totalPayables);
+        BigDecimal cf = beforeSheet.balanceBf().add(totalIncome).add(total(beforeSheet.accountPayments()))
+                .subtract(totalExpenses).subtract(totalPayables);
         int nextRevision = locked.revisionNo() + 1;
         String notes = blankToNull(request.notes());
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE balance_sheet_submissions SET income_lines=?, expense_lines=?, payable_lines=?,
-                  total_income=?, total_expenses=?, total_payables=?, balance_cf=?, notes=?, revision_no=?,
+                  drawer_cash_lines=?, cash_in_hand=?, total_income=?, total_expenses=?, total_payables=?, balance_cf=?, notes=?, revision_no=?,
                   last_edited_at=CURRENT_TIMESTAMP, last_edited_by_user_id=?, last_edited_by_name=?
                 WHERE balance_sheet_submission_id=? AND revision_no=?
                 """)) {
             ps.setString(1, encodeLines(income)); ps.setString(2, encodeLines(expenses)); ps.setString(3, encodeLines(payables));
-            ps.setBigDecimal(4, totalIncome); ps.setBigDecimal(5, totalExpenses); ps.setBigDecimal(6, totalPayables);
-            ps.setBigDecimal(7, cf); ps.setString(8, notes); ps.setInt(9, nextRevision);
-            setNullableInteger(ps, 10, ServerRequestIdentity.userId()); ps.setString(11, ServerRequestIdentity.userName());
-            ps.setLong(12, request.submissionId()); ps.setInt(13, locked.revisionNo());
+            ps.setString(4, encodeLines(drawerCash)); ps.setBigDecimal(5, total(drawerCash));
+            ps.setBigDecimal(6, totalIncome); ps.setBigDecimal(7, totalExpenses); ps.setBigDecimal(8, totalPayables);
+            ps.setBigDecimal(9, cf); ps.setString(10, notes); ps.setInt(11, nextRevision);
+            setNullableInteger(ps, 12, ServerRequestIdentity.userId()); ps.setString(13, ServerRequestIdentity.userName());
+            ps.setLong(14, request.submissionId()); ps.setInt(15, locked.revisionNo());
             if (ps.executeUpdate() != 1) throw new SQLException("This Balance Sheet was changed by another user. Reopen it before saving.");
         }
         BalanceSheet afterSheet = new BalanceSheet(beforeSheet.submissionId(), beforeSheet.periodStart(), beforeSheet.periodEnd(),
                 beforeSheet.submittedAt(), beforeSheet.submittedByName(), notes, income, beforeSheet.receivables(), expenses,
-                payables, beforeSheet.drawerCash(), beforeSheet.deviceSales(), beforeSheet.deviceOrders(), beforeSheet.devicePayments(),
+                payables, drawerCash, beforeSheet.deviceSales(), beforeSheet.deviceOrders(), beforeSheet.devicePayments(),
                 beforeSheet.accountPayments(), beforeSheet.bankTransactions(), beforeSheet.pendingCheques(), beforeSheet.drawerChecks(),
-                beforeSheet.cashInHand(), beforeSheet.balanceBf(), totalIncome, beforeSheet.totalReceivables(), totalExpenses,
+                total(drawerCash), beforeSheet.balanceBf(), totalIncome, beforeSheet.totalReceivables(), totalExpenses,
                 totalPayables, cf);
         AuditSnapshot before = new AuditSnapshot(beforeSheet, beforeExpenses, beforeIncome);
         AuditSnapshot after = new AuditSnapshot(afterSheet, afterExpenses, afterIncome);

@@ -399,7 +399,7 @@ public class BalanceDraw extends JFrame {
             String printError=null;
             try {
                 CashDrawerCloseReceiptPrinter.print(result.session(),closingCih,closingFloat,closingBreakdown,
-                        result.handlers(),
+                        result.handlers(),result.returnedAmount(),
                         HardwareSettingsManager.getDefaultReceiptPrinter());
             } catch (Exception ex) {
                 printError=ex.getMessage();

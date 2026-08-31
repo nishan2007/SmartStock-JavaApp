@@ -1,0 +1,10 @@
+SmartStock 1.0.125
+
+- Prevents false database startup errors when PostgreSQL is already running.
+- Makes desktop and server update rollback validation fail-safe and preserves the previous rollback until its replacement is complete.
+- Stops the desktop, Java service, and Scheduler tunnel in a deterministic order and restores the service after an updater failure.
+- Preserves the signed-in service identity when an elevated updater repairs the scheduled task.
+- Detects rejected Windows administrator approval without closing the running application.
+- Preserves fresh concurrent update staging directories and removes only stages older than 24 hours.
+- Stages and validates the complete Windows server payload before swapping it into service.
+- Deletes obsolete installed JARs only after the full Windows installer payload succeeds.

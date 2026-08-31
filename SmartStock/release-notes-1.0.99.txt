@@ -1,0 +1,5 @@
+SmartStock 1.0.99
+
+- Fixes direct Ethernet ESC/POS receipt printing when no Windows receipt-printer queue is installed or selected.
+- Allows Test Receipt, Test Cutter, and Test Drawer to use the configured network printer directly at its saved host and port.
+- Requires a Windows receipt queue only as a fallback when native Ethernet printing is disabled.

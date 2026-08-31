@@ -1,0 +1,9 @@
+SmartStock 1.0.120
+
+- Replicates the SmartStock Employee Schedule layout in the Scheduler web app.
+- Adds Weekly and Semi-monthly views with the same period navigation rules as the desktop scheduler.
+- Adds Detailed and Compact assignment layouts for large browser screens.
+- Adds a separate touch-first phone presentation with safe-area support and persistent schedule actions.
+- Automatically selects the appropriate phone or browser presentation and provides a manual Browser/Phone switch.
+- Keeps assignments, shifts, lunches, holidays, clearing, and Auto Schedule on the same authoritative store-server API.
+- Refreshes the Scheduler PWA cache so installed phones receive the updated interface.

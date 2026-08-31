@@ -1,0 +1,9 @@
+SmartStock 1.0.104
+
+- Adds independent Company Preferences switches for rounding final sale totals and custom-order line prices to the nearest $20.
+- Keeps discounts and VAT calculations unchanged and applies sales rounding only to the final amount payable.
+- Enforces both rounding preferences on the authenticated store server, including quotation-to-custom-order conversion.
+- Adds a View Inventory price-review popup that finds catalog prices that are not multiples of $20, proposes corrected prices, and allows selected updates.
+- Protects bulk price updates with Edit Item permission checks, confirmation, stale-price detection, idempotency, audit records, and synchronization events.
+- Includes the current payroll, badge printing, Ethernet receipt printing, mobile item, employee administration, and workstation reliability improvements in this workspace.
+- Full Maven tests, repository security checks, and git diff validation passed before Windows packaging.

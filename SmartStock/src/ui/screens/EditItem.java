@@ -253,8 +253,10 @@ public class EditItem extends JFrame {
         JScrollPane barcodeScroll = createTextAreaScroll(barcodesArea, 112);
         addField(fields, 0, 0, "Additional barcodes", BarcodeGenerationHelper.area(this, barcodesArea, barcodeScroll),
                 "Optional. Enter one per line, or generate another barcode.", false, 1);
-        addField(fields, 1, 0, "Product image", imageSelector, "A clear product image is required.", true, 1);
-        return createSectionCard("4", "Barcodes and image", "Maintain the required product image and any additional barcodes.", DeckersPalette.PURPLE, fields);
+        addField(fields, 1, 0, "Product image", imageSelector,
+                "Required for inventory and non-inventory items; optional for services.", false, 1);
+        return createSectionCard("4", "Barcodes and image",
+                "Maintain the image when required and any additional barcodes.", DeckersPalette.PURPLE, fields);
     }
 
     private JPanel createFieldGrid() {
@@ -660,7 +662,7 @@ public class EditItem extends JFrame {
             showValidationError("Select or enter the sales shelf location.", itemDetailsSelector.shelfComponent());
             return;
         }
-        if (imageSelector.getImageUrl().isBlank()) {
+        if (!"SERVICE".equals(productType) && imageSelector.getImageUrl().isBlank()) {
             showValidationError("Choose a product image or enter an image URL.", imageSelector);
             return;
         }

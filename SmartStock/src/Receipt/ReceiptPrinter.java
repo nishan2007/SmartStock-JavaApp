@@ -45,7 +45,8 @@ public class ReceiptPrinter {
             EpsonReceiptPrintService.PrintResult result = EpsonReceiptPrintService.print(receipt, printer, openDrawer, reprint);
             if (!result.successful()) {
                 try {
-                    if (HardwareSettingsManager.getEpsonSettings().printDialogFallback()) {
+                    if (!NativeEscPosTransport.isEnabled()
+                            && HardwareSettingsManager.getEpsonSettings().printDialogFallback()) {
                         printWithSystemDialog(receipt, reprint);
                         return EpsonReceiptPrintService.PrintResult.queued("Selected in system print dialog");
                     }
@@ -68,12 +69,20 @@ public class ReceiptPrinter {
     public static void printToPosPrinter(ReceiptData receipt, HardwareSettingsManager.PosPrinter printer,
                                          HardwareSettingsManager.PrintFormat printFormat,
                                          boolean reprint) throws PrintException {
+        HardwareSettingsManager.PrintFormat resolvedFormat = printFormat == null
+                ? (printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat()) : printFormat;
+        if (resolvedFormat == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+            CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
+            byte[] bytes = EpsonReceiptPrintService.composeJob(ReceiptFormatter.formatEscPos(receipt, settings, reprint),
+                    loadEpsonSettings(), false);
+            if (NativeEscPosTransport.sendIfEnabled(bytes) != null) return;
+        }
         if (printer == null) {
             PrintService service = PrintServiceLookup.lookupDefaultPrintService();
             if (service == null) {
                 throw new PrintException("No default printer is configured.");
             }
-            printToService(receipt, service, printFormat, reprint);
+            printToService(receipt, service, resolvedFormat, reprint);
             return;
         }
 
@@ -82,7 +91,7 @@ public class ReceiptPrinter {
             throw new PrintException("Configured printer was not found: " + printer.systemName());
         }
 
-        printToService(receipt, service, printFormat == null ? printer.printFormat() : printFormat, reprint);
+        printToService(receipt, service, resolvedFormat, reprint);
     }
 
     private static void printToService(ReceiptData receipt, PrintService service, HardwareSettingsManager.PrintFormat printFormat) throws PrintException {

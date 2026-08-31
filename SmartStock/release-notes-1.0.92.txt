@@ -1,0 +1,5 @@
+SmartStock 1.0.92
+
+- Replaces the non-responsive Welcome-screen register configuration action with a dedicated connection dialog.
+- Fixes Continue to Register Setup after switching environments by routing it through the same reliable workflow.
+- Saves Client mode, SmartStock server host, HTTPS port, and store location together, then confirms success before pairing.

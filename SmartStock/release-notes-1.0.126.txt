@@ -1,0 +1,15 @@
+SmartStock 1.0.126
+
+- Adds a Use Last Saved Details button to the Add Item web app for quickly restoring the previous department, item type, brand, and sales shelf.
+- Adds optional customer photos and business logos to customer account profiles.
+- Stores customer photos in the protected OneDrive-backed customer-photos folder with a local image cache.
+- Adds customer photo and expiry information to landscape customer-card output and template positioning.
+- Defaults newly issued customer cards to a two-year expiry while allowing the expiry date to be changed before printing or PDF export.
+- Adds a Renew Card action and preserves the saved expiry date for later reprints.
+- Prevents expired customer cards from being used for account-credit purchases without blocking other payment methods, returns, payments, or account access.
+- Adds the Government customer type and branded customer-card template while preserving existing customized templates.
+- Includes the ordered database upgrade for customer photo references, card issue dates, expiry dates, and Government template mapping.
+- Allows scheduler web sign-in with either a SmartStock username or email address.
+- Adds server-enforced, read-only employee self-service schedule viewing.
+- Shows the scheduler link and QR code on authorized registers while keeping start and stop controls server-only.
+- Adds an employee picker before Auto Schedule, selecting all non-administrator employees by default.

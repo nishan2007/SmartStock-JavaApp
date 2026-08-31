@@ -1,0 +1,6 @@
+SmartStock 1.0.111
+
+- Includes customer-account payments in the Balance C/F calculation.
+- Keeps customer payments separate from new Income so receivable collections are not misclassified or double-counted.
+- Preserves customer payments when editing and recalculating saved balance-sheet submissions.
+- Includes the customer open-balance fix and all preceding checkout, catalog, rounding, and item-workflow improvements.

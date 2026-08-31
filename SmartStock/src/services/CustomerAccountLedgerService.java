@@ -115,6 +115,9 @@ public final class CustomerAccountLedgerService {
     }
 
     private static BigDecimal calculateCustomerBalance(Connection conn, int customerId) throws SQLException {
+        String remoteDelta = columnExists(conn, "sync_cross_store_customer_history_cache", "credit_applied_amount")
+                ? remoteBalanceDeltaSql()
+                : legacyRemoteBalanceDeltaSql();
         String sql = """
                 SELECT GREATEST(COALESCE(SUM(balance_delta),0),0) AS balance FROM (
                   SELECT %s AS balance_delta FROM customer_account_transactions WHERE customer_id=?
@@ -122,7 +125,7 @@ public final class CustomerAccountLedgerService {
                   SELECT %s AS balance_delta FROM sync_cross_store_customer_history_cache
                   WHERE customer_id=? AND event_key LIKE 'LEDGER:%%'
                 ) all_store_ledger
-                """.formatted(BALANCE_DELTA_CASE,remoteBalanceDeltaSql());
+                """.formatted(BALANCE_DELTA_CASE, remoteDelta);
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, customerId);
             ps.setInt(2, customerId);
@@ -140,6 +143,17 @@ public final class CustomerAccountLedgerService {
             CASE
               WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'')='PAYMENT' THEN -ABS(COALESCE(credit_applied_amount,amount,0))
+              WHEN COALESCE(event_type,'') IN ('RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
+              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE','CUSTOM_ORDER_PAYMENT') THEN 0
+              WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)
+              ELSE COALESCE(amount,0)
+            END
+            """;}
+
+    static String legacyRemoteBalanceDeltaSql(){return """
+            CASE
+              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
+              WHEN COALESCE(event_type,'')='PAYMENT' THEN -ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'') IN ('RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE','CUSTOM_ORDER_PAYMENT') THEN 0
               WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)

@@ -1,0 +1,6 @@
+SmartStock 1.0.96
+
+- Restores existing Item Type, Brand, and Sales Shelf suggestions in the Add Item web app while retaining free-text creation.
+- Refreshes newly created lookup values immediately for Save & New without reloading the full catalog.
+- Speeds returning web sessions with safe lookup caching and background refresh.
+- Avoids recompressing mobile JPEG uploads that are already within SmartStock's validated image limits.

@@ -433,6 +433,13 @@ public final class InitialSetupWizard extends JFrame {
 
     private void openModeSetup() {
         if (selectedMode == null) return;
+        if (selectedMode == DatabaseMode.CLIENT) {
+            if (RegisterConnectionSetup.open(this)) {
+                if (owner instanceof WelcomeFrame welcome) welcome.refreshAfterSetup();
+                dispose();
+            }
+            return;
+        }
         JFrame setup = selectedMode == DatabaseMode.SERVER
                 ? new ServerSetupWizard(owner == null ? this : owner)
                 : new DatabaseSetup(owner == null ? this : owner, selectedMode);

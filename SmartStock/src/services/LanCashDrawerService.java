@@ -36,7 +36,8 @@ final class LanCashDrawerService {
     static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
         CashDrawerSession result=CashDrawerService.closeSession(c,id,count,text(body,"notes"),userId,userName);
-        return map("session",result,"handlers",CashDrawerService.listCashHandlers(c,id));
+        return map("session",result,"handlers",CashDrawerService.listCashHandlers(c,id),
+                "returnedAmount",CashDrawerService.calculateReturnedCash(c,id));
     }
     static Map<String,Object> recent(Connection c,int userId,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");return map("sessions",CashDrawerService.listRecentSessions(c,locationId,null,false));

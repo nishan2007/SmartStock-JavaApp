@@ -1,0 +1,4 @@
+SmartStock 1.0.101
+
+- Repairs missing effective pay-rate baseline rows for employees created before payroll settings were initialized.
+- The repair is idempotent, preserves all existing payroll history, and runs automatically during store-server startup.

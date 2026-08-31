@@ -1,0 +1,9 @@
+SmartStock 1.0.102
+
+- Fixes employee badge Position and Badge ID text printing as missing characters or rectangles through Bodno/Magicard Windows printer drivers.
+- Sends physical badge pages as opaque RGB images and falls back to a safe system font when a configured font cannot render the badge text.
+
+- Adds Save and Print to the Mobile Item Web App for newly created inventory products, custom items, and custom variants.
+- Reloads the saved item before printing so generated identifiers and final prices appear on the tag.
+- Prints one tag with the location's Standard price-tag template through the configured Ethernet receipt printer, with the Windows receipt queue retained as fallback.
+- Clearly reports when the item saved successfully but printing failed, without attempting to create the item again.

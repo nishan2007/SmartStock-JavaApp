@@ -27,14 +27,17 @@ class LanCatalogProductTypeFilterTest {
     }
 
     @Test
-    void appliesTheProductTypePredicateBeforeTheCatalogLimit() throws Exception {
+    void appliesTheProductTypePredicateBeforeTheOptionalCatalogLimit() throws Exception {
         String source = Files.readString(Path.of("src/services/LanApiServer.java"));
         int searchMethod = source.indexOf("private ApiResult searchCatalog");
         int filter = source.indexOf("UPPER(COALESCE(p.product_type", searchMethod);
-        int limit = source.indexOf("LIMIT 250", searchMethod);
+        int order = source.indexOf("ORDER BY %s", filter);
+        int optionalLimitPlaceholder = source.indexOf("%s", order);
 
         assertTrue(searchMethod >= 0);
         assertTrue(filter > searchMethod);
-        assertTrue(limit > filter);
+        assertTrue(order > filter);
+        assertTrue(optionalLimitPlaceholder > order);
+        assertTrue(source.contains("searchText.isBlank() ? \"\" : \"LIMIT 250\""));
     }
 }

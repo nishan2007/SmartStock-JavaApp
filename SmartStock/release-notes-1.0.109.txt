@@ -1,0 +1,6 @@
+SmartStock 1.0.109
+
+- Fixes customer-account payments failing while loading open customer balances on partially upgraded servers.
+- Adds backward-compatible balance reading for older cross-store cache schemas.
+- Detects and repairs partially completed customer-credit schema upgrades during normal server startup.
+- Includes usage-sorted Service Quick Picks and all preceding checkout, catalog, rounding, and item-workflow fixes.

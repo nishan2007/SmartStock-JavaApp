@@ -73,7 +73,17 @@ class AppUpdateServiceTest {
     void windowsUpdaterTargetsInstalledServerTask() throws Exception {
         String source = Files.readString(Path.of("src/services/AppUpdateService.java"));
         assertTrue(source.contains("sync.service.task.name\", \"SmartStockServerService"));
+        assertTrue(source.contains("sync.service.user\", windowsServiceUser()"));
         assertTrue(!source.contains("sync.service.task.name\", \"SmartStockBackgroundSync"));
+    }
+
+    @Test
+    void windowsInstallerDeletesOldJarsOnlyAfterPayloadInstallation() throws Exception {
+        String source = Files.readString(Path.of("tools/package-windows-release.ps1"));
+
+        assertTrue(!source.contains("[InstallDelete]"));
+        assertTrue(source.contains("if CurStep = ssPostInstall then"));
+        assertTrue(source.contains("CompareText(FindRec.Name, '$($Jar.Name)')"));
     }
 
     @Test
@@ -83,10 +93,12 @@ class AppUpdateServiceTest {
                 Path.of("C:\\Users\\Test User\\stage's\\updater.jar"),
                 Path.of("C:\\Users\\Test User\\stage's\\update.properties"));
 
-        assertEquals("powershell.exe", command.get(0));
+        assertTrue(command.get(0).endsWith("WindowsPowerShell\\v1.0\\powershell.exe"));
         String script = command.get(command.size() - 1);
         assertTrue(script.contains("-Verb RunAs"));
         assertTrue(script.contains("-WindowStyle Hidden"));
+        assertTrue(script.contains("-Wait -PassThru"));
+        assertTrue(script.contains("exit $p.ExitCode"));
         assertTrue(script.contains("stage''s\\updater.jar"));
         assertTrue(script.contains("stage''s\\update.properties"));
     }
@@ -98,6 +110,8 @@ class AppUpdateServiceTest {
         Files.createDirectories(staged);
         Files.createDirectories(rollback);
         Files.writeString(staged.resolve("release.zip"), "old");
+        Files.setLastModifiedTime(staged, java.nio.file.attribute.FileTime.from(
+                java.time.Instant.now().minus(java.time.Duration.ofHours(25))));
         Files.writeString(tempDir.resolve("updater.log"), "keep");
 
         AppUpdateService.cleanupStaleStagingDirectories(tempDir);
@@ -105,6 +119,16 @@ class AppUpdateServiceTest {
         assertTrue(Files.notExists(staged));
         assertTrue(Files.isDirectory(rollback));
         assertTrue(Files.isRegularFile(tempDir.resolve("updater.log")));
+    }
+
+    @Test
+    void preservesFreshUpdateStages(@TempDir Path tempDir) throws Exception {
+        Path staged = tempDir.resolve("staged-1.0.2-active");
+        Files.createDirectories(staged);
+
+        AppUpdateService.cleanupStaleStagingDirectories(tempDir);
+
+        assertTrue(Files.isDirectory(staged));
     }
 
     @Test

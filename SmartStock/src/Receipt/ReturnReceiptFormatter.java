@@ -17,17 +17,26 @@ public final class ReturnReceiptFormatter {
     private ReturnReceiptFormatter() { }
 
     public static String formatText(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings) {
-        return format(receipt, settings, RECEIPT_WIDTH);
+        return format(receipt, settings, RECEIPT_WIDTH, false);
+    }
+
+    public static String formatText(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings, boolean reprint) {
+        return format(receipt, settings, RECEIPT_WIDTH, reprint);
     }
 
     public static String formatLetterText(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings) {
-        return format(receipt, settings, LETTER_WIDTH);
+        return format(receipt, settings, LETTER_WIDTH, false);
     }
 
-    private static String format(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings, int width) {
+    public static String formatLetterText(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings, boolean reprint) {
+        return format(receipt, settings, LETTER_WIDTH, reprint);
+    }
+
+    private static String format(ReturnReceiptData receipt, CompanyCustomizationManager.ReceiptSettings settings, int width, boolean reprint) {
         StringBuilder out = new StringBuilder();
         center(out, settings.companyName(), width);
         center(out, "RETURN RECEIPT", width);
+        if (reprint) center(out, "DUPLICATE / REPRINT", width);
         if (!settings.headerLine().isBlank()) center(out, settings.headerLine(), width);
         rule(out, width);
         pair(out, "Return Receipt", receipt.returnReceiptNumber(), width);
@@ -54,7 +63,7 @@ public final class ReturnReceiptFormatter {
 
     private static String money(BigDecimal value) { return CURRENCY.format(value == null ? BigDecimal.ZERO : value); }
     private static void rule(StringBuilder out, int width) { out.append("-".repeat(width)).append('\n'); }
-    private static void center(StringBuilder out, String value, int width) { String text=trim(value,width); out.append(" ".repeat(Math.max((width-text.length())/2,0))).append(text).append('\n'); }
+    private static void center(StringBuilder out, String value, int width) { for(String line:(value==null?"":value).replace("\r\n","\n").replace('\r','\n').split("\n",-1)){String text=trim(line,width);out.append(" ".repeat(Math.max((width-text.length())/2,0))).append(text).append('\n');} }
     private static void pair(StringBuilder out,String label,String value,int width){label=label==null?"":label;value=value==null?"":value;int spaces=width-label.length()-value.length();if(spaces<1)out.append(trim(label,Math.max(width-value.length()-1,1))).append(' ').append(trim(value,width-1)).append('\n');else out.append(label).append(" ".repeat(spaces)).append(value).append('\n');}
     private static String trim(String value,int width){String text=value==null?"":value;return text.length()<=width?text:text.substring(0,Math.max(width,0));}
 }
