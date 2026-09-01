@@ -26,4 +26,21 @@ class LogoutNfcLifecycleTest {
         assertTrue(login.contains("windowClosed(WindowEvent event) { stopNfcMonitor(); }"));
         assertTrue(login.contains("monitor.interrupt();"));
     }
+
+    @Test
+    void logoutCentersLoginInsteadOfReusingTheFullScreenWindowsTopLeft() throws Exception {
+        String navigation = Files.readString(SOURCE.resolve("managers/NavigationManager.java"));
+        int logout = navigation.indexOf("void logoutToLogin");
+        int nextMethod = navigation.indexOf("void returnToWelcomeFromLogin", logout);
+        String flow = navigation.substring(logout, nextMethod);
+
+        assertTrue(flow.contains("login.setLocationRelativeTo(null);"));
+        assertTrue(!flow.contains("login.setLocation(loginLocation)"));
+    }
+
+    @Test
+    void logoutDoesNotBlockLoginOnCloudSessionFileCleanup() throws Exception {
+        String logout = Files.readString(SOURCE.resolve("managers/SessionLogoutManager.java"));
+        assertTrue(logout.contains("SupabaseSessionManager.clearPersistedSessionAsync();"));
+    }
 }

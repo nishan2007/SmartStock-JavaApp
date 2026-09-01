@@ -460,8 +460,6 @@ public final class NavigationManager {
             activeMainMenu = null;
         }
 
-        Point loginLocation = currentScreen == null || !currentScreen.isShowing()
-                ? null : currentScreen.getLocationOnScreen();
         if (currentScreen != null) {
             UiTaskRunner.cancelAll(currentScreen);
             currentScreen.dispose();
@@ -471,7 +469,7 @@ public final class NavigationManager {
         SwingUtilities.invokeLater(() -> {
             try {
                 Login login = new Login();
-                if (loginLocation != null) login.setLocation(loginLocation);
+                login.setLocationRelativeTo(null);
                 login.toFront();
                 login.requestFocus();
             } finally {

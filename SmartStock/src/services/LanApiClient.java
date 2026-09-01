@@ -177,6 +177,9 @@ public final class LanApiClient {
 
     public static ServiceHealth checkHealth() throws Exception {
         Probe probe = probeUntrusted(baseUri());
+        if (!probe.localSchemaReady()) {
+            throw new IllegalStateException("The SmartStock database schema is not ready.");
+        }
         return new ServiceHealth(true, probe.certificateFingerprint(), probe.companyName());
     }
 
@@ -283,6 +286,15 @@ public final class LanApiClient {
                 ? response.get("locationId").getAsInt() : null);
     }
 
+    /** Keeps descriptive workstation details current without delaying readiness. */
+    public static void syncDeviceMetadataWithoutWaiting() {
+        if (!isPaired()) return;
+        UiTaskRunner.supplyAsync(() -> {
+            try { syncDeviceMetadata(); } catch (Exception ignored) { }
+            return null;
+        });
+    }
+
     private static void addDeviceMetadata(JsonObject request, DeviceInfo device) {
         request.addProperty("deviceName",device.getDeviceName());
         request.addProperty("hostname",device.getHostname());
@@ -350,6 +362,11 @@ public final class LanApiClient {
      */
     public static LoginResult loginWithCredentials(String identifier, char[] secret, int locationId) throws Exception {
         return loginOffline(identifier, secret, locationId);
+    }
+
+    public static LoginResult loginWithWallet(String credential,char[] pin,int locationId,String method)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("walletCredential",credential);request.addProperty("pin",new String(pin));request.addProperty("locationId",locationId);request.addProperty("presentationMethod",method);
+        try{return saveSession(post("/v1/sessions/wallet-login",request,true,false));}finally{java.util.Arrays.fill(pin,'\0');}
     }
 
     public static List<RemoteStore> loadRemoteStores() throws Exception {
@@ -426,7 +443,7 @@ public final class LanApiClient {
     public static void clearEmployeeSession() {
         SecureCredentialStore.delete(API_SESSION_SECRET);
         cachedEmployeeSession = null;
-        resetTransport(false, false);
+        SessionDataCache.clear();
     }
 
     public static ApprovalResult requestManagerApproval(String managerIdentifier, char[] password,
@@ -552,6 +569,11 @@ public final class LanApiClient {
 
     public static InventoryResult loadInventory(InventoryRequest request)throws Exception{
         return GSON.fromJson(post("/v1/inventory/list",GSON.toJsonTree(request).getAsJsonObject(),true,true),InventoryResult.class);
+    }
+
+    public static void updateInventoryCell(InventoryCellUpdate request,String idempotencyKey)throws Exception{
+        post("/v1/products/inline-update",GSON.toJsonTree(request).getAsJsonObject(),true,true,
+                Map.of("Idempotency-Key",idempotencyKey));
     }
 
     public static CrossStoreInventoryResult loadCrossStoreInventory(String query,Integer locationId)throws Exception{
@@ -892,6 +914,7 @@ public final class LanApiClient {
     public static void markPayrollPaid(managers.TimeClockManager.PayrollSummary summary,String method,String reference,String key)throws Exception{JsonObject r=new JsonObject();r.add("summary",GSON.toJsonTree(summary));r.addProperty("paymentMethod",method);if(reference!=null)r.addProperty("paymentReference",reference);post("/v1/payroll/pay",r,true,true,Map.of("Idempotency-Key",key));}
     public static BadgePrintService.EmployeeBadgeData loadEmployeeBadgeData(int userId)throws Exception{JsonObject r=new JsonObject();r.addProperty("userId",userId);return GSON.fromJson(post("/v1/employees/badge-data",r,true,true).get("employee"),BadgePrintService.EmployeeBadgeData.class);}
     public static void incrementEmployeeBadgePrintCount(int userId,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("userId",userId);post("/v1/employees/badge-printed",r,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject employeeWallet(String action,int userId)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("userId",userId);return post("/v1/employees/wallet",r,true,true);}
     public static LanEmployeeAdminService.State loadEmployeeAdminState(Integer userId)throws Exception{JsonObject r=new JsonObject();if(userId!=null)r.addProperty("userId",userId);return GSON.fromJson(post("/v1/employees/admin/state",r,true,true).get("state"),LanEmployeeAdminService.State.class);}
     public static JsonObject updateEmployeeAdmin(String action,Integer userId,LanEmployeeAdminService.SaveRequest employee,List<Integer>locations,String token,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(userId!=null)r.addProperty("userId",userId);if(employee!=null)r.add("employee",GSON.toJsonTree(employee));if(locations!=null)r.add("locationIds",GSON.toJsonTree(locations));if(token!=null)r.addProperty("supabaseAccessToken",token);return post("/v1/employees/admin/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject quotationRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/read",r,true,true);}
@@ -1053,7 +1076,7 @@ public final class LanApiClient {
         } finally {
             SecureCredentialStore.delete(API_SESSION_SECRET);
             cachedEmployeeSession = null;
-            resetTransport(false, false);
+            SessionDataCache.clear();
         }
     }
 
@@ -1081,7 +1104,7 @@ public final class LanApiClient {
         } finally {
             SecureCredentialStore.delete(API_SESSION_SECRET);
             cachedEmployeeSession = null;
-            resetTransport(false, false);
+            SessionDataCache.clear();
         }
         HttpClient capturedClient = client;
         HttpRequest capturedRequest = request;
@@ -1171,7 +1194,8 @@ public final class LanApiClient {
                 ? data.get("locationId").getAsInt() : null;
         return new Probe(advertised, optionalString(data, "pairingProof"),
                 optionalString(data, "previousPairingProof"), locationId,
-                optionalString(data, "companyName"));
+                optionalString(data, "companyName"),
+                data.has("localSchemaReady") && data.get("localSchemaReady").getAsBoolean());
     }
 
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth) throws Exception {
@@ -1393,7 +1417,7 @@ public final class LanApiClient {
         if (persistent) SecureCredentialStore.write(API_SESSION_SECRET, session);
         else SecureCredentialStore.delete(API_SESSION_SECRET);
         cachedEmployeeSession = session;
-        resetTransport(false, false);
+        SessionDataCache.clear();
     }
 
     private static HttpClient clientForTrustManager(X509TrustManager trustManager) throws Exception {
@@ -1441,7 +1465,8 @@ public final class LanApiClient {
     }
 
     private record Probe(String certificateFingerprint, String pairingProof,
-                         String previousPairingProof, Integer locationId, String companyName) { }
+                         String previousPairingProof, Integer locationId, String companyName,
+                         boolean localSchemaReady) { }
     public record PairingResult(String status, boolean employeeActionRequired) { }
     public record DiscoveredServer(String service, String host, int port,
                                    String environment, Integer locationId, String storeName, String storeCode,
@@ -1553,13 +1578,15 @@ public final class LanApiClient {
     public record InventoryLookups(List<NamedId> departments,List<NamedId> vendors,List<String> itemTypes,
                                    List<String> brands,List<String> shelves) { }
     public record NamedId(int id,String name) { }
-    public record LookupItem(String itemType,int itemId,String name,String description,String code,int quantityOnHand) { }
+    public record LookupItem(String itemType,int itemId,String name,String description,String code,int quantityOnHand,
+                             String itemTypeName,String brandName,BigDecimal price,String imageUrl) { }
     public record ReceivingBarcodeRequest(String itemType,int itemId,String barcode) { }
     public record ReceivingBarcodeResult(String itemType,int itemId,String barcode,String destination) { }
-    public record InventoryRequest(String search,String stockFilter,String department,String itemType,String brand,
+    public record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,
                                    String shelf,String storageShelf) { }
     public record InventoryResult(List<InventoryProduct> products,int totalProducts,int totalUnits,
                                   boolean canViewVendor,boolean canViewCostPrice,boolean canViewCreatedBy) { }
+    public record InventoryCellUpdate(int productId,String field,String value,String expectedValue) { }
     public record InventoryProduct(int productId,String sku,String name,String size,String description,String productType,
                                    String department,String itemType,String brand,String shelf,String storageShelf,
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,

@@ -1,0 +1,7 @@
+SmartStock 1.0.130
+
+- Adds an Apple Wallet template editor in Company Preferences with a default employee badge, selectable employee information, custom text, colors, branding import, image sizing, and an approximate preview.
+- Keeps Wallet templates separate from printed badges, with server-enforced permissions and store-scoped enrollment templates. Changes apply to newly issued badges.
+- Adds an explicit enrollment confirmation page, HTTPS address validation, and safer public error messages.
+- Adds pass-signature, tampering, template validation and persistence tests.
+- Apple-issued signing certificates and live iPhone/scanner verification are still required. Apple Wallet NFC remains disabled pending certified provider and hardware integration.

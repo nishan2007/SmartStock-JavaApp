@@ -1,0 +1,10 @@
+SmartStock 1.0.133
+
+- Prioritizes the configured Ethernet receipt printer even when a letter-size Windows printer is the system default; USB receipt printers configured as default continue to work normally.
+- Focuses Make a Sale search automatically when the screen opens and after each completed sale.
+- Centers the login screen after logout and reduces repeat-login delays while improving the initial local database readiness check.
+- Adds item type, brand, price, and image hover previews to item searches in Edit Item and Receive Inventory.
+- Adds Inventory Overview product-type filters for showing or hiding inventory, service, and non-inventory items.
+- Adds Enter-to-edit and Enter-to-save editing in Inventory Overview, with server-enforced Edit Item permission and additional Manual Adjustment permission for quantity changes.
+- Includes checkout response and drawer timing improvements plus Wallet employee badge enhancements.
+- Physical receipt printer, cash drawer, installed-app upgrade, and live database verification remain required after updating.

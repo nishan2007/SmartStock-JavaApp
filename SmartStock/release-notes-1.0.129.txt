@@ -1,0 +1,6 @@
+SmartStock 1.0.129
+
+- Adds Apple Wallet employee badges with secure, one-time enrollment links and QR-code login at registers.
+- Adds independent Wallet badge enrollment, replacement, and immediate revocation from Employee Management.
+- Applies the existing company badge-PIN policy to Wallet login and synchronizes revocable Wallet credentials across assigned stores.
+- Adds the protected configuration and provider boundary for a later Apple-certified VAS NFC reader rollout. Apple Wallet NFC remains disabled until certified reader hardware and a provider adapter are configured and validated.

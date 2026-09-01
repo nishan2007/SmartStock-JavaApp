@@ -66,6 +66,7 @@ public final class CloudRowMirrorService {
                     + " OR EXISTS (SELECT 1 FROM change_basket_updates c WHERE c.device_id=t.device_id AND c.location_id=?))"),
             Map.entry("email_outbox_events", "EXISTS (SELECT 1 FROM email_outbox p WHERE p.email_outbox_id=t.email_outbox_id AND p.location_id=?)"),
             Map.entry("employee_time_clock_adjustments", "EXISTS (SELECT 1 FROM employee_time_clock p WHERE p.clock_id=t.clock_id AND p.location_id=?)"),
+            Map.entry("employee_wallet_credentials", "EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id=t.user_id AND ul.location_id=?)"),
             Map.entry("held_cart_items", "EXISTS (SELECT 1 FROM held_carts p WHERE p.held_cart_id=t.held_cart_id AND p.location_id=?)"),
             Map.entry("invoice_audit_log", invoicePredicate()),
             Map.entry("invoice_delivery_lines", invoicePredicate()),

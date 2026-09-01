@@ -39,4 +39,17 @@ class MakeASaleItemSearchResetTest {
         assertTrue(source.contains("addSelectedSearchResultToCart();"));
         assertTrue(source.contains("productSearchSelectionNavigated = false;"));
     }
+
+    @Test void searchReceivesFocusWhenScreenOpensAndAfterSuccessfulCheckout() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
+        int build = source.indexOf("revalidate();");
+        int initialFocus = source.indexOf("focusProductSearch();", build);
+        int checkoutSuccess = source.indexOf("cartModel.setRowCount(0);");
+        int checkoutFocus = source.indexOf("focusProductSearch();", checkoutSuccess);
+
+        assertTrue(build >= 0 && initialFocus > build);
+        assertTrue(checkoutSuccess >= 0 && checkoutFocus > checkoutSuccess);
+        assertTrue(source.contains("SwingUtilities.invokeLater(() ->"));
+        assertTrue(source.contains("searchField.requestFocusInWindow();"));
+    }
 }

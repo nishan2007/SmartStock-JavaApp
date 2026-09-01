@@ -51,7 +51,9 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(14, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(16, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260831150000_wallet_template.sql"));
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }
@@ -92,5 +94,8 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(13));
+        assertEquals(
+                "database/migrations/v1_after/20260831120000_apple_wallet_badges.sql",
+                ServerSupabaseMigrationRunner.migrationResources().get(14));
     }
 }

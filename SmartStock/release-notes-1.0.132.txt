@@ -1,0 +1,7 @@
+SmartStock 1.0.132
+
+- Saves checkout timing diagnostics to the register's local .smartstock/checkout-timing.log, including server response, drawer command, receipt work, and total background checkout time.
+- Timestamps each timing entry and rotates the log with one retained backup to bound disk usage.
+- Keeps customer and payment details out of timing logs; logging failures never interrupt a sale.
+- Includes the existing drawer-before-receipt checkout improvement and previous Wallet enhancements.
+- Physical drawer response and live register timing verification remain required after updating.

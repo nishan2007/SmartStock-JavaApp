@@ -286,6 +286,58 @@ final class LanProductAdminService {
         return map("productId", request.productId(), "quantity", adjust ? request.quantity() : inventory.quantity());
     }
 
+    static Map<String,Object> inlineUpdate(Connection connection,JsonObject body,UUID deviceId,int userId,
+                                           String userName,int locationId)throws Exception{
+        requireDeviceId(deviceId);requirePermission(connection,userId,"EDIT_ITEM");
+        int productId=body.has("productId")?body.get("productId").getAsInt():0;
+        String field=clean(body.has("field")?body.get("field").getAsString():"",40);
+        String value=clean(body.has("value")?body.get("value").getAsString():"",1000);
+        String expected=body.has("expectedValue")&&!body.get("expectedValue").isJsonNull()
+                ?body.get("expectedValue").getAsString():"";
+        if(productId<=0)throw rule(400,"VALIDATION_ERROR","Select an item to edit.");
+        try(PreparedStatement lock=connection.prepareStatement("SELECT sku FROM products WHERE product_id=? FOR UPDATE")){
+            lock.setInt(1,productId);try(ResultSet rs=lock.executeQuery()){
+                if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","Item was not found.");
+                if("SMARTSTOCK-MISC".equals(rs.getString(1)))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be edited.");
+            }
+        }
+        if("QUANTITY".equals(field)){
+            requirePermission(connection,userId,"MANUAL_ADJUSTMENT");
+            InventoryState inventory=lockInventory(connection,productId,locationId);
+            int next=whole(value,"Enter a valid whole-number quantity.");
+            int prior=whole(expected,"Inventory changed. Reload before adjusting it.");
+            if(prior!=inventory.quantity())throw rule(409,"STOCK_CHANGED","Inventory changed on another register. Reload before adjusting it.");
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE inventory SET quantity_on_hand=? WHERE product_id=? AND location_id=?")){
+                ps.setInt(1,next);ps.setInt(2,productId);ps.setInt(3,locationId);ps.executeUpdate();
+            }
+            if(next!=prior)movement(connection,productId,locationId,next-prior,"MANUAL_ADJUSTMENT",
+                    "Manual adjustment from Inventory Overview",userId,userName,deviceId);
+        }else if("REORDER_LEVEL".equals(field)){
+            int next=whole(value,"Enter a valid reorder level.");if(next<0)throw rule(400,"VALIDATION_ERROR","Reorder level cannot be negative.");
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE inventory SET reorder_level=? WHERE product_id=? AND location_id=?")){
+                ps.setInt(1,next);ps.setInt(2,productId);ps.setInt(3,locationId);ps.executeUpdate();
+            }
+        }else{
+            String column=switch(field){case"NAME"->"name";case"SIZE"->"size";case"DESCRIPTION"->"description";
+                case"SKU"->"sku";case"PRODUCT_TYPE"->"product_type";case"COST_PRICE"->"cost_price";case"PRICE"->"price";
+                default->throw rule(400,"VALIDATION_ERROR","This inventory column must be edited from Edit Item.");};
+            Object bound=value;
+            if("NAME".equals(field)&&value.isBlank())throw rule(400,"VALIDATION_ERROR","Item name is required.");
+            if("PRODUCT_TYPE".equals(field)){String normalized=value.toUpperCase().replace(' ','_');
+                if(!List.of("INVENTORY","SERVICE","NON_INVENTORY").contains(normalized))throw rule(400,"VALIDATION_ERROR","Use Inventory, Service, or Non Inventory.");bound=normalized;}
+            if("COST_PRICE".equals(field)||"PRICE".equals(field)){BigDecimal money=moneyValue(value);if(money.signum()<0)throw rule(400,"VALIDATION_ERROR","Prices cannot be negative.");bound=money;}
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE products SET "+column+"=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")){
+                ps.setObject(1,bound);ps.setInt(2,productId);ps.executeUpdate();
+            }catch(SQLException ex){throw friendlyConstraint(ex);}
+        }
+        SyncOutboxService.recordEvent(connection,"PRODUCT_UPDATED",map("product_id",productId,"location_id",locationId,"user_id",userId),locationId,deviceId.toString(),userId);
+        audit(connection,"LAN_PRODUCT_INLINE_UPDATED",deviceId,userId,"product_id="+productId+"; location_id="+locationId+"; field="+field);
+        return map("productId",productId,"updated",true);
+    }
+
+    private static int whole(String value,String message)throws RuleViolation{try{return Integer.parseInt(value.trim());}catch(Exception ex){throw rule(400,"VALIDATION_ERROR",message);}}
+    private static BigDecimal moneyValue(String value)throws RuleViolation{try{return new BigDecimal(value.replace("$","").replace(",","").trim());}catch(Exception ex){throw rule(400,"VALIDATION_ERROR","Enter a valid price.");}}
+
     private record PriceRoundingRequest(List<PriceRoundingLine> lines){}
     private record PriceRoundingLine(int productId,BigDecimal expectedPrice,BigDecimal newPrice){}
 

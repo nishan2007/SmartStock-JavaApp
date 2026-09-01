@@ -470,6 +470,23 @@ Confirmed findings:
 
 ## Remaining work
 
+### 2026-08-31 workflow release 1.0.133
+
+- Packaged Windows 1.0.133 build 10133 after the complete Maven test suite, repository security check, packaging archive checks, and whitespace checks passed.
+- Updater ZIP: `SmartStock/target/release-windows/smartstock-windows-1.0.133.zip`, 53,170,444 bytes, SHA-256 `6d8fc158a4e510476ec8d5aad41f2cc510a70ce0af2e037e01d79d597b57d2d3`.
+- Local installer: `SmartStock/target/release-windows/smartstock-windows-setup-1.0.133.exe`, 65,827,908 bytes, SHA-256 `36f61cfc5f58a22b11b58fafe8fc45ea06e1fe4c06733701f70e2fbe9035d74d`.
+- Production publication is pending authorization for the external R2 artifact upload and Supabase release-catalog write.
+- Installed-app upgrade, live database/service, receipt printer, cash drawer, NFC, and real sale timing verification remain outstanding.
+
+### 2026-08-31 checkout timing release 1.0.132
+
+- Packaged Windows 1.0.132 and published build 10132 to the production update catalog after downloading and verifying the uploaded R2 ZIP.
+- Updater ZIP: `windows/1.0.132/smartstock-windows-1.0.132.zip`, 53,157,593 bytes, SHA-256 `2c0b1c5baf9c726b40b4bdf29ff3d18188d3d2ba4bd7f20488a3c34549b23236`.
+- Local installer: `SmartStock/target/release-windows/smartstock-windows-setup-1.0.132.exe`, 65,816,973 bytes, SHA-256 `82b99fd807b3df035b7ff3f7cea8de376b1333ed00a7425b287eb1ff65f50f52`.
+- Full Maven tests, Windows packaging/archive checks, repository security check, and whitespace checks passed. Production release-row readback confirmed publication.
+- Persists checkout timing entries in the user's `.smartstock/checkout-timing.log`, with timestamps, a 1 MiB rotation threshold, and one backup. Diagnostic write failures cannot fail checkout.
+- No local installation performed, per installation preference. Installed-app upgrade, live database/service, printer, cash drawer, NFC, and real sale timing verification remain outstanding.
+
 1. Restart the server service so the connection pool and credential cache become active.
 2. Perform the live performance and hardware checks below.
 3. Remeasure:
@@ -496,6 +513,12 @@ The following inventory/menu files are part of this release and were reviewed to
 These changes add background inventory warming, shared cached catalog reads, mutation-safe refreshes, and explicit inventory-refresh feedback.
 
 ## Cross-computer handoff procedure
+
+### Release installation preference (2026-08-31)
+
+- Do not install or update the locally installed SmartStock application unless the user explicitly requests installation. Packaging and publishing do not authorize installation. The user will test deployment through the in-app updater.
+- Windows 1.0.129 build 10129 is published to production. Independent release-row readback confirmed the updater ZIP path `windows/1.0.129/smartstock-windows-1.0.129.zip`, size 53,117,033 bytes, SHA-256 `a85c0e1dd7a30540b4d2a039149873f157a900048e1f972c8b4267bd635bb0ba`, and `published=true`.
+- Wallet signing configuration, iPhone enrollment, physical scanner, live database upgrade/synchronization, and certified NFC-provider validation remain separate deployment checks. True Wallet NFC remains disabled.
 
 Before switching computers:
 

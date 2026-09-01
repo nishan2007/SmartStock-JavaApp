@@ -1075,6 +1075,10 @@ public class CompanyCustomization extends JFrame {
         JButton openEditorButton = new JButton("Open Badge Template Editor");
         openEditorButton.addActionListener(e -> openBadgeTemplateEditorDialog());
         panel.add(openEditorButton);
+        JButton walletEditorButton = new JButton("Open Apple Wallet Template Editor");
+        walletEditorButton.addActionListener(e -> new ui.screens.companyprefs.WalletTemplateEditor(
+                this, getBadgeTemplateSettingsFromFields(), getSettingsFromFields()).setVisible(true));
+        panel.add(walletEditorButton);
         return panel;
     }
 

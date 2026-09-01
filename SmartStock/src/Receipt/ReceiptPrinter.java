@@ -41,11 +41,13 @@ public class ReceiptPrinter {
 
     public static EpsonReceiptPrintService.PrintResult printToPosPrinter(ReceiptData receipt,
             HardwareSettingsManager.PosPrinter printer, boolean openDrawer, boolean reprint) throws PrintException {
-        if (printer != null && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+        boolean nativeEthernetEnabled = NativeEscPosTransport.isEnabled();
+        if (nativeEthernetEnabled
+                || (printer != null && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40)) {
             EpsonReceiptPrintService.PrintResult result = EpsonReceiptPrintService.print(receipt, printer, openDrawer, reprint);
             if (!result.successful()) {
                 try {
-                    if (!NativeEscPosTransport.isEnabled()
+                    if (!nativeEthernetEnabled
                             && HardwareSettingsManager.getEpsonSettings().printDialogFallback()) {
                         printWithSystemDialog(receipt, reprint);
                         return EpsonReceiptPrintService.PrintResult.queued("Selected in system print dialog");

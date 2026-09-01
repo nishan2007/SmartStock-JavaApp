@@ -166,6 +166,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/devices/transfers/destinations", exchange -> handle(exchange, this::registerTransferDestinations));
         server.createContext("/v1/devices/transfers/cancel", exchange -> handle(exchange, this::cancelRegisterTransfer));
         server.createContext("/v1/sessions/login", exchange -> handle(exchange, this::login));
+        server.createContext("/v1/sessions/wallet-login", exchange -> handle(exchange, this::walletLogin));
         server.createContext("/v1/sessions/badge-status", exchange -> handle(exchange, this::badgeStatus));
         server.createContext("/v1/sessions/badge-pin-setup", exchange -> handle(exchange, this::badgePinSetup));
         server.createContext("/v1/sessions/refresh", exchange -> handle(exchange, this::refresh));
@@ -219,6 +220,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/products/price-tag-settings", exchange -> handle(exchange, this::priceTagSettings));
         server.createContext("/v1/products/create", exchange -> handle(exchange, this::createProduct));
         server.createContext("/v1/products/update", exchange -> handle(exchange, this::updateProduct));
+        server.createContext("/v1/products/inline-update", exchange -> handle(exchange, this::inlineUpdateProduct));
         server.createContext("/v1/products/non-rounded-prices", exchange -> handle(exchange, this::nonRoundedProductPrices));
         server.createContext("/v1/products/round-prices", exchange -> handle(exchange, this::roundProductPrices));
         server.createContext("/v1/sync/status", exchange -> handle(exchange, this::syncStatus));
@@ -334,6 +336,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/payroll/pay", exchange -> handle(exchange, this::payrollPay));
         server.createContext("/v1/employees/badge-data", exchange -> handle(exchange, this::employeeBadgeData));
         server.createContext("/v1/employees/badge-printed", exchange -> handle(exchange, this::employeeBadgePrinted));
+        server.createContext("/v1/employees/wallet", exchange -> handle(exchange, this::employeeWallet));
+        server.createContext("/wallet/enroll/", this::walletEnrollment);
         server.createContext("/v1/employees/admin/state", exchange -> handle(exchange, this::employeeAdminState));
         server.createContext("/v1/employees/admin/update", exchange -> handle(exchange, this::employeeAdminMutation));
         server.createContext("/v1/quotations/read", exchange -> handle(exchange, this::quotationRead));
@@ -986,6 +990,27 @@ public final class LanApiServer implements AutoCloseable {
             List<String> permissions = loadPermissions(connection, user.userId());
             return ApiResult.ok(sessionResponse(sessionToken, user, permissions, device.deviceId(), supabaseTokens,
                     deviceSessionPolicy(connection, device.deviceId())));
+        }
+    }
+
+    private ApiResult walletLogin(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        int locationId=requiredInt(context.body(),"locationId");String credential=required(context.body(),"walletCredential",512);
+        String method=required(context.body(),"presentationMethod",20).toUpperCase(java.util.Locale.ROOT);
+        if(!Set.of("BARCODE","NFC").contains(method))throw new ApiException(400,"VALIDATION_ERROR","Unsupported Wallet presentation method.",false);
+        if("NFC".equals(method)&&!AppleWalletConfig.load().nfcReady())throw new ApiException(409,"WALLET_NFC_DISABLED","Apple Wallet NFC is not enabled on this server.",false);
+        if(!device.remoteAdmin()&&device.locationId()!=null&&device.locationId()!=locationId)throw new ApiException(403,"DEVICE_STORE_MISMATCH","This register is assigned to a different store.",false);
+        String pin=optional(context.body(),"pin",32);char[] entered=(pin==null?"":pin).toCharArray();
+        try(Connection c=DB.getConnection()){
+            LoginSecurityService.requireAllowed(c,credential);
+            AppleWalletBadgeService.AuthenticatedWallet result;
+            try{result=AppleWalletBadgeService.authenticate(c,credential,locationId,entered);}finally{java.util.Arrays.fill(entered,'\0');}
+            if(result==null){LoginSecurityService.recordFailure(c,device.deviceId(),credential,"Apple Wallet login failed");throw new ApiException(401,"LOGIN_FAILED","The login was not accepted.",false);}
+            LoginSecurityService.recordSuccess(c,credential);AuthenticatedUser user=loadUser(c,result.userId(),locationId);
+            String source=result.pinRequired()?"WALLET_"+method+"_PIN":"WALLET_"+method;
+            if(!result.pinRequired())auditSecurity(c,"WALLET_BADGE_ONLY_LOGIN",device.deviceId(),result.userId(),"Apple Wallet "+method+" login accepted by company preference");
+            auditSecurity(c,"APPLE_WALLET_LOGIN",device.deviceId(),result.userId(),"presentation="+method);
+            String sessionToken=issueSession(c,device,user,source);return ApiResult.ok(sessionResponse(sessionToken,user,loadPermissions(c,user.userId()),device.deviceId(),null,deviceSessionPolicy(c,device.deviceId())));
         }
     }
 
@@ -2457,6 +2482,36 @@ public final class LanApiServer implements AutoCloseable {
     private static void bindTimeClock(SessionPrincipal s,AuthenticatedUser u){ServerTimeClockManager.bindRequest(s.userId(),s.locationId(),u.locationName(),u.locationTimezone(),displayName(u));}
     private ApiResult employeeBadgeData(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);int userId=requiredInt(x.body(),"userId");try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");try{return ApiResult.ok(Map.of("employee",BadgePrintService.loadEmployeeBadgeData(c,userId,s.locationId())));}catch(IllegalArgumentException e){throw new ApiException(404,"EMPLOYEE_NOT_FOUND",e.getMessage(),false);}}}
     private ApiResult employeeBadgePrinted(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required to record badge printing."),operation="employees.badge-printed.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));int userId=requiredInt(x.body(),"userId");try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}BadgePrintService.incrementBadgePrintCount(c,userId,s.locationId());Map<String,Object>result=Map.of("recorded",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(IllegalArgumentException e){c.rollback();throw new ApiException(404,"EMPLOYEE_NOT_FOUND",e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
+    private ApiResult employeeWallet(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",20);int userId=requiredInt(x.body(),"userId");
+        try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object> out=new LinkedHashMap<>();switch(action){
+            case "STATUS"->{var status=AppleWalletBadgeService.status(c,userId,s.locationId());out.put("status",status.status());out.put("issuedAt",status.issuedAt());out.put("lastUsedAt",status.lastUsedAt());}
+            case "ENROLL","REPLACE"->{if("REPLACE".equals(action))AppleWalletBadgeService.revoke(c,userId,s.locationId(),s.userId());var enrollment=AppleWalletBadgeService.createEnrollment(c,userId,s.locationId(),s.userId());out.put("url",enrollment.url());out.put("expiresAt",enrollment.expiresAt());auditSecurity(c,"APPLE_WALLET_ENROLLMENT_CREATED",d.deviceId(),s.userId(),"employee_user_id="+userId+"; action="+action);}
+            case "REVOKE"->{AppleWalletBadgeService.revoke(c,userId,s.locationId(),s.userId());out.put("revoked",true);auditSecurity(c,"APPLE_WALLET_BADGE_REVOKED",d.deviceId(),s.userId(),"employee_user_id="+userId);}
+            default->throw new ApiException(400,"VALIDATION_ERROR","The Wallet badge action is invalid.",false);}
+            c.commit();return ApiResult.ok(out);
+        }catch(IllegalArgumentException e){c.rollback();throw new ApiException(404,"EMPLOYEE_NOT_FOUND",e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
+    }
+
+    private void walletEnrollment(HttpExchange exchange)throws IOException{
+        exchange.getResponseHeaders().set("Cache-Control","no-store");
+        exchange.getResponseHeaders().set("Referrer-Policy","no-referrer");
+        exchange.getResponseHeaders().set("X-Content-Type-Options","nosniff");
+        exchange.getResponseHeaders().set("Content-Security-Policy","default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+        try{
+            String method=exchange.getRequestMethod();
+            if(!"GET".equals(method)&&!"POST".equals(method)){exchange.getResponseHeaders().set("Allow","GET, POST");exchange.sendResponseHeaders(405,-1);exchange.close();return;}
+            String path=exchange.getRequestURI().getPath(),prefix="/wallet/enroll/";String token=path.startsWith(prefix)?path.substring(prefix.length()):"";
+            if(!token.matches("[A-Za-z0-9_-]{43}")){exchange.sendResponseHeaders(404,-1);exchange.close();return;}
+            if("GET".equals(method)){
+                byte[] page=WalletEnrollmentPage.html().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type","text/html; charset=utf-8");
+                exchange.sendResponseHeaders(200,page.length);try(var out=exchange.getResponseBody()){out.write(page);}return;
+            }
+            byte[] pass;try(Connection c=DB.getConnection()){pass=AppleWalletBadgeService.consumeEnrollment(c,token);auditSecurity(c,"APPLE_WALLET_PASS_ISSUED",null,null,"One-time enrollment consumed");}
+            exchange.getResponseHeaders().set("Content-Type","application/vnd.apple.pkpass");exchange.getResponseHeaders().set("Content-Disposition","attachment; filename=SmartStock-Employee-Badge.pkpass");exchange.getResponseHeaders().set("Cache-Control","no-store");exchange.getResponseHeaders().set("X-Content-Type-Options","nosniff");exchange.sendResponseHeaders(200,pass.length);try(var out=exchange.getResponseBody()){out.write(pass);}
+        }catch(Exception ex){byte[] body="Unable to issue this badge. The link may be expired or already used. Ask your administrator for help.".getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","text/plain; charset=utf-8");exchange.sendResponseHeaders(400,body.length);try(var out=exchange.getResponseBody()){out.write(body);}}
+    }
     private ApiResult employeeAdminState(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);Integer userId=x.body().has("userId")&&!x.body().get("userId").isJsonNull()?x.body().get("userId").getAsInt():null;try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());return ApiResult.ok(Map.of("state",LanEmployeeAdminService.state(c,userId,LocalDate.now(java.time.ZoneId.of(u.locationTimezone())))));}}
     private ApiResult employeeAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",30),key=requireIdempotencyKey(x,"A valid idempotency key is required for this employee change."),operation="employees.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser actor=loadUser(c,s.userId(),s.locationId());Map<String,Object>result=new LinkedHashMap<>();switch(action){case"ROTATE_BADGE"->result.put("badgeId",LanEmployeeAdminService.rotateBadge(c,requiredInt(x.body(),"userId"),s.userId(),displayName(actor)));case"SAVE_STORES"->{Integer[]ids=GSON.fromJson(x.body().get("locationIds"),Integer[].class);LanEmployeeAdminService.saveStores(c,requiredInt(x.body(),"userId"),ids==null?List.of():List.of(ids));result.put("saved",true);}case"CREATE"->{LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);request=request.withEmail(employeeAuthEmail(request.email(),request.username(),actor.email()));String authId=employeeAuthCreate(request);try{result.put("userId",LanEmployeeAdminService.create(c,request,authId,s.userId(),displayName(actor)));}catch(Exception e){try{employeeAuthDelete(authId,null);}catch(Exception ignored){}throw e;}}case"UPDATE"->{int id=requiredInt(x.body(),"userId");LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);String existingEmail=LanEmployeeAdminService.email(c,id);String requestedEmail=request.email()==null||request.email().isBlank()?existingEmail:request.email();request=request.withEmail(employeeAuthEmail(requestedEmail,request.username(),actor.email()));String authId=LanEmployeeAdminService.authUserId(c,id);if(authId==null||authId.isBlank()){if(request.password()==null||request.password().isBlank())throw new ApiException(400,"PASSWORD_REQUIRED","Enter a password to create the missing employee Auth account.",false);authId=employeeAuthCreate(request);}else employeeAuthUpdate(authId,request);LanEmployeeAdminService.update(c,id,request,authId,request.password()!=null&&!request.password().isBlank(),s.userId(),displayName(actor),LocalDate.now(java.time.ZoneId.of(actor.locationTimezone())));result.put("userId",id);}case"DEACTIVATE"->{int id=requiredInt(x.body(),"userId");String authId=LanEmployeeAdminService.authUserId(c,id);if(authId!=null&&!authId.isBlank())employeeAuthDelete(authId,null);LanEmployeeAdminService.deactivate(c,id,s.userId(),displayName(actor));result.put("deactivated",true);}default->throw new ApiException(400,"VALIDATION_ERROR","The employee administration action is invalid.",false);}completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private String employeeAuthCreate(LanEmployeeAdminService.SaveRequest r)throws Exception{
@@ -2702,6 +2757,7 @@ public final class LanApiServer implements AutoCloseable {
                     case "CUSTOM_ORDER_SLIP" -> ServerCompanyCustomizationRepository.loadCustomOrderSlipSettings();
                     case "QUOTATION_INVOICE" -> ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettings();
                     case "BADGE_TEMPLATE" -> ServerCompanyCustomizationRepository.loadBadgeTemplateSettings();
+                    case "WALLET_TEMPLATE" -> WalletTemplateRepository.load(connection, locationId).json();
                     case "CUSTOMER_CARD_TEMPLATES" -> {
                         try(PreparedStatement ps=connection.prepareStatement("SELECT COALESCE(customer_card_template_layout_data,'') FROM company_customization WHERE BTRIM(COALESCE(customer_card_template_layout_data,''))<>'' ORDER BY updated_at DESC NULLS LAST,location_id LIMIT 1")){try(ResultSet rs=ps.executeQuery()){yield rs.next()?rs.getString(1):"";}}
                     }
@@ -2748,6 +2804,11 @@ public final class LanApiServer implements AutoCloseable {
                         throw new ApiException(400, "VALIDATION_ERROR", "Configuration settings are required.", false);
                     }
                     switch (action) {
+                        case "WALLET_TEMPLATE" -> {
+                            try { WalletTemplateRepository.save(connection, locationId, x.body().get("settings").getAsString()); }
+                            catch (RuntimeException ex) { throw new ApiException(400, "VALIDATION_ERROR", "Invalid Wallet template. Check field limits, colors and images.", false); }
+                            auditSecurity(connection, "APPLE_WALLET_TEMPLATE_UPDATED", device.deviceId(), session.userId(), "location_id=" + locationId);
+                        }
                         case "RECEIPT" -> ServerCompanyCustomizationRepository.saveReceiptSettings(
                                 GSON.fromJson(x.body().get("settings"), ServerCompanyCustomizationRepository.ReceiptSettings.class));
                         case "CUSTOM_ORDER" -> ServerCompanyCustomizationRepository.saveCustomOrderSettings(
@@ -3279,6 +3340,22 @@ public final class LanApiServer implements AutoCloseable {
 
     private ApiResult updateProduct(RequestContext context) throws Exception {
         return mutateProduct(context, false);
+    }
+
+    private ApiResult inlineUpdateProduct(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        String key=requireIdempotencyKey(context,"A valid idempotency key is required to edit inventory.");
+        String operation="products.inline-update.v1",hash=LanSecurity.sha256(GSON.toJson(context.body()));
+        try(Connection connection=DB.getConnection()){connection.setAutoCommit(false);try{
+            Map<String,Object> previous=loadIdempotentResult(connection,device.deviceId(),key,operation,hash);
+            if(previous!=null){connection.commit();return ApiResult.ok(previous);}
+            AuthenticatedUser user=loadUser(connection,session.userId(),session.locationId());
+            Map<String,Object> result=LanProductAdminService.inlineUpdate(connection,context.body(),device.deviceId(),
+                    session.userId(),displayName(user),session.locationId());
+            completeIdempotency(connection,device.deviceId(),key,result);connection.commit();return ApiResult.ok(result);
+        }catch(LanProductAdminService.RuleViolation ex){connection.rollback();throw apiException(ex);}
+        catch(Exception ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}}
     }
 
     private ApiResult nonRoundedProductPrices(RequestContext context)throws Exception{

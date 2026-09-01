@@ -73,6 +73,14 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
         return read("BADGE_TEMPLATE", BadgeTemplateSettings.class);
     }
 
+    public static services.WalletBadgeTemplate loadWalletTemplate() {
+        return services.WalletBadgeTemplate.parse(read("WALLET_TEMPLATE", String.class));
+    }
+
+    public static void saveWalletTemplate(services.WalletBadgeTemplate template) throws IOException, SQLException {
+        save("WALLET_TEMPLATE", template.json());
+    }
+
     public static void saveBadgeTemplateSettings(BadgeTemplateSettings settings) throws IOException, SQLException {
         save("BADGE_TEMPLATE", settings);
     }

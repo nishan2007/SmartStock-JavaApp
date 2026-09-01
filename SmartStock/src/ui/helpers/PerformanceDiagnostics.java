@@ -5,6 +5,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.lang.reflect.Array;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Locale;
 import java.util.Map;
@@ -12,6 +17,7 @@ import java.util.Map;
 /** Low-cardinality performance logging with no request bodies or personal data. */
 public final class PerformanceDiagnostics {
     private static final long SLOW_MILLIS = Long.getLong("smartstock.slowOperationMillis", 500L);
+    private static final long MAX_CHECKOUT_LOG_BYTES = 1_048_576L;
 
     private PerformanceDiagnostics() { }
 
@@ -31,9 +37,33 @@ public final class PerformanceDiagnostics {
                                     boolean success, int resultCount) {
         long elapsedMillis = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
         String count = resultCount < 0 ? "" : " count=" + resultCount;
-        System.err.printf(Locale.ROOT,
+        String line = String.format(Locale.ROOT,
                 "SmartStock timing category=%s operation=%s durationMs=%d success=%s%s%n",
                 safe(category), safe(operation), elapsedMillis, success, count);
+        System.err.print(line);
+        if ("checkout".equals(category)) {
+            try {
+                appendCheckoutTiming(Path.of(System.getProperty("user.home"), ".smartstock",
+                        "checkout-timing.log"), line, MAX_CHECKOUT_LOG_BYTES);
+            } catch (RuntimeException ignored) {
+                // Invalid paths or denied property access must never interrupt a committed sale.
+            }
+        }
+    }
+
+    /** Best-effort, bounded local diagnostics; never includes requests or exception messages. */
+    static synchronized void appendCheckoutTiming(Path log, String line, long maxBytes) {
+        try {
+            Files.createDirectories(log.getParent());
+            if (Files.exists(log) && Files.size(log) >= maxBytes) {
+                Files.move(log, log.resolveSibling(log.getFileName() + ".1"),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.writeString(log, Instant.now() + " " + line,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // Logging is optional: disk full, permissions, or rotation failures cannot fail a sale.
+        }
     }
 
     public static void cacheHit(String operation, boolean fresh) {

@@ -100,7 +100,8 @@ class ResponsiveLoadingArchitectureTest {
         assertTrue(client.contains("if (existing != null) return existing"));
         assertTrue(client.contains("saveEmployeeSession(String session, boolean persistent)"));
         assertTrue(client.contains("else SecureCredentialStore.delete(API_SESSION_SECRET)"));
-        assertTrue(client.contains("resetTransport(false, false)"));
+        assertTrue(client.contains("syncDeviceMetadataWithoutWaiting()"));
+        assertTrue(client.contains("SessionDataCache.clear()"));
         String base = Files.readString(Path.of("database/v1/local/001_schema.sql"));
         String runtime = Files.readString(SOURCE_ROOT.resolve("services/BaseSchemaInstaller.java"));
         assertTrue(base.contains("sale_items_sale_idx"));

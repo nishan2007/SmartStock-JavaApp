@@ -18,6 +18,7 @@ import ui.helpers.UiTaskRunner;
 import ui.helpers.SessionDataCache;
 import ui.helpers.ProductImageHelper;
 import ui.helpers.BarcodeGenerationHelper;
+import ui.helpers.TableImageHoverPreview;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -471,8 +472,9 @@ public class EditItem extends JFrame {
             table.setRowSelectionInterval(0, 0);
             table.setAutoCreateRowSorter(true);
             table.setRowHeight(30);
-            int[] hiddenColumns = {0, 5, 6, 7, 10, 11, 13, 15, 16, 17, 18, 19};
+            int[] hiddenColumns = {0, 5, 6, 10, 11, 13, 15, 18, 19};
             for (int columnIndex : hiddenColumns) hideColumn(table, columnIndex);
+            TableImageHoverPreview.install(this, table, 15, DeckersPalette.PURPLE);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(900, 300));
             String storeLabel = SessionManager.getCurrentLocationName() != null

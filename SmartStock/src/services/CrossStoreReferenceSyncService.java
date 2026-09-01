@@ -32,6 +32,8 @@ final class CrossStoreReferenceSyncService {
                     """),
             new TableSnapshot("user_locations", "user_id,location_id",
                     "user_id::text||':'||location_id::text", "updated_at"),
+            new TableSnapshot("employee_wallet_credentials", "wallet_credential_id",
+                    "wallet_credential_id::text", "updated_at"),
             new TableSnapshot("employee_payroll_settings", "setting_id", "setting_id::text", "updated_at"),
             new TableSnapshot("employee_schedule_shifts", "shift_id", "shift_id::text", "updated_at"),
             new TableSnapshot("employee_schedule_holidays", "holiday_date", "holiday_date::text", "updated_at"),
@@ -199,6 +201,7 @@ final class CrossStoreReferenceSyncService {
             case "locations"->upsertLocation(c,row);
             case "users"->upsertUser(c,row);
             case "user_locations"->upsertUserLocation(c,row);
+            case "employee_wallet_credentials"->upsertWalletCredential(c,row);
             case "employee_payroll_settings"->upsertPayrollSetting(c,row);
             case "employee_schedule_shifts"->upsertShift(c,row);
             case "employee_schedule_holidays"->upsertHoliday(c,row);
@@ -263,6 +266,22 @@ final class CrossStoreReferenceSyncService {
                 WHERE user_locations.updated_at<EXCLUDED.updated_at
                 """)){p.setInt(1,integer(r,"user_id"));p.setInt(2,integer(r,"location_id"));
             p.setTimestamp(3,timestamp(r,"updated_at"));p.executeUpdate();}
+    }
+
+    private static void upsertWalletCredential(Connection c,JsonObject r)throws SQLException{
+        try(PreparedStatement p=c.prepareStatement("""
+                INSERT INTO employee_wallet_credentials(wallet_credential_id,user_id,credential_hash,serial_number,
+                  status,issued_at,issued_by_user_id,revoked_at,revoked_by_user_id,last_used_at,updated_at)
+                VALUES(?::uuid,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(wallet_credential_id) DO UPDATE SET credential_hash=EXCLUDED.credential_hash,
+                  serial_number=EXCLUDED.serial_number,status=EXCLUDED.status,revoked_at=EXCLUDED.revoked_at,
+                  revoked_by_user_id=EXCLUDED.revoked_by_user_id,last_used_at=EXCLUDED.last_used_at,
+                  updated_at=EXCLUDED.updated_at
+                WHERE employee_wallet_credentials.updated_at<EXCLUDED.updated_at
+                """)){int i=1;p.setString(i++,required(r,"wallet_credential_id"));p.setInt(i++,integer(r,"user_id"));
+            p.setString(i++,text(r,"credential_hash"));p.setString(i++,text(r,"serial_number"));p.setString(i++,text(r,"status"));
+            p.setTimestamp(i++,timestamp(r,"issued_at"));nullableInt(p,i++,r,"issued_by_user_id");nullableTimestamp(p,i++,r,"revoked_at");
+            nullableInt(p,i++,r,"revoked_by_user_id");nullableTimestamp(p,i++,r,"last_used_at");p.setTimestamp(i,timestamp(r,"updated_at"));p.executeUpdate();}
     }
 
     private static void upsertPayrollSetting(Connection c,JsonObject r)throws SQLException{
@@ -428,6 +447,7 @@ final class CrossStoreReferenceSyncService {
             case "locations"->key.addProperty("location_id",integer(row,"location_id"));
             case "users"->key.addProperty("user_id",integer(row,"user_id"));
             case "user_locations"->{key.addProperty("user_id",integer(row,"user_id"));key.addProperty("location_id",integer(row,"location_id"));}
+            case "employee_wallet_credentials"->key.addProperty("wallet_credential_id",required(row,"wallet_credential_id"));
             case "employee_payroll_settings"->key.addProperty("setting_id",required(row,"setting_id"));
             case "employee_schedule_shifts"->key.addProperty("shift_id",required(row,"shift_id"));
             case "employee_schedule_holidays"->key.addProperty("holiday_date",required(row,"holiday_date"));

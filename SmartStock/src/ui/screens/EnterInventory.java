@@ -12,6 +12,7 @@ import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.SessionDataCache;
+import ui.helpers.TableImageHoverPreview;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -442,7 +443,8 @@ public class EnterInventory extends JFrame {
             java.util.List<Object[]> rows = new java.util.ArrayList<>();
             for (LanApiClient.LookupItem item : LanApiClient.searchReceivingItems(searchText)) {
                 rows.add(new Object[]{
-                        item.itemType(), item.itemId(), item.name(), item.description(), item.code(), item.quantityOnHand()
+                        item.itemType(), item.itemId(), item.name(), item.description(), item.code(), item.quantityOnHand(),
+                        item.itemTypeName(), item.brandName(), item.price(), item.imageUrl()
                 });
             }
             return rows;
@@ -471,7 +473,8 @@ public class EnterInventory extends JFrame {
                     DeckersPalette.sectionBorder(DeckersPalette.MAGENTA)));
             searchPopup.setFocusable(false);
 
-            String[] columns = {"Type", "ID", "Name", "Description", "SKU / Code", "Stock"};
+            String[] columns = {"Type", "ID", "Name", "Description", "SKU / Code", "Stock",
+                    "Item Type", "Brand", "Price", "Image URL"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -486,10 +489,8 @@ public class EnterInventory extends JFrame {
             searchResultsTable.setRowHeight(24);
             JTableHeader header = searchResultsTable.getTableHeader();
             header.setReorderingAllowed(false);
-            header.setPreferredSize(new Dimension(0, 0));
-            header.setMinimumSize(new Dimension(0, 0));
-            header.setMaximumSize(new Dimension(0, 0));
-            header.setVisible(false);
+            TableImageHoverPreview.install(this, searchResultsTable, 9, DeckersPalette.MAGENTA);
+            searchResultsTable.removeColumn(searchResultsTable.getColumnModel().getColumn(9));
             searchResultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent e) {
@@ -503,7 +504,6 @@ public class EnterInventory extends JFrame {
             searchResultsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             searchResultsScrollPane.getViewport().setBackground(
                     DeckersPalette.tableBody(DeckersPalette.MAGENTA));
-            searchResultsScrollPane.setColumnHeaderView(null);
             searchResultsScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 
             searchPopup.setLayout(new BorderLayout());
@@ -521,13 +521,16 @@ public class EnterInventory extends JFrame {
         }
         displayedSearchText = searchField.getText().trim();
 
-        searchResultsScrollPane.setPreferredSize(new Dimension(Math.max(searchField.getWidth(), 500), 220));
+        searchResultsScrollPane.setPreferredSize(new Dimension(Math.max(searchField.getWidth(), 980), 240));
         searchResultsTable.getColumnModel().getColumn(0).setPreferredWidth(90);
         searchResultsTable.getColumnModel().getColumn(1).setPreferredWidth(50);
         searchResultsTable.getColumnModel().getColumn(2).setPreferredWidth(140);
         searchResultsTable.getColumnModel().getColumn(3).setPreferredWidth(220);
         searchResultsTable.getColumnModel().getColumn(4).setPreferredWidth(110);
         searchResultsTable.getColumnModel().getColumn(5).setPreferredWidth(70);
+        searchResultsTable.getColumnModel().getColumn(6).setPreferredWidth(110);
+        searchResultsTable.getColumnModel().getColumn(7).setPreferredWidth(100);
+        searchResultsTable.getColumnModel().getColumn(8).setPreferredWidth(80);
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);

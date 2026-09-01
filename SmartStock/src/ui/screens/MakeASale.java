@@ -649,6 +649,7 @@ public class MakeASale extends JFrame {
        loadCompanyBranding();
 	       revalidate();
 	       repaint();
+	       focusProductSearch();
 	       javax.swing.Timer themeTimer = new javax.swing.Timer(100, themeEvent -> {
 	           if (isShowing()) WindowHelper.configurePosWindow(MakeASale.this);
 	       });
@@ -1851,6 +1852,15 @@ public class MakeASale extends JFrame {
         SwingUtilities.invokeLater(searchField::requestFocusInWindow);
     }
 
+    /** Returns keyboard wedges and barcode scanners to the primary POS input. */
+    private void focusProductSearch() {
+        SwingUtilities.invokeLater(() -> {
+            if (searchField != null && searchField.isShowing() && searchField.isEnabled()) {
+                searchField.requestFocusInWindow();
+            }
+        });
+    }
+
     private void closeSearchPopup() {
         hideImagePreview();
         if (searchPopup != null) {
@@ -3004,6 +3014,7 @@ public class MakeASale extends JFrame {
             checkoutBtn.setEnabled(true);
             checkoutPrintBtn.setEnabled(true);
             loadingState.ready(java.time.Instant.now());
+            focusProductSearch();
         }, failure -> {
             checkoutBtn.setEnabled(true);
             checkoutPrintBtn.setEnabled(true);

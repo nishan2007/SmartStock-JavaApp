@@ -6,6 +6,7 @@ import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.ThemeManager;
 import ui.helpers.UiDebouncer;
+import ui.helpers.UiTaskRunner;
 import ui.helpers.WindowHelper;
 import managers.PermissionManager;
 import managers.SessionManager;
@@ -31,6 +32,7 @@ public class ViewInventory extends JFrame {
     private JTextField searchField;
     private JComboBox<String> stockFilterCombo;
     private JComboBox<String> departmentFilterCombo;
+    private JComboBox<String> productTypeFilterCombo;
     private JComboBox<String> itemTypeFilterCombo;
     private JComboBox<String> brandFilterCombo;
     private JComboBox<String> shelfFilterCombo;
@@ -104,6 +106,8 @@ public class ViewInventory extends JFrame {
         rightPanel.add(stockFilterCombo);
 
         departmentFilterCombo = new JComboBox<>(new String[]{"All Departments"});
+        productTypeFilterCombo = new JComboBox<>(new String[]{"All Product Types", "Inventory Only", "Service Only",
+                "Non Inventory Only", "Hide Inventory", "Hide Services", "Hide Non Inventory"});
         itemTypeFilterCombo = new JComboBox<>(new String[]{"All Item Types"});
         brandFilterCombo = new JComboBox<>(new String[]{"All Brands"});
         shelfFilterCombo = new JComboBox<>(new String[]{"All Shelves"});
@@ -113,6 +117,8 @@ public class ViewInventory extends JFrame {
         detailFilterPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
         detailFilterPanel.add(new JLabel("Department:"));
         detailFilterPanel.add(departmentFilterCombo);
+        detailFilterPanel.add(new JLabel("Product Type:"));
+        detailFilterPanel.add(productTypeFilterCombo);
         detailFilterPanel.add(new JLabel("Item Type:"));
         detailFilterPanel.add(itemTypeFilterCombo);
         detailFilterPanel.add(new JLabel("Brand:"));
@@ -130,6 +136,7 @@ public class ViewInventory extends JFrame {
             searchField.setText("");
             stockFilterCombo.setSelectedIndex(0);
             departmentFilterCombo.setSelectedIndex(0);
+            productTypeFilterCombo.setSelectedIndex(0);
             brandFilterCombo.setSelectedIndex(0);
             shelfFilterCombo.setSelectedIndex(0);
             storageShelfFilterCombo.setSelectedIndex(0);
@@ -156,6 +163,7 @@ public class ViewInventory extends JFrame {
             loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem());
         });
         itemTypeFilterCombo.addActionListener(e -> reloadForDetailFilter());
+        productTypeFilterCombo.addActionListener(e -> reloadForDetailFilter());
         brandFilterCombo.addActionListener(e -> reloadForDetailFilter());
         shelfFilterCombo.addActionListener(e -> reloadForDetailFilter());
         storageShelfFilterCombo.addActionListener(e -> reloadForDetailFilter());
@@ -199,7 +207,7 @@ public class ViewInventory extends JFrame {
         tableModel = new DefaultTableModel(columns.toArray(new String[0]), 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false;
+                return canInlineEditColumn(column);
             }
         };
 
@@ -218,6 +226,7 @@ public class ViewInventory extends JFrame {
                 }
             }
         });
+        installInlineEditing();
 
         TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(tableModel);
         setIntegerComparator(sorter, "Product ID");
@@ -250,6 +259,62 @@ public class ViewInventory extends JFrame {
         JScrollPane scrollPane = new JScrollPane(inventoryTable);
         applyInventoryScrollPaneTheme(scrollPane);
         return scrollPane;
+    }
+
+    private boolean canInlineEditColumn(int modelColumn) {
+        if (!PermissionManager.hasPermission("EDIT_ITEM") || modelColumn < 0 || tableModel == null) return false;
+        String name=tableModel.getColumnName(modelColumn);
+        if ("Quantity".equals(name)) return PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
+        return List.of("Name","Size","Description","SKU","Type","Cost Price","Price","Reorder Level").contains(name);
+    }
+
+    private void installInlineEditing() {
+        KeyStroke enter=KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER,0);
+        inventoryTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(enter,"smartstock-inline-edit");
+        inventoryTable.getActionMap().put("smartstock-inline-edit",new AbstractAction(){
+            @Override public void actionPerformed(java.awt.event.ActionEvent event){
+                int viewRow=inventoryTable.getSelectedRow(),viewColumn=inventoryTable.getSelectedColumn();
+                if(viewRow<0||viewColumn<0)return;
+                int modelRow=inventoryTable.convertRowIndexToModel(viewRow);
+                int modelColumn=inventoryTable.convertColumnIndexToModel(viewColumn);
+                if(!canInlineEditColumn(modelColumn)){
+                    Toolkit.getDefaultToolkit().beep();return;
+                }
+                if(!inventoryTable.isEditing()){
+                    Object old=tableModel.getValueAt(modelRow,modelColumn);
+                    inventoryTable.putClientProperty("SmartStock.inlineOldValue",old);
+                    inventoryTable.putClientProperty("SmartStock.inlineModelRow",modelRow);
+                    inventoryTable.putClientProperty("SmartStock.inlineModelColumn",modelColumn);
+                    if(inventoryTable.editCellAt(viewRow,viewColumn)){
+                        Component editor=inventoryTable.getEditorComponent();editor.requestFocusInWindow();
+                        if(editor instanceof JTextField text)text.selectAll();
+                    }
+                    return;
+                }
+                int editRow=(Integer)inventoryTable.getClientProperty("SmartStock.inlineModelRow");
+                int editColumn=(Integer)inventoryTable.getClientProperty("SmartStock.inlineModelColumn");
+                Object old=inventoryTable.getClientProperty("SmartStock.inlineOldValue");
+                if(!inventoryTable.getCellEditor().stopCellEditing())return;
+                saveInlineEdit(editRow,editColumn,old,tableModel.getValueAt(editRow,editColumn));
+            }
+        });
+    }
+
+    private void saveInlineEdit(int modelRow,int modelColumn,Object oldValue,Object newValue){
+        String before=String.valueOf(oldValue==null?"":oldValue),after=String.valueOf(newValue==null?"":newValue).trim();
+        if(before.equals(after))return;
+        int productId=((Number)tableModel.getValueAt(modelRow,tableModel.findColumn("Product ID"))).intValue();
+        String field=switch(tableModel.getColumnName(modelColumn)){
+            case"Name"->"NAME";case"Size"->"SIZE";case"Description"->"DESCRIPTION";case"SKU"->"SKU";
+            case"Type"->"PRODUCT_TYPE";case"Cost Price"->"COST_PRICE";case"Price"->"PRICE";
+            case"Quantity"->"QUANTITY";case"Reorder Level"->"REORDER_LEVEL";
+            default->null;};
+        if(field==null){tableModel.setValueAt(oldValue,modelRow,modelColumn);return;}
+        LanApiClient.InventoryCellUpdate request=new LanApiClient.InventoryCellUpdate(productId,field,after,before);
+        UiTaskRunner.submit(this,"inventory.inline-update",()->{LanApiClient.updateInventoryCell(request,java.util.UUID.randomUUID().toString());return true;},
+                ignored->{SessionDataCache.invalidate("inventory-");loadInventory(searchField.getText().trim(),(String)stockFilterCombo.getSelectedItem());},
+                failure->{tableModel.setValueAt(oldValue,modelRow,modelColumn);JOptionPane.showMessageDialog(this,
+                        "Could not save inventory change: "+failure.getMessage(),"Inventory Edit",JOptionPane.ERROR_MESSAGE);});
     }
 
     private void applyInventoryTableTheme() {
@@ -468,6 +533,7 @@ public class ViewInventory extends JFrame {
         LanApiClient.InventoryRequest request = new LanApiClient.InventoryRequest(
                 searchText, stockFilter,
                 selectedFilter(departmentFilterCombo, "All Departments"),
+                selectedFilter(productTypeFilterCombo, "All Product Types"),
                 selectedFilter(itemTypeFilterCombo, "All Item Types"),
                 selectedFilter(brandFilterCombo, "All Brands"),
                 selectedFilter(shelfFilterCombo, "All Shelves"),

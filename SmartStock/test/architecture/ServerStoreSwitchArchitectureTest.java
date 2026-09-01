@@ -30,6 +30,6 @@ class ServerStoreSwitchArchitectureTest {
         assertTrue(setup.contains("ServerStoreSwitchService.switchServerStore"));
         assertTrue(server.contains("RETURNING last_store_id"));
         assertTrue(client.contains("saveServerAssignedLocation(response.has(\"locationId\")"));
-        assertTrue(welcome.contains("LanApiClient.syncDeviceMetadata()"));
+        assertTrue(welcome.contains("LanApiClient.syncDeviceMetadataWithoutWaiting()"));
     }
 }

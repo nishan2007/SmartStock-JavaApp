@@ -20,6 +20,21 @@ class EthernetReceiptPrinterFallbackArchitectureTest {
     }
 
     @Test
+    void enabledEthernetOverridesALetterSizeWindowsDefaultForPosReceipts() throws Exception {
+        String source = Files.readString(Path.of("src/Receipt/ReceiptPrinter.java"));
+        int method = source.indexOf("public static EpsonReceiptPrintService.PrintResult printToPosPrinter");
+        int ethernet = source.indexOf("boolean nativeEthernetEnabled = NativeEscPosTransport.isEnabled()", method);
+        int route = source.indexOf("if (nativeEthernetEnabled", ethernet);
+        int epson = source.indexOf("EpsonReceiptPrintService.print(receipt, printer", route);
+        int formatFallback = source.indexOf("printToPosPrinter(receipt, printer,", epson + 1);
+
+        assertTrue(method >= 0 && ethernet > method && route > ethernet);
+        assertTrue(epson > route);
+        assertTrue(formatFallback > epson,
+                "Ethernet must be selected before routing by the Windows printer's paper format");
+    }
+
+    @Test
     void cutterAndDrawerTestsAlsoAllowEthernetWithoutAWindowsQueue() throws Exception {
         String source = Files.readString(Path.of("src/Receipt/EpsonReceiptPrintService.java"));
         int controlMethod = source.indexOf("public static PrintResult testControl");

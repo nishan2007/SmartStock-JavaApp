@@ -20,7 +20,7 @@ public final class SessionLogoutManager {
             try {
                 LanApiClient.logoutWithoutWaiting();
                 SupabaseSessionManager.clearSession();
-                SupabaseSessionManager.clearPersistedSession();
+                SupabaseSessionManager.clearPersistedSessionAsync();
                 SessionManager.clearSessionState();
                 NavigationManager.logoutToLogin(resolveScreen(currentScreen));
             } finally {

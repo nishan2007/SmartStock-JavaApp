@@ -1,0 +1,8 @@
+SmartStock 1.0.131
+
+- Seeds the default Wallet template with existing company branding and adds Pull existing company info with optional company contact fields.
+- Adds custom background artwork for Apple's iOS 27+ Poster Generic layout, with a standard Wallet layout fallback for older devices.
+- Reuses the current employee badge's CEO signature in the lower-right artwork area above the native QR/footer region, with size and removal controls.
+- Preserves customized templates and poster settings when importing company information.
+- Adds compatibility, artwork, signature placement, and signed-pass integrity tests.
+- Apple signing setup and live iPhone/scanner verification remain required. The preview is approximate; Apple controls native overlays. NFC remains disabled.

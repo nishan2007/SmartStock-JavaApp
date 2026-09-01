@@ -130,6 +130,9 @@ public class EmployeeManagement extends JFrame {
     private JButton programNfcButton;
     private JButton testNfcButton;
     private JButton rotateBadgeIdButton;
+    private JButton enrollWalletButton;
+    private JButton replaceWalletButton;
+    private JButton revokeWalletButton;
 
     private Integer selectedUserId = null;
     private String originalFirstName = "";
@@ -555,6 +558,9 @@ public class EmployeeManagement extends JFrame {
         programNfcButton = new JButton("Program NFC/RFID");
         testNfcButton = new JButton("Test NFC");
         rotateBadgeIdButton = new JButton("Rotate Badge ID");
+        enrollWalletButton = new JButton("Enroll Apple Wallet");
+        replaceWalletButton = new JButton("Replace Wallet Badge");
+        revokeWalletButton = new JButton("Revoke Wallet Badge");
 
         Dimension compactButtonSize = new Dimension(145, 32);
         addButton.setPreferredSize(compactButtonSize);
@@ -576,6 +582,9 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(programNfcButton);
         topButtonPanel.add(testNfcButton);
         topButtonPanel.add(rotateBadgeIdButton);
+        topButtonPanel.add(enrollWalletButton);
+        topButtonPanel.add(replaceWalletButton);
+        topButtonPanel.add(revokeWalletButton);
 
         bottomButtonPanel.add(clearButton);
         bottomButtonPanel.add(refreshButton);
@@ -645,6 +654,9 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.addActionListener(e -> programSelectedNfc());
         testNfcButton.addActionListener(e -> testSelectedNfc());
         rotateBadgeIdButton.addActionListener(e -> rotateSelectedBadgeId());
+        enrollWalletButton.addActionListener(e -> createWalletEnrollment("ENROLL"));
+        replaceWalletButton.addActionListener(e -> createWalletEnrollment("REPLACE"));
+        revokeWalletButton.addActionListener(e -> revokeWalletBadge());
 
         clearButton.addActionListener(new ActionListener() {
             @Override
@@ -733,6 +745,9 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(false);
         testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
+        enrollWalletButton.setEnabled(false);
+        replaceWalletButton.setEnabled(false);
+        revokeWalletButton.setEnabled(false);
         loadRoles();
         loadStoresForUser(null);
         loadEmployees();
@@ -840,6 +855,9 @@ public class EmployeeManagement extends JFrame {
         styleButton(programNfcButton, false);
         styleButton(testNfcButton, false);
         styleButton(rotateBadgeIdButton, false);
+        styleButton(enrollWalletButton, false);
+        styleButton(replaceWalletButton, false);
+        styleButton(revokeWalletButton, false);
         styleButton(clearButton, false);
         styleButton(refreshButton, false);
     }
@@ -1259,6 +1277,33 @@ public class EmployeeManagement extends JFrame {
         },ex->JOptionPane.showMessageDialog(this,"Failed to rotate badge ID.\n\n"+ex.getMessage(),"Rotate Badge ID",JOptionPane.ERROR_MESSAGE));
     }
 
+    private void createWalletEnrollment(String action) {
+        if (selectedUserId == null) { JOptionPane.showMessageDialog(this,"Select an employee first."); return; }
+        int userId=selectedUserId;
+        UiTaskRunner.submit(this,"employees.wallet-enrollment",()->LanApiClient.employeeWallet(action,userId),result->{
+            String url=result.get("url").getAsString();
+            try { Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(url),null); } catch (Exception ignored) { }
+            JLabel qr=new JLabel(new ImageIcon(walletQr(url,260)));
+            JTextArea link=new JTextArea(url);link.setEditable(false);link.setLineWrap(true);link.setWrapStyleWord(true);link.setRows(3);
+            JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(new JLabel("Open this one-time link on the employee's iPhone. It expires in 10 minutes and has been copied to the clipboard."),BorderLayout.NORTH);panel.add(qr,BorderLayout.CENTER);panel.add(new JScrollPane(link),BorderLayout.SOUTH);
+            JOptionPane.showMessageDialog(this,panel,"Apple Wallet Enrollment",JOptionPane.INFORMATION_MESSAGE);
+        },ex->JOptionPane.showMessageDialog(this,"Could not create the Apple Wallet enrollment.\n\n"+ex.getMessage(),"Apple Wallet",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void revokeWalletBadge() {
+        if(selectedUserId==null){JOptionPane.showMessageDialog(this,"Select an employee first.");return;}
+        if(JOptionPane.showConfirmDialog(this,"Revoke this employee's active Apple Wallet badge?","Revoke Wallet Badge",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+        int userId=selectedUserId;UiTaskRunner.submit(this,"employees.wallet-revoke",()->LanApiClient.employeeWallet("REVOKE",userId),ignored->JOptionPane.showMessageDialog(this,"The Apple Wallet badge was revoked immediately."),ex->JOptionPane.showMessageDialog(this,"Could not revoke the Apple Wallet badge.\n\n"+ex.getMessage(),"Apple Wallet",JOptionPane.ERROR_MESSAGE));
+    }
+
+    static java.awt.image.BufferedImage walletQr(String value,int size){
+        try {
+            com.google.zxing.common.BitMatrix matrix=new com.google.zxing.qrcode.QRCodeWriter().encode(value,com.google.zxing.BarcodeFormat.QR_CODE,size,size);
+            java.awt.image.BufferedImage image=new java.awt.image.BufferedImage(size,size,java.awt.image.BufferedImage.TYPE_INT_RGB);
+            for(int x=0;x<size;x++)for(int y=0;y<size;y++)image.setRGB(x,y,matrix.get(x,y)?Color.BLACK.getRGB():Color.WHITE.getRGB());return image;
+        } catch (com.google.zxing.WriterException ex) { throw new IllegalStateException("Could not create enrollment QR code.",ex); }
+    }
+
     private BadgePrintService.EmployeeBadgeData selectedBadgeData() throws Exception {
         if (selectedUserId == null) {
             throw new IllegalStateException("Select an employee first.");
@@ -1369,6 +1414,9 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(true);
         testNfcButton.setEnabled(true);
         rotateBadgeIdButton.setEnabled(true);
+        enrollWalletButton.setEnabled(true);
+        replaceWalletButton.setEnabled(true);
+        revokeWalletButton.setEnabled(true);
     }
 
     private void addEmployee() {
@@ -1566,6 +1614,9 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(false);
         testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
+        enrollWalletButton.setEnabled(false);
+        replaceWalletButton.setEnabled(false);
+        revokeWalletButton.setEnabled(false);
         usernameField.requestFocusInWindow();
     }
 

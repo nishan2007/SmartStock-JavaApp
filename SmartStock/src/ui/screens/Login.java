@@ -112,9 +112,10 @@ public class Login extends JFrame {
                 ? lastNfcBadgeIdentifier
                 : usernameField.getText().trim();
         char[] secret = passwordField.getPassword();
+        boolean walletCredential = identifier.toUpperCase(java.util.Locale.ROOT).startsWith("SSW1");
         boolean badgeIdentifier = BadgeCredentialService.looksLikeGeneratedBadge(
                 BadgeCredentialService.normalizeBadge(identifier));
-        if (identifier.isBlank() || (secret.length == 0 && !badgeIdentifier)) {
+        if (identifier.isBlank() || (secret.length == 0 && !badgeIdentifier && !walletCredential)) {
             Arrays.fill(secret, '\0');
             JOptionPane.showMessageDialog(this,
                     "Enter username/email and password, or scan a badge and enter the employee PIN.");
@@ -149,7 +150,9 @@ public class Login extends JFrame {
         SwingWorker<LanApiClient.LoginResult, Void> worker = new SwingWorker<>() {
             @Override
             protected LanApiClient.LoginResult doInBackground() throws Exception {
-                return LanApiClient.loginWithCredentials(identifier, secret, locationId);
+                return walletCredential
+                        ? LanApiClient.loginWithWallet(identifier, secret, locationId, "BARCODE")
+                        : LanApiClient.loginWithCredentials(identifier, secret, locationId);
             }
 
             @Override

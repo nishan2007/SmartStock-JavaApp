@@ -58,6 +58,8 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260827170000_rename_individual_customer_template.sql"
             ,"database/migrations/v1_after/20260828190000_scheduler_web_app.sql"
             ,"database/migrations/v1_after/20260830120000_customer_photos_card_expiry_government.sql"
+            ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
+            ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -71,6 +73,8 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260820030000_bound_store_snapshot_retention.sql",
             "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql",
             "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
+            ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
+            ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -434,6 +438,8 @@ public final class SchemaContractService {
         ensureIndividualCustomerTemplateRename(connection);
         ensureSchedulerWebUpgrade(connection);
         ensureCustomerPhotoCardExpiryUpgrade(connection);
+        ensureAppleWalletBadgeUpgrade(connection);
+        ensureWalletTemplateUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
@@ -452,6 +458,50 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Customer photos and card expiry could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureWalletTemplateUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "company_customization")
+                || (columnExists(connection, "public", "company_customization", "wallet_template_json")
+                && columnExists(connection, "public", "employee_wallet_enrollments", "location_id"))) return;
+        String storedCatalog = null;
+        if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setInt(1, BASELINE_VERSION);
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) storedCatalog = rs.getString(1); }
+            }
+        }
+        if (storedCatalog != null && !storedCatalog.equals(catalogFingerprint(connection, List.of("public"), false)))
+            throw new SQLException("Local schema drift blocks Wallet template installation.", "55000");
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource("database/migrations/v1_after/20260831150000_wallet_template.sql"));
+            if (storedCatalog != null) try (PreparedStatement ps = connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1, resourceFingerprint(localContractResources()));
+                ps.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                ps.setInt(3, BASELINE_VERSION); ps.executeUpdate();
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("Wallet template could not be installed.", ex);
+        } finally { connection.setAutoCommit(auto); }
+    }
+
+    public static void ensureAppleWalletBadgeUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","users")
+                || (tableExists(connection,"public","employee_wallet_credentials")
+                && tableExists(connection,"public","employee_wallet_enrollments")))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Apple Wallet badge tables could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     /** Installs the owner scheduler through the ordered local migration and advances metadata. */

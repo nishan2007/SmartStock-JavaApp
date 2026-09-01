@@ -59,25 +59,33 @@ final class LanInventoryService {
         String query = text(search, 300);
         if (query.isBlank()) return List.of();
         String sql = """
-                SELECT item_type,item_id,name,description,code,quantity_on_hand FROM (
+                SELECT item_type,item_id,name,description,code,quantity_on_hand,item_type_name,brand_name,price,image_url FROM (
                   SELECT 'Product' item_type,p.product_id item_id,
                     p.name||CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END name,
                     COALESCE(p.description,'') description,COALESCE(p.sku,'') code,
-                    COALESCE(i.quantity_on_hand,0) quantity_on_hand
+                    COALESCE(i.quantity_on_hand,0) quantity_on_hand,COALESCE(it.name,'') item_type_name,
+                    COALESCE(ib.name,'') brand_name,COALESCE(p.price,0) price,COALESCE(p.image_url,'') image_url
                   FROM products p LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
+                  LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
+                  LEFT JOIN item_brands ib ON ib.brand_id=p.brand_id
                   WHERE COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND %s
                   UNION ALL
                   SELECT 'Custom Item',coi.custom_item_id,coi.item_name,COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
-                    COALESCE(coi.quantity_on_hand,0)
-                  FROM custom_order_items coi WHERE coi.is_active=TRUE
+                    COALESCE(coi.quantity_on_hand,0),COALESCE(it.name,''),COALESCE(ib.name,''),
+                    COALESCE(coi.fixed_price,coi.area_price,0),COALESCE(coi.image_url,'')
+                  FROM custom_order_items coi LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id
+                  LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id WHERE coi.is_active=TRUE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY'
                     AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
                   SELECT 'Custom Variant',coiv.custom_variant_id,coi.item_name||' - '||coiv.variant_name,
                     COALESCE(coi.description,''),COALESCE(NULLIF(coiv.sku,''),NULLIF(coiv.barcode,''),
-                    'CUSTOM-'||coi.custom_item_id||'-'||coiv.custom_variant_id),COALESCE(coiv.quantity_on_hand,0)
+                    'CUSTOM-'||coi.custom_item_id||'-'||coiv.custom_variant_id),COALESCE(coiv.quantity_on_hand,0),
+                    COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(coiv.fixed_price,coi.fixed_price,coi.area_price,0),
+                    COALESCE(NULLIF(coiv.image_url,''),coi.image_url,'')
                   FROM custom_order_item_variants coiv JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
+                  LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id
                   WHERE coi.is_active=TRUE AND coiv.is_active=TRUE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY' AND %s
                 ) matched ORDER BY item_type,name LIMIT 300
@@ -93,7 +101,9 @@ final class LanInventoryService {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) rows.add(map(
                         "itemType", rs.getString(1), "itemId", rs.getInt(2), "name", rs.getString(3),
-                        "description", rs.getString(4), "code", rs.getString(5), "quantityOnHand", rs.getInt(6)));
+                        "description", rs.getString(4), "code", rs.getString(5), "quantityOnHand", rs.getInt(6),
+                        "itemTypeName",rs.getString(7),"brandName",rs.getString(8),"price",rs.getBigDecimal(9),
+                        "imageUrl",rs.getString(10)));
             }
         }
         return rows;
@@ -106,6 +116,7 @@ final class LanInventoryService {
         String search = text(r == null ? null : r.search(), 300);
         String stock = text(r == null ? null : r.stockFilter(), 40);
         String department = text(r == null ? null : r.department(), 200);
+        String productType = text(r == null ? null : r.productType(), 40);
         String itemType = text(r == null ? null : r.itemType(), 200);
         String brand = text(r == null ? null : r.brand(), 200);
         String shelf = text(r == null ? null : r.shelf(), 200);
@@ -135,6 +146,7 @@ final class LanInventoryService {
             for (String token : ProductSearchHelper.tokens(search)) args.add("%" + token + "%");
         }
         appendFilter(sql, args, "cat.name", department);
+        appendProductTypeFilter(sql, productType);
         appendFilter(sql, args, "it.name", itemType);
         appendFilter(sql, args, "ib.name", brand);
         appendFilter(sql, args, "sl.name", shelf);
@@ -453,6 +465,19 @@ final class LanInventoryService {
         return rows;
     }
     private static void appendFilter(StringBuilder sql,List<Object>args,String column,String value){if(!value.isBlank()){sql.append(" AND ").append(column).append("=?");args.add(value);}}
+    private static void appendProductTypeFilter(StringBuilder sql,String filter){
+        String type="COALESCE(p.product_type,'INVENTORY')";
+        switch(filter){
+            case "Inventory Only" -> sql.append(" AND ").append(type).append("='INVENTORY'");
+            case "Service Only" -> sql.append(" AND ").append(type).append("='SERVICE'");
+            case "Non Inventory Only" -> sql.append(" AND ").append(type).append("='NON_INVENTORY'");
+            case "Hide Inventory" -> sql.append(" AND ").append(type).append("<>'INVENTORY'");
+            case "Hide Services" -> sql.append(" AND ").append(type).append("<>'SERVICE'");
+            case "Hide Non Inventory" -> sql.append(" AND ").append(type).append("<>'NON_INVENTORY'");
+            case "" -> { }
+            default -> throw new IllegalArgumentException("Unknown product type filter.");
+        }
+    }
     private static void bind(PreparedStatement ps,List<?>args)throws SQLException{for(int i=0;i<args.size();i++)ps.setObject(i+1,args.get(i));}
     private static String text(String value,int max)throws RuleViolation{String clean=value==null?"":value.trim();if(clean.length()>max)throw rule(400,"VALIDATION_ERROR","A request value is too long.");return clean;}
     private static String normalizeItemType(String value){String v=value==null?"":value.trim().toUpperCase().replace(' ','_');return switch(v){case "PRODUCT"->"PRODUCT";case "CUSTOM_ITEM"->"CUSTOM_ITEM";case "CUSTOM_VARIANT"->"CUSTOM_VARIANT";default->v;};}
@@ -472,7 +497,7 @@ final class LanInventoryService {
         RuleViolation(int status,String code,String safeMessage){super(safeMessage);this.status=status;this.code=code;this.safeMessage=safeMessage;}
         int status(){return status;} String code(){return code;} String safeMessage(){return safeMessage;}
     }
-    private record InventoryRequest(String search,String stockFilter,String department,String itemType,String brand,String shelf,String storageShelf){}
+    private record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf){}
     private record HistoryRequest(String search,String fromDate,String toDate){}
     private record ReceiveRequest(String overrideApprovalToken,String overrideReason,List<ReceiveLine> lines){}
     private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity){}
