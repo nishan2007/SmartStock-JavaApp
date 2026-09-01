@@ -475,7 +475,7 @@ Confirmed findings:
 - Packaged Windows 1.0.133 build 10133 after the complete Maven test suite, repository security check, packaging archive checks, and whitespace checks passed.
 - Updater ZIP: `SmartStock/target/release-windows/smartstock-windows-1.0.133.zip`, 53,170,444 bytes, SHA-256 `6d8fc158a4e510476ec8d5aad41f2cc510a70ce0af2e037e01d79d597b57d2d3`.
 - Local installer: `SmartStock/target/release-windows/smartstock-windows-setup-1.0.133.exe`, 65,827,908 bytes, SHA-256 `36f61cfc5f58a22b11b58fafe8fc45ea06e1fe4c06733701f70e2fbe9035d74d`.
-- Production publication is pending authorization for the external R2 artifact upload and Supabase release-catalog write.
+- Published build 10133 to production after downloading and verifying the uploaded R2 ZIP; Supabase returned the matching release row.
 - Installed-app upgrade, live database/service, receipt printer, cash drawer, NFC, and real sale timing verification remain outstanding.
 
 ### 2026-08-31 checkout timing release 1.0.132
