@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -75,6 +76,66 @@ final class LanRefundService {
             }
         }
         return results;
+    }
+
+    static List<Map<String, Object>> advancedSearch(Connection connection, String saleDate,
+                                                     String itemQuery, int userId,
+                                                     int locationId) throws Exception {
+        requirePermission(connection, userId, "PROCESS_RETURNS");
+        requirePermission(connection, userId, "ADVANCED_RETURN_LOOKUP");
+        LocalDate date;
+        try {
+            date = LocalDate.parse(saleDate == null ? "" : saleDate.trim());
+        } catch (RuntimeException ex) {
+            throw new RuleViolation(400, "VALIDATION_ERROR", "Select a valid sale date.", false);
+        }
+        String term = itemQuery == null ? "" : itemQuery.trim();
+        if (term.length() < 2 || term.length() > 300) {
+            throw new RuleViolation(400, "VALIDATION_ERROR",
+                    "Enter at least two characters of the item name, SKU, or barcode.", false);
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT s.sale_id, COALESCE(s.receipt_number, ''), s.created_at,
+                       COALESCE(s.total_amount, 0), COALESCE(s.user_name, ''),
+                       COALESCE(s.receipt_device_id, s.device_id, '')
+                FROM sales s
+                JOIN locations l ON l.location_id = s.location_id
+                WHERE s.location_id = ?
+                  AND (s.created_at AT TIME ZONE COALESCE(NULLIF(l.timezone, ''), 'UTC'))::date = ?
+                  AND EXISTS (
+                    SELECT 1 FROM sale_items si
+                    LEFT JOIN products p ON p.product_id = si.product_id
+                    LEFT JOIN product_barcodes pb ON pb.product_id = si.product_id
+                    WHERE si.sale_id = s.sale_id
+                      AND (COALESCE(NULLIF(si.item_name, ''), p.name, '') ILIKE ?
+                        OR COALESCE(p.sku, '') ILIKE ?
+                        OR COALESCE(pb.barcode, '') ILIKE ?)
+                  )
+                ORDER BY s.created_at DESC
+                LIMIT 200
+                """)) {
+            String like = "%" + term + "%";
+            ps.setInt(1, locationId);
+            ps.setObject(2, date);
+            ps.setString(3, like);
+            ps.setString(4, like);
+            ps.setString(5, like);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("saleId", rs.getInt(1));
+                    row.put("receiptNumber", rs.getString(2));
+                    row.put("createdAtEpochMillis", rs.getTimestamp(3).getTime());
+                    row.put("totalAmount", money(rs.getBigDecimal(4)));
+                    row.put("cashierName", rs.getString(5));
+                    row.put("deviceId", rs.getString(6));
+                    row.put("sourceLocationId", locationId);
+                    results.add(row);
+                }
+            }
+        }
+        return List.copyOf(results);
     }
 
     static Map<String, Object> details(Connection connection, int saleId,

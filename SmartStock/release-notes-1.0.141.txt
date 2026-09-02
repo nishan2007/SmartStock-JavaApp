@@ -1,0 +1,8 @@
+SmartStock 1.0.141
+
+- Adds an explicit Default receipt printer selector in Workstation Preferences for choosing the Ethernet receipt printer or a Windows / USB printer queue.
+- Prevents an installed letter-size Windows printer from taking over receipt and cash-drawer routing when Ethernet is selected.
+- Keeps existing Ethernet-enabled registers routed to Ethernet by default and preserves normal USB receipt-printer behavior on registers using Windows queues.
+- Applies the selected receipt destination to receipt tests, cutter tests, cash-drawer commands, normal receipts, returns, and other ESC/POS output.
+- Includes the Apple Wallet scanner compatibility improvements from 1.0.140 and earlier workflow updates.
+- Physical receipt printer, cutter, cash drawer, installed-app upgrade, and live database verification remain required after updating.

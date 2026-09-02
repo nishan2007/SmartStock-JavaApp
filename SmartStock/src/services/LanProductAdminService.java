@@ -27,14 +27,27 @@ final class LanProductAdminService {
     static List<Map<String, Object>> searchEditable(Connection connection, String search,
                                                      int userId, int locationId) throws Exception {
         requirePermission(connection, userId, "EDIT_ITEM");
+        return searchEditable(connection, search, locationId, false);
+    }
+
+    static List<Map<String, Object>> searchArchived(Connection connection, String search,
+                                                     int userId, int locationId) throws Exception {
+        requirePermission(connection, userId, "PRODUCT_ARCHIVE");
+        return searchEditable(connection, search, locationId, true);
+    }
+
+    private static List<Map<String, Object>> searchEditable(Connection connection, String search,
+                                                             int locationId, boolean archived) throws Exception {
         String query = clean(search, 300);
         if (query.isBlank()) return List.of();
+        String predicate=ProductSearchHelper.predicate("p",locationId,query)
+                .replace("p.is_active = TRUE",archived?"p.is_active = FALSE":"p.is_active = TRUE");
         String sql = """
                 SELECT p.product_id,p.name,COALESCE(p.size,''),COALESCE(p.sku,''),COALESCE(p.barcode,''),
                   COALESCE(p.description,''),COALESCE(p.cost_price,0),COALESCE(p.price,0),
                   COALESCE(p.product_type,'INVENTORY'),COALESCE(i.quantity_on_hand,0),COALESCE(i.reorder_level,0),
                   p.category_id,COALESCE(c.name,''),p.vendor_id,COALESCE(v.name,''),COALESCE(p.image_url,''),
-                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,'')
+                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),p.is_active
                 FROM products p LEFT JOIN categories c ON c.category_id=p.category_id
                 LEFT JOIN vendors v ON v.vendor_id=p.vendor_id
                 LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
@@ -44,7 +57,7 @@ final class LanProductAdminService {
                 LEFT JOIN shelf_locations sl ON sl.shelf_location_id=psa.shelf_location_id
                 LEFT JOIN shelf_locations ssl ON ssl.shelf_location_id=psa.storage_shelf_location_id
                 WHERE p.sku<>'SMARTSTOCK-MISC' AND %s ORDER BY p.name LIMIT 300
-                """.formatted(ProductSearchHelper.predicate("p", locationId, query));
+                """.formatted(predicate);
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setInt(1, locationId); ps.setInt(2, locationId); ProductSearchHelper.bindTokens(ps, 3, query);
@@ -57,7 +70,8 @@ final class LanProductAdminService {
                         "categoryId", nullableInt(rs, 12), "categoryName", rs.getString(13),
                         "vendorId", nullableInt(rs, 14), "vendorName", rs.getString(15), "imageUrl", rs.getString(16),
                         "itemTypeName", rs.getString(17), "brandName", rs.getString(18), "shelfName", rs.getString(19),
-                        "storageShelfName", rs.getString(20), "additionalBarcodes", additionalBarcodes(connection, rs.getInt(1))));
+                        "storageShelfName", rs.getString(20), "additionalBarcodes", additionalBarcodes(connection, rs.getInt(1)),
+                        "active",rs.getBoolean(21)));
             }
         }
         return rows;
@@ -68,7 +82,7 @@ final class LanProductAdminService {
         List<Map<String,Object>> rows=new ArrayList<>();
         try(PreparedStatement ps=connection.prepareStatement("""
                 SELECT product_id,COALESCE(sku,''),COALESCE(name,''),COALESCE(size,''),COALESCE(price,0)
-                FROM products WHERE MOD(COALESCE(price,0),20)<>0
+                FROM products WHERE MOD(COALESCE(price,0),20)<>0 AND is_active=TRUE
                 ORDER BY name,product_id LIMIT 2000
                 """);ResultSet rs=ps.executeQuery()){
             while(rs.next()){
@@ -172,7 +186,7 @@ final class LanProductAdminService {
                                            int userId,int locationId)throws Exception{
         requireAnyPermission(connection,userId,"VIEW_INVENTORY","EDIT_ITEM","NEW_ITEM","MAKE_SALE");
         String normalized=clean(itemType,20).toLowerCase(java.util.Locale.ROOT);String sql=switch(normalized){
-            case "product"->"SELECT p.name,COALESCE(p.size,''),COALESCE(p.description,''),COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id),COALESCE(p.price,0) FROM products p WHERE p.product_id=? AND p.sku<>'SMARTSTOCK-MISC'";
+            case "product"->"SELECT p.name,COALESCE(p.size,''),COALESCE(p.description,''),COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id),COALESCE(p.price,0) FROM products p WHERE p.product_id=? AND p.sku<>'SMARTSTOCK-MISC' AND p.is_active=TRUE";
             case "custom"->"SELECT coi.item_name,'',COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE";
             case "variant"->"SELECT coi.item_name||' - '||v.variant_name,v.variant_name,COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND v.is_active=TRUE";
             default->throw rule(400,"VALIDATION_ERROR","The saved item type is invalid.");};
@@ -232,7 +246,7 @@ final class LanProductAdminService {
         if (request.productId() == null || request.productId() <= 0)
             throw rule(400, "VALIDATION_ERROR", "Select an item to update.");
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT sku FROM products WHERE product_id=? FOR UPDATE")) {
+                "SELECT sku FROM products WHERE product_id=? AND is_active=TRUE FOR UPDATE")) {
             ps.setInt(1, request.productId());
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw rule(404, "PRODUCT_NOT_FOUND", "Item was not found.");
@@ -286,6 +300,104 @@ final class LanProductAdminService {
         return map("productId", request.productId(), "quantity", adjust ? request.quantity() : inventory.quantity());
     }
 
+    static Map<String,Object> setArchived(Connection connection,JsonObject body,UUID deviceId,
+                                           int userId,int locationId,boolean archive)throws Exception{
+        requireDeviceId(deviceId);requirePermission(connection,userId,"PRODUCT_ARCHIVE");
+        int productId=body.has("productId")?body.get("productId").getAsInt():0;
+        String reason=clean(body.has("reason")&&!body.get("reason").isJsonNull()?body.get("reason").getAsString():"",1000);
+        if(productId<=0)throw rule(400,"VALIDATION_ERROR","Select a product.");
+        if(archive&&reason.isBlank())throw rule(400,"ARCHIVE_REASON_REQUIRED","Enter a reason for archiving this product.");
+        String name,sku;boolean active;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT name,sku,is_active FROM products WHERE product_id=? FOR UPDATE")){
+            ps.setInt(1,productId);try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","Item was not found.");
+                name=rs.getString(1);sku=rs.getString(2);active=rs.getBoolean(3);
+            }
+        }
+        if("SMARTSTOCK-MISC".equalsIgnoreCase(sku))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be archived.");
+        if(archive&&!active)throw rule(409,"ALREADY_ARCHIVED","This product is already archived.");
+        if(!archive&&active)throw rule(409,"ALREADY_ACTIVE","This product is already active.");
+        if(archive){
+            List<String> stock=new ArrayList<>();
+            try(PreparedStatement ps=connection.prepareStatement("""
+                    SELECT COALESCE(l.name,'Store '||i.location_id),i.quantity_on_hand
+                    FROM inventory i LEFT JOIN locations l ON l.location_id=i.location_id
+                    WHERE i.product_id=? AND i.quantity_on_hand<>0 FOR UPDATE OF i
+                    """)){ps.setInt(1,productId);try(ResultSet rs=ps.executeQuery()){
+                while(rs.next())stock.add(rs.getString(1)+": "+rs.getInt(2));
+            }}
+            if(!stock.isEmpty())throw rule(409,"PRODUCT_HAS_STOCK","Set stock to zero at every store before archiving. "+String.join(", ",stock));
+        }
+        try(PreparedStatement ps=connection.prepareStatement(archive?"""
+                UPDATE products SET is_active=FALSE,archived_at=CURRENT_TIMESTAMP,archived_by_user_id=?,archive_reason=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?
+                """:"""
+                UPDATE products SET is_active=TRUE,archived_at=NULL,archived_by_user_id=NULL,archive_reason=NULL,updated_at=CURRENT_TIMESTAMP WHERE product_id=?
+                """)){if(archive){ps.setInt(1,userId);ps.setString(2,reason);ps.setInt(3,productId);}else ps.setInt(1,productId);ps.executeUpdate();}
+        try(PreparedStatement ps=connection.prepareStatement("""
+                INSERT INTO product_lifecycle_audit(product_id,action_type,reason,user_id,device_id,location_id)
+                VALUES (?,?,?,?,?,?)
+                """)){ps.setInt(1,productId);ps.setString(2,archive?"ARCHIVE":"RESTORE");ps.setString(3,reason.isBlank()?null:reason);ps.setInt(4,userId);ps.setObject(5,deviceId);ps.setInt(6,locationId);ps.executeUpdate();}
+        String event=archive?"PRODUCT_ARCHIVED":"PRODUCT_RESTORED";
+        SyncOutboxService.recordEvent(connection,event,map("product_id",productId,"location_id",locationId,"user_id",userId),locationId,deviceId.toString(),userId);
+        audit(connection,"LAN_"+event,deviceId,userId,"product_id="+productId+"; location_id="+locationId+"; reason="+reason);
+        return map("productId",productId,"name",name,"active",!archive);
+    }
+
+    static Map<String,Object> bulkArchive(Connection connection,JsonObject body,UUID deviceId,
+                                          int userId,int locationId)throws Exception{
+        List<Integer> productIds=productIds(body);
+        String reason=clean(body.has("reason")&&!body.get("reason").isJsonNull()?body.get("reason").getAsString():"",1000);
+        if(reason.isBlank())throw rule(400,"ARCHIVE_REASON_REQUIRED","Enter a reason for archiving the selected products.");
+        List<Map<String,Object>> archived=new ArrayList<>();
+        for(int productId:productIds){
+            JsonObject request=new JsonObject();request.addProperty("productId",productId);request.addProperty("reason",reason);
+            archived.add(setArchived(connection,request,deviceId,userId,locationId,true));
+        }
+        return map("updatedCount",archived.size(),"products",archived);
+    }
+
+    static Map<String,Object> clearBarcodes(Connection connection,JsonObject body,UUID deviceId,
+                                            int userId,int locationId)throws Exception{
+        requireDeviceId(deviceId);requirePermission(connection,userId,"EDIT_ITEM");
+        List<Integer> productIds=productIds(body);int cleared=0;
+        for(int productId:productIds){
+            String sku;boolean active;
+            try(PreparedStatement lock=connection.prepareStatement("SELECT sku,is_active FROM products WHERE product_id=? FOR UPDATE")){
+                lock.setInt(1,productId);try(ResultSet rs=lock.executeQuery()){
+                    if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","A selected item was not found.");
+                    sku=rs.getString(1);active=rs.getBoolean(2);
+                }
+            }
+            if(!active)throw rule(409,"PRODUCT_ARCHIVED","Restore archived products before clearing their barcodes.");
+            if("SMARTSTOCK-MISC".equalsIgnoreCase(sku))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be changed.");
+            Set<String> existing=additionalBarcodeSet(connection,productId,true);
+            for(String barcode:existing)ReferenceDataSyncService.recordTombstone(connection,"product_barcodes",Map.of("barcode",barcode));
+            try(PreparedStatement delete=connection.prepareStatement("DELETE FROM product_barcodes WHERE product_id=?")){
+                delete.setInt(1,productId);delete.executeUpdate();
+            }
+            try(PreparedStatement update=connection.prepareStatement("UPDATE products SET barcode=NULL,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")){
+                update.setInt(1,productId);update.executeUpdate();
+            }
+            SyncOutboxService.recordEvent(connection,"PRODUCT_BARCODES_CLEARED",map(
+                    "product_id",productId,"location_id",locationId,"user_id",userId),locationId,deviceId.toString(),userId);
+            audit(connection,"LAN_PRODUCT_BARCODES_CLEARED",deviceId,userId,
+                    "product_id="+productId+"; location_id="+locationId+"; additional_count="+existing.size());
+            cleared++;
+        }
+        return map("updatedCount",cleared);
+    }
+
+    private static List<Integer> productIds(JsonObject body)throws RuleViolation{
+        if(body==null||!body.has("productIds")||!body.get("productIds").isJsonArray())
+            throw rule(400,"VALIDATION_ERROR","Select one or more products.");
+        LinkedHashSet<Integer> ids=new LinkedHashSet<>();
+        try{body.getAsJsonArray("productIds").forEach(value->{int id=value.getAsInt();if(id>0)ids.add(id);});}
+        catch(Exception ex){throw rule(400,"VALIDATION_ERROR","The selected products are invalid.");}
+        if(ids.isEmpty())throw rule(400,"VALIDATION_ERROR","Select one or more products.");
+        if(ids.size()>500)throw rule(400,"VALIDATION_ERROR","Select no more than 500 products at once.");
+        return List.copyOf(ids);
+    }
+
     static Map<String,Object> inlineUpdate(Connection connection,JsonObject body,UUID deviceId,int userId,
                                            String userName,int locationId)throws Exception{
         requireDeviceId(deviceId);requirePermission(connection,userId,"EDIT_ITEM");
@@ -295,7 +407,7 @@ final class LanProductAdminService {
         String expected=body.has("expectedValue")&&!body.get("expectedValue").isJsonNull()
                 ?body.get("expectedValue").getAsString():"";
         if(productId<=0)throw rule(400,"VALIDATION_ERROR","Select an item to edit.");
-        try(PreparedStatement lock=connection.prepareStatement("SELECT sku FROM products WHERE product_id=? FOR UPDATE")){
+        try(PreparedStatement lock=connection.prepareStatement("SELECT sku FROM products WHERE product_id=? AND is_active=TRUE FOR UPDATE")){
             lock.setInt(1,productId);try(ResultSet rs=lock.executeQuery()){
                 if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","Item was not found.");
                 if("SMARTSTOCK-MISC".equals(rs.getString(1)))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be edited.");

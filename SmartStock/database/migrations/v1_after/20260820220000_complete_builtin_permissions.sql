@@ -22,6 +22,7 @@ VALUES
     ('VIEW_INVENTORY', 'View Inventory', 'Allows viewing item and stock information.', 'Inventory', 'Item Visibility', CURRENT_TIMESTAMP),
     ('NEW_ITEM', 'New Item', 'Allows creating inventory items.', 'Inventory', 'Items', CURRENT_TIMESTAMP),
     ('EDIT_ITEM', 'Edit Item', 'Allows editing inventory items.', 'Inventory', 'Items', CURRENT_TIMESTAMP),
+    ('PRODUCT_ARCHIVE', 'Archive and Restore Products', 'Allows globally archiving and restoring products.', 'Inventory', 'Items', CURRENT_TIMESTAMP),
     ('RECEIVING_INVENTORY', 'Receive Inventory', 'Allows receiving stock into inventory.', 'Inventory', 'Receiving', CURRENT_TIMESTAMP),
     ('VIEW_RECEIVING_HISTORY', 'View Receiving History', 'Allows viewing completed inventory receiving activity.', 'Inventory', 'Receiving', CURRENT_TIMESTAMP),
     ('CUSTOMER_ACCOUNTS', 'Customer Accounts', 'Allows viewing and managing customer accounts.', 'Customers', 'Accounts', CURRENT_TIMESTAMP),
@@ -36,7 +37,8 @@ VALUES
     ('LOCAL_DEVICE_SETTINGS', 'Local Device Settings', 'Allows editing workstation-specific settings.', 'Operations', 'Device & Hardware', CURRENT_TIMESTAMP),
     ('CUSTOM_ORDER_PRICE_OVERRIDE', 'Custom Order Price Override', 'Allows overriding configured custom-item prices.', 'Custom Orders', 'Approvals', CURRENT_TIMESTAMP),
     ('CUSTOM_ORDER_ITEMS', 'Custom Order Items', 'Allows managing the custom-order item catalog.', 'Custom Orders', 'Order Items', CURRENT_TIMESTAMP),
-    ('MANAGE_CUSTOM_ORDER_ITEMS', 'Manage Custom Order Items', 'Allows managing the custom-order item catalog.', 'Custom Orders', 'Order Items', CURRENT_TIMESTAMP)
+    ('MANAGE_CUSTOM_ORDER_ITEMS', 'Manage Custom Order Items', 'Allows managing the custom-order item catalog.', 'Custom Orders', 'Order Items', CURRENT_TIMESTAMP),
+    ('ADVANCED_RETURN_LOOKUP', 'Advanced Return Lookup', 'Allows finding receipts by sale date and item name, SKU, or barcode.', 'Sales', 'Returns', CURRENT_TIMESTAMP)
 ON CONFLICT (permission_key) DO UPDATE SET
     permission_name = EXCLUDED.permission_name,
     description = EXCLUDED.description,

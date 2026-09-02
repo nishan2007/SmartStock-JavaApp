@@ -692,6 +692,13 @@ public final class LanApiClient {
         return rows == null ? List.of() : List.of(rows);
     }
 
+    public static List<EditableProduct> searchArchivedProducts(String search)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("search",search==null?"":search);
+        JsonObject data=post("/v1/products/archived-search",request,true,true);
+        EditableProduct[] rows=GSON.fromJson(data.getAsJsonArray("products"),EditableProduct[].class);
+        return rows==null?List.of():List.of(rows);
+    }
+
     public static List<PriceTagCatalogItem> searchPriceTagItems(String search) throws Exception {
         JsonObject request = new JsonObject(); request.addProperty("search", search == null ? "" : search);
         JsonObject data = post("/v1/products/price-tags", request, true, true);
@@ -710,6 +717,29 @@ public final class LanApiClient {
 
     public static SavedProduct updateProduct(ProductSaveRequest request, String idempotencyKey) throws Exception {
         return saveProduct("/v1/products/update", request, idempotencyKey);
+    }
+
+    public static ProductLifecycleResult archiveProduct(int productId,String reason,String key)throws Exception{return productLifecycle("/v1/products/archive",productId,reason,key);}
+    public static ProductLifecycleResult restoreProduct(int productId,String reason,String key)throws Exception{return productLifecycle("/v1/products/restore",productId,reason,key);}
+    private static ProductLifecycleResult productLifecycle(String path,int productId,String reason,String key)throws Exception{
+        requireIdempotencyKey(key,"Product lifecycle idempotency key is required.");JsonObject request=new JsonObject();request.addProperty("productId",productId);request.addProperty("reason",reason==null?"":reason);
+        return GSON.fromJson(post(path,request,true,true,Map.of("Idempotency-Key",key)),ProductLifecycleResult.class);
+    }
+
+    public static int archiveProducts(List<Integer> productIds,String reason,String key)throws Exception{
+        return bulkProductAction("/v1/products/bulk-archive",productIds,reason,key);
+    }
+
+    public static int clearProductBarcodes(List<Integer> productIds,String key)throws Exception{
+        return bulkProductAction("/v1/products/clear-barcodes",productIds,null,key);
+    }
+
+    private static int bulkProductAction(String path,List<Integer> productIds,String reason,String key)throws Exception{
+        requireIdempotencyKey(key,"Product bulk-change idempotency key is required.");
+        JsonObject request=new JsonObject();request.add("productIds",GSON.toJsonTree(productIds));
+        if(reason!=null)request.addProperty("reason",reason);
+        JsonObject result=post(path,request,true,true,Map.of("Idempotency-Key",key));
+        return result.get("updatedCount").getAsInt();
     }
 
     public static List<NonRoundedPriceItem> loadNonRoundedProductPrices()throws Exception{
@@ -844,6 +874,8 @@ public final class LanApiClient {
     private static void clearTransferState()throws Exception{RegisterTransfer state=transferState();SecureCredentialStore.delete(TRANSFER_STATE_SECRET);if(SecureCredentialStore.read(TRANSFER_STATE_SECRET)!=null&&state!=null)SecureCredentialStore.write(TRANSFER_STATE_SECRET,GSON.toJson(new RegisterTransfer(state.transferId(),state.deviceId(),state.sourceLocationId(),state.destinationLocationId(),state.sourceStoreName(),state.destinationStoreName(),"COMPLETED",state.emergency(),state.reason(),state.preparedAt(),state.expiresAt())));}
     public static List<DeviceSessionRecord> loadDeviceSessions(String deviceId)throws Exception{JsonObject r=new JsonObject();r.addProperty("deviceId",deviceId);JsonObject d=post("/v1/security/devices/sessions",r,true,true);DeviceSessionRecord[]a=GSON.fromJson(d.getAsJsonArray("sessions"),DeviceSessionRecord[].class);return a==null?List.of():List.of(a);}
     public static void updateManagedDevice(DeviceAdminUpdate request,String key)throws Exception{post("/v1/security/devices/update",GSON.toJsonTree(request).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key));}
+    public static List<SchedulerBrowserDevice> loadSchedulerBrowserDevices()throws Exception{JsonObject d=post("/v1/security/scheduler-devices/list",new JsonObject(),true,true);SchedulerBrowserDevice[]a=GSON.fromJson(d.getAsJsonArray("devices"),SchedulerBrowserDevice[].class);return a==null?List.of():List.of(a);}
+    public static void updateSchedulerBrowserDevice(String deviceId,boolean staySignedIn,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("deviceId",deviceId);r.addProperty("staySignedIn",staySignedIn);post("/v1/security/scheduler-devices/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static ServerAdminState loadServerAdminState()throws Exception{
         JsonObject d=post("/v1/security/servers/list",new JsonObject(),true,true);
         ServerRecord[]a=GSON.fromJson(d.getAsJsonArray("servers"),ServerRecord[].class);
@@ -1021,6 +1053,17 @@ public final class LanApiClient {
         request.addProperty("query", query == null ? "" : query);
         if(sourceLocationId!=null)request.addProperty("sourceLocationId",sourceLocationId);
         JsonObject data = post("/v1/sales/search", request, true, true);
+        SaleSearchResult[] sales = GSON.fromJson(data.getAsJsonArray("sales"), SaleSearchResult[].class);
+        return sales == null ? List.of() : List.of(sales);
+    }
+
+    public static List<SaleSearchResult> advancedSearchSalesForReturn(
+            String saleDate, String itemQuery, Integer sourceLocationId) throws Exception {
+        JsonObject request = new JsonObject();
+        request.addProperty("saleDate", saleDate == null ? "" : saleDate);
+        request.addProperty("itemQuery", itemQuery == null ? "" : itemQuery);
+        if (sourceLocationId != null) request.addProperty("sourceLocationId", sourceLocationId);
+        JsonObject data = post("/v1/sales/advanced-return-search", request, true, true);
         SaleSearchResult[] sales = GSON.fromJson(data.getAsJsonArray("sales"), SaleSearchResult[].class);
         return sales == null ? List.of() : List.of(sales);
     }
@@ -1587,7 +1630,7 @@ public final class LanApiClient {
     public record InventoryResult(List<InventoryProduct> products,int totalProducts,int totalUnits,
                                   boolean canViewVendor,boolean canViewCostPrice,boolean canViewCreatedBy) { }
     public record InventoryCellUpdate(int productId,String field,String value,String expectedValue) { }
-    public record InventoryProduct(int productId,String sku,String name,String size,String description,String productType,
+    public record InventoryProduct(int productId,String sku,String barcode,String name,String size,String description,String productType,
                                    String department,String itemType,String brand,String shelf,String storageShelf,
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,
                                    int reorderLevel,String createdBy) { }
@@ -1634,7 +1677,7 @@ public final class LanApiClient {
                                   BigDecimal costPrice,BigDecimal price,String productType,int quantity,int reorderLevel,
                                   Integer categoryId,String categoryName,Integer vendorId,String vendorName,String imageUrl,
                                   String itemTypeName,String brandName,String shelfName,String storageShelfName,
-                                  List<String> additionalBarcodes) { }
+                                  List<String> additionalBarcodes,boolean active) { }
     public record PriceTagCatalogItem(String itemType,String name,String size,String description,String code,
                                       BigDecimal price,long itemId) { }
     public record PriceTagSettings(String encodedTemplates,boolean showCompany,boolean showSku,boolean showBarcode,
@@ -1645,6 +1688,7 @@ public final class LanApiClient {
                                      List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
                                      boolean adjustQuantity) { }
     public record SavedProduct(int productId,String sku,int quantity) { }
+    public record ProductLifecycleResult(int productId,String name,boolean active) { }
     public record NonRoundedPriceItem(int productId,String sku,String name,String size,
                                       BigDecimal currentPrice,BigDecimal suggestedPrice) { }
     public record PriceRoundingLine(int productId,BigDecimal expectedPrice,BigDecimal newPrice) { }
@@ -1719,6 +1763,8 @@ public final class LanApiClient {
                                     boolean persistentLoginAllowed,boolean autoLogoutEnabled,
                                     int autoLogoutMinutes,boolean allowSales,boolean allowOrders,
                                     String notes,String deviceName,String receiptCode) { }
+    public record SchedulerBrowserDevice(String deviceId,String deviceName,String employeeName,String username,
+                                         boolean staySignedIn,String expiresAt,String createdAt,String lastSeenAt,boolean revoked) { }
     public record ServerAdminState(List<ServerRecord> servers,List<ServerEvent> events,String currentServerInstanceId,String localRole) { }
     public record ServerRecord(String serverInstanceId,int locationId,String installationId,String displayName,
                                String hostname,String appVersion,String certificateFingerprint,String endpointHost,

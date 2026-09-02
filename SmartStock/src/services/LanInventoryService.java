@@ -126,7 +126,7 @@ final class LanInventoryService {
         boolean showCreatedBy = hasPermission(c, userId, "VIEW_CREATED_BY");
 
         StringBuilder sql = new StringBuilder("""
-                SELECT p.product_id,COALESCE(p.sku,''),COALESCE(p.name,''),COALESCE(p.size,''),
+                SELECT p.product_id,COALESCE(p.sku,''),COALESCE(p.barcode,''),COALESCE(p.name,''),COALESCE(p.size,''),
                   COALESCE(p.description,''),COALESCE(p.product_type,'INVENTORY'),COALESCE(cat.name,''),
                   COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),
                   COALESCE(v.name,''),COALESCE(p.cost_price,0),COALESCE(p.price,0),
@@ -162,15 +162,16 @@ final class LanInventoryService {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("productId", rs.getInt(1)); row.put("sku", rs.getString(2)); row.put("name", rs.getString(3));
-                    row.put("size", rs.getString(4)); row.put("description", rs.getString(5)); row.put("productType", rs.getString(6));
-                    row.put("department", rs.getString(7)); row.put("itemType", rs.getString(8)); row.put("brand", rs.getString(9));
-                    row.put("shelf", rs.getString(10)); row.put("storageShelf", rs.getString(11));
-                    row.put("vendor", showVendor ? rs.getString(12) : "");
-                    row.put("costPrice", showCost ? rs.getBigDecimal(13) : null); row.put("price", rs.getBigDecimal(14));
-                    row.put("quantityOnHand", rs.getInt(15)); row.put("reorderLevel", rs.getInt(16));
-                    row.put("createdBy", showCreatedBy ? rs.getString(17) : ""); rows.add(row);
-                    if ("INVENTORY".equals(normalizeProductType(rs.getString(6)))) units += rs.getInt(15);
+                    row.put("productId", rs.getInt(1)); row.put("sku", rs.getString(2)); row.put("barcode", rs.getString(3));
+                    row.put("name", rs.getString(4)); row.put("size", rs.getString(5)); row.put("description", rs.getString(6));
+                    row.put("productType", rs.getString(7)); row.put("department", rs.getString(8));
+                    row.put("itemType", rs.getString(9)); row.put("brand", rs.getString(10));
+                    row.put("shelf", rs.getString(11)); row.put("storageShelf", rs.getString(12));
+                    row.put("vendor", showVendor ? rs.getString(13) : "");
+                    row.put("costPrice", showCost ? rs.getBigDecimal(14) : null); row.put("price", rs.getBigDecimal(15));
+                    row.put("quantityOnHand", rs.getInt(16)); row.put("reorderLevel", rs.getInt(17));
+                    row.put("createdBy", showCreatedBy ? rs.getString(18) : ""); rows.add(row);
+                    if ("INVENTORY".equals(normalizeProductType(rs.getString(7)))) units += rs.getInt(16);
                 }
             }
         }
@@ -329,10 +330,10 @@ final class LanInventoryService {
 
     private static LockedStock lockStock(Connection c, String type, int itemId, int locationId) throws Exception {
         if ("PRODUCT".equals(type)) {
-            try (PreparedStatement ensure = c.prepareStatement("INSERT INTO inventory(product_id,location_id,quantity_on_hand,reorder_level) SELECT product_id,?,0,0 FROM products WHERE product_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY' ON CONFLICT(product_id,location_id) DO NOTHING")) {
+            try (PreparedStatement ensure = c.prepareStatement("INSERT INTO inventory(product_id,location_id,quantity_on_hand,reorder_level) SELECT product_id,?,0,0 FROM products WHERE product_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND is_active=TRUE ON CONFLICT(product_id,location_id) DO NOTHING")) {
                 ensure.setInt(1, locationId); ensure.setInt(2, itemId); ensure.executeUpdate();
             }
-            try (PreparedStatement ps = c.prepareStatement("SELECT p.name,COALESCE(i.quantity_on_hand,0) FROM products p JOIN inventory i ON i.product_id=p.product_id AND i.location_id=? WHERE p.product_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF i")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT p.name,COALESCE(i.quantity_on_hand,0) FROM products p JOIN inventory i ON i.product_id=p.product_id AND i.location_id=? WHERE p.product_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND p.is_active=TRUE FOR UPDATE OF i")) {
                 ps.setInt(1, locationId); ps.setInt(2, itemId); try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw rule(404, "ITEM_NOT_FOUND", "A receiving item no longer exists.");
                     return new LockedStock(type, itemId, null, rs.getString(1), null, rs.getInt(2));

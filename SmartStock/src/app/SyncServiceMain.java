@@ -8,6 +8,7 @@ import services.SyncWorker;
 import services.LanApiServer;
 import services.ServerRoleGuard;
 import services.SchedulerWebRuntimeController;
+import services.WalletEnrollmentServer;
 
 import java.sql.Connection;
 
@@ -15,6 +16,7 @@ public final class SyncServiceMain {
     private static volatile boolean running = true;
     private static volatile LanApiServer lanApiServer;
     private static volatile SchedulerWebRuntimeController schedulerWeb;
+    private static volatile WalletEnrollmentServer walletEnrollment;
 
     private SyncServiceMain() {
     }
@@ -23,6 +25,7 @@ public final class SyncServiceMain {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
             if (schedulerWeb != null) schedulerWeb.close();
+            if (walletEnrollment != null) walletEnrollment.close();
             if (lanApiServer != null) {
                 lanApiServer.close();
             }
@@ -93,6 +96,12 @@ public final class SyncServiceMain {
             try {
                 lanApiServer = LanApiServer.start();
                 schedulerWeb = SchedulerWebRuntimeController.start();
+                try {
+                    walletEnrollment = WalletEnrollmentServer.startIfConfigured();
+                } catch (Exception walletError) {
+                    System.err.println("Apple Wallet enrollment gateway could not start: "
+                            + walletError.getMessage());
+                }
                 SyncServiceStatusService.mark("Running",
                         "SmartStock LAN service is online on HTTPS port " + LanApiServer.DEFAULT_PORT + ".");
             } catch (Exception ex) {
@@ -107,6 +116,10 @@ public final class SyncServiceMain {
             if (schedulerWeb != null) {
                 schedulerWeb.close();
                 schedulerWeb = null;
+            }
+            if (walletEnrollment != null) {
+                walletEnrollment.close();
+                walletEnrollment = null;
             }
             if (lanApiServer != null) {
                 lanApiServer.close();

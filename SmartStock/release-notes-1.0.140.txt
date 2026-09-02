@@ -1,0 +1,6 @@
+SmartStock 1.0.140
+
+- Fixes Apple Wallet QR badge login with keyboard-wedge barcode scanners that add AIM identifiers, framing bytes, Enter characters, or configured prefixes and suffixes.
+- Extracts and authenticates only the exact fixed-length opaque Wallet credential instead of hashing scanner-added data.
+- Preserves barcode-only login when the company badge-PIN preference is disabled and keeps existing physical badge, username/password, and employee PIN login paths compatible.
+- Does not enable Apple Wallet NFC; a certified Apple VAS provider and reader are still required.

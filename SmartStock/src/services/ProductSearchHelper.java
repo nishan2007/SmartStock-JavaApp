@@ -16,12 +16,14 @@ public final class ProductSearchHelper {
     }
 
     public static String predicate(String productAlias, Integer locationId, String searchText, boolean includeVendor) {
+        String active = safeAlias(productAlias) + ".is_active = TRUE";
         List<String> tokens = tokens(searchText);
         if (tokens.isEmpty()) {
-            return "TRUE";
+            return active;
         }
         String expression = searchableTextExpression(productAlias, locationId, includeVendor);
-        return String.join(" AND ", java.util.Collections.nCopies(tokens.size(), expression + " ILIKE ?"));
+        return active + " AND "
+                + String.join(" AND ", java.util.Collections.nCopies(tokens.size(), expression + " ILIKE ?"));
     }
 
     public static int bindTokens(PreparedStatement ps, int startIndex, String searchText) throws SQLException {

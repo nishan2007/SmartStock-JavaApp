@@ -51,7 +51,7 @@ final class ReceivingBarcodeService {
 
     private static Target lockTarget(Connection c,String type,int id)throws Exception{
         String sql=switch(type){
-            case "PRODUCT"->"SELECT COALESCE(barcode,'') FROM products WHERE product_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY' FOR UPDATE";
+            case "PRODUCT"->"SELECT COALESCE(barcode,'') FROM products WHERE product_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND is_active=TRUE FOR UPDATE";
             case "CUSTOM_ITEM"->"SELECT COALESCE(barcode,'') FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND COALESCE(has_variants,FALSE)=FALSE FOR UPDATE";
             default->"SELECT COALESCE(v.barcode,'') FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND v.is_active=TRUE AND i.is_active=TRUE AND COALESCE(i.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF v";
         };

@@ -7,11 +7,28 @@ Configure these values only on the store server through protected machine-local 
 - `SMARTSTOCK_WALLET_PASS_TYPE`
 - `SMARTSTOCK_WALLET_TEAM_ID`
 - `SMARTSTOCK_WALLET_SIGNING_P12`
-- `SMARTSTOCK_WALLET_SIGNING_PASSWORD`
+- `SMARTSTOCK_WALLET_SIGNING_PASSWORD` (legacy/plaintext override only)
 - `SMARTSTOCK_WALLET_WWDR_CERT`
 - `SMARTSTOCK_WALLET_PUBLIC_ORIGIN`
 
 The public origin must be an HTTPS address that routes `/wallet/enroll/` to the store LAN service. Enrollment links expire after ten minutes and work once. Never commit the signing certificate, password, private key, or generated pass.
+
+On Windows, store the signing password under the secure credential key
+`apple-wallet-signing-password`; SmartStock reads it through the existing
+CurrentUser DPAPI-backed credential store. The background server opens a separate
+HTTP listener on `127.0.0.1:8447` only when the barcode configuration is complete.
+Configure the public tunnel to use that loopback listener. It serves only
+`/wallet/enroll/{token}` and returns 404 for every other path. Never point the
+Wallet tunnel at LAN API port 8443.
+
+For the installed background service, deploy the active PKCS#12 signing package
+and WWDR certificate under the protected server-owned `.smartstock` profile tree,
+not a desktop, Downloads, OneDrive, repository, or interactive-app-only folder.
+Grant access only to the Windows account that runs the SmartStock server task.
+The enrollment handler records sanitized local failures in
+`.smartstock/wallet-enrollment-errors.log`; it never includes the enrollment token
+or signing password. A secondary audit-write failure is logged locally but does
+not discard an otherwise successfully signed pass response.
 
 True NFC is disabled by default. Enable it only after a certified Apple VAS provider and reader have been validated. The additional settings are `SMARTSTOCK_WALLET_NFC_ENABLED`, `SMARTSTOCK_WALLET_NFC_PROVIDER`, `SMARTSTOCK_WALLET_NFC_PUBLIC_KEY`, and `SMARTSTOCK_WALLET_TRUSTED_READERS`. The ACR122U remains for physical SmartStock NFC cards and cannot read Apple Wallet VAS passes.
 

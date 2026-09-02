@@ -45,11 +45,15 @@ class AppleWalletBadgeArchitectureTest {
         String service=Files.readString(Path.of("src/services/AppleWalletBadgeService.java"));
         String config=Files.readString(Path.of("src/services/AppleWalletConfig.java"));
         String server=Files.readString(Path.of("src/services/LanApiServer.java"));
+        String enrollment=Files.readString(Path.of("src/services/WalletEnrollmentHandler.java"));
+        String gateway=Files.readString(Path.of("src/services/WalletEnrollmentServer.java"));
         assertTrue(service.contains("consumed_at IS NULL AND e.expires_at>CURRENT_TIMESTAMP"));
         assertTrue(service.contains("UPDATE employee_wallet_enrollments SET consumed_at=CURRENT_TIMESTAMP"));
         assertTrue(config.contains("smartstock.wallet.nfcEnabled\", \"false"));
         assertTrue(server.contains("WALLET_NFC_DISABLED"));
-        assertTrue(server.contains("application/vnd.apple.pkpass"));
+        assertTrue(enrollment.contains("application/vnd.apple.pkpass"));
+        assertTrue(gateway.contains("127.0.0.1"));
+        assertFalse(server.contains("createContext(\"/wallet/enroll/\""));
     }
 
     @Test
@@ -57,6 +61,6 @@ class AppleWalletBadgeArchitectureTest {
         String login=Files.readString(Path.of("src/ui/screens/Login.java"));
         assertTrue(login.contains("loginWithWallet"));
         assertTrue(login.contains("loginWithCredentials"));
-        assertTrue(login.contains("startsWith(\"SSW1\")"));
+        assertTrue(login.contains("normalizeScannedCredential"));
     }
 }

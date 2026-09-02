@@ -116,6 +116,27 @@ public class HardwareSettingsManager {
         }
     }
 
+    public static ReceiptPrinterDestination getDefaultReceiptPrinterDestination() throws IOException {
+        Properties properties = loadProperties();
+        String configured = properties.getProperty("receipt.default_destination", "").trim();
+        if (!configured.isBlank()) return ReceiptPrinterDestination.fromConfigValue(configured);
+        // Preserve the behavior of registers configured before the destination selector existed.
+        return Boolean.parseBoolean(properties.getProperty("escpos.ethernet.enabled", "false"))
+                ? ReceiptPrinterDestination.ETHERNET
+                : ReceiptPrinterDestination.WINDOWS_QUEUE;
+    }
+
+    public static void saveDefaultReceiptPrinterDestination(ReceiptPrinterDestination destination) throws IOException {
+        ReceiptPrinterDestination clean = destination == null
+                ? ReceiptPrinterDestination.WINDOWS_QUEUE : destination;
+        Properties properties = loadProperties();
+        properties.setProperty("receipt.default_destination", clean.configValue());
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
     public static BadgePrinterSettings getBadgePrinterSettings() throws IOException {
         return readBadgePrinterSettings(loadProperties());
     }
@@ -272,6 +293,33 @@ public class HardwareSettingsManager {
         public String toString() {
             return label;
         }
+    }
+
+    public enum ReceiptPrinterDestination {
+        ETHERNET("ETHERNET", "Ethernet receipt printer"),
+        WINDOWS_QUEUE("WINDOWS_QUEUE", "Windows / USB printer queue");
+
+        private final String configValue;
+        private final String label;
+
+        ReceiptPrinterDestination(String configValue, String label) {
+            this.configValue = configValue;
+            this.label = label;
+        }
+
+        public String configValue() { return configValue; }
+
+        public static ReceiptPrinterDestination fromConfigValue(String value) {
+            if (value != null) {
+                for (ReceiptPrinterDestination destination : values()) {
+                    if (destination.configValue.equalsIgnoreCase(value.trim())
+                            || destination.name().equalsIgnoreCase(value.trim())) return destination;
+                }
+            }
+            return WINDOWS_QUEUE;
+        }
+
+        @Override public String toString() { return label; }
     }
 
     public record EpsonSettings(boolean enabled, boolean automaticCut, boolean cashDrawerEnabled,

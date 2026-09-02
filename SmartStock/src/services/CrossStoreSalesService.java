@@ -124,6 +124,46 @@ final class CrossStoreSalesService {
           row.put("cacheRefreshedAtEpochMillis",epoch(rs.getTimestamp(8)));row.put("cacheStatus",rs.getString(9));row.put("deviceId","");out.add(row);}}}return List.copyOf(out);
     }
 
+    static List<Map<String,Object>> advancedSearchForReturn(Connection c, int userId,
+            int currentLocationId, String saleDate, String itemQuery,
+            int sourceLocationId) throws Exception {
+        requirePair(c, userId, "PROCESS_RETURNS", "PROCESS_MULTI_STORE_RETURNS");
+        if (!hasPermission(c, userId, "ADVANCED_RETURN_LOOKUP"))
+            throw rule(403, "PERMISSION_DENIED", "Advanced return lookup permission is required.");
+        LocalDate date;
+        try { date = LocalDate.parse(clean(saleDate, 10)); }
+        catch (RuntimeException ex) { throw rule(400, "VALIDATION_ERROR", "Select a valid sale date."); }
+        String term = clean(itemQuery, 300);
+        if (term.length() < 2)
+            throw rule(400, "VALIDATION_ERROR", "Enter at least two characters of the item name, SKU, or barcode.");
+        List<Map<String,Object>> out = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT s.source_location_id,s.sale_id,s.receipt_number,s.source_created_at,
+                       s.total_amount,s.user_name,s.store_name,s.cache_refreshed_at,s.cache_status
+                FROM sync_cross_store_sales_cache s
+                JOIN locations l ON l.location_id=s.source_location_id
+                WHERE s.source_location_id=?
+                  AND (s.source_created_at AT TIME ZONE COALESCE(NULLIF(l.timezone,''),'UTC'))::date=?
+                  AND EXISTS (SELECT 1 FROM sync_cross_store_sale_items_cache i
+                              WHERE i.source_location_id=s.source_location_id AND i.sale_id=s.sale_id
+                                AND (COALESCE(i.product_name,'') ILIKE ? OR COALESCE(i.sku,'') ILIKE ?))
+                ORDER BY s.source_created_at DESC LIMIT 200
+                """)) {
+            String like = "%" + term + "%";
+            ps.setInt(1, sourceLocationId); ps.setObject(2, date);
+            ps.setString(3, like); ps.setString(4, like);
+            try (ResultSet rs=ps.executeQuery()) { while(rs.next()) {
+                Map<String,Object> row=new LinkedHashMap<>(); row.put("sourceLocationId",rs.getInt(1));
+                row.put("saleId",rs.getInt(2)); row.put("receiptNumber",rs.getString(3));
+                row.put("createdAtEpochMillis",epoch(rs.getTimestamp(4))); row.put("totalAmount",rs.getBigDecimal(5));
+                row.put("cashierName",rs.getString(6)); row.put("storeName",rs.getString(7));
+                row.put("cacheRefreshedAtEpochMillis",epoch(rs.getTimestamp(8))); row.put("cacheStatus",rs.getString(9));
+                row.put("deviceId",""); out.add(row);
+            }}
+        }
+        return List.copyOf(out);
+    }
+
     static List<StoreOption> returnStoreOptions(Connection c,int userId,int currentLocationId)throws Exception{
         requirePair(c,userId,"PROCESS_RETURNS","PROCESS_MULTI_STORE_RETURNS");
         return stores(c,currentLocationId);

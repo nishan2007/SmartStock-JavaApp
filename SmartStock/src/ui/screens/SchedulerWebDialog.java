@@ -22,7 +22,7 @@ public final class SchedulerWebDialog extends JDialog {
     private final JLabel state=new JLabel("Checking gateway…"),port=new JLabel(" ");
     private final JTextField address=new JTextField();
     private final JLabel qr=new JLabel("Start the web app to display its QR code.",SwingConstants.CENTER);
-    private final JButton open=new JButton("Open Link"),copy=new JButton("Copy Link"),start=new JButton("Start Web App"),stop=new JButton("Stop Web App");
+    private final JButton open=new JButton("Open Link"),copy=new JButton("Copy Link"),devices=new JButton("Scheduler Devices"),start=new JButton("Start Web App"),stop=new JButton("Stop Web App");
     private final boolean canControl;
     private final Timer refreshTimer=new Timer(3000,e->refresh());
     private boolean loading; private String publicUrl;
@@ -38,10 +38,10 @@ public final class SchedulerWebDialog extends JDialog {
         JPanel links=new JPanel(new FlowLayout(FlowLayout.LEFT,6,4));links.add(open);links.add(copy);
         info.add(title);info.add(Box.createVerticalStrut(8));info.add(help);info.add(Box.createVerticalStrut(14));info.add(state);info.add(Box.createVerticalStrut(5));info.add(new JLabel("Public scheduler address:"));info.add(Box.createVerticalStrut(3));info.add(address);info.add(links);info.add(port);root.add(info,BorderLayout.NORTH);
         qr.setPreferredSize(new Dimension(290,290));qr.setBorder(new EmptyBorder(8,8,8,8));root.add(qr,BorderLayout.CENTER);
-        JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT));if(canControl){actions.add(start);actions.add(stop);}JButton close=new JButton("Close");close.addActionListener(e->dispose());actions.add(close);root.add(actions,BorderLayout.SOUTH);setContentPane(root);
+        JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT));if(canControl){actions.add(devices);actions.add(start);actions.add(stop);}JButton close=new JButton("Close");close.addActionListener(e->dispose());actions.add(close);root.add(actions,BorderLayout.SOUTH);setContentPane(root);
     }
 
-    private void wire(){start.addActionListener(e->run(LanApiClient::startSchedulerWeb));stop.addActionListener(e->run(LanApiClient::stopSchedulerWeb));open.addActionListener(e->openLink());copy.addActionListener(e->copyLink());address.addMouseListener(new MouseAdapter(){@Override public void mouseClicked(MouseEvent e){if(SwingUtilities.isLeftMouseButton(e)&&publicUrl!=null)openLink();}});}
+    private void wire(){devices.addActionListener(e->new SchedulerBrowserDevicesDialog(this).setVisible(true));start.addActionListener(e->run(LanApiClient::startSchedulerWeb));stop.addActionListener(e->run(LanApiClient::stopSchedulerWeb));open.addActionListener(e->openLink());copy.addActionListener(e->copyLink());address.addMouseListener(new MouseAdapter(){@Override public void mouseClicked(MouseEvent e){if(SwingUtilities.isLeftMouseButton(e)&&publicUrl!=null)openLink();}});}
     private void refresh(){if(!refreshTimer.isRunning())refreshTimer.start();run(LanApiClient::schedulerWebStatus);}
     @Override public void dispose(){refreshTimer.stop();super.dispose();}
     private void run(Load load){if(loading)return;loading=true;busy(true);new SwingWorker<LanApiClient.SchedulerWebStatus,Void>(){@Override protected LanApiClient.SchedulerWebStatus doInBackground()throws Exception{return load.get();}@Override protected void done(){loading=false;try{busy(false);render(get());}catch(Exception e){busy(false);publicUrl=null;state.setText("Status unavailable: "+root(e));renderLink();}}}.execute();}

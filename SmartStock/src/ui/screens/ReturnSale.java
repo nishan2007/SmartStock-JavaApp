@@ -32,6 +32,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -39,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Date;
 
 /** Return editor backed exclusively by the authenticated SmartStock LAN service. */
 public class ReturnSale extends JFrame {
@@ -47,6 +49,8 @@ public class ReturnSale extends JFrame {
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
 
     private final JTextField saleSearchField = new JTextField();
+    private final JTextField advancedItemField = new JTextField(24);
+    private final JSpinner advancedDateSpinner = new JSpinner(new SpinnerDateModel());
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
     private final JComboBox<String> refundMethodBox = new JComboBox<>(
             new String[]{"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"});
@@ -65,6 +69,7 @@ public class ReturnSale extends JFrame {
     private final List<LanApiClient.SaleSearchResult> searchResults=new ArrayList<>();
     private final List<StoreChoice> storeChoices=new ArrayList<>();
     private final Integer initialSourceLocationId;
+    private JComponent searchPopupAnchor = saleSearchField;
 
     private SaleSnapshot loadedSale;
     private boolean updatingModel;
@@ -175,6 +180,9 @@ public class ReturnSale extends JFrame {
         JPanel lookup = new JPanel(new BorderLayout(0, 8));
         lookup.setOpaque(false);
         lookup.add(searchPanel, BorderLayout.NORTH);
+        if (PermissionManager.hasPermission("ADVANCED_RETURN_LOOKUP")) {
+            lookup.add(buildAdvancedLookupPanel(), BorderLayout.CENTER);
+        }
         lookup.add(saleInfoLabel, BorderLayout.SOUTH);
 
         loadButton.addActionListener(e -> loadSale());
@@ -188,6 +196,53 @@ public class ReturnSale extends JFrame {
         panel.add(hero, BorderLayout.NORTH);
         panel.add(lookup, BorderLayout.SOUTH);
         return panel;
+    }
+
+    private JPanel buildAdvancedLookupPanel() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        DeckersSwing.styleBand(panel, DeckersPalette.PURPLE, new Insets(10, 14, 10, 14));
+        advancedDateSpinner.setEditor(new JSpinner.DateEditor(advancedDateSpinner, "yyyy-MM-dd"));
+        advancedDateSpinner.setToolTipText("Sale date at the selected store");
+        advancedItemField.putClientProperty("JTextField.placeholderText", "Item name, SKU, or barcode");
+        advancedItemField.setToolTipText("Search receipts from this date containing the item");
+        DeckersSwing.styleField(advancedItemField);
+        JButton searchButton = new JButton("Find Receipts");
+        DeckersSwing.styleUtilityButton(searchButton, DeckersPalette.PURPLE);
+        panel.add(DeckersSwing.metaLabel("Advanced lookup"));
+        panel.add(DeckersSwing.metaLabel("Sale date"));
+        panel.add(advancedDateSpinner);
+        panel.add(DeckersSwing.metaLabel("Item"));
+        panel.add(advancedItemField);
+        panel.add(searchButton);
+        searchButton.addActionListener(e -> runAdvancedLookup());
+        advancedItemField.addActionListener(e -> runAdvancedLookup());
+        return panel;
+    }
+
+    private void runAdvancedLookup() {
+        if (!PermissionManager.requirePermission("ADVANCED_RETURN_LOOKUP", this,
+                "Advanced Return Lookup")) return;
+        String item = advancedItemField.getText().trim();
+        if (item.length() < 2) {
+            JOptionPane.showMessageDialog(this,
+                    "Enter at least two characters of the item name, SKU, or barcode.");
+            return;
+        }
+        Date selected = (Date) advancedDateSpinner.getValue();
+        LocalDate date = selected.toInstant().atZone(StoreTimeZoneHelper.getStoreZone()).toLocalDate();
+        Integer source = selectedSourceLocation();
+        UiTaskRunner.submit(this, "return-sale.advanced-search",
+                () -> LanApiClient.advancedSearchSalesForReturn(date.toString(), item, source), results -> {
+                    populateSearchResults(results);
+                    if (results.isEmpty()) {
+                        saleSearchPopup.setVisible(false);
+                        JOptionPane.showMessageDialog(this,
+                                "No receipts on " + date + " contain that item.");
+                    } else {
+                        searchPopupAnchor = advancedItemField;
+                        showSaleSearchPopup();
+                    }
+                }, ex -> showApiError("Advanced return lookup failed", ex));
     }
 
     private void setupSaleSearchPopup() {
@@ -347,6 +402,7 @@ public class ReturnSale extends JFrame {
             return;
         }
         Integer source=selectedSourceLocation();
+        searchPopupAnchor = saleSearchField;
         UiTaskRunner.submit(this,"return-sale.search",()->LanApiClient.searchSalesForReturn(search,source),results->{
             populateSearchResults(results);
             if (results.isEmpty()) {
@@ -370,11 +426,11 @@ public class ReturnSale extends JFrame {
     }
 
     private void showSaleSearchPopup() {
-        int width = Math.max(saleSearchField.getWidth(), 1040);
+        int width = Math.max(searchPopupAnchor.getWidth(), 1040);
         int height = Math.min(260, 30 + saleSearchModel.getRowCount() * 28);
         saleSearchPopup.setPopupSize(width, Math.max(height, 90));
-        saleSearchPopup.show(saleSearchField, 0, saleSearchField.getHeight());
-        saleSearchField.requestFocusInWindow();
+        saleSearchPopup.show(searchPopupAnchor, 0, searchPopupAnchor.getHeight());
+        searchPopupAnchor.requestFocusInWindow();
     }
 
     private void selectSaleSearchResult() {

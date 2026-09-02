@@ -58,6 +58,8 @@ public class EditItem extends JFrame {
 
     private JButton saveButton;
     private JButton clearButton;
+    private JButton archiveButton;
+    private JCheckBox archivedProductsBox;
     private JButton cancelButton;
     private JLabel quantityHintLabel;
     private JLabel selectionStatusLabel;
@@ -68,6 +70,7 @@ public class EditItem extends JFrame {
     private String pendingSaveKey;
     private String pendingSaveFingerprint;
     private String selectedProductType = "INVENTORY";
+    private boolean selectedProductActive = true;
     private final boolean canManualAdjustment = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
 
     public EditItem() {
@@ -125,6 +128,10 @@ public class EditItem extends JFrame {
                 : "Read-only. Requires Manual Adjustment permission.");
         selectionStatusLabel = createHelperLabel("No product selected.");
         saveButton = new JButton("Save Changes");
+        archiveButton = new JButton("Archive Product...");
+        archivedProductsBox = new JCheckBox("Search archived products");
+        archivedProductsBox.setOpaque(false);
+        archivedProductsBox.setVisible(PermissionManager.hasPermission("PRODUCT_ARCHIVE"));
         clearButton = new JButton("Clear Selection");
         cancelButton = new JButton("Close");
     }
@@ -207,6 +214,7 @@ public class EditItem extends JFrame {
         searchBtn.setPreferredSize(new Dimension(105, 38));
         searchControls.add(searchField, BorderLayout.CENTER);
         searchControls.add(searchBtn, BorderLayout.EAST);
+        searchControls.add(archivedProductsBox, BorderLayout.SOUTH);
 
         panel.add(copy, BorderLayout.WEST);
         panel.add(searchControls, BorderLayout.CENTER);
@@ -379,10 +387,12 @@ public class EditItem extends JFrame {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actions.setOpaque(false);
         DeckersSwing.styleUtilityButton(clearButton, DeckersPalette.YELLOW);
+        DeckersSwing.styleUtilityButton(archiveButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(cancelButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
         saveButton.setPreferredSize(new Dimension(145, 40));
         actions.add(clearButton);
+        if(PermissionManager.hasPermission("PRODUCT_ARCHIVE"))actions.add(archiveButton);
         actions.add(cancelButton);
         actions.add(saveButton);
         footer.add(hint, BorderLayout.WEST);
@@ -394,6 +404,7 @@ public class EditItem extends JFrame {
         searchBtn.addActionListener(e -> searchProduct());
         searchField.addActionListener(e -> searchProduct());
         saveButton.addActionListener(e -> saveChanges());
+        archiveButton.addActionListener(e -> changeArchiveState());
         clearButton.addActionListener(e -> clearSelection());
         cancelButton.addActionListener(e -> dispose());
         itemTypeBox.addActionListener(e -> {
@@ -447,7 +458,8 @@ public class EditItem extends JFrame {
         }
 
         try {
-            List<LanApiClient.EditableProduct> products = LanApiClient.searchEditableProducts(searchText);
+            List<LanApiClient.EditableProduct> products = archivedProductsBox.isSelected()
+                    ? LanApiClient.searchArchivedProducts(searchText) : LanApiClient.searchEditableProducts(searchText);
             if (products.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No matching products found.");
                 return;
@@ -490,6 +502,7 @@ public class EditItem extends JFrame {
                     .filter(candidate -> candidate.productId() == productId).findFirst()
                     .orElseThrow(() -> new IllegalStateException("Selected item is no longer in the search result."));
             selectedProductId = product.productId();
+            selectedProductActive = product.active();
             nameField.setText(product.name());
             sizeField.setText(product.size());
             skuField.setText(product.sku());
@@ -510,6 +523,7 @@ public class EditItem extends JFrame {
                     product.additionalBarcodes() == null ? List.of() : product.additionalBarcodes()));
             imageSelector.setImageUrl(product.imageUrl());
             setFormEnabled(true);
+            archiveButton.setText(selectedProductActive?"Archive Product...":"Restore Product...");
             updateInventoryFieldsForType();
             selectionStatusLabel.setText("Editing: " + product.name() + "  •  SKU " + product.sku());
             inventoryScrollPane.getViewport().setViewPosition(new Point(0, 0));
@@ -527,6 +541,7 @@ public class EditItem extends JFrame {
     }
 
     private void saveChanges() {
+        if(!selectedProductActive){JOptionPane.showMessageDialog(this,"Restore this product before editing it.");return;}
         if (selectedProductId == -1) {
             JOptionPane.showMessageDialog(this, "No product selected.");
             return;
@@ -699,6 +714,25 @@ public class EditItem extends JFrame {
 
     private record ProductSaveOutcome(LanApiClient.SavedProduct saved,String imageUrl) { }
 
+    private void changeArchiveState(){
+        if(selectedProductId<0)return;
+        boolean archive=selectedProductActive;
+        JTextArea reasonArea=new JTextArea(4,32);reasonArea.setLineWrap(true);reasonArea.setWrapStyleWord(true);
+        int result=JOptionPane.showConfirmDialog(this,new JScrollPane(reasonArea),
+                archive?"Archive Product - Reason Required":"Restore Product - Optional Reason",
+                JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+        if(result!=JOptionPane.OK_OPTION)return;
+        String reason=reasonArea.getText().trim();
+        if(archive&&reason.isBlank()){JOptionPane.showMessageDialog(this,"Enter a reason for archiving this product.");return;}
+        int productId=selectedProductId;
+        UiTaskRunner.submit(this,"items.lifecycle",()->archive
+                ?LanApiClient.archiveProduct(productId,reason,UUID.randomUUID().toString())
+                :LanApiClient.restoreProduct(productId,reason,UUID.randomUUID().toString()),saved->{
+            SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);
+            JOptionPane.showMessageDialog(this,archive?"Product archived successfully.":"Product restored successfully.");clearSelection();
+        },ex->JOptionPane.showMessageDialog(this,"Could not "+(archive?"archive":"restore")+" product: "+ex.getMessage()));
+    }
+
     private void showValidationError(String message, JComponent component) {
         JOptionPane.showMessageDialog(this, message, "Check Item Details", JOptionPane.WARNING_MESSAGE);
         component.scrollRectToVisible(new Rectangle(component.getSize()));
@@ -718,6 +752,7 @@ public class EditItem extends JFrame {
         selectedProductId = -1;
         selectedOriginalQuantity = 0;
         selectedProductType = "INVENTORY";
+        selectedProductActive = true;
         nameField.setText("");
         sizeField.setText("");
         skuField.setText("");
@@ -755,6 +790,7 @@ public class EditItem extends JFrame {
         vendorSelector.setSelectorEnabled(enabled);
         imageSelector.setSelectorEnabled(enabled);
         saveButton.setEnabled(enabled);
+        archiveButton.setEnabled(enabled&&PermissionManager.hasPermission("PRODUCT_ARCHIVE"));
         clearButton.setEnabled(enabled);
     }
 

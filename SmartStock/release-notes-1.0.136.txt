@@ -1,0 +1,7 @@
+SmartStock 1.0.136
+
+- Adds an Advanced Return Lookup for finding receipts by store-local sale date and item name, SKU, or barcode.
+- Protects the advanced lookup with a new server-enforced permission that is assigned to ADMIN by default and can be granted to other roles.
+- Supports advanced receipt lookup against synchronized remote-store sale items when multistore return access is permitted.
+- Includes the checkout, product archiving, Scheduler Web browser-device, updater, and synchronization improvements from the 1.0.135 release line.
+- Existing store data is preserved; the permission catalog update is applied transactionally during schema readiness checks.

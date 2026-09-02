@@ -1,0 +1,8 @@
+SmartStock 1.0.138
+
+- Adds checkbox selection to Inventory Overview for controlled multi-item actions.
+- Adds a separate Clear Barcodes action that removes primary and additional barcodes while leaving products active, allowing those identifiers to be reassigned intentionally.
+- Adds a separate Archive Selected action with permission checks, required reasons, zero-stock enforcement, auditing, and synchronization.
+- Fixes inline inventory edits so changes save when editing ends, including when the user clicks away from the cell.
+- Includes the product archive, scheduler browser-device, advanced return lookup, and Apple Wallet enrollment updates already present in this build line.
+- Installed-app, live database/service, physical printer, cash drawer, NFC, and multi-register synchronization checks remain required after updating.

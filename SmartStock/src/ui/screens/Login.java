@@ -7,6 +7,7 @@ import managers.SessionManager;
 import managers.AutoLogoutManager;
 import managers.SupabaseSessionManager;
 import services.BadgeCredentialService;
+import services.AppleWalletBadgeService;
 import services.LanApiClient;
 import services.PcscNfcService;
 import services.EmployeePinService;
@@ -112,7 +113,8 @@ public class Login extends JFrame {
                 ? lastNfcBadgeIdentifier
                 : usernameField.getText().trim();
         char[] secret = passwordField.getPassword();
-        boolean walletCredential = identifier.toUpperCase(java.util.Locale.ROOT).startsWith("SSW1");
+        String normalizedWalletCredential = AppleWalletBadgeService.normalizeScannedCredential(identifier);
+        boolean walletCredential = !normalizedWalletCredential.isEmpty();
         boolean badgeIdentifier = BadgeCredentialService.looksLikeGeneratedBadge(
                 BadgeCredentialService.normalizeBadge(identifier));
         if (identifier.isBlank() || (secret.length == 0 && !badgeIdentifier && !walletCredential)) {
@@ -151,7 +153,7 @@ public class Login extends JFrame {
             @Override
             protected LanApiClient.LoginResult doInBackground() throws Exception {
                 return walletCredential
-                        ? LanApiClient.loginWithWallet(identifier, secret, locationId, "BARCODE")
+                        ? LanApiClient.loginWithWallet(normalizedWalletCredential, secret, locationId, "BARCODE")
                         : LanApiClient.loginWithCredentials(identifier, secret, locationId);
             }
 

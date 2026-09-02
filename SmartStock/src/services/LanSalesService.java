@@ -237,7 +237,7 @@ final class LanSalesService {
     }
 
     private static Map<Integer, CatalogLine> lockCatalogLines(Connection connection,
-                                                               List<Integer> productIds) throws SQLException {
+                                                               List<Integer> productIds) throws SQLException, RuleViolation {
         if (productIds.isEmpty()) throw new SQLException("Cart is empty.");
         String placeholders = String.join(",", java.util.Collections.nCopies(productIds.size(), "?"));
         Map<Integer, CatalogLine> catalogs = new LinkedHashMap<>();
@@ -245,15 +245,19 @@ final class LanSalesService {
                 SELECT p.product_id, p.name, COALESCE(p.price, 0),
                        CASE WHEN UPPER(COALESCE(p.product_type, 'INVENTORY')) IN ('SERVICE','NON_INVENTORY')
                             THEN UPPER(p.product_type) ELSE 'INVENTORY' END,
-                       COALESCE(c.vat_rate_percent, 0),COALESCE(p.sku,'')
+                       COALESCE(c.vat_rate_percent, 0),COALESCE(p.sku,''),p.is_active
                 FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
                 WHERE p.product_id IN (%s) ORDER BY p.product_id FOR UPDATE OF p
                 """.formatted(placeholders))) {
             for (int i = 0; i < productIds.size(); i++) ps.setInt(i + 1, productIds.get(i));
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
+                    String sku=rs.getString(6);
+                    if(!rs.getBoolean(7)&&!"SMARTSTOCK-MISC".equals(sku))
+                        throw new RuleViolation(409,"PRODUCT_ARCHIVED",
+                                "A cart product was archived. Remove it before checkout.",false);
                     CatalogLine line = new CatalogLine(rs.getInt(1), rs.getString(2), money(rs.getBigDecimal(3)),
-                            rs.getString(4), percent(rs.getBigDecimal(5)),rs.getString(6));
+                            rs.getString(4), percent(rs.getBigDecimal(5)),sku);
                     catalogs.put(line.productId(), line);
                 }
             }

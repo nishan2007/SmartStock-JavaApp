@@ -36,7 +36,7 @@ public final class CloudRowMirrorService {
             "roles", "permissions", "role_permissions", "mobile_permissions",
             "role_mobile_permissions", "company_info", "locations", "users", "customer_types",
             "customer_accounts", "categories", "item_types", "item_brands", "vendors",
-            "products", "product_barcodes", "custom_order_items",
+            "products", "product_lifecycle_audit", "product_barcodes", "custom_order_items",
             "custom_order_item_barcodes", "custom_order_item_variants", "custom_order_item_variant_barcodes",
             "custom_order_print_materials", "custom_order_print_size_presets",
             "custom_order_design_placements", "employee_payroll_settings",

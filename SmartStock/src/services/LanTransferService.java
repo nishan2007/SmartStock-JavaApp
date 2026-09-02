@@ -46,7 +46,7 @@ final class LanTransferService {
                   CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,
                   COALESCE(i.quantity_on_hand,0)
                 FROM products p JOIN inventory i ON i.product_id=p.product_id
-                WHERE i.location_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY'
+                WHERE i.location_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND p.is_active=TRUE
                 """);
         if (!search.isBlank()) sql.append(" AND ").append(ProductSearchHelper.predicate("p",locationId,search));
         sql.append(" ORDER BY p.name LIMIT 300");
@@ -119,7 +119,7 @@ final class LanTransferService {
         Set<Integer> unique=new HashSet<>();
         for(TransferLine line:lines){if(line.productId()<=0||line.quantity()<=0||line.quantity()>1_000_000||!unique.add(line.productId()))throw rule(400,"VALIDATION_ERROR","Every product must appear once with a valid quantity.");}
         for(TransferLine line:lines){
-            try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(i.quantity_on_hand,0) FROM inventory i JOIN products p ON p.product_id=i.product_id WHERE i.product_id=? AND i.location_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF i")){
+            try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(i.quantity_on_hand,0) FROM inventory i JOIN products p ON p.product_id=i.product_id WHERE i.product_id=? AND i.location_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND p.is_active=TRUE FOR UPDATE OF i")){
                 ps.setInt(1,line.productId());ps.setInt(2,sourceLocationId);try(ResultSet rs=ps.executeQuery()){
                     if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","A transfer product is unavailable at this store.");
                 }

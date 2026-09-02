@@ -314,6 +314,20 @@ SELECT r.role_id,p.permission_key,CURRENT_TIMESTAMP FROM public.roles r CROSS JO
 WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='ACCESS_SCHEDULER_WEB'
 ON CONFLICT (role_id,permission_key) DO NOTHING;
 
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup,created_at)
+VALUES ('ADVANCED_RETURN_LOOKUP','Advanced Return Lookup',
+        'Allows finding receipts by sale date and item name, SKU, or barcode.',
+        'Sales','Returns',CURRENT_TIMESTAMP)
+ON CONFLICT (permission_key) DO UPDATE SET permission_name=EXCLUDED.permission_name,
+ description=EXCLUDED.description,permission_group=EXCLUDED.permission_group,
+ permission_subgroup=EXCLUDED.permission_subgroup;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,CURRENT_TIMESTAMP FROM public.roles r CROSS JOIN public.permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='ADVANCED_RETURN_LOOKUP'
+ON CONFLICT (role_id,permission_id) DO NOTHING;
+SELECT pg_catalog.setval(pg_get_serial_sequence('public.permissions','permission_id'),
+ GREATEST((SELECT MAX(permission_id) FROM public.permissions),1),TRUE);
+
 
 --
 -- PostgreSQL database dump complete

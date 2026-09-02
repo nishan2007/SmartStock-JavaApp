@@ -1,0 +1,8 @@
+SmartStock 1.0.134
+
+- Adds automatically registered Scheduler Web browser devices. Scheduler access remains immediate, while administrators can selectively enable 30-day Stay Signed In for trusted phones or computers from the Scheduler Web App window.
+- Keeps Scheduler remembered login disabled by default, tied to one employee and browser, protected by opaque secure cookies, and revocable from SmartStock or by signing out.
+- Fixes Employee Time Clock privacy so employees see only their own time details and their session timer cannot reuse another employee's cached clock-in record. Managers continue reviewing staff time through Payroll.
+- Adds safe product archiving behavior and prevents inactive products from appearing in active sales, inventory, receiving, transfer, and search workflows.
+- Includes ordered local schema migrations and upgrade coverage for Scheduler browser devices and product archiving without replacing production data.
+- Installed-app upgrade, live database/service, Scheduler browser restoration, and physical hardware verification remain required after updating.

@@ -1,0 +1,5 @@
+SmartStock 1.0.137
+
+- Adds a dedicated loopback-only Apple Wallet enrollment gateway for safe HTTPS tunneling without exposing register APIs.
+- Loads the Apple Wallet signing password from SmartStock's Windows DPAPI-backed secure credential store when no plaintext override is configured.
+- Keeps Wallet NFC disabled while enabling the signed QR employee-badge rollout.

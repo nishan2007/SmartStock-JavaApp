@@ -71,6 +71,21 @@ class SchedulerWebArchitectureTest {
         assertTrue(migration.contains("ENABLE ROW LEVEL SECURITY"));
         assertTrue(migration.contains("REVOKE ALL"));
     }
+    @Test void schedulerBrowsersRegisterAutomaticallyButRememberingRequiresDesktopToggle()throws Exception{
+        String server=Files.readString(ROOT.resolve("services/SchedulerWebServer.java"));
+        String admin=Files.readString(ROOT.resolve("services/SchedulerWebDeviceAdminService.java"));
+        String dialog=Files.readString(ROOT.resolve("ui/screens/SchedulerBrowserDevicesDialog.java"));
+        String migration=Files.readString(Path.of("database/migrations/v1_after/20260831210000_scheduler_web_devices.sql"));
+        assertTrue(server.contains("registerBrowser"));
+        assertTrue(server.contains("stay_signed_in=TRUE"));
+        assertTrue(server.contains("ss_scheduler_browser"));
+        assertTrue(admin.contains("Duration.ofDays(30)"));
+        assertTrue(admin.contains("'DEVICE_MANAGEMENT'"));
+        assertTrue(dialog.contains("Browsers appear here automatically"));
+        assertTrue(dialog.contains("Enable Stay Signed In"));
+        assertTrue(migration.contains("stay_signed_in boolean NOT NULL DEFAULT false"));
+        assertTrue(migration.contains("ENABLE ROW LEVEL SECURITY"));
+    }
     @Test void schedulerCanBeStoppedFromTheActiveServerConsole()throws Exception{
         String api=Files.readString(ROOT.resolve("services/LanApiServer.java"));
         String gateway=Files.readString(ROOT.resolve("services/SchedulerWebRuntimeController.java"));

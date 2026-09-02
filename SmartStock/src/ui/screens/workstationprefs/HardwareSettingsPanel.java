@@ -26,6 +26,8 @@ public class HardwareSettingsPanel extends JPanel {
     private final JCheckBox cashDrawerBox = new JCheckBox("Cash drawer");
     private final JCheckBox dialogFallbackBox = new JCheckBox("Print dialog fallback", true);
     private final JCheckBox nativeEthernetBox = new JCheckBox("Native Ethernet ESC/POS");
+    private final JComboBox<HardwareSettingsManager.ReceiptPrinterDestination> receiptDestinationBox =
+            new JComboBox<>(HardwareSettingsManager.ReceiptPrinterDestination.values());
     private final JTextField ethernetHostField = new JTextField("10.1.1.23", 11);
     private final JSpinner ethernetPortSpinner = new JSpinner(new SpinnerNumberModel(9100, 1, 65535, 1));
     private final JCheckBox badgePrinterEnabledBox = new JCheckBox("Enable Magicard badge printing");
@@ -97,6 +99,8 @@ public class HardwareSettingsPanel extends JPanel {
         ethernetPanel.add(ethernetHostField);
         ethernetPanel.add(new JLabel("Port:"));
         ethernetPanel.add(ethernetPortSpinner);
+        ethernetPanel.add(new JLabel("Default receipt printer:"));
+        ethernetPanel.add(receiptDestinationBox);
 
         JPanel badgePrinterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         badgePrinterPanel.setOpaque(false);
@@ -195,11 +199,12 @@ public class HardwareSettingsPanel extends JPanel {
                     var configured=UiTaskRunner.supplyAsync(HardwareSettingsManager::getConfiguredPrinters);
                     var epson=UiTaskRunner.supplyAsync(HardwareSettingsManager::getEpsonSettings);
                     var ethernet=UiTaskRunner.supplyAsync(HardwareSettingsManager::getNativeEthernetPrinterSettings);
+                    var receiptDestination=UiTaskRunner.supplyAsync(HardwareSettingsManager::getDefaultReceiptPrinterDestination);
                     var badge=UiTaskRunner.supplyAsync(HardwareSettingsManager::getBadgePrinterSettings);
                     var badgeSettings=badge.join();
                     boolean badgeAvailable=badgeSettings.enabled() && installed.join().contains(badgeSettings.systemName());
-                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join(),ethernet.join(),badgeSettings,badgeAvailable);
-                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyInstalledBadgePrinters(snapshot.installed());applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());applyEthernetSettings(snapshot.ethernet());applyBadgePrinterSettings(snapshot.badge(),snapshot.badgeAvailable());});
+                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join(),ethernet.join(),receiptDestination.join(),badgeSettings,badgeAvailable);
+                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyInstalledBadgePrinters(snapshot.installed());applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());applyEthernetSettings(snapshot.ethernet());receiptDestinationBox.setSelectedItem(snapshot.receiptDestination());applyBadgePrinterSettings(snapshot.badge(),snapshot.badgeAvailable());});
     }
 
     private void loadConfiguredPrinters() {
@@ -288,9 +293,15 @@ public class HardwareSettingsPanel extends JPanel {
         }
 
         try {
+            HardwareSettingsManager.ReceiptPrinterDestination destination = selectedReceiptDestination();
+            if (destination == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET
+                    && !nativeEthernetBox.isSelected()) {
+                throw new IllegalArgumentException("Enable Native Ethernet ESC/POS before making it the default receipt printer.");
+            }
             HardwareSettingsManager.saveConfiguredPrinters(printers);
             HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
             HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
+            HardwareSettingsManager.saveDefaultReceiptPrinterDestination(destination);
             HardwareSettingsManager.saveBadgePrinterSettings(readBadgePrinterSettings());
             SessionDataCache.invalidate("workstation:hardware");
             JOptionPane.showMessageDialog(this, "Hardware settings saved.");
@@ -329,6 +340,12 @@ public class HardwareSettingsPanel extends JPanel {
         nativeEthernetBox.setSelected(value.enabled());
         ethernetHostField.setText(value.host());
         ethernetPortSpinner.setValue(value.port());
+    }
+
+    private HardwareSettingsManager.ReceiptPrinterDestination selectedReceiptDestination() {
+        Object selected = receiptDestinationBox.getSelectedItem();
+        return selected instanceof HardwareSettingsManager.ReceiptPrinterDestination destination
+                ? destination : HardwareSettingsManager.ReceiptPrinterDestination.WINDOWS_QUEUE;
     }
 
     private HardwareSettingsManager.BadgePrinterSettings readBadgePrinterSettings() {
@@ -390,8 +407,7 @@ public class HardwareSettingsPanel extends JPanel {
 
     private void testControl(Receipt.EpsonReceiptPrintService.ControlAction action) {
         try {
-            HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
-            HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
+            saveReceiptTestSettings();
             var result = Receipt.EpsonReceiptPrintService.testControl(selectedConfiguredPrinter(), action);
             JOptionPane.showMessageDialog(this, result.message(), "Epson " + action + " Test",
                     result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
@@ -410,14 +426,24 @@ public class HardwareSettingsPanel extends JPanel {
                         java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, java.math.BigDecimal.TEN,
                         java.math.BigDecimal.TEN)));
         try {
-            HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
-            HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
+            saveReceiptTestSettings();
             var result = Receipt.EpsonReceiptPrintService.print(sample, selectedConfiguredPrinter(), false, false);
             JOptionPane.showMessageDialog(this, result.message(), "Epson Receipt Test",
                     result.successful() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
         } catch (IOException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Hardware Settings", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void saveReceiptTestSettings() throws IOException {
+        HardwareSettingsManager.ReceiptPrinterDestination destination = selectedReceiptDestination();
+        if (destination == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET
+                && !nativeEthernetBox.isSelected()) {
+            throw new IllegalArgumentException("Enable Native Ethernet ESC/POS before making it the default receipt printer.");
+        }
+        HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
+        HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
+        HardwareSettingsManager.saveDefaultReceiptPrinterDestination(destination);
     }
 
     private void ensureOneDefaultSelected() {
@@ -443,6 +469,7 @@ public class HardwareSettingsPanel extends JPanel {
                                     List<HardwareSettingsManager.PosPrinter> configured,
                                     HardwareSettingsManager.EpsonSettings epson,
                                     HardwareSettingsManager.NativeEthernetPrinterSettings ethernet,
+                                    HardwareSettingsManager.ReceiptPrinterDestination receiptDestination,
                                     HardwareSettingsManager.BadgePrinterSettings badge,
                                     boolean badgeAvailable) { }
 }

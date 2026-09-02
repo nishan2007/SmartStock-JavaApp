@@ -57,9 +57,11 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260827160000_share_card_and_badge_templates.sql"
             ,"database/migrations/v1_after/20260827170000_rename_individual_customer_template.sql"
             ,"database/migrations/v1_after/20260828190000_scheduler_web_app.sql"
+            ,"database/migrations/v1_after/20260831210000_scheduler_web_devices.sql"
             ,"database/migrations/v1_after/20260830120000_customer_photos_card_expiry_government.sql"
             ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
             ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
+            ,"database/migrations/v1_after/20260831170000_product_archiving.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -79,7 +81,7 @@ public final class SchemaContractService {
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
     private static final Set<String> REQUIRED_BUILTIN_PERMISSION_KEYS = Set.of(
-            "MAKE_SALE", "VIEW_SALES", "VIEW_INVENTORY", "NEW_ITEM", "EDIT_ITEM",
+            "MAKE_SALE", "VIEW_SALES", "VIEW_INVENTORY", "NEW_ITEM", "EDIT_ITEM", "PRODUCT_ARCHIVE",
             "RECEIVING_INVENTORY", "VIEW_RECEIVING_HISTORY", "CUSTOMER_ACCOUNTS",
             "SET_CREDIT_LIMIT", "EDIT_ACCOUNT_NUMBER", "VIEW_ITEM_DETAILS",
             "EMPLOYEE_MANAGEMENT", "ROLE_MANAGEMENT", "VIEW_REPORTS", "CHANGE_STORE",
@@ -431,6 +433,7 @@ public final class SchemaContractService {
         ensureMobileItemWebUpgrade(connection);
         ensureOneDriveImageUpgrade(connection);
         ensureBuiltinPermissionsUpgrade(connection);
+        ensureProductArchivingUpgrade(connection);
         ensureMiscSaleItemsUpgrade(connection);
         ensureCustomerTypeReceiptPrintingUpgrade(connection);
         ensureCustomerCardTemplatesUpgrade(connection);
@@ -443,6 +446,34 @@ public final class SchemaContractService {
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    public static void ensureProductArchivingUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","products")||!tableExists(connection,"public","permissions"))return;
+        boolean ready=columnExists(connection,"public","products","archived_at")
+                &&columnExists(connection,"public","products","archived_by_user_id")
+                &&columnExists(connection,"public","products","archive_reason")
+                &&tableExists(connection,"public","product_lifecycle_audit");
+        if(ready)return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260831170000_product_archiving.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=?
+                    """)){
+                ps.setString(1,resourceFingerprint(localContractResources()));
+                ps.setString(2,catalogFingerprint(connection,List.of("public"),false));
+                ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){
+            connection.rollback();
+            if(ex instanceof SQLException sql)throw sql;
+            throw new SQLException("Product archiving schema could not be installed.",ex);
+        }finally{connection.setAutoCommit(auto);}
     }
 
     public static void ensureCustomerPhotoCardExpiryUpgrade(Connection connection)throws SQLException{
@@ -511,6 +542,7 @@ public final class SchemaContractService {
                 || !tableExists(connection,"public","role_mobile_permissions")) return;
         boolean installed=tableExists(connection,"public","scheduler_web_runtime")
                 && tableExists(connection,"public","scheduler_web_sessions")
+                && tableExists(connection,"public","scheduler_web_devices")
                 && tableExists(connection,"public","scheduler_web_auth_attempts")
                 && tableExists(connection,"public","scheduler_web_idempotency");
         String storedResource,storedCatalog;
@@ -524,6 +556,7 @@ public final class SchemaContractService {
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
         try{
             SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260828190000_scheduler_web_app.sql"));
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260831210000_scheduler_web_devices.sql"));
             try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=?")){
                 ps.setString(1,expected);ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.setString(4,storedResource);
                 if(ps.executeUpdate()!=1)throw new SQLException("Local schema metadata changed during scheduler web installation.");

@@ -23,12 +23,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /** Revocable Apple Wallet badge issuance and authentication. */
 public final class AppleWalletBadgeService {
     public static final String CREDENTIAL_PREFIX = "SSW1";
+    private static final Pattern SCANNED_CREDENTIAL = Pattern.compile(
+            "(?i)SSW1[0-9A-HJKMNP-TV-Z]{32}");
     private static final Duration ENROLLMENT_LIFETIME = Duration.ofMinutes(10);
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Gson GSON = LanJson.create();
@@ -95,10 +99,21 @@ public final class AppleWalletBadgeService {
     }
 
     public static AuthenticatedWallet authenticate(Connection c,String credential,int locationId,char[] pin)throws Exception{
-        String normalized=credential==null?"":credential.trim().toUpperCase(Locale.ROOT);
-        if(!normalized.startsWith(CREDENTIAL_PREFIX))return null;
+        String normalized=normalizeScannedCredential(credential);
+        if(normalized.isEmpty())return null;
         try(PreparedStatement ps=c.prepareStatement("SELECT w.user_id,u.username,u.full_name FROM employee_wallet_credentials w JOIN users u ON u.user_id=w.user_id JOIN user_locations ul ON ul.user_id=u.user_id AND ul.location_id=? WHERE w.credential_hash=? AND w.status='ACTIVE' AND u.is_active=TRUE")){
             ps.setInt(1,locationId);ps.setString(2,hash(normalized));try(ResultSet r=ps.executeQuery()){if(!r.next())return null;int id=r.getInt(1);boolean required=managers.ServerCompanyCustomizationRepository.isBadgePinRequired(c,locationId);if(required&&!LocalAuthCacheService.verifyEmployeePin(c,id,pin))return null;try(PreparedStatement used=c.prepareStatement("UPDATE employee_wallet_credentials SET last_used_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND credential_hash=?")){used.setInt(1,id);used.setString(2,hash(normalized));used.executeUpdate();}return new AuthenticatedWallet(id,r.getString(2),r.getString(3),required);}}
+    }
+
+    /**
+     * Keyboard-wedge scanners can surround QR data with an AIM symbology identifier,
+     * framing characters, or a configured prefix/suffix. Extract only the fixed-size
+     * opaque Wallet credential so those scanner settings do not change its hash.
+     */
+    public static String normalizeScannedCredential(String scanned) {
+        if (scanned == null || scanned.isBlank()) return "";
+        Matcher matcher = SCANNED_CREDENTIAL.matcher(scanned.toUpperCase(Locale.ROOT));
+        return matcher.find() ? matcher.group() : "";
     }
 
     static byte[] buildPass(AppleWalletConfig config,String serial,String name,String username,String credential)throws Exception{

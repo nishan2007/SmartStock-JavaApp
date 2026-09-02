@@ -12,12 +12,18 @@ public final class NativeEscPosTransport {
     private NativeEscPosTransport() { }
 
     public static boolean isEnabled() throws PrintException {
-        return settings().enabled();
+        try {
+            return settings().enabled()
+                    && HardwareSettingsManager.getDefaultReceiptPrinterDestination()
+                    == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET;
+        } catch (IOException ex) {
+            throw new PrintException("Invalid default receipt printer setting: " + safeMessage(ex));
+        }
     }
 
     public static String sendIfEnabled(byte[] jobBytes) throws PrintException {
         HardwareSettingsManager.NativeEthernetPrinterSettings settings = settings();
-        if (!settings.enabled()) return null;
+        if (!isEnabled()) return null;
         send(jobBytes, settings);
         return settings.endpoint();
     }

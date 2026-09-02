@@ -19,6 +19,7 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
+import javax.swing.event.ChangeEvent;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -43,6 +44,11 @@ public class ViewInventory extends JFrame {
     private JLabel locationLabel;
     private JButton viewDetailsButton;
     private JButton reviewPricesButton;
+    private JButton clearBarcodesButton;
+    private JButton archiveSelectedButton;
+    private int editingModelRow=-1;
+    private int editingModelColumn=-1;
+    private Object editingOldValue;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private LanApiClient.InventoryLookups allInventoryLookups;
     private final boolean canViewCostPrice = PermissionManager.hasPermission("VIEW_COST_PRICE");
@@ -179,8 +185,10 @@ public class ViewInventory extends JFrame {
 
     private JScrollPane buildTablePanel() {
         List<String> columns = new ArrayList<>();
+        columns.add("Select");
         columns.add("Product ID");
         columns.add("SKU");
+        columns.add("Primary Barcode");
         columns.add("Name");
         columns.add("Size");
         columns.add("Description");
@@ -205,13 +213,28 @@ public class ViewInventory extends JFrame {
         }
 
         tableModel = new DefaultTableModel(columns.toArray(new String[0]), 0) {
+            @Override public Class<?> getColumnClass(int column){return "Select".equals(getColumnName(column))?Boolean.class:Object.class;}
             @Override
             public boolean isCellEditable(int row, int column) {
-                return canInlineEditColumn(column);
+                return "Select".equals(getColumnName(column))||canInlineEditColumn(column);
             }
         };
 
-        inventoryTable = new JTable(tableModel);
+        inventoryTable = new JTable(tableModel){
+            @Override public boolean editCellAt(int row,int column,java.util.EventObject event){
+                int modelRow=convertRowIndexToModel(row),modelColumn=convertColumnIndexToModel(column);
+                boolean editable=canInlineEditColumn(modelColumn);
+                if(editable){editingModelRow=modelRow;editingModelColumn=modelColumn;editingOldValue=tableModel.getValueAt(modelRow,modelColumn);}
+                else{editingModelRow=-1;editingModelColumn=-1;editingOldValue=null;}
+                return super.editCellAt(row,column,event);
+            }
+            @Override public void editingStopped(ChangeEvent event){
+                int row=editingModelRow,column=editingModelColumn;Object old=editingOldValue;
+                super.editingStopped(event);
+                editingModelRow=-1;editingModelColumn=-1;editingOldValue=null;
+                if(row>=0&&column>=0)saveInlineEdit(row,column,old,tableModel.getValueAt(row,column));
+            }
+        };
         inventoryTable.setRowHeight(28);
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         inventoryTable.getTableHeader().setReorderingAllowed(false);
@@ -237,8 +260,10 @@ public class ViewInventory extends JFrame {
         inventoryTable.setRowSorter(sorter);
 
         TableColumnModel columnModel = inventoryTable.getColumnModel();
+        setColumnWidth(columnModel, "Select", 55);
         setColumnWidth(columnModel, "Product ID", 80);
         setColumnWidth(columnModel, "SKU", 130);
+        setColumnWidth(columnModel, "Primary Barcode", 150);
         setColumnWidth(columnModel, "Name", 180);
         setColumnWidth(columnModel, "Size", 100);
         setColumnWidth(columnModel, "Description", 240);
@@ -281,21 +306,13 @@ public class ViewInventory extends JFrame {
                     Toolkit.getDefaultToolkit().beep();return;
                 }
                 if(!inventoryTable.isEditing()){
-                    Object old=tableModel.getValueAt(modelRow,modelColumn);
-                    inventoryTable.putClientProperty("SmartStock.inlineOldValue",old);
-                    inventoryTable.putClientProperty("SmartStock.inlineModelRow",modelRow);
-                    inventoryTable.putClientProperty("SmartStock.inlineModelColumn",modelColumn);
                     if(inventoryTable.editCellAt(viewRow,viewColumn)){
                         Component editor=inventoryTable.getEditorComponent();editor.requestFocusInWindow();
                         if(editor instanceof JTextField text)text.selectAll();
                     }
                     return;
                 }
-                int editRow=(Integer)inventoryTable.getClientProperty("SmartStock.inlineModelRow");
-                int editColumn=(Integer)inventoryTable.getClientProperty("SmartStock.inlineModelColumn");
-                Object old=inventoryTable.getClientProperty("SmartStock.inlineOldValue");
-                if(!inventoryTable.getCellEditor().stopCellEditing())return;
-                saveInlineEdit(editRow,editColumn,old,tableModel.getValueAt(editRow,editColumn));
+                inventoryTable.getCellEditor().stopCellEditing();
             }
         });
     }
@@ -391,11 +408,21 @@ public class ViewInventory extends JFrame {
             SessionDataCache.invalidate("inventory-");
             loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem());
         }).setVisible(true));
+        clearBarcodesButton=new JButton("Clear Barcodes...");
+        clearBarcodesButton.setEnabled(PermissionManager.hasPermission("EDIT_ITEM"));
+        clearBarcodesButton.setToolTipText("Remove primary and additional barcodes from checked items so those barcodes can be reused.");
+        clearBarcodesButton.addActionListener(e->clearSelectedBarcodes());
+        archiveSelectedButton=new JButton("Archive Selected...");
+        archiveSelectedButton.setEnabled(PermissionManager.hasPermission("PRODUCT_ARCHIVE"));
+        archiveSelectedButton.setToolTipText("Archive checked zero-stock products without changing their barcodes.");
+        archiveSelectedButton.addActionListener(e->archiveSelectedProducts());
 
         footerPanel.add(totalProductsLabel);
         footerPanel.add(totalItemsLabel);
         footerPanel.add(viewDetailsButton);
         footerPanel.add(reviewPricesButton);
+        footerPanel.add(clearBarcodesButton);
+        footerPanel.add(archiveSelectedButton);
         footerPanel.add(loadingState);
 
         return footerPanel;
@@ -549,7 +576,7 @@ public class ViewInventory extends JFrame {
         for (LanApiClient.InventoryProduct product : result.products()) {
                 String productType = normalizeProductType(product.productType());
                 Vector<Object> row = new Vector<>();
-                row.add(product.productId()); row.add(product.sku()); row.add(product.name());
+                row.add(Boolean.FALSE);row.add(product.productId()); row.add(product.sku()); row.add(product.barcode()); row.add(product.name());
                 row.add(product.size()); row.add(product.description()); row.add(formatProductType(productType));
                 row.add(product.department()); row.add(product.itemType()); row.add(product.brand());
                 row.add(product.shelf()); row.add(product.storageShelf());
@@ -612,9 +639,52 @@ public class ViewInventory extends JFrame {
         }
 
         int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
-        int productId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, 0)));
+        int productId = Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow, tableModel.findColumn("Product ID"))));
 
         new ViewInventoryDetails(this, productId).setVisible(true);
+    }
+
+    private List<Integer> checkedProductIds(){
+        List<Integer> ids=new ArrayList<>();int selected=tableModel.findColumn("Select"),id=tableModel.findColumn("Product ID");
+        for(int row=0;row<tableModel.getRowCount();row++)if(Boolean.TRUE.equals(tableModel.getValueAt(row,selected)))
+            ids.add(((Number)tableModel.getValueAt(row,id)).intValue());
+        return ids;
+    }
+
+    private void clearSelectedBarcodes(){
+        if(!PermissionManager.requirePermission("EDIT_ITEM",this,"Clear Product Barcodes"))return;
+        List<Integer> ids=checkedProductIds();if(ids.isEmpty()){JOptionPane.showMessageDialog(this,"Check one or more items first.");return;}
+        int choice=JOptionPane.showConfirmDialog(this,
+                "Clear the primary and all additional barcodes from "+ids.size()+" selected item(s)?\n\n"
+                        +"The items will remain active. Their former barcodes can then be assigned to new items.",
+                "Clear Selected Barcodes",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+        if(choice!=JOptionPane.OK_OPTION)return;
+        UiTaskRunner.submit(this,"inventory.clear-barcodes",
+                ()->LanApiClient.clearProductBarcodes(ids,java.util.UUID.randomUUID().toString()),
+                count->{JOptionPane.showMessageDialog(this,"Cleared barcodes from "+count+" item(s).");refreshAfterBulkChange();},
+                failure->JOptionPane.showMessageDialog(this,"Could not clear the selected barcodes: "+failure.getMessage(),
+                        "Clear Barcodes",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void archiveSelectedProducts(){
+        if(!PermissionManager.requirePermission("PRODUCT_ARCHIVE",this,"Archive Products"))return;
+        List<Integer> ids=checkedProductIds();if(ids.isEmpty()){JOptionPane.showMessageDialog(this,"Check one or more items first.");return;}
+        JTextArea reason=new JTextArea(3,36);reason.setLineWrap(true);reason.setWrapStyleWord(true);
+        int choice=JOptionPane.showConfirmDialog(this,new Object[]{
+                "Archive "+ids.size()+" selected item(s)? All selected items must have zero stock at every store.",
+                "Reason:",new JScrollPane(reason)},"Archive Selected Products",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+        if(choice!=JOptionPane.OK_OPTION)return;
+        String text=reason.getText().trim();if(text.isEmpty()){JOptionPane.showMessageDialog(this,"Enter an archive reason.");return;}
+        UiTaskRunner.submit(this,"inventory.bulk-archive",
+                ()->LanApiClient.archiveProducts(ids,text,java.util.UUID.randomUUID().toString()),
+                count->{JOptionPane.showMessageDialog(this,"Archived "+count+" item(s).");refreshAfterBulkChange();},
+                failure->JOptionPane.showMessageDialog(this,"Could not archive the selected items: "+failure.getMessage(),
+                        "Archive Products",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void refreshAfterBulkChange(){
+        SessionDataCache.invalidate("inventory-");
+        loadInventory(searchField.getText().trim(),(String)stockFilterCombo.getSelectedItem());
     }
 
     private Integer getCurrentLocationId() {

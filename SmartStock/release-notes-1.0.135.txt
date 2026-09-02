@@ -1,0 +1,8 @@
+SmartStock 1.0.135
+
+- Fixes checkout for miscellaneous sale lines that use the intentionally inactive SMARTSTOCK-MISC system anchor.
+- Keeps genuinely archived products blocked at checkout with a clear product-archived message.
+- Adds safe, reversible product archiving and restoration with permission checks, required archive reasons, global zero-stock enforcement, lifecycle auditing, and active-list filtering.
+- Automatically installs the product-archiving schema upgrade on existing store databases before readiness validation.
+- Includes the Scheduler Web browser-device and advanced return lookup changes packaged with this build.
+- Installed-app, live database/service, physical printer, cash drawer, NFC, and multi-register synchronization checks remain required after updating.

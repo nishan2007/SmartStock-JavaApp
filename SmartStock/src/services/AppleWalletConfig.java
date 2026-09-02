@@ -1,5 +1,7 @@
 package services;
 
+import utils.SecureCredentialStore;
+
 import java.nio.file.Path;
 
 /** Machine-local Apple Wallet configuration. Secrets are never persisted by SmartStock. */
@@ -9,10 +11,15 @@ public record AppleWalletConfig(String passTypeIdentifier, String teamIdentifier
                                 String nfcEncryptionPublicKey, String trustedReaderIds) {
     private static final java.util.Set<String> IMPLEMENTED_NFC_PROVIDERS = java.util.Set.of();
     public static AppleWalletConfig load() {
+        String signingPassword = value("SMARTSTOCK_WALLET_SIGNING_PASSWORD", "smartstock.wallet.signingPassword", "");
+        if (signingPassword.isBlank()) {
+            signingPassword = java.util.Objects.requireNonNullElse(
+                    SecureCredentialStore.read("apple-wallet-signing-password"), "");
+        }
         return new AppleWalletConfig(value("SMARTSTOCK_WALLET_PASS_TYPE", "smartstock.wallet.passType", ""),
                 value("SMARTSTOCK_WALLET_TEAM_ID", "smartstock.wallet.teamId", ""),
                 path("SMARTSTOCK_WALLET_SIGNING_P12", "smartstock.wallet.signingP12"),
-                value("SMARTSTOCK_WALLET_SIGNING_PASSWORD", "smartstock.wallet.signingPassword", "").toCharArray(),
+                signingPassword.toCharArray(),
                 path("SMARTSTOCK_WALLET_WWDR_CERT", "smartstock.wallet.wwdrCert"),
                 value("SMARTSTOCK_WALLET_PUBLIC_ORIGIN", "smartstock.wallet.publicOrigin", ""),
                 Boolean.parseBoolean(value("SMARTSTOCK_WALLET_NFC_ENABLED", "smartstock.wallet.nfcEnabled", "false")),

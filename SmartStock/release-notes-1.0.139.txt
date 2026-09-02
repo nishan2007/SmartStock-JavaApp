@@ -1,0 +1,7 @@
+SmartStock 1.0.139
+
+- Fixes Apple Wallet enrollment links for the installed Windows background service by supporting signing material deployed in the protected server-owned SmartStock profile.
+- Keeps successful signed-pass downloads available when the secondary issuance audit write fails.
+- Adds sanitized machine-local Wallet enrollment failure diagnostics without recording enrollment tokens or certificate passwords.
+- Preserves the isolated loopback-only Wallet gateway, one-time enrollment tokens, revocable credentials, barcode login, PIN policy, and disabled-by-default NFC behavior.
+- Does not enable Apple Wallet NFC; a certified Apple VAS provider and reader are still required.

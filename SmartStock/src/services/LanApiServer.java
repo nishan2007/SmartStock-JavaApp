@@ -185,6 +185,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/sales/settings", exchange -> handle(exchange, this::salesSettings));
         server.createContext("/v1/sales/checkout", exchange -> handle(exchange, this::checkout));
         server.createContext("/v1/sales/search", exchange -> handle(exchange, this::searchSales));
+        server.createContext("/v1/sales/advanced-return-search", exchange -> handle(exchange, this::advancedReturnSearch));
         server.createContext("/v1/sales/return-stores", exchange -> handle(exchange, this::returnStores));
         server.createContext("/v1/sales/return-details", exchange -> handle(exchange, this::returnDetails));
         server.createContext("/v1/sales/refund", exchange -> handle(exchange, this::refund));
@@ -216,10 +217,15 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/catalog/customer-types/list", exchange -> handle(exchange, this::catalogCustomerTypes));
         server.createContext("/v1/catalog/customer-types/save", exchange -> handle(exchange, this::saveCatalogCustomerType));
         server.createContext("/v1/products/edit-search", exchange -> handle(exchange, this::editableProductSearch));
+        server.createContext("/v1/products/archived-search", exchange -> handle(exchange, this::archivedProductSearch));
         server.createContext("/v1/products/price-tags", exchange -> handle(exchange, this::priceTagProductSearch));
         server.createContext("/v1/products/price-tag-settings", exchange -> handle(exchange, this::priceTagSettings));
         server.createContext("/v1/products/create", exchange -> handle(exchange, this::createProduct));
         server.createContext("/v1/products/update", exchange -> handle(exchange, this::updateProduct));
+        server.createContext("/v1/products/archive", exchange -> handle(exchange, x -> mutateProductLifecycle(x, true)));
+        server.createContext("/v1/products/restore", exchange -> handle(exchange, x -> mutateProductLifecycle(x, false)));
+        server.createContext("/v1/products/bulk-archive", exchange -> handle(exchange, this::bulkArchiveProducts));
+        server.createContext("/v1/products/clear-barcodes", exchange -> handle(exchange, this::clearProductBarcodes));
         server.createContext("/v1/products/inline-update", exchange -> handle(exchange, this::inlineUpdateProduct));
         server.createContext("/v1/products/non-rounded-prices", exchange -> handle(exchange, this::nonRoundedProductPrices));
         server.createContext("/v1/products/round-prices", exchange -> handle(exchange, this::roundProductPrices));
@@ -263,6 +269,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/security/devices/list", exchange -> handle(exchange, this::deviceAdminList));
         server.createContext("/v1/security/devices/sessions", exchange -> handle(exchange, this::deviceAdminSessions));
         server.createContext("/v1/security/devices/update", exchange -> handle(exchange, this::deviceAdminUpdate));
+        server.createContext("/v1/security/scheduler-devices/list", exchange -> handle(exchange, this::schedulerDeviceAdminList));
+        server.createContext("/v1/security/scheduler-devices/update", exchange -> handle(exchange, this::schedulerDeviceAdminUpdate));
         server.createContext("/v1/security/servers/list", exchange -> handle(exchange, this::serverAdminList));
         server.createContext("/v1/security/servers/update", exchange -> handle(exchange, this::serverAdminUpdate));
         server.createContext("/v1/security/servers/prepare-standby", exchange -> handle(exchange, x->serverAdminAction(x,"PREPARE_STANDBY")));
@@ -337,7 +345,6 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/employees/badge-data", exchange -> handle(exchange, this::employeeBadgeData));
         server.createContext("/v1/employees/badge-printed", exchange -> handle(exchange, this::employeeBadgePrinted));
         server.createContext("/v1/employees/wallet", exchange -> handle(exchange, this::employeeWallet));
-        server.createContext("/wallet/enroll/", this::walletEnrollment);
         server.createContext("/v1/employees/admin/state", exchange -> handle(exchange, this::employeeAdminState));
         server.createContext("/v1/employees/admin/update", exchange -> handle(exchange, this::employeeAdminMutation));
         server.createContext("/v1/quotations/read", exchange -> handle(exchange, this::quotationRead));
@@ -2138,6 +2145,17 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
+    private ApiResult archivedProductSearch(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection connection=DB.getConnection()){
+            try{return ApiResult.ok(Map.of("products",LanProductAdminService.searchArchived(connection,
+                    optional(context.body(),"search",300),session.userId(),session.locationId())));}
+            catch(LanProductAdminService.RuleViolation ex){throw apiException(ex);}
+        }
+    }
+
     private ApiResult priceTagProductSearch(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
         DevicePrincipal device = authenticateDevice(context.exchange());
@@ -2207,6 +2225,15 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private ApiResult deviceAdminList(RequestContext x)throws Exception{return deviceAdminRead(x,(c,s)->LanDeviceAdminService.list(c,s.userId()));}
+    private ApiResult schedulerDeviceAdminList(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){try{return ApiResult.ok(SchedulerWebDeviceAdminService.list(c,s.userId()));}catch(SchedulerWebDeviceAdminService.RuleViolation e){throw new ApiException(e.status,e.code,e.getMessage(),false);}}
+    }
+    private ApiResult schedulerDeviceAdminUpdate(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        String key=requireIdempotencyKey(x,"A valid idempotency key is required for a Scheduler device change."),operation="security.scheduler-devices.update.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
+        try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}Map<String,Object>result=SchedulerWebDeviceAdminService.update(c,x.body(),s.userId());completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(SchedulerWebDeviceAdminService.RuleViolation e){c.rollback();throw new ApiException(e.status,e.code,e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
+    }
     private ApiResult deviceAdminSessions(RequestContext x)throws Exception{return deviceAdminRead(x,(c,s)->LanDeviceAdminService.sessions(c,x.body(),s.userId()));}
     private ApiResult deviceSecurityStatus(RequestContext x)throws Exception{return deviceAdminRead(x,(c,s)->LanDeviceAdminService.security(c,s.userId()));}
     private ApiResult deviceAdminUpdate(RequestContext x)throws Exception{
@@ -2493,25 +2520,6 @@ public final class LanApiServer implements AutoCloseable {
         }catch(IllegalArgumentException e){c.rollback();throw new ApiException(404,"EMPLOYEE_NOT_FOUND",e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
     }
 
-    private void walletEnrollment(HttpExchange exchange)throws IOException{
-        exchange.getResponseHeaders().set("Cache-Control","no-store");
-        exchange.getResponseHeaders().set("Referrer-Policy","no-referrer");
-        exchange.getResponseHeaders().set("X-Content-Type-Options","nosniff");
-        exchange.getResponseHeaders().set("Content-Security-Policy","default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
-        try{
-            String method=exchange.getRequestMethod();
-            if(!"GET".equals(method)&&!"POST".equals(method)){exchange.getResponseHeaders().set("Allow","GET, POST");exchange.sendResponseHeaders(405,-1);exchange.close();return;}
-            String path=exchange.getRequestURI().getPath(),prefix="/wallet/enroll/";String token=path.startsWith(prefix)?path.substring(prefix.length()):"";
-            if(!token.matches("[A-Za-z0-9_-]{43}")){exchange.sendResponseHeaders(404,-1);exchange.close();return;}
-            if("GET".equals(method)){
-                byte[] page=WalletEnrollmentPage.html().getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type","text/html; charset=utf-8");
-                exchange.sendResponseHeaders(200,page.length);try(var out=exchange.getResponseBody()){out.write(page);}return;
-            }
-            byte[] pass;try(Connection c=DB.getConnection()){pass=AppleWalletBadgeService.consumeEnrollment(c,token);auditSecurity(c,"APPLE_WALLET_PASS_ISSUED",null,null,"One-time enrollment consumed");}
-            exchange.getResponseHeaders().set("Content-Type","application/vnd.apple.pkpass");exchange.getResponseHeaders().set("Content-Disposition","attachment; filename=SmartStock-Employee-Badge.pkpass");exchange.getResponseHeaders().set("Cache-Control","no-store");exchange.getResponseHeaders().set("X-Content-Type-Options","nosniff");exchange.sendResponseHeaders(200,pass.length);try(var out=exchange.getResponseBody()){out.write(pass);}
-        }catch(Exception ex){byte[] body="Unable to issue this badge. The link may be expired or already used. Ask your administrator for help.".getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","text/plain; charset=utf-8");exchange.sendResponseHeaders(400,body.length);try(var out=exchange.getResponseBody()){out.write(body);}}
-    }
     private ApiResult employeeAdminState(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);Integer userId=x.body().has("userId")&&!x.body().get("userId").isJsonNull()?x.body().get("userId").getAsInt():null;try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());return ApiResult.ok(Map.of("state",LanEmployeeAdminService.state(c,userId,LocalDate.now(java.time.ZoneId.of(u.locationTimezone())))));}}
     private ApiResult employeeAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",30),key=requireIdempotencyKey(x,"A valid idempotency key is required for this employee change."),operation="employees.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser actor=loadUser(c,s.userId(),s.locationId());Map<String,Object>result=new LinkedHashMap<>();switch(action){case"ROTATE_BADGE"->result.put("badgeId",LanEmployeeAdminService.rotateBadge(c,requiredInt(x.body(),"userId"),s.userId(),displayName(actor)));case"SAVE_STORES"->{Integer[]ids=GSON.fromJson(x.body().get("locationIds"),Integer[].class);LanEmployeeAdminService.saveStores(c,requiredInt(x.body(),"userId"),ids==null?List.of():List.of(ids));result.put("saved",true);}case"CREATE"->{LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);request=request.withEmail(employeeAuthEmail(request.email(),request.username(),actor.email()));String authId=employeeAuthCreate(request);try{result.put("userId",LanEmployeeAdminService.create(c,request,authId,s.userId(),displayName(actor)));}catch(Exception e){try{employeeAuthDelete(authId,null);}catch(Exception ignored){}throw e;}}case"UPDATE"->{int id=requiredInt(x.body(),"userId");LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);String existingEmail=LanEmployeeAdminService.email(c,id);String requestedEmail=request.email()==null||request.email().isBlank()?existingEmail:request.email();request=request.withEmail(employeeAuthEmail(requestedEmail,request.username(),actor.email()));String authId=LanEmployeeAdminService.authUserId(c,id);if(authId==null||authId.isBlank()){if(request.password()==null||request.password().isBlank())throw new ApiException(400,"PASSWORD_REQUIRED","Enter a password to create the missing employee Auth account.",false);authId=employeeAuthCreate(request);}else employeeAuthUpdate(authId,request);LanEmployeeAdminService.update(c,id,request,authId,request.password()!=null&&!request.password().isBlank(),s.userId(),displayName(actor),LocalDate.now(java.time.ZoneId.of(actor.locationTimezone())));result.put("userId",id);}case"DEACTIVATE"->{int id=requiredInt(x.body(),"userId");String authId=LanEmployeeAdminService.authUserId(c,id);if(authId!=null&&!authId.isBlank())employeeAuthDelete(authId,null);LanEmployeeAdminService.deactivate(c,id,s.userId(),displayName(actor));result.put("deactivated",true);}default->throw new ApiException(400,"VALIDATION_ERROR","The employee administration action is invalid.",false);}completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private String employeeAuthCreate(LanEmployeeAdminService.SaveRequest r)throws Exception{
@@ -3342,6 +3350,20 @@ public final class LanApiServer implements AutoCloseable {
         return mutateProduct(context, false);
     }
 
+    private ApiResult mutateProductLifecycle(RequestContext context,boolean archive)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        String key=requireIdempotencyKey(context,"A valid idempotency key is required for this product change.");
+        String operation=archive?"products.archive.v1":"products.restore.v1",hash=LanSecurity.sha256(GSON.toJson(context.body()));
+        try(Connection connection=DB.getConnection()){connection.setAutoCommit(false);try{
+            Map<String,Object>previous=loadIdempotentResult(connection,device.deviceId(),key,operation,hash);
+            if(previous!=null){connection.commit();return ApiResult.ok(previous);}
+            Map<String,Object>result=LanProductAdminService.setArchived(connection,context.body(),device.deviceId(),session.userId(),session.locationId(),archive);
+            completeIdempotency(connection,device.deviceId(),key,result);connection.commit();return ApiResult.ok(result);
+        }catch(LanProductAdminService.RuleViolation ex){connection.rollback();throw apiException(ex);}
+        catch(Exception ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}}
+    }
+
     private ApiResult inlineUpdateProduct(RequestContext context)throws Exception{
         requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);
@@ -3353,6 +3375,30 @@ public final class LanApiServer implements AutoCloseable {
             AuthenticatedUser user=loadUser(connection,session.userId(),session.locationId());
             Map<String,Object> result=LanProductAdminService.inlineUpdate(connection,context.body(),device.deviceId(),
                     session.userId(),displayName(user),session.locationId());
+            completeIdempotency(connection,device.deviceId(),key,result);connection.commit();return ApiResult.ok(result);
+        }catch(LanProductAdminService.RuleViolation ex){connection.rollback();throw apiException(ex);}
+        catch(Exception ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}}
+    }
+
+    private ApiResult bulkArchiveProducts(RequestContext context)throws Exception{
+        return bulkProductMutation(context,"products.bulk-archive.v1",true);
+    }
+
+    private ApiResult clearProductBarcodes(RequestContext context)throws Exception{
+        return bulkProductMutation(context,"products.clear-barcodes.v1",false);
+    }
+
+    private ApiResult bulkProductMutation(RequestContext context,String operation,boolean archive)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        String key=requireIdempotencyKey(context,"A valid idempotency key is required for this product change.");
+        String hash=LanSecurity.sha256(GSON.toJson(context.body()));
+        try(Connection connection=DB.getConnection()){connection.setAutoCommit(false);try{
+            Map<String,Object> previous=loadIdempotentResult(connection,device.deviceId(),key,operation,hash);
+            if(previous!=null){connection.commit();return ApiResult.ok(previous);}
+            Map<String,Object> result=archive
+                    ?LanProductAdminService.bulkArchive(connection,context.body(),device.deviceId(),session.userId(),session.locationId())
+                    :LanProductAdminService.clearBarcodes(connection,context.body(),device.deviceId(),session.userId(),session.locationId());
             completeIdempotency(connection,device.deviceId(),key,result);connection.commit();return ApiResult.ok(result);
         }catch(LanProductAdminService.RuleViolation ex){connection.rollback();throw apiException(ex);}
         catch(Exception ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}}
@@ -3525,6 +3571,31 @@ public final class LanApiServer implements AutoCloseable {
             } catch (LanRefundService.RuleViolation ex) {
                 throw apiException(ex);
             } catch(CrossStoreSalesService.RuleViolation ex){throw new ApiException(ex.status(),ex.code(),ex.safeMessage(),false);
+            }
+        }
+    }
+
+    private ApiResult advancedReturnSearch(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        String saleDate = required(context.body(), "saleDate", 10);
+        String itemQuery = required(context.body(), "itemQuery", 300);
+        Integer source = context.body().has("sourceLocationId")
+                && !context.body().get("sourceLocationId").isJsonNull()
+                ? context.body().get("sourceLocationId").getAsInt() : session.locationId();
+        try (Connection connection = DB.getConnection()) {
+            try {
+                List<Map<String, Object>> sales = source == session.locationId()
+                        ? LanRefundService.advancedSearch(connection, saleDate, itemQuery,
+                                session.userId(), session.locationId())
+                        : CrossStoreSalesService.advancedSearchForReturn(connection, session.userId(),
+                                session.locationId(), saleDate, itemQuery, source);
+                return ApiResult.ok(Map.of("sales", sales));
+            } catch (LanRefundService.RuleViolation ex) {
+                throw apiException(ex);
+            } catch (CrossStoreSalesService.RuleViolation ex) {
+                throw new ApiException(ex.status(), ex.code(), ex.safeMessage(), false);
             }
         }
     }
