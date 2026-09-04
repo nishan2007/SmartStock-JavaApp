@@ -62,6 +62,8 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
             ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
             ,"database/migrations/v1_after/20260831170000_product_archiving.sql"
+            ,"database/migrations/v1_after/20260902170000_wallet_session_auth_sources.sql"
+            ,"database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -77,6 +79,7 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
             ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
             ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
+            ,"database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -443,6 +446,8 @@ public final class SchemaContractService {
         ensureCustomerPhotoCardExpiryUpgrade(connection);
         ensureAppleWalletBadgeUpgrade(connection);
         ensureWalletTemplateUpgrade(connection);
+        ensureWalletSessionAuthSourcesUpgrade(connection);
+        ensureWalletLocationRelevanceUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
@@ -533,6 +538,59 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Apple Wallet badge tables could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureWalletSessionAuthSourcesUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "lan_api_sessions")) return;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT pg_get_constraintdef(oid, true)
+                FROM pg_constraint
+                WHERE conrelid='public.lan_api_sessions'::regclass
+                  AND conname='lan_api_sessions_auth_source_check'
+                """); ResultSet rs = ps.executeQuery()) {
+            if (rs.next() && rs.getString(1).contains("WALLET_BARCODE")) return;
+        }
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260902170000_wallet_session_auth_sources.sql"));
+            if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+                try (PreparedStatement ps = connection.prepareStatement("""
+                        UPDATE public.smartstock_schema_metadata
+                        SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                        WHERE schema_scope='LOCAL' AND baseline_version=?
+                        """)) {
+                    ps.setString(1, resourceFingerprint(localContractResources()));
+                    ps.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                    ps.setInt(3, BASELINE_VERSION);
+                    ps.executeUpdate();
+                }
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("Wallet session authentication sources could not be installed.", ex);
+        } finally {
+            connection.setAutoCommit(auto);
+        }
+    }
+
+    public static void ensureWalletLocationRelevanceUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "locations")
+                || (columnExists(connection, "public", "locations", "wallet_relevance_latitude")
+                && columnExists(connection, "public", "locations", "wallet_relevance_longitude"))) return;
+        boolean auto=connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata")) try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources())); ps.setString(2,catalogFingerprint(connection,List.of("public"),false)); ps.setInt(3,BASELINE_VERSION); ps.executeUpdate();
+            }
+            connection.commit();
+        } catch(Exception ex) { connection.rollback(); if(ex instanceof SQLException sql) throw sql; throw new SQLException("Wallet location relevance could not be installed.",ex); }
+        finally { connection.setAutoCommit(auto); }
     }
 
     /** Installs the owner scheduler through the ordered local migration and advances metadata. */

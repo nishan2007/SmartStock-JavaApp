@@ -75,14 +75,20 @@ $serviceInstaller = Join-Path $PSScriptRoot "install-sync-service.ps1"
     -Environment "production" -SupabaseUrl $SupabaseUrl.TrimEnd("/") `
     -SupabasePublishableKey $SupabasePublishableKey -ServiceUser $serviceUser
 
-$ruleName = "SmartStock LAN API 8443"
-$existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-if ($null -ne $existingRule) {
-    Remove-NetFirewallRule -DisplayName $ruleName
+$lanRules = @(
+    @{ Name = "SmartStock LAN API $LanApiPort"; Port = $LanApiPort },
+    @{ Name = "SmartStock Mobile Item Web UI 8444"; Port = 8444 },
+    @{ Name = "SmartStock Mobile Item Web API 8445"; Port = 8445 }
+)
+foreach ($rule in $lanRules) {
+    $existingRule = Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue
+    if ($null -ne $existingRule) {
+        Remove-NetFirewallRule -DisplayName $rule.Name
+    }
+    New-NetFirewallRule -DisplayName $rule.Name -Direction Inbound -Action Allow `
+        -Protocol TCP -LocalPort $rule.Port -RemoteAddress $LanSubnet `
+        -Profile Private | Out-Host
 }
-New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
-    -Protocol TCP -LocalPort $LanApiPort -RemoteAddress $LanSubnet `
-    -Profile Private | Out-Host
 
 Start-Sleep -Seconds 3
 $task = schtasks /Query /TN "SmartStockServerService" /FO LIST

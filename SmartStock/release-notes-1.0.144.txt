@@ -1,0 +1,11 @@
+SmartStock 1.0.144
+
+- Fixes iPhone access to the Mobile Item Web App by advertising its Bonjour/mDNS address and opening its private-LAN firewall ports during Windows server installation.
+- Adds an audited Employee Management action to clear a selected employee's failed login attempts so they can retry immediately.
+- Includes Apple Wallet Lock Screen relevance for employee badge passes at configured store locations.
+- Includes every coordinate-configured store assigned to the employee, up to Apple's 10-location pass limit.
+- Adds Wallet latitude and longitude fields to Location Management with validation and cross-store synchronization.
+- Prioritizes the issuing store and omits stores whose Wallet coordinates have not been configured.
+- Existing Wallet passes must be replaced after store coordinates are saved to receive the new location information.
+- Adds automatic clock-out reviews to Payroll and allows authorized managers to correct clock-in, clock-out, lunch, and break times with a required, append-only audit reason.
+- Adds an optional, draggable and resizable front-side employee login QR element to the PVC badge template editor, disabled by default and rendered with the configured company logo in its center.

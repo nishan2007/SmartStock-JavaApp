@@ -14,6 +14,7 @@ import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
+import ui.helpers.WhatsAppActions;
 
 import javax.print.PrintException;
 import javax.swing.*;
@@ -74,11 +75,14 @@ public class ReceiptPreview extends JFrame {
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         JButton emailButton = new JButton("Email Receipt");
+        JButton whatsappButton = new JButton("Send WhatsApp");
         JButton printButton = new JButton("Print Receipt");
         JButton closeButton = new JButton("Close");
         emailButton.setEnabled(false);
+        whatsappButton.setEnabled(false);
         printButton.setEnabled(false);
         buttonPanel.add(emailButton);
+        buttonPanel.add(whatsappButton);
         buttonPanel.add(printButton);
         buttonPanel.add(closeButton);
         JPanel footerPanel = new JPanel(new BorderLayout());
@@ -87,6 +91,7 @@ public class ReceiptPreview extends JFrame {
         mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         emailButton.addActionListener(e -> emailReceipt());
+        whatsappButton.addActionListener(e -> WhatsAppActions.send(this,"SALE_RECEIPT",receiptData.getSaleId()));
         printButton.addActionListener(e -> printReceipt());
         closeButton.addActionListener(e -> dispose());
         printerBox.addActionListener(e -> updateFormatFromPrinter());
@@ -100,6 +105,7 @@ public class ReceiptPreview extends JFrame {
                 loadingState, CompanyCustomizationManager::loadReceiptSettings, settings -> {
                     receiptSettings = settings;
                     emailButton.setEnabled(true);
+                    whatsappButton.setEnabled(true);
                     printButton.setEnabled(true);
                     updateReceiptPreview();
                     loadLogoPreviewAsync();

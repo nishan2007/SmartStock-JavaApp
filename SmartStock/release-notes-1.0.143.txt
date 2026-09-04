@@ -1,0 +1,7 @@
+SmartStock 1.0.143
+
+- Adds Apple Wallet Lock Screen relevance for employee badge passes at configured store locations.
+- Includes every coordinate-configured store assigned to the employee, up to Apple's 10-location pass limit.
+- Adds Wallet latitude and longitude fields to Location Management with validation and cross-store synchronization.
+- Prioritizes the issuing store and omits stores whose Wallet coordinates have not been configured.
+- Existing Wallet passes must be replaced after store coordinates are saved to receive the new location information.

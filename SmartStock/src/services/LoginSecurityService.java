@@ -9,6 +9,8 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 public final class LoginSecurityService {
@@ -71,6 +73,28 @@ public final class LoginSecurityService {
             ps.executeUpdate();
         } catch (Exception ignored) {
         }
+    }
+
+    public static int clearFailures(Connection conn, String... identifiers) throws SQLException {
+        Set<String> hashes = new LinkedHashSet<>();
+        if (identifiers != null) {
+            for (String identifier : identifiers) {
+                if (identifier != null && !identifier.isBlank()) hashes.add(hash(identifier));
+            }
+        }
+        if (hashes.isEmpty()) return 0;
+        int cleared = 0;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "DELETE FROM login_security_state WHERE identifier_hash = ?")) {
+            for (String identifierHash : hashes) {
+                ps.setString(1, identifierHash);
+                ps.addBatch();
+            }
+            for (int count : ps.executeBatch()) {
+                if (count > 0) cleared += count;
+            }
+        }
+        return cleared;
     }
 
     private static void recordAudit(Connection conn, String type, UUID deviceId, String details) throws SQLException {

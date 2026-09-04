@@ -94,7 +94,8 @@ public final class AppleWalletBadgeService {
                     "FIRST_NAME",employee.firstName(),"LAST_NAME",employee.lastName(),"EMAIL",employee.email(),"PHONE",employee.phone(),
                     "ROLE",employee.roleName(),"LOCATION",employee.locationName(),"ISSUED",java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString());
             BufferedImage photo=template.employeePhoto()?utils.ImageCacheManager.loadImage(employee.photoPath()):null;
-            byte[] pass=buildPass(config,serial,credential,template,values,photo);c.commit();return pass;
+            List<Map<String,Object>> relevantLocations=walletRelevantLocations(c,userId,locationId);
+            byte[] pass=buildPass(config,serial,credential,template,values,photo,relevantLocations);c.commit();return pass;
         }catch(Exception ex){c.rollback();throw ex;}finally{c.setAutoCommit(true);}
     }
 
@@ -122,6 +123,12 @@ public final class AppleWalletBadgeService {
 
     static byte[] buildPass(AppleWalletConfig config,String serial,String credential,WalletBadgeTemplate template,
                             Map<String,String> employee,BufferedImage employeePhoto)throws Exception{
+        return buildPass(config,serial,credential,template,employee,employeePhoto,List.of());
+    }
+
+    static byte[] buildPass(AppleWalletConfig config,String serial,String credential,WalletBadgeTemplate template,
+                            Map<String,String> employee,BufferedImage employeePhoto,
+                            List<Map<String,Object>> relevantLocations)throws Exception{
         Map<String,byte[]> files=new LinkedHashMap<>();Map<String,Object> pass=new LinkedHashMap<>();
         pass.put("formatVersion",1);pass.put("passTypeIdentifier",config.passTypeIdentifier());pass.put("serialNumber",serial);pass.put("teamIdentifier",config.teamIdentifier());pass.put("organizationName","SmartStock");pass.put("description","SmartStock Employee Badge");pass.put("logoText","SmartStock");pass.put("foregroundColor","rgb(255,255,255)");pass.put("backgroundColor","rgb(0,55,96)");
         pass.put("organizationName",template.company());pass.put("description",template.title());pass.put("logoText",template.company());
@@ -129,6 +136,7 @@ public final class AppleWalletBadgeService {
         pass.put("generic",template.passFields(employee));
         if(template.poster().enabled())pass.put("posterGeneric",WalletPosterArtwork.fields(template,employee));
         pass.put("barcodes",List.of(Map.of("format","PKBarcodeFormatQR","message",credential,"messageEncoding","iso-8859-1","altText","SmartStock Wallet Badge")));
+        if(relevantLocations!=null&&!relevantLocations.isEmpty())pass.put("locations",List.copyOf(relevantLocations));
         pass.put("sharingProhibited",true);
         if(config.nfcReady())pass.put("nfc",Map.of("message",credential,"encryptionPublicKey",config.nfcEncryptionPublicKey(),"requiresAuthentication",false));
         files.put("pass.json",GSON.toJson(pass).getBytes(StandardCharsets.UTF_8));files.put("icon.png",icon(29));files.put("icon@2x.png",icon(58));files.put("icon@3x.png",icon(87));
@@ -149,6 +157,23 @@ public final class AppleWalletBadgeService {
     private static byte[] sign(AppleWalletConfig cfg,byte[] manifest)throws Exception{KeyStore store=KeyStore.getInstance("PKCS12");try(InputStream in=Files.newInputStream(cfg.signingPkcs12())){store.load(in,cfg.signingPassword());}String alias=Collections.list(store.aliases()).stream().filter(a->{try{return store.isKeyEntry(a);}catch(Exception e){return false;}}).findFirst().orElseThrow();PrivateKey key=(PrivateKey)store.getKey(alias,cfg.signingPassword());X509Certificate signer=(X509Certificate)store.getCertificate(alias);X509Certificate wwdr;try(InputStream in=Files.newInputStream(cfg.wwdrCertificate())){wwdr=(X509Certificate)CertificateFactory.getInstance("X.509").generateCertificate(in);}CMSSignedDataGenerator gen=new CMSSignedDataGenerator();gen.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().build()).build(new JcaContentSignerBuilder("SHA256withRSA").build(key),signer));gen.addCertificates(new JcaCertStore(List.of(signer,wwdr)));return gen.generate(new CMSProcessableByteArray(manifest),false).getEncoded();}
     private static byte[] icon(int size)throws IOException{BufferedImage i=new BufferedImage(size,size,BufferedImage.TYPE_INT_ARGB);Graphics2D g=i.createGraphics();g.setColor(new Color(0,55,96));g.fillRoundRect(0,0,size,size,size/4,size/4);g.setColor(new Color(255,112,0));g.setFont(new Font("SansSerif",Font.BOLD,Math.max(10,size/2)));g.drawString("S",size/3,size*2/3);g.dispose();ByteArrayOutputStream o=new ByteArrayOutputStream();ImageIO.write(i,"png",o);return o.toByteArray();}
     private static void requireEmployee(Connection c,int userId,int location)throws Exception{try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM users u JOIN user_locations ul ON ul.user_id=u.user_id WHERE u.user_id=? AND ul.location_id=?")){p.setInt(1,userId);p.setInt(2,location);try(ResultSet r=p.executeQuery()){if(!r.next())throw new IllegalArgumentException("Employee was not found at this store.");}}}
+    private static List<Map<String,Object>> walletRelevantLocations(Connection c,int userId,int preferredLocationId)throws SQLException{
+        List<Map<String,Object>> locations=new ArrayList<>();
+        try(PreparedStatement p=c.prepareStatement("""
+                SELECT l.wallet_relevance_latitude,l.wallet_relevance_longitude,l.name
+                FROM user_locations ul JOIN locations l ON l.location_id=ul.location_id
+                WHERE ul.user_id=? AND l.wallet_relevance_latitude IS NOT NULL
+                  AND l.wallet_relevance_longitude IS NOT NULL
+                ORDER BY CASE WHEN l.location_id=? THEN 0 ELSE 1 END,l.location_id
+                LIMIT 10
+                """)){
+            p.setInt(1,userId);p.setInt(2,preferredLocationId);
+            try(ResultSet r=p.executeQuery()){while(r.next())locations.add(Map.of(
+                    "latitude",r.getDouble(1),"longitude",r.getDouble(2),
+                    "relevantText","Employee badge for "+r.getString(3)));}
+        }
+        return locations;
+    }
     private static int employeeLocation(Connection c,int id)throws SQLException{try(PreparedStatement p=c.prepareStatement("SELECT MIN(location_id) FROM user_locations WHERE user_id=?")){p.setInt(1,id);try(ResultSet r=p.executeQuery()){if(!r.next()||r.getObject(1)==null)throw new SQLException("Employee has no assigned store.");return r.getInt(1);}}}
     private static Instant instant(ResultSet r,int i)throws SQLException{java.sql.Timestamp t=r.getTimestamp(i);return t==null?null:t.toInstant();}
     private static byte[] random(int n){byte[] b=new byte[n];RANDOM.nextBytes(b);return b;}

@@ -51,9 +51,11 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(16, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(17, ServerSupabaseMigrationRunner.migrationResources().size());
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260831150000_wallet_template.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"));
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }

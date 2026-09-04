@@ -62,5 +62,31 @@ class AppleWalletBadgeArchitectureTest {
         assertTrue(login.contains("loginWithWallet"));
         assertTrue(login.contains("loginWithCredentials"));
         assertTrue(login.contains("normalizeScannedCredential"));
+        String schema=Files.readString(Path.of("database/v1/local/001_schema.sql"));
+        String migration=Files.readString(Path.of("database/migrations/v1_after/20260902170000_wallet_session_auth_sources.sql"));
+        String contract=Files.readString(Path.of("src/services/SchemaContractService.java"));
+        assertTrue(schema.contains("'WALLET_BARCODE'::text"));
+        assertTrue(schema.contains("'WALLET_NFC_PIN'::text"));
+        assertTrue(migration.contains("lan_api_sessions_auth_source_check"));
+        assertTrue(contract.contains("ensureWalletSessionAuthSourcesUpgrade(connection)"));
+    }
+
+    @Test
+    void walletPassUsesCoordinatesForEveryAssignedStore() throws Exception {
+        String migrationResource="database/migrations/v1_after/20260902180000_wallet_location_relevance.sql";
+        assertTrue(services.SchemaContractService.localContractResources().contains(migrationResource));
+        assertTrue(services.SchemaContractService.cloudContractResources().contains(migrationResource));
+        String migration=Files.readString(Path.of(migrationResource));
+        assertTrue(migration.contains("wallet_relevance_latitude"));
+        assertTrue(migration.contains("wallet_relevance_longitude"));
+        String service=Files.readString(Path.of("src/services/AppleWalletBadgeService.java"));
+        assertTrue(service.contains("FROM user_locations ul JOIN locations l"));
+        assertTrue(service.contains("LIMIT 10"));
+        assertTrue(service.contains("pass.put(\"locations\""));
+        String sync=Files.readString(Path.of("src/services/CrossStoreReferenceSyncService.java"));
+        assertTrue(sync.contains("wallet_relevance_latitude=EXCLUDED.wallet_relevance_latitude"));
+        String ui=Files.readString(Path.of("src/ui/screens/LocationManagementPanel.java"));
+        assertTrue(ui.contains("Wallet Latitude:"));
+        assertTrue(ui.contains("Wallet Longitude:"));
     }
 }

@@ -1,6 +1,7 @@
 package ui.screens;
 
 import services.LanApiClient;
+import services.ComputerLocationService;
 import ui.components.LoadingStatePanel;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
@@ -32,6 +33,9 @@ public class LocationManagementPanel extends JPanel {
     private final JTextField addressLine1Field = new JTextField();
     private final JTextField addressLine2Field = new JTextField();
     private final JTextField addressLine3Field = new JTextField();
+    private final JTextField walletLatitudeField = new JTextField();
+    private final JTextField walletLongitudeField = new JTextField();
+    private final JButton useComputerLocationButton = new JButton("Use This Computer's Location");
     private final JTextField phoneLine1Field = new JTextField();
     private final JTextField phoneLine2Field = new JTextField();
     private final JTextField emailLine1Field = new JTextField();
@@ -69,7 +73,7 @@ public class LocationManagementPanel extends JPanel {
         tableModel = new DefaultTableModel(new Object[]{
                 "ID", "Store Name", "Store Code", "Address", "Address Line 1", "Address Line 2", "Address Line 3",
                 "Phone Line 1", "Phone Line 2", "Email Line 1", "Email Line 2", "Sender Email", "Sender Name",
-                "BCC Email", "Balance Sheet Email", "Email Receipts", "Email Orders", "Email Quotes", "Email Invoices", "Email Delivery", "Timezone"
+                "BCC Email", "Balance Sheet Email", "Email Receipts", "Email Orders", "Email Quotes", "Email Invoices", "Email Delivery", "Timezone", "Wallet Latitude", "Wallet Longitude"
         }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -108,6 +112,7 @@ public class LocationManagementPanel extends JPanel {
         JButton searchButton = new JButton("Search");
         JButton refreshButton = new JButton("Refresh");
         JButton processEmailButton = new JButton("Process Email Outbox");
+        JButton whatsappButton = new JButton("WhatsApp Settings");
         searchPanel.add(new JLabel("Search:"), BorderLayout.WEST);
         searchPanel.add(searchField, BorderLayout.CENTER);
 
@@ -116,6 +121,7 @@ public class LocationManagementPanel extends JPanel {
         buttons.add(searchButton);
         buttons.add(refreshButton);
         buttons.add(processEmailButton);
+        buttons.add(whatsappButton);
         searchPanel.add(buttons, BorderLayout.EAST);
 
         searchButton.addActionListener(e -> loadLocations());
@@ -125,6 +131,7 @@ public class LocationManagementPanel extends JPanel {
             loadLocations();
         });
         processEmailButton.addActionListener(e -> processEmailOutbox());
+        whatsappButton.addActionListener(e -> {if(selectedLocationId==null){JOptionPane.showMessageDialog(this,"Select a saved location first.");return;}new WhatsAppSettingsDialog(SwingUtilities.getWindowAncestor(this),selectedLocationId).setVisible(true);});
 
         panel.add(titleLabel, BorderLayout.NORTH);
         panel.add(searchPanel, BorderLayout.SOUTH);
@@ -207,11 +214,15 @@ public class LocationManagementPanel extends JPanel {
         addFormRow(panel, gbc, 15, "Auto Email:", buildEmailTogglePanel());
         addFormRow(panel, gbc, 16, "Gmail Connection:", buildGmailPanel());
         addFormRow(panel, gbc, 17, "Timezone:", timezoneBox);
+        addFormRow(panel, gbc, 18, "Wallet Latitude:", walletLatitudeField);
+        addFormRow(panel, gbc, 19, "Wallet Longitude:", walletLongitudeField);
+        addFormRow(panel, gbc, 20, "", useComputerLocationButton);
+        useComputerLocationButton.addActionListener(e -> useComputerLocation());
 
-        JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Used for report date boundaries and store totals.</div></html>");
+        JLabel timezoneHelp = new JLabel("<html><div style='width:230px;color:#6b7280;'>Timezone controls reports. Wallet coordinates make assigned employee passes relevant near this store; enter both values.</div></html>");
         timezoneHelp.setFont(new Font("SansSerif", Font.PLAIN, 12));
         gbc.gridx = 1;
-        gbc.gridy = 18;
+        gbc.gridy = 21;
         gbc.gridwidth = 1;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -225,7 +236,7 @@ public class LocationManagementPanel extends JPanel {
         buttonPanel.add(saveButton);
 
         gbc.gridx = 0;
-        gbc.gridy = 19;
+        gbc.gridy = 22;
         gbc.gridwidth = 2;
         gbc.weighty = 0;
         gbc.anchor = GridBagConstraints.SOUTH;
@@ -262,6 +273,19 @@ public class LocationManagementPanel extends JPanel {
         gmailTestButton.addActionListener(e -> sendGmailTest());
         gmailDisconnectButton.setEnabled(false);
         gmailTestButton.setEnabled(false);
+    }
+
+    private void useComputerLocation() {
+        Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
+        useComputerLocationButton.setEnabled(false);
+        useComputerLocationButton.setText("Getting location...");
+        UiTaskRunner.submit(owner,"locations.current-position",ComputerLocationService::current,position->{
+            walletLatitudeField.setText(String.format(java.util.Locale.ROOT,"%.7f",position.latitude()));
+            walletLongitudeField.setText(String.format(java.util.Locale.ROOT,"%.7f",position.longitude()));
+            useComputerLocationButton.setEnabled(true);useComputerLocationButton.setText("Use This Computer's Location");
+            String accuracy=position.accuracyMeters()<1000?String.format(java.util.Locale.ROOT,"%.0f metres",position.accuracyMeters()):String.format(java.util.Locale.ROOT,"%.1f km",position.accuracyMeters()/1000);
+            JOptionPane.showMessageDialog(this,"Coordinates filled from Windows Location Services.\nEstimated accuracy: "+accuracy+"\n\nVerify this computer is physically at the store, then click Save.","Wallet Location",position.accuracyMeters()>500?JOptionPane.WARNING_MESSAGE:JOptionPane.INFORMATION_MESSAGE);
+        },ex->{useComputerLocationButton.setEnabled(true);useComputerLocationButton.setText("Use This Computer's Location");JOptionPane.showMessageDialog(this,ex.getMessage(),"Current Location",JOptionPane.ERROR_MESSAGE);});
     }
 
     private void importGmailClient() {
@@ -387,7 +411,7 @@ public class LocationManagementPanel extends JPanel {
                     tableModel.addRow(new Object[]{
                             r.locationId(),r.name(),r.storeCode(),r.address(),r.addressLine1(),r.addressLine2(),r.addressLine3(),r.phoneLine1(),r.phoneLine2(),
                             r.emailLine1(),r.emailLine2(),r.senderEmail(),r.senderName(),r.bccEmail(),r.balanceSheetEmail(),r.emailReceipts(),r.emailOrders(),
-                            r.emailQuotes(),r.emailInvoices(),r.emailDelivery(),r.timezone()
+                            r.emailQuotes(),r.emailInvoices(),r.emailDelivery(),r.timezone(),r.walletLatitude(),r.walletLongitude()
                     });
             }
         });
@@ -422,6 +446,8 @@ public class LocationManagementPanel extends JPanel {
         emailInvoicesBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 18))));
         emailDeliveryBillsBox.setSelected(Boolean.parseBoolean(String.valueOf(tableModel.getValueAt(modelRow, 19))));
         timezoneBox.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 20)));
+        walletLatitudeField.setText(nullableCell(modelRow,21));
+        walletLongitudeField.setText(nullableCell(modelRow,22));
         refreshGmailStatus();
     }
 
@@ -441,6 +467,10 @@ public class LocationManagementPanel extends JPanel {
         String bccEmail = bccEmailField.getText().trim();
         String balanceSheetEmail = balanceSheetEmailField.getText().trim();
         String timezone = getTimezoneValue();
+        Double walletLatitude=parseCoordinate(walletLatitudeField.getText(),"latitude",-90,90);
+        Double walletLongitude=parseCoordinate(walletLongitudeField.getText(),"longitude",-180,180);
+        if((walletLatitude!=null&&Double.isNaN(walletLatitude))||(walletLongitude!=null&&Double.isNaN(walletLongitude)))return;
+        if((walletLatitude==null)!=(walletLongitude==null)){JOptionPane.showMessageDialog(this,"Enter both Wallet latitude and longitude, or leave both blank.","Invalid Wallet Location",JOptionPane.WARNING_MESSAGE);return;}
 
         if (name.isBlank()) {
             JOptionPane.showMessageDialog(this, "Location name is required.");
@@ -469,7 +499,7 @@ public class LocationManagementPanel extends JPanel {
 
         LanApiClient.LocationRecord request=new LanApiClient.LocationRecord(selectedLocationId,name,storeCode,address,addressLine1,addressLine2,addressLine3,
                 phoneLine1,phoneLine2,emailLine1,emailLine2,senderEmail,senderName,bccEmail,balanceSheetEmail,emailReceiptsBox.isSelected(),
-                emailOrderConfirmationsBox.isSelected(),emailQuotesBox.isSelected(),emailInvoicesBox.isSelected(),emailDeliveryBillsBox.isSelected(),timezone);
+                emailOrderConfirmationsBox.isSelected(),emailQuotesBox.isSelected(),emailInvoicesBox.isSelected(),emailDeliveryBillsBox.isSelected(),timezone,walletLatitude,walletLongitude);
         String fingerprint=request.toString();
         if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
         String mutationKey=pendingSaveKey;Window owner=SwingUtilities.getWindowAncestor(this);if(owner==null)return;
@@ -518,6 +548,8 @@ public class LocationManagementPanel extends JPanel {
         emailInvoicesBox.setSelected(false);
         emailDeliveryBillsBox.setSelected(false);
         timezoneBox.setSelectedItem(DEFAULT_TIMEZONE);
+        walletLatitudeField.setText("");
+        walletLongitudeField.setText("");
         gmailStatusLabel.setText("Not configured");
         gmailConnectButton.setText("Connect Gmail");
         gmailDisconnectButton.setEnabled(false);
@@ -538,4 +570,8 @@ public class LocationManagementPanel extends JPanel {
         if (parsed > 9999) parsed = 9999;
         return String.format("%04d", parsed);
     }
+
+    private static final Double INVALID_COORDINATE=Double.NaN;
+    private Double parseCoordinate(String text,String label,double min,double max){String clean=text==null?"":text.trim();if(clean.isEmpty())return null;try{double value=Double.parseDouble(clean);if(!Double.isFinite(value)||value<min||value>max)throw new NumberFormatException();return value;}catch(NumberFormatException ex){JOptionPane.showMessageDialog(this,"Enter a valid Wallet "+label+" between "+min+" and "+max+".","Invalid Wallet Location",JOptionPane.WARNING_MESSAGE);return INVALID_COORDINATE;}}
+    private String nullableCell(int row,int column){Object value=tableModel.getValueAt(row,column);return value==null?"":String.valueOf(value);}
 }

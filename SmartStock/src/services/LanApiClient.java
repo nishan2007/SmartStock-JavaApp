@@ -938,6 +938,7 @@ public final class LanApiClient {
     public static TimeClockAutoCloseService.EmployeeAutoCloseNotice loadLatestTimeClockNotice()throws Exception{JsonObject d=post("/v1/time-clock/auto-close/notice",new JsonObject(),true,true);return d.has("notice")&&!d.get("notice").isJsonNull()?GSON.fromJson(d.get("notice"),TimeClockAutoCloseService.EmployeeAutoCloseNotice.class):null;}
     public static void confirmTimeClockAutoClose(long clockId,String reason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.addProperty("reason",reason);post("/v1/time-clock/auto-close/confirm",r,true,true,Map.of("Idempotency-Key",key));}
     public static void correctTimeClockAutoClose(long clockId,java.time.ZoneId zone,TimeClockAutoCloseService.Correction correction,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.addProperty("zoneId",zone.getId());r.add("correction",GSON.toJsonTree(correction));post("/v1/time-clock/auto-close/correct",r,true,true,Map.of("Idempotency-Key",key));}
+    public static void correctTimeClockSession(long clockId,TimeClockAutoCloseService.Correction correction,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.add("correction",GSON.toJsonTree(correction));post("/v1/time-clock/correct",r,true,true,Map.of("Idempotency-Key",key));}
     public static managers.TimeClockManager.TimeClockDashboard loadTimeClockDashboard()throws Exception{return GSON.fromJson(post("/v1/time-clock/dashboard",new JsonObject(),true,true).get("dashboard"),managers.TimeClockManager.TimeClockDashboard.class);}
     public static TimeClockPunchState loadTimeClockPunchState()throws Exception{return GSON.fromJson(post("/v1/time-clock/punch-state",new JsonObject(),true,true),TimeClockPunchState.class);}
     public static void timeClockPunch(String action,String approvalToken,String approvalReason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(approvalToken!=null)r.addProperty("approvalToken",approvalToken);if(approvalReason!=null)r.addProperty("approvalReason",approvalReason);post("/v1/time-clock/punch",r,true,true,Map.of("Idempotency-Key",key));}
@@ -989,6 +990,9 @@ public final class LanApiClient {
     public static JsonObject balanceSheetRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/read",r,true,true);}
     public static JsonObject balanceSheetMutation(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Balance-sheet idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject queueEmail(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Email queue idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/email/queue",r,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject sendWhatsApp(JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"WhatsApp send idempotency key is required.");return post("/v1/whatsapp/send",copy(body),true,false,Map.of("Idempotency-Key",key));}
+    public static JsonObject loadWhatsAppConfiguration(int locationId)throws Exception{JsonObject b=new JsonObject();b.addProperty("locationId",locationId);return post("/v1/whatsapp/configuration",b,true,false);}
+    public static void saveWhatsAppConfiguration(int locationId,JsonObject settings,String key)throws Exception{JsonObject b=copy(settings);b.addProperty("locationId",locationId);post("/v1/whatsapp/configuration/save",b,true,false,Map.of("Idempotency-Key",key));}
     private static JsonObject copy(JsonObject source){JsonObject out=new JsonObject();if(source!=null)for(var e:source.entrySet())out.add(e.getKey(),e.getValue());return out;}
     public static List<models.AppNotification> loadNotifications()throws Exception{JsonObject d=post("/v1/notifications/list",new JsonObject(),true,true);models.AppNotification[] rows=GSON.fromJson(d.getAsJsonArray("notifications"),models.AppNotification[].class);return rows==null?List.of():List.of(rows);}
     public static void updateNotification(String action,String notificationKey,int minutes,models.AppNotification notification,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("notificationKey",notificationKey);r.addProperty("minutes",minutes);if(notification!=null)r.add("notification",GSON.toJsonTree(notification));post("/v1/notifications/update",r,true,true,Map.of("Idempotency-Key",key));}
@@ -1714,14 +1718,16 @@ public final class LanApiClient {
                                         BigDecimal customOrderDue,BigDecimal totalDue,
                                         boolean business,boolean active,String accountNotes,Integer customerTypeId,
                                         String customerTypeName,int customerCardTemplateSlot,Integer customerSince,
-                                        String customerPhotoUrl,java.time.LocalDate customerCardIssuedOn,java.time.LocalDate customerCardExpiresOn) { }
+                                        String customerPhotoUrl,java.time.LocalDate customerCardIssuedOn,java.time.LocalDate customerCardExpiresOn,
+                                        boolean whatsappOptIn,String whatsappConsentPhone) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                              String phone,String email,BigDecimal creditLimit,boolean business,
-                                             boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl) {
+                                             boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn) {
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,false);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                           String phone,String email,BigDecimal creditLimit,boolean business,
-                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null);}
+                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null,false);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null,false);}
     }
     public record CustomerCardDates(java.time.LocalDate issuedOn,java.time.LocalDate expiresOn) { }
     public record SavedCustomerAccount(int customerId,String accountNumber) { }
@@ -1783,7 +1789,7 @@ public final class LanApiClient {
                                        String lanCertificateFingerprint,List<String>warnings) { }
     public record LocationRecord(Integer locationId,String name,String storeCode,String address,String addressLine1,String addressLine2,String addressLine3,
                                  String phoneLine1,String phoneLine2,String emailLine1,String emailLine2,String senderEmail,String senderName,String bccEmail,
-                                 String balanceSheetEmail,boolean emailReceipts,boolean emailOrders,boolean emailQuotes,boolean emailInvoices,boolean emailDelivery,String timezone) { }
+                                 String balanceSheetEmail,boolean emailReceipts,boolean emailOrders,boolean emailQuotes,boolean emailInvoices,boolean emailDelivery,String timezone,Double walletLatitude,Double walletLongitude) { }
     public record EmailProcessingResult(int processed,long sent,long failed,long skipped) { }
     public record GmailClientStatus(boolean configured,String clientIdHint) { }
     public record GmailConnectionStatus(String senderEmail,String status,String message,int requeued) { }

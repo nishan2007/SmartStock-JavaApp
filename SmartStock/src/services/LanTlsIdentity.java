@@ -90,6 +90,12 @@ public final class LanTlsIdentity {
         return hostname.isBlank() ? "smartstock-server" : hostname;
     }
 
+    /** Bonjour/mDNS name used by iPhone browsers on the store LAN. */
+    public static String mobileWebHostName() throws Exception {
+        String hostname = tlsHostName();
+        return hostname.endsWith(".local") ? hostname : hostname + ".local";
+    }
+
     /** Changes every ten minutes and accepts the immediately previous window during setup. */
     public String currentPairingPhrase() {
         return pairingPhrase(Instant.now().getEpochSecond() / 600L);
@@ -142,6 +148,8 @@ public final class LanTlsIdentity {
         builder.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName[]{
                 new GeneralName(GeneralName.dNSName, "localhost"),
                 new GeneralName(GeneralName.dNSName, hostname),
+                new GeneralName(GeneralName.dNSName,
+                        hostname.endsWith(".local") ? hostname : hostname + ".local"),
                 new GeneralName(GeneralName.iPAddress, "127.0.0.1")
         }));
         X509Certificate certificate = new JcaX509CertificateConverter().getCertificate(

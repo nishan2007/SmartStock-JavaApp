@@ -8,6 +8,7 @@ import ui.helpers.SessionDataCache;
 import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 import services.EmailOutboxService;
+import ui.helpers.WhatsAppActions;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -83,12 +84,15 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         JButton emailButton = new JButton("Email");
+        JButton whatsappButton = new JButton("Send WhatsApp");
         JButton printButton = new JButton("Print");
         JButton closeButton = new JButton("Close");
         emailButton.setEnabled(!loadDocument);
+        whatsappButton.setEnabled(!loadDocument);
         printButton.setEnabled(!loadDocument);
         if (emailDocumentType != null && emailDocumentId != null) {
             buttons.add(emailButton);
+            buttons.add(whatsappButton);
         }
         buttons.add(printButton);
         buttons.add(closeButton);
@@ -98,6 +102,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         mainPanel.add(footerPanel, BorderLayout.SOUTH);
 
         emailButton.addActionListener(e -> emailDocument());
+        whatsappButton.addActionListener(e -> WhatsAppActions.send(this,emailDocumentType,emailDocumentId));
         printButton.addActionListener(e -> printDocument());
         closeButton.addActionListener(e -> dispose());
         WindowHelper.configurePosWindow(this);
@@ -108,6 +113,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                     () -> buildDocument(emailDocumentType, emailDocumentId), text -> {
                         applyDocument(text);
                         emailButton.setEnabled(true);
+                        whatsappButton.setEnabled(true);
                         printButton.setEnabled(true);
                         if (showPrintDialogOnOpen) openPrintDialogLater();
                     });

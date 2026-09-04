@@ -2,8 +2,11 @@ package ui.screens;
 
 import utils.CurrencyFormatter;
 import managers.TimeClockManager;
+import managers.PermissionManager;
 import managers.TimeClockManager.PayrollSummary;
 import managers.TimeClockManager.TimeClockRow;
+import services.TimeClockAutoCloseService;
+import services.TimeClockAutoCloseService.PendingReview;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
 import ui.design.DeckersPalette;
@@ -48,16 +51,19 @@ public class PayrollDashboard extends JFrame {
     private final TableRowSorter<DefaultTableModel> summarySorter;
     private final TableRowSorter<DefaultTableModel> detailSorter;
     private final JTable summaryTable;
+    private final JTable detailTable;
     private final JTabbedPane tabbedPane;
     private List<PayrollSummary> allSummaries = new ArrayList<>();
     private List<TimeClockRow> allRows = new ArrayList<>();
     private final List<PayrollSummary> renderedSummaries = new ArrayList<>();
+    private final List<TimeClockRow> renderedRows = new ArrayList<>();
     private boolean updatingPayPeriodOptions;
     private boolean updatingEmployeeOptions;
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy h:mm a");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
+    private static final DateTimeFormatter CORRECTION_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final NumberFormat CURRENCY_FORMAT = CurrencyFormatter.create(Locale.US);
 
     public PayrollDashboard() {
@@ -84,6 +90,8 @@ public class PayrollDashboard extends JFrame {
         JButton bonusSelectedButton = new JButton("Bonus Selected");
         JButton bonusAllButton = new JButton("Bonus All in Period");
         JButton markPaidButton = new JButton("Mark Selected Paid");
+        JButton reviewsButton = new JButton("Review Automatic Clock-Outs");
+        JButton correctSessionButton = new JButton("Correct Selected Session");
         JButton refreshButton = new JButton("Refresh");
         JPanel leftFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         leftFilterPanel.setOpaque(false);
@@ -109,11 +117,17 @@ public class PayrollDashboard extends JFrame {
         DeckersSwing.styleUtilityButton(bonusSelectedButton, DeckersPalette.YELLOW);
         DeckersSwing.styleUtilityButton(bonusAllButton, DeckersPalette.ORANGE);
         DeckersSwing.styleUtilityButton(markPaidButton, DeckersPalette.CORAL);
+        DeckersSwing.styleUtilityButton(reviewsButton, DeckersPalette.ORANGE);
+        DeckersSwing.styleUtilityButton(correctSessionButton, DeckersPalette.MAGENTA);
         DeckersSwing.styleUtilityButton(refreshButton, DeckersPalette.PURPLE);
         buttonPanel.add(generateCurrentButton);
         buttonPanel.add(bonusSelectedButton);
         buttonPanel.add(bonusAllButton);
         buttonPanel.add(markPaidButton);
+        if (PermissionManager.hasPermission("TIME_CLOCK_MANAGEMENT")) {
+            buttonPanel.add(reviewsButton);
+            buttonPanel.add(correctSessionButton);
+        }
         buttonPanel.add(refreshButton);
 
         GridBagConstraints gbc = new GridBagConstraints();
@@ -180,11 +194,13 @@ public class PayrollDashboard extends JFrame {
                 return false;
             }
         };
-        JTable detailTable = new JTable(detailModel);
+        detailTable = new JTable(detailModel);
         detailTable.setRowHeight(28);
         DeckersSwing.styleTable(detailTable, DeckersPalette.MAGENTA);
         detailSorter = new TableRowSorter<>(detailModel);
         detailTable.setRowSorter(detailSorter);
+        detailTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        detailTable.setToolTipText("Select a session, then use Correct Selected Session to amend its times with an audit reason.");
 
         tabbedPane = new JTabbedPane();
         tabbedPane.setBackground(DeckersPalette.background());
@@ -216,6 +232,8 @@ public class PayrollDashboard extends JFrame {
         bonusSelectedButton.addActionListener(e -> giveSelectedEmployeeBonus());
         bonusAllButton.addActionListener(e -> giveAllEmployeesBonus());
         markPaidButton.addActionListener(e -> markSelectedPayrollPaid());
+        reviewsButton.addActionListener(e -> showAutomaticReviews());
+        correctSessionButton.addActionListener(e -> correctSelectedSession());
         refreshButton.addActionListener(e -> loadPayroll());
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
@@ -338,6 +356,7 @@ public class PayrollDashboard extends JFrame {
         summaryModel.setRowCount(0);
         detailModel.setRowCount(0);
         renderedSummaries.clear();
+        renderedRows.clear();
 
         PayPeriodOption selectedPeriod = (PayPeriodOption) payPeriodBox.getSelectedItem();
         EmployeeOption selectedEmployee = (EmployeeOption) employeeBox.getSelectedItem();
@@ -390,6 +409,7 @@ public class PayrollDashboard extends JFrame {
             if (!matchesEmployee(row.userId(), selectedEmployee)) {
                 continue;
             }
+            renderedRows.add(row);
             detailModel.addRow(new Object[]{
                     row.clockId(),
                     row.employeeName(),
@@ -470,6 +490,134 @@ public class PayrollDashboard extends JFrame {
     private static JLabel detailMetric(String label,String value){JLabel result=new JLabel("<html><b>"+label+"</b><br>"+(value==null?"":value)+"</html>");result.setBorder(new EmptyBorder(4,6,4,6));return result;}
 
     private static String clockReview(TimeClockRow row){if(row.autoClockOut())return "Auto clock-out — "+(row.autoClockOutReviewStatus()==null?"Pending":row.autoClockOutReviewStatus());if(row.autoBreakEnd())return "Auto break end — "+(row.autoBreakEndReviewStatus()==null?"Pending":row.autoBreakEndReviewStatus());return "";}
+
+    private void showAutomaticReviews() {
+        if (!PermissionManager.requirePermission("TIME_CLOCK_MANAGEMENT", this, "Time Clock Reviews")) return;
+        try {
+            List<PendingReview> reviews = TimeClockAutoCloseService.loadPendingReviews();
+            if (reviews.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "There are no automatic time-clock adjustments awaiting review.");
+                return;
+            }
+            DefaultTableModel model = new DefaultTableModel(
+                    new Object[]{"Employee", "Store", "Work Date", "Clock In", "Lunch", "Break", "Clock Out", "Hours", "Rule"}, 0) {
+                @Override public boolean isCellEditable(int row, int column) { return false; }
+            };
+            for (PendingReview review : reviews) {
+                model.addRow(new Object[]{review.employeeName(), review.locationName(), review.workDate(),
+                        formatTime(review.clockIn()), timeRange(review.lunchStart(), review.lunchEnd()),
+                        timeRange(review.breakStart(), review.breakEnd()), formatTime(review.clockOut()),
+                        formatHours(review.workedHours()), review.rule()});
+            }
+            JTable table = new JTable(model);
+            table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            table.setRowHeight(28);
+            table.setRowSelectionInterval(0, 0);
+            JScrollPane scroll = createTableScrollPane(table);
+            scroll.setPreferredSize(new Dimension(980, 320));
+            Object[] options = {"Confirm", "Correct", "Close"};
+            int choice = JOptionPane.showOptionDialog(this, scroll, "Automatic Time-Clock Reviews",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
+            if (choice < 0 || choice == 2 || table.getSelectedRow() < 0) return;
+            PendingReview review = reviews.get(table.convertRowIndexToModel(table.getSelectedRow()));
+            if (choice == 0) {
+                TimeClockAutoCloseService.confirm(review.clockId(), "Automatic time-clock adjustment confirmed from payroll.");
+            } else {
+                showCorrectionDialog(review.clockId(), review.employeeName(), review.clockIn(), review.lunchStart(),
+                        review.lunchEnd(), review.breakStart(), review.breakEnd(), review.clockOut(), true);
+            }
+            loadPayroll();
+            SwingUtilities.invokeLater(this::showAutomaticReviews);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Unable to review automatic time-clock adjustments.\n\n" + ex.getMessage(),
+                    "Time Clock Review", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void correctSelectedSession() {
+        if (!PermissionManager.requirePermission("TIME_CLOCK_MANAGEMENT", this, "Correct Time-Clock Session")) return;
+        if (tabbedPane.getSelectedIndex() != 1) {
+            tabbedPane.setSelectedIndex(1);
+            JOptionPane.showMessageDialog(this, "Select a row in Time Records, then choose Correct Selected Session again.");
+            return;
+        }
+        int selected = detailTable.getSelectedRow();
+        if (selected < 0) {
+            JOptionPane.showMessageDialog(this, "Select the time-clock session that needs correction.");
+            return;
+        }
+        int modelRow = detailTable.convertRowIndexToModel(selected);
+        if (modelRow < 0 || modelRow >= renderedRows.size()) return;
+        TimeClockRow row = renderedRows.get(modelRow);
+        try {
+            showCorrectionDialog(row.clockId(), row.employeeName(), row.clockIn(), row.lunchStart(), row.lunchEnd(),
+                    row.breakStart(), row.breakEnd(), row.clockOut(), false);
+            loadPayroll();
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Unable to correct the time-clock session.\n\n" + ex.getMessage(),
+                    "Time Clock Correction", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showCorrectionDialog(long clockId, String employeeName, LocalDateTime clockIn,
+                                      LocalDateTime lunchStartValue, LocalDateTime lunchEndValue,
+                                      LocalDateTime breakStartValue, LocalDateTime breakEndValue,
+                                      LocalDateTime clockOutValue, boolean automaticReview) throws SQLException {
+        JTextField clockInField = correctionField(clockIn);
+        JTextField lunchStartField = correctionField(lunchStartValue);
+        JTextField lunchEndField = correctionField(lunchEndValue);
+        JTextField breakStartField = correctionField(breakStartValue);
+        JTextField breakEndField = correctionField(breakEndValue);
+        JTextField clockOutField = correctionField(clockOutValue);
+        JTextArea reason = new JTextArea(3, 28);
+        reason.setLineWrap(true);
+        reason.setWrapStyleWord(true);
+        JPanel form = new JPanel(new GridLayout(0, 2, 8, 8));
+        form.add(new JLabel("Employee")); form.add(new JLabel(employeeName));
+        form.add(new JLabel("Clock in (yyyy-MM-dd HH:mm)")); form.add(clockInField);
+        form.add(new JLabel("Lunch start (optional)")); form.add(lunchStartField);
+        form.add(new JLabel("Lunch end (optional)")); form.add(lunchEndField);
+        form.add(new JLabel("Break start (optional)")); form.add(breakStartField);
+        form.add(new JLabel("Break end (optional)")); form.add(breakEndField);
+        form.add(new JLabel("Clock out (yyyy-MM-dd HH:mm)")); form.add(clockOutField);
+        form.add(new JLabel("Required correction reason")); form.add(new JScrollPane(reason));
+        if (JOptionPane.showConfirmDialog(this, form, "Correct Time-Clock Session",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        try {
+            TimeClockAutoCloseService.Correction correction = new TimeClockAutoCloseService.Correction(
+                    parseRequiredCorrectionTime(clockInField.getText()), parseOptionalCorrectionTime(lunchStartField.getText()),
+                    parseOptionalCorrectionTime(lunchEndField.getText()), parseOptionalCorrectionTime(breakStartField.getText()),
+                    parseOptionalCorrectionTime(breakEndField.getText()), parseRequiredCorrectionTime(clockOutField.getText()),
+                    reason.getText());
+            if (automaticReview) {
+                PendingReview review = TimeClockAutoCloseService.loadPendingReviews().stream()
+                        .filter(item -> item.clockId() == clockId).findFirst()
+                        .orElseThrow(() -> new SQLException("This automatic adjustment was already reviewed."));
+                TimeClockAutoCloseService.correct(clockId, review.locationZone(), correction);
+            } else {
+                TimeClockAutoCloseService.correctSession(clockId, correction);
+            }
+        } catch (java.time.format.DateTimeParseException ex) {
+            throw new SQLException("Use yyyy-MM-dd HH:mm for every entered date and time.");
+        }
+    }
+
+    private static JTextField correctionField(LocalDateTime value) {
+        return new JTextField(value == null ? "" : value.format(CORRECTION_FORMAT));
+    }
+
+    private static LocalDateTime parseRequiredCorrectionTime(String value) {
+        return LocalDateTime.parse(value == null ? "" : value.trim(), CORRECTION_FORMAT);
+    }
+
+    private static LocalDateTime parseOptionalCorrectionTime(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? null : LocalDateTime.parse(trimmed, CORRECTION_FORMAT);
+    }
+
+    private static String timeRange(LocalDateTime start, LocalDateTime end) {
+        return start == null ? "—" : formatTime(start) + " – " + formatTime(end);
+    }
 
     private void giveAllEmployeesBonus() {
         PayPeriodOption selectedPeriod = (PayPeriodOption) payPeriodBox.getSelectedItem();

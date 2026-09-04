@@ -309,8 +309,9 @@ final class CrossStoreReferenceSyncService {
                   company_email_line2,receipt_store_code,timezone,created_at,balance_sheet_recipient_email,
                   updated_at,email_sender_address,email_sender_name,email_bcc_address,email_receipts_enabled,
                   email_order_confirmations_enabled,email_quotes_enabled,email_invoices_enabled,
-                  email_delivery_bills_enabled,email_connected_at,email_last_tested_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  email_delivery_bills_enabled,email_connected_at,email_last_tested_at,
+                  wallet_relevance_latitude,wallet_relevance_longitude)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(location_id) DO UPDATE SET name=EXCLUDED.name,address=EXCLUDED.address,
                   company_address_line1=EXCLUDED.company_address_line1,company_address_line2=EXCLUDED.company_address_line2,
                   company_address_line3=EXCLUDED.company_address_line3,company_phone_line1=EXCLUDED.company_phone_line1,
@@ -323,7 +324,9 @@ final class CrossStoreReferenceSyncService {
                   email_order_confirmations_enabled=EXCLUDED.email_order_confirmations_enabled,
                   email_quotes_enabled=EXCLUDED.email_quotes_enabled,email_invoices_enabled=EXCLUDED.email_invoices_enabled,
                   email_delivery_bills_enabled=EXCLUDED.email_delivery_bills_enabled,
-                  email_connected_at=EXCLUDED.email_connected_at,email_last_tested_at=EXCLUDED.email_last_tested_at
+                  email_connected_at=EXCLUDED.email_connected_at,email_last_tested_at=EXCLUDED.email_last_tested_at,
+                  wallet_relevance_latitude=EXCLUDED.wallet_relevance_latitude,
+                  wallet_relevance_longitude=EXCLUDED.wallet_relevance_longitude
                 WHERE locations.updated_at<EXCLUDED.updated_at
                 """)){int i=1;ps.setInt(i++,integer(r,"location_id"));ps.setString(i++,text(r,"name"));
             nullableText(ps,i++,r,"address");ps.setString(i++,text(r,"company_address_line1"));
@@ -337,7 +340,8 @@ final class CrossStoreReferenceSyncService {
             ps.setBoolean(i++,bool(r,"email_receipts_enabled"));ps.setBoolean(i++,bool(r,"email_order_confirmations_enabled"));
             ps.setBoolean(i++,bool(r,"email_quotes_enabled"));ps.setBoolean(i++,bool(r,"email_invoices_enabled"));
             ps.setBoolean(i++,bool(r,"email_delivery_bills_enabled"));nullableTimestamp(ps,i++,r,"email_connected_at");
-            nullableTimestamp(ps,i,r,"email_last_tested_at");ps.executeUpdate();}
+            nullableTimestamp(ps,i++,r,"email_last_tested_at");nullableDouble(ps,i++,r,"wallet_relevance_latitude");
+            nullableDouble(ps,i,r,"wallet_relevance_longitude");ps.executeUpdate();}
     }
 
     private static void upsertShift(Connection c,JsonObject r)throws SQLException{
@@ -475,6 +479,7 @@ final class CrossStoreReferenceSyncService {
     private static Time time(JsonObject r,String k)throws SQLException{try{return Time.valueOf(LocalTime.parse(required(r,k)));}catch(Exception e){throw new SQLException("Shared reference row has invalid "+k+".",e);}}
     private static void nullableText(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.VARCHAR);else p.setString(i,r.get(k).getAsString());}
     private static void nullableInt(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.INTEGER);else p.setInt(i,r.get(k).getAsInt());}
+    private static void nullableDouble(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.DOUBLE);else p.setDouble(i,r.get(k).getAsDouble());}
     private static void nullableUuid(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.OTHER);else p.setObject(i,UUID.fromString(r.get(k).getAsString()));}
     private static void nullableTimestamp(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.TIMESTAMP_WITH_TIMEZONE);else p.setTimestamp(i,timestamp(r,k));}
     private static void nullableDate(PreparedStatement p,int i,JsonObject r,String k)throws SQLException{if(!r.has(k)||r.get(k).isJsonNull())p.setNull(i,java.sql.Types.DATE);else p.setDate(i,date(r,k));}

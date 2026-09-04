@@ -419,8 +419,23 @@ public final class TimeClockAutoCloseService {
         catch (Exception ex) { throw sql("Unable to correct the automatic time-clock adjustment through the SmartStock server.", ex); }
     }
 
+    public static void correctSession(long clockId, Correction correction) throws SQLException {
+        try { LanApiClient.correctTimeClockSession(clockId, correction, UUID.randomUUID().toString()); }
+        catch (Exception ex) { throw sql("Unable to correct the time-clock session through the SmartStock server.", ex); }
+    }
+
+    public static void correctSession(Connection conn, long clockId, Correction correction,
+                                      Integer actorUserId, String actorName) throws SQLException {
+        correct(conn, clockId, zoneForClock(conn, clockId), correction, actorUserId, actorName, false);
+    }
+
     public static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
                                Integer actorUserId, String actorName) throws SQLException {
+        correct(conn, clockId, zone, correction, actorUserId, actorName, true);
+    }
+
+    private static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
+                                Integer actorUserId, String actorName, boolean requirePendingReview) throws SQLException {
         validateCorrection(correction);
         ensureSchema(conn);
                 PunchValues before = lockPunch(conn, clockId);
@@ -473,7 +488,8 @@ public final class TimeClockAutoCloseService {
                             auto_clock_out_reviewed_by_user_id = ?,
                             auto_clock_out_reviewed_by_name = ?,
                             auto_clock_out_review_reason = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE clock_id = ? AND (auto_clock_out_review_status = 'PENDING' OR auto_break_end_review_status = 'PENDING')
+                        WHERE clock_id = ?
+                          AND (? = FALSE OR auto_clock_out_review_status = 'PENDING' OR auto_break_end_review_status = 'PENDING')
                         """)) {
                     setTimestamp(ps, 1, in); setTimestamp(ps, 2, lunchStart); setTimestamp(ps, 3, lunchEnd);
                     setTimestamp(ps, 4, breakStart); setTimestamp(ps, 5, breakEnd); setTimestamp(ps, 6, out);
@@ -482,10 +498,28 @@ public final class TimeClockAutoCloseService {
                     ps.setString(10, actorName);
                     ps.setString(11, correction.reason().trim());
                     ps.setLong(12, clockId);
-                    if (ps.executeUpdate() != 1) throw new SQLException("This automatic clock-out was already reviewed.");
+                    ps.setBoolean(13, requirePendingReview);
+                    if (ps.executeUpdate() != 1) throw new SQLException(requirePendingReview
+                            ? "This automatic clock-out was already reviewed."
+                            : "The time-clock record was not found.");
                 }
                 insertAdjustment(conn, clockId, userId, "CORRECT", before, after,
                         correction.reason().trim(), actorUserId, actorName);
+    }
+
+    private static ZoneId zoneForClock(Connection conn, long clockId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT COALESCE(NULLIF(l.timezone, ''), 'America/New_York')
+                FROM employee_time_clock tc
+                LEFT JOIN locations l ON l.location_id = tc.location_id
+                WHERE tc.clock_id = ?
+                """)) {
+            ps.setLong(1, clockId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) throw new SQLException("Time-clock record was not found.");
+                return safeZone(rs.getString(1));
+            }
+        }
     }
 
     private static PunchValues automaticValues(Connection conn, OpenPunch punch, Instant detectedAt) throws SQLException {

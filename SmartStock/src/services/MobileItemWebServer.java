@@ -58,7 +58,7 @@ public final class MobileItemWebServer implements AutoCloseable {
     }
 
     public static MobileItemWebServer start(LanTlsIdentity identity, LanApiServer owner) throws Exception {
-        String host=LanTlsIdentity.tlsHostName();
+        String host=LanTlsIdentity.mobileWebHostName();
         HttpsServer ui=null,api=null;ExecutorService pool=null;
         try{
             ui=HttpsServer.create(new InetSocketAddress(UI_PORT),20);api=HttpsServer.create(new InetSocketAddress(API_PORT),40);

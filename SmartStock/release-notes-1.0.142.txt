@@ -1,0 +1,7 @@
+SmartStock 1.0.142
+
+- Fixes Apple Wallet QR badge authentication completing successfully but failing while creating the employee session.
+- Expands the LAN session schema to accept Wallet barcode and future verified Wallet NFC authentication sources, with and without the company badge-PIN requirement.
+- Automatically applies the ordered session-source migration to existing store databases during server startup.
+- Preserves existing username/password, employee PIN, physical badge, and barcode-scanner login workflows.
+- Does not enable Apple Wallet NFC; a certified Apple VAS provider and reader are still required.

@@ -36,6 +36,7 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField accountNumberField;
     private JTextField nameField;
     private JTextField phoneField;
+    private JCheckBox whatsappOptInCheckBox;
     private JTextField emailField;
     private JTextField customerSinceField;
     private JTextField customerPhotoField;
@@ -132,6 +133,7 @@ public class CustomerAccountDetails extends JFrame {
         accountNumberField.setEditable(canEditAccountNumber);
         nameField = new JTextField();
         phoneField = new JTextField();
+        whatsappOptInCheckBox = new JCheckBox("Customer consents to sales documents by WhatsApp");
         emailField = new JTextField();
         customerSinceField = new JTextField();
         customerPhotoField = new JTextField();customerPhotoField.setEditable(false);
@@ -151,6 +153,7 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 0, 1, "Name:", nameField);
         addInfoField(grid, gbc, 1, 0, "Customer Type:", customerTypeSelector);
         addInfoField(grid, gbc, 1, 1, "Phone:", phoneField);
+        addInfoField(grid, gbc, 6, 1, "WhatsApp:", whatsappOptInCheckBox);
         addInfoField(grid, gbc, 2, 0, "Email:", emailField);
         addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
         addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
@@ -271,7 +274,7 @@ public class CustomerAccountDetails extends JFrame {
                 customerTypeSelector.setSelectedCustomerType(
                         account.customerTypeId(),account.customerTypeName()
                 );
-                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());
+                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());
                 customerSinceField.setText(account.customerSince()==null?"":String.valueOf(account.customerSince()));
                 customerPhotoField.setText(text(account.customerPhotoUrl()));
                 ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);
@@ -324,14 +327,14 @@ public class CustomerAccountDetails extends JFrame {
         String photoInput=customerPhotoField.getText().trim();
         final BigDecimal savedCreditLimit=creditLimit;
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
-                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput);
+                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected());
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
         String saveKey = pendingSaveKey;
         saveButton.setEnabled(false);
         UiTaskRunner.submit(this, "customer-account.save", () -> {
             String uploaded=CustomerPhotoService.uploadLocalPhotoIfNeeded(photoInput,name);
-            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded), saveKey);
+            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected()), saveKey);
             return null;
         }, ignored -> {
             pendingSaveKey=null;pendingFingerprint=null;

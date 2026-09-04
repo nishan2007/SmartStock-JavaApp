@@ -71,6 +71,7 @@ public final class BadgePrintService {
         DEFAULT_ELEMENTS.put("front.templateImage", new BadgeElement("front.templateImage", "Front Extra Image", "front", new Rectangle(445, 820, 105, 105)));
         DEFAULT_ELEMENTS.put("front.quote", new BadgeElement("front.quote", "Quote", "front", new Rectangle(90, 270, 460, 95)));
         DEFAULT_ELEMENTS.put("front.photo", new BadgeElement("front.photo", "Photo", "front", new Rectangle(92, 533, 165, 190)));
+        DEFAULT_ELEMENTS.put("front.qr", new BadgeElement("front.qr", "Login QR Code", "front", new Rectangle(425, 760, 160, 160)));
         DEFAULT_ELEMENTS.put("front.roleBand", new BadgeElement("front.roleBand", "Role Color Block", "front", new Rectangle(0, 508, CARD_WIDTH, 54)));
         DEFAULT_ELEMENTS.put("front.nameBand", new BadgeElement("front.nameBand", "Name Color Block", "front", new Rectangle(0, 562, CARD_WIDTH, 70)));
         DEFAULT_ELEMENTS.put("front.role", new BadgeElement("front.role", "Role", "front", new Rectangle(286, 508, 338, 54)));
@@ -500,7 +501,7 @@ public final class BadgePrintService {
             case "back.issueDate" -> settings.showIssueDate();
             case "back.barcode" -> settings.showBarcode();
             case "back.badgeText" -> settings.showBadgeText();
-            case "front.templateImage", "back.templateImage" -> false;
+            case "front.templateImage", "back.templateImage", "front.qr" -> false;
             default -> true;
         };
     }
@@ -590,6 +591,7 @@ public final class BadgePrintService {
             case "front.roleBand", "back.instructions" -> 40;
             case "front.nameBand", "back.employeeNumber" -> 50;
             case "front.photo", "back.issueDate" -> 60;
+            case "front.qr" -> 65;
             case "front.role", "back.expiryDate" -> 70;
             case "front.name", "back.custom1" -> 80;
             case "front.custom1", "back.custom2" -> 90;
@@ -936,6 +938,7 @@ public final class BadgePrintService {
                 Color borderColor = elementColor(settings, elementId);
                 withRotation(g, rect, rotation, copy -> paintPhoto(copy, photo, drawRect, borderColor));
             }
+            case "front.qr" -> paintQrCode(g, employee, settings);
             case "front.role" -> {
                 g.setColor(elementColor(settings, elementId));
                 drawCenteredFit(g, employee.roleName().toUpperCase(Locale.ROOT), layoutRect(settings, elementId), textStyle(settings, elementId), elementRotation(settings, elementId));
@@ -1006,6 +1009,22 @@ public final class BadgePrintService {
         BufferedImage barcode = renderCode128(employee.badgeId(), Math.max(1120, drawRect.width), Math.max(270, drawRect.height));
         withRotation(g, rect, rotation, copy ->
                 drawBarcodeFit(copy, barcode, drawRect.x, drawRect.y, drawRect.width, drawRect.height)
+        );
+    }
+
+    private static void paintQrCode(Graphics2D g, EmployeeBadgeData employee,
+                                    CompanyCustomizationManager.BadgeTemplateSettings settings) {
+        String elementId = "front.qr";
+        Rectangle rect = layoutRect(settings, elementId);
+        int rotation = elementRotation(settings, elementId);
+        Rectangle drawRect = rotatedContentRect(rect, rotation);
+        int size = Math.max(240, Math.max(drawRect.width, drawRect.height) * 4);
+        BufferedImage qr = renderQrCode(employee.badgeId(), size);
+        BufferedImage logo = loadImage(settings.logoPath());
+        if (logo != null) qr = overlayQrLogo(qr, logo);
+        BufferedImage renderedQr = qr;
+        withRotation(g, rect, rotation, copy ->
+                drawBarcodeFit(copy, renderedQr, drawRect.x, drawRect.y, drawRect.width, drawRect.height)
         );
     }
 
@@ -1906,6 +1925,57 @@ public final class BadgePrintService {
             }
         }
         return image;
+    }
+
+    static BufferedImage renderQrCode(String text, int size) {
+        String value = BadgeCredentialService.normalizeBadge(text);
+        if (value.isBlank()) value = "BADGE";
+        int safeSize = Math.max(120, size);
+        BitMatrix matrix;
+        try {
+            matrix = new com.google.zxing.qrcode.QRCodeWriter().encode(
+                    value,
+                    BarcodeFormat.QR_CODE,
+                    safeSize,
+                    safeSize,
+                    Map.of(
+                            EncodeHintType.ERROR_CORRECTION,
+                            com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.H,
+                            EncodeHintType.MARGIN,
+                            4
+                    )
+            );
+        } catch (com.google.zxing.WriterException ex) {
+            throw new IllegalArgumentException("Badge QR code could not be generated.", ex);
+        }
+        BufferedImage image = new BufferedImage(matrix.getWidth(), matrix.getHeight(), BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < matrix.getHeight(); y++) {
+            for (int x = 0; x < matrix.getWidth(); x++) {
+                image.setRGB(x, y, matrix.get(x, y) ? Color.BLACK.getRGB() : Color.WHITE.getRGB());
+            }
+        }
+        return image;
+    }
+
+    static BufferedImage overlayQrLogo(BufferedImage qr, BufferedImage logo) {
+        if (qr == null || logo == null) return qr;
+        BufferedImage result = new BufferedImage(qr.getWidth(), qr.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = result.createGraphics();
+        configure(g);
+        g.drawImage(qr, 0, 0, null);
+        int maxLogo = Math.max(24, Math.min(qr.getWidth(), qr.getHeight()) * 18 / 100);
+        double scale = Math.min(maxLogo / (double) logo.getWidth(), maxLogo / (double) logo.getHeight());
+        int logoWidth = Math.max(1, (int) Math.round(logo.getWidth() * scale));
+        int logoHeight = Math.max(1, (int) Math.round(logo.getHeight() * scale));
+        int padding = Math.max(8, Math.min(qr.getWidth(), qr.getHeight()) * 2 / 100);
+        int x = (qr.getWidth() - logoWidth) / 2;
+        int y = (qr.getHeight() - logoHeight) / 2;
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(x - padding, y - padding, logoWidth + padding * 2, logoHeight + padding * 2,
+                padding, padding);
+        drawHighQualityImage(g, logo, x, y, logoWidth, logoHeight);
+        g.dispose();
+        return result;
     }
 
     public static List<String> splitWriterCommand(String command) {

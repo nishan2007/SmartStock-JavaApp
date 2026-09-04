@@ -2197,8 +2197,11 @@ CREATE TABLE public.locations (
     email_last_tested_at timestamp with time zone,
     receipt_store_code text DEFAULT '0001'::text NOT NULL,
     timezone text DEFAULT 'America/New_York'::text NOT NULL,
+    wallet_relevance_latitude double precision,
+    wallet_relevance_longitude double precision,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT locations_wallet_relevance_coordinates_check CHECK (((wallet_relevance_latitude IS NULL AND wallet_relevance_longitude IS NULL) OR (wallet_relevance_latitude BETWEEN (-90)::double precision AND (90)::double precision AND wallet_relevance_longitude BETWEEN (-180)::double precision AND (180)::double precision)))
 );
 
 
@@ -4745,3 +4748,7 @@ REVOKE ALL ON TABLE public.image_cloud_configuration FROM PUBLIC;
 REVOKE ALL ON TABLE public.image_cloud_configuration FROM anon;
 REVOKE ALL ON TABLE public.image_cloud_configuration FROM authenticated;
 GRANT ALL ON TABLE public.image_cloud_configuration TO service_role;
+-- WhatsApp consent follows the customer reference record; outbox and credentials remain store-local.
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS whatsapp_opt_in boolean NOT NULL DEFAULT false;
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS whatsapp_consent_phone text;
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS whatsapp_consent_at timestamp with time zone;

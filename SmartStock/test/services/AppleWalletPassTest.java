@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipInputStream;
 
@@ -114,5 +115,17 @@ class AppleWalletPassTest {
                 MessageDigest.getInstance("SHA-1").digest(customFiles.get(entry.getKey()))));
         var customSignature=new CMSSignedData(new CMSProcessableByteArray(customFiles.get("manifest.json")),customFiles.get("signature"));
         assertTrue(customSignature.getSignerInfos().getSigners().iterator().next().verify(new JcaSimpleSignerInfoVerifierBuilder().build(holder)));
+
+        byte[] located=AppleWalletBadgeService.buildPass(config,"located-serial",credential,template,
+                Map.of("NAME","Alice"),null,List.of(
+                        Map.of("latitude",6.8013,"longitude",-58.1551,"relevantText","Employee badge for Main Store"),
+                        Map.of("latitude",6.8070,"longitude",-58.1660,"relevantText","Employee badge for Branch Store")));
+        Map<String,byte[]> locatedFiles=new HashMap<>();
+        try(var zip=new ZipInputStream(new ByteArrayInputStream(located))){
+            for(var entry=zip.getNextEntry();entry!=null;entry=zip.getNextEntry())locatedFiles.put(entry.getName(),zip.readAllBytes());
+        }
+        JsonObject locatedPass=JsonParser.parseString(new String(locatedFiles.get("pass.json"),StandardCharsets.UTF_8)).getAsJsonObject();
+        assertEquals(2,locatedPass.getAsJsonArray("locations").size());
+        assertEquals("Employee badge for Main Store",locatedPass.getAsJsonArray("locations").get(0).getAsJsonObject().get("relevantText").getAsString());
     }
 }

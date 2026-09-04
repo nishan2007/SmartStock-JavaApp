@@ -130,6 +130,7 @@ public class EmployeeManagement extends JFrame {
     private JButton programNfcButton;
     private JButton testNfcButton;
     private JButton rotateBadgeIdButton;
+    private JButton clearLoginAttemptsButton;
     private JButton enrollWalletButton;
     private JButton replaceWalletButton;
     private JButton revokeWalletButton;
@@ -558,6 +559,7 @@ public class EmployeeManagement extends JFrame {
         programNfcButton = new JButton("Program NFC/RFID");
         testNfcButton = new JButton("Test NFC");
         rotateBadgeIdButton = new JButton("Rotate Badge ID");
+        clearLoginAttemptsButton = new JButton("Clear Login Attempts");
         enrollWalletButton = new JButton("Enroll Apple Wallet");
         replaceWalletButton = new JButton("Replace Wallet Badge");
         revokeWalletButton = new JButton("Revoke Wallet Badge");
@@ -582,6 +584,7 @@ public class EmployeeManagement extends JFrame {
         topButtonPanel.add(programNfcButton);
         topButtonPanel.add(testNfcButton);
         topButtonPanel.add(rotateBadgeIdButton);
+        topButtonPanel.add(clearLoginAttemptsButton);
         topButtonPanel.add(enrollWalletButton);
         topButtonPanel.add(replaceWalletButton);
         topButtonPanel.add(revokeWalletButton);
@@ -654,6 +657,7 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.addActionListener(e -> programSelectedNfc());
         testNfcButton.addActionListener(e -> testSelectedNfc());
         rotateBadgeIdButton.addActionListener(e -> rotateSelectedBadgeId());
+        clearLoginAttemptsButton.addActionListener(e -> clearSelectedLoginAttempts());
         enrollWalletButton.addActionListener(e -> createWalletEnrollment("ENROLL"));
         replaceWalletButton.addActionListener(e -> createWalletEnrollment("REPLACE"));
         revokeWalletButton.addActionListener(e -> revokeWalletBadge());
@@ -745,6 +749,7 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(false);
         testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
+        clearLoginAttemptsButton.setEnabled(false);
         enrollWalletButton.setEnabled(false);
         replaceWalletButton.setEnabled(false);
         revokeWalletButton.setEnabled(false);
@@ -855,6 +860,7 @@ public class EmployeeManagement extends JFrame {
         styleButton(programNfcButton, false);
         styleButton(testNfcButton, false);
         styleButton(rotateBadgeIdButton, false);
+        styleButton(clearLoginAttemptsButton, false);
         styleButton(enrollWalletButton, false);
         styleButton(replaceWalletButton, false);
         styleButton(revokeWalletButton, false);
@@ -1414,9 +1420,35 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(true);
         testNfcButton.setEnabled(true);
         rotateBadgeIdButton.setEnabled(true);
+        clearLoginAttemptsButton.setEnabled(true);
         enrollWalletButton.setEnabled(true);
         replaceWalletButton.setEnabled(true);
         revokeWalletButton.setEnabled(true);
+    }
+
+    private void clearSelectedLoginAttempts() {
+        if (selectedUserId == null) {
+            JOptionPane.showMessageDialog(this, "Select an employee first.");
+            return;
+        }
+        String employeeName = composeFullName(firstNameField.getText().trim(),
+                middleNameField.getText().trim(), lastNameField.getText().trim());
+        if (employeeName.isBlank()) employeeName = usernameField.getText().trim();
+        if (JOptionPane.showConfirmDialog(this,
+                "Clear failed login attempts for " + employeeName + "?\n\nThey will be able to try signing in immediately.",
+                "Clear Login Attempts", JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
+        int userId = selectedUserId;
+        UiTaskRunner.submit(this, "employees.clear-login-attempts", () -> {
+            LanApiClient.updateEmployeeAdmin("CLEAR_LOGIN_ATTEMPTS", userId, null, null, null,
+                    UUID.randomUUID().toString());
+            return Boolean.TRUE;
+        }, ignored -> JOptionPane.showMessageDialog(this,
+                "Failed login attempts cleared. The employee can sign in immediately.",
+                "Login Attempts Cleared", JOptionPane.INFORMATION_MESSAGE),
+                ex -> JOptionPane.showMessageDialog(this,
+                        "Could not clear failed login attempts.\n\n" + ex.getMessage(),
+                        "Clear Login Attempts", JOptionPane.ERROR_MESSAGE));
     }
 
     private void addEmployee() {
@@ -1614,6 +1646,7 @@ public class EmployeeManagement extends JFrame {
         programNfcButton.setEnabled(false);
         testNfcButton.setEnabled(false);
         rotateBadgeIdButton.setEnabled(false);
+        clearLoginAttemptsButton.setEnabled(false);
         enrollWalletButton.setEnabled(false);
         replaceWalletButton.setEnabled(false);
         revokeWalletButton.setEnabled(false);

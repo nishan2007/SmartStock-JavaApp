@@ -45,6 +45,7 @@ class MobileItemWebArchitectureTest {
         for(String value:new String[]{"UI_PORT = 8444","API_PORT = 8445","ACTIVATION_INVALID","CSRF_INVALID","SameSite=Strict","Idempotency-Key","requireLan"})assertTrue(api.contains(value),value);
         assertTrue(api.contains("origin.equalsIgnoreCase(allowed)"));
         assertTrue(api.contains("LanProductAdminService.create"));
+        assertTrue(api.contains("LanTlsIdentity.mobileWebHostName()"));
         assertTrue(api.contains("LanProductAdminService.update"));
         assertTrue(api.contains("device_name='WEB APP'"));
         assertTrue(api.contains("smartstock-mobile-item-web:"));

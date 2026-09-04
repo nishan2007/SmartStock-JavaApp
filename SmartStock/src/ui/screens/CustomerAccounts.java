@@ -41,6 +41,7 @@ public class CustomerAccounts extends JFrame {
     private JTextArea accountNotesArea;
     private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
+    private JCheckBox whatsappOptInCheckBox;
     private JButton addButton;
     private JButton updateButton;
     private JButton clearButton;
@@ -170,6 +171,7 @@ public class CustomerAccounts extends JFrame {
         accountNotesArea.setWrapStyleWord(true);
         businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active", true);
+        whatsappOptInCheckBox = new JCheckBox("Customer consents to sales documents by WhatsApp");
 
         addField(formPanel, gbc, 0, "Account #:", accountNumberField);
         addField(formPanel, gbc, 1, "Name:", nameField);
@@ -179,22 +181,23 @@ public class CustomerAccounts extends JFrame {
         addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
         addField(formPanel, gbc, 6, "Balance (All Stores):", balanceField);
         addField(formPanel, gbc, 7, "Customer Since (year):", customerSinceField);
+        addField(formPanel, gbc, 8, "WhatsApp:", whatsappOptInCheckBox);
 
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 9;
         formPanel.add(new JLabel("Account Type:"), gbc);
         gbc.gridx = 1;
         formPanel.add(businessAccountCheckBox, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 9;
+        gbc.gridy = 10;
         formPanel.add(new JLabel("Status:"), gbc);
         gbc.gridx = 1;
         formPanel.add(activeCheckBox, gbc);
 
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
         notesScrollPane.setPreferredSize(new Dimension(0, 82));
-        addField(formPanel, gbc, 10, "Notes:", notesScrollPane);
+        addField(formPanel, gbc, 11, "Notes:", notesScrollPane);
 
         JPanel buttonPanel = new JPanel(new GridLayout(0, 2, 8, 8));
         addButton = new JButton("Add Account");
@@ -302,6 +305,7 @@ public class CustomerAccounts extends JFrame {
         activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 13)));
         accountNotesArea.setText(valueAt(modelRow, 14));
         customerSinceField.setText(selectedAccount==null||selectedAccount.customerSince()==null?"":String.valueOf(selectedAccount.customerSince()));
+        whatsappOptInCheckBox.setSelected(selectedAccount!=null&&selectedAccount.whatsappOptIn());
         updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
@@ -375,7 +379,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(null,null,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,null,whatsappOptInCheckBox.isSelected());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -425,7 +429,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(selectedCustomerId,accountNumber,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,selectedAccount==null?null:selectedAccount.customerPhotoUrl(),whatsappOptInCheckBox.isSelected());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -526,6 +530,7 @@ public class CustomerAccounts extends JFrame {
         accountNotesArea.setText("");
         businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
+        whatsappOptInCheckBox.setSelected(false);
         updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
