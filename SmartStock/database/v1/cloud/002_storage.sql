@@ -90,3 +90,21 @@ USING (
         OR COALESCE(public.current_app_user_is_admin(), false)
     )
 );
+
+-- Cloud-only storage provisioning; local installations have no storage schema.
+DO $portal_storage$ BEGIN
+ IF to_regclass('storage.buckets') IS NOT NULL THEN
+  INSERT INTO storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+   VALUES('employment-applications','employment-applications',FALSE,10485760,ARRAY['image/jpeg','image/png','application/pdf'])
+   ON CONFLICT(id) DO UPDATE SET public=FALSE,file_size_limit=10485760,allowed_mime_types=EXCLUDED.allowed_mime_types;
+  DROP POLICY IF EXISTS employment_portal_server_only ON storage.objects;
+  CREATE POLICY employment_portal_server_only ON storage.objects AS RESTRICTIVE FOR ALL TO anon,authenticated
+   USING(bucket_id <> 'employment-applications') WITH CHECK(bucket_id <> 'employment-applications');
+  DROP POLICY IF EXISTS employment_portal_employee_upload_guard ON storage.objects;
+  CREATE POLICY employment_portal_employee_upload_guard ON storage.objects AS RESTRICTIVE FOR INSERT TO authenticated
+   WITH CHECK(public.current_app_user_id() IS NOT NULL);
+  DROP POLICY IF EXISTS employment_portal_employee_update_guard ON storage.objects;
+  CREATE POLICY employment_portal_employee_update_guard ON storage.objects AS RESTRICTIVE FOR UPDATE TO authenticated
+   USING(public.current_app_user_id() IS NOT NULL) WITH CHECK(public.current_app_user_id() IS NOT NULL);
+ END IF;
+END $portal_storage$;

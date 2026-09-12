@@ -191,7 +191,8 @@ public final class ServerCustomOrderDataService {
         String sql = """
                 SELECT customer_id, name, phone,
                        COALESCE(account_number,'') AS account_number,
-                       COALESCE(email,'') AS email
+                       COALESCE(email,'') AS email,COALESCE(require_charge_authorization,FALSE) AS require_charge_authorization,
+                       COALESCE(custom_order_discount_enabled,FALSE),COALESCE(custom_order_discount_percent,0)
                 FROM customer_accounts
                 WHERE is_active = TRUE
                   AND (? = '' OR name ILIKE ? OR COALESCE(phone, '') ILIKE ? OR COALESCE(email,'') ILIKE ? OR COALESCE(account_number,'') ILIKE ?)
@@ -212,7 +213,7 @@ public final class ServerCustomOrderDataService {
                             rs.getString("name"),
                             rs.getString("phone"),
                             rs.getString("account_number"),
-                            rs.getString("email")
+                            rs.getString("email"),rs.getBoolean("require_charge_authorization"),rs.getBoolean(7),rs.getBigDecimal(8)
                     ));
                 }
             }
@@ -293,9 +294,10 @@ public final class ServerCustomOrderDataService {
                     location_id, location_name, device_id, device_name,
                     cash_drawer_id, cash_drawer_name, cash_drawer_session_id,
                     minimum_deposit_required, deposit_override_reason,
-                    deposit_override_by_user_id, deposit_override_by_name
+                    deposit_override_by_user_id, deposit_override_by_name,
+                    customer_discount_percent,customer_discount_applied,customer_discount_amount
                 )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String lineSql = """
                 INSERT INTO custom_order_lines (
@@ -357,7 +359,7 @@ public final class ServerCustomOrderDataService {
                     customer_id, custom_order_id, location_id, amount, transaction_type, note, user_name, device_id, device_name,
                     payment_method, payment_reference, cash_drawer_id, cash_drawer_name, cash_drawer_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING transaction_id
                 """;
 
         try (PreparedStatement orderPs = conn.prepareStatement(orderSql, Statement.RETURN_GENERATED_KEYS);
@@ -371,6 +373,7 @@ public final class ServerCustomOrderDataService {
                 DeviceContextService.requireOrdersAllowed(conn);
                 int customerId = resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
                 boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
+                if(hasAccountBalanceDue)CustomerChargeAuthorizationService.validateRequired(conn,customerId,request.authorization());
                 CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
                 boolean cashUpfrontPayment = request.amountPaid().compareTo(BigDecimal.ZERO) > 0
                         && "CASH".equalsIgnoreCase(blankToNull(request.paymentMethod()));
@@ -406,6 +409,9 @@ public final class ServerCustomOrderDataService {
                 orderPs.setString(23, blankToNull(request.depositOverrideReason()));
                 setNullableInteger(orderPs, 24, request.depositOverrideByUserId());
                 orderPs.setString(25, blankToNull(request.depositOverrideByName()));
+                orderPs.setBigDecimal(26,defaultZero(request.customerDiscountPercent()));
+                orderPs.setBoolean(27,request.customerDiscountPercent()!=null&&request.customerDiscountPercent().signum()>0);
+                orderPs.setBigDecimal(28,defaultZero(request.customerDiscountAmount()));
                 orderPs.executeUpdate();
 
                 long orderId;
@@ -456,7 +462,8 @@ public final class ServerCustomOrderDataService {
                 setNullableLong(accountTransactionPs, 12, cashDrawer.cashDrawerId());
                 accountTransactionPs.setString(13, blankToNull(cashDrawer.drawerName()));
                 setNullableLong(accountTransactionPs, 14, cashDrawer.sessionId());
-                accountTransactionPs.executeUpdate();
+                long transactionId;try(ResultSet transactionKeys=accountTransactionPs.executeQuery()){if(!transactionKeys.next())throw new SQLException("Customer account transaction was not created.");transactionId=transactionKeys.getLong(1);}
+                if(hasAccountBalanceDue)CustomerChargeAuthorizationService.insert(conn,transactionId,customerId,request.locationId(),"CUSTOM_ORDER",orderId,request.authorization(),request.takenByUserId(),request.takenByName(),request.deviceId()==null||request.deviceId().isBlank()?null:java.util.UUID.fromString(request.deviceId()),request.deviceName());
                 CustomOrderAuditService.recordAudit(conn, orderId, "CREATE", "order", null, orderNumber, null);
                 CustomOrderAuditService.recordStatus(conn, orderId, null, "NEW", "Order created");
 
@@ -798,7 +805,9 @@ public final class ServerCustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
+        public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email){this(customerId,name,phone,accountNumber,email,false,false,BigDecimal.ZERO);}
+        public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email,boolean requireChargeAuthorization){this(customerId,name,phone,accountNumber,email,requireChargeAuthorization,false,BigDecimal.ZERO);}
         @Override
         public String toString() {
             if (customerId == null) {
@@ -840,8 +849,12 @@ public final class ServerCustomOrderDataService {
             String depositOverrideByName,
             String orderNotes,
             List<OrderLineRequest> lines,
-            String depositApprovalToken
+            String depositApprovalToken,
+            CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount,
+            BigDecimal customerDiscountPercent,BigDecimal customerDiscountAmount
     ) {
+        public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,Integer locationId,String locationName,String deviceId,String deviceName,BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,String depositOverrideByName,String orderNotes,List<OrderLineRequest>lines,String depositApprovalToken){this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,null,true,BigDecimal.ZERO,BigDecimal.ZERO);}
+        public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,Integer locationId,String locationName,String deviceId,String deviceName,BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,String depositOverrideByName,String orderNotes,List<OrderLineRequest>lines,String depositApprovalToken,CustomerChargeAuthorizationService.Authorization authorization){this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,authorization,true,BigDecimal.ZERO,BigDecimal.ZERO);}
     }
 
     public record OrderLineRequest(

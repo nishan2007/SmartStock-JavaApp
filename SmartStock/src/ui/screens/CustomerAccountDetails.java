@@ -37,6 +37,7 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField nameField;
     private JTextField phoneField;
     private JCheckBox whatsappOptInCheckBox;
+    private JCheckBox requireChargeAuthorizationCheckBox;
     private JTextField emailField;
     private JTextField customerSinceField;
     private JTextField customerPhotoField;
@@ -58,6 +59,7 @@ public class CustomerAccountDetails extends JFrame {
     private String pendingFingerprint;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private LanApiClient.CustomerAccountRecord currentAccount;
+    private java.util.List<LanApiClient.CustomerTransactionRecord> currentTransactions=java.util.List.of();
 
     public CustomerAccountDetails(int customerId, Runnable afterSave) {
         this.customerId = customerId;
@@ -134,6 +136,7 @@ public class CustomerAccountDetails extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         whatsappOptInCheckBox = new JCheckBox("Customer consents to sales documents by WhatsApp");
+        requireChargeAuthorizationCheckBox=new JCheckBox("Require representative authorization for account charges");
         emailField = new JTextField();
         customerSinceField = new JTextField();
         customerPhotoField = new JTextField();customerPhotoField.setEditable(false);
@@ -154,6 +157,7 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 1, 0, "Customer Type:", customerTypeSelector);
         addInfoField(grid, gbc, 1, 1, "Phone:", phoneField);
         addInfoField(grid, gbc, 6, 1, "WhatsApp:", whatsappOptInCheckBox);
+        addInfoField(grid,gbc,7,1,"Account authorization:",requireChargeAuthorizationCheckBox);
         addInfoField(grid, gbc, 2, 0, "Email:", emailField);
         addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
         addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
@@ -218,6 +222,7 @@ public class CustomerAccountDetails extends JFrame {
         transactionTable.setRowHeight(26);
         transactionTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         transactionTable.getTableHeader().setReorderingAllowed(false);
+        transactionTable.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){if(e.getClickCount()==2){int view=transactionTable.rowAtPoint(e.getPoint());if(view>=0){int model=transactionTable.convertRowIndexToModel(view);if(model<currentTransactions.size())showAuthorization(currentTransactions.get(model).authorization());}}}});
         transactionTable.getColumnModel().getColumn(0).setPreferredWidth(100);
         transactionTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         transactionTable.getColumnModel().getColumn(2).setPreferredWidth(160);
@@ -274,7 +279,7 @@ public class CustomerAccountDetails extends JFrame {
                 customerTypeSelector.setSelectedCustomerType(
                         account.customerTypeId(),account.customerTypeName()
                 );
-                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());
+                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());requireChargeAuthorizationCheckBox.setSelected(account.requireChargeAuthorization());
                 customerSinceField.setText(account.customerSince()==null?"":String.valueOf(account.customerSince()));
                 customerPhotoField.setText(text(account.customerPhotoUrl()));
                 ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);
@@ -282,6 +287,7 @@ public class CustomerAccountDetails extends JFrame {
                 creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
         transactionModel.setRowCount(0);
             LanApiClient.CustomerTransactionResult result = snapshot.transactions();
+            currentTransactions=result.transactions()==null?java.util.List.of():result.transactions();
             for(LanApiClient.CustomerTransactionRecord row:result.transactions())transactionModel.addRow(new Object[]{
                     formatRecord(row),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),row.userName(),row.deviceName(),
                     row.cashDrawerName(),formatType(row.transactionType()),formatType(row.documentType()),row.documentNumber(),
@@ -289,6 +295,12 @@ public class CustomerAccountDetails extends JFrame {
                     formatStatus(row.documentStatus()),currencyFormat.format(defaultZero(row.chargeTotal())),row.remote()?"Synced snapshot":"Live store data",row.note()});
             transactionSummaryLabel.setText("Transactions: "+result.count()+"    Charges: "+currencyFormat.format(result.totalCharges())
                     +"    Payments: "+currencyFormat.format(result.totalPayments()));
+    }
+
+    private void showAuthorization(LanApiClient.ChargeAuthorizationEvidence a){
+        if(a==null){JOptionPane.showMessageDialog(this,"No representative authorization is attached to this transaction.");return;}
+        JPanel panel=new JPanel(new BorderLayout(10,10));JTextArea text=new JTextArea("Representative: "+a.representativeName()+"\nCaptured: "+formatTimestamp(a.capturedAtEpochMillis())+"\nCashier: "+a.capturedByName()+"\nDevice: "+a.deviceName()+(a.unsignedReason()==null||a.unsignedReason().isBlank()?"":"\nUnsigned reason: "+a.unsignedReason()));text.setEditable(false);text.setOpaque(false);panel.add(text,BorderLayout.NORTH);
+        JLabel image=new JLabel(a.imageExpired()?"Signature image expired":"No signature captured",SwingConstants.CENTER);if(a.signaturePngBase64()!=null&&!a.signaturePngBase64().isBlank())try{var raw=java.util.Base64.getDecoder().decode(a.signaturePngBase64());var source=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(raw));if(source!=null){image.setIcon(new ImageIcon(source.getScaledInstance(620,240,Image.SCALE_SMOOTH)));image.setText("");}}catch(Exception ignored){}image.setBorder(BorderFactory.createLineBorder(Color.GRAY));panel.add(image);JOptionPane.showMessageDialog(this,panel,"Account Charge Authorization",JOptionPane.PLAIN_MESSAGE);
     }
 
     private void saveAccountDetails() {
@@ -327,14 +339,14 @@ public class CustomerAccountDetails extends JFrame {
         String photoInput=customerPhotoField.getText().trim();
         final BigDecimal savedCreditLimit=creditLimit;
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
-                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected());
+                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected());
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
         String saveKey = pendingSaveKey;
         saveButton.setEnabled(false);
         UiTaskRunner.submit(this, "customer-account.save", () -> {
             String uploaded=CustomerPhotoService.uploadLocalPhotoIfNeeded(photoInput,name);
-            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected()), saveKey);
+            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected()), saveKey);
             return null;
         }, ignored -> {
             pendingSaveKey=null;pendingFingerprint=null;

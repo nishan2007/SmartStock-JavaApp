@@ -1,0 +1,4 @@
+Improve inventory search responsiveness.
+
+- Warm the shared inventory catalog when inventory and item screens open.
+- Reuse recent edit-item searches and refresh the cache after item changes.

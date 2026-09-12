@@ -14,6 +14,7 @@ public class ReceiptData {
     private final String cashierName;
     private final String customerName;
     private final String accountNumber;
+    private final String representativeName;
     private final String paymentMethod;
     private final String paymentStatus;
     private final String deviceId;
@@ -54,6 +55,9 @@ public class ReceiptData {
             BigDecimal changeDue,
             List<ReceiptItem> items
     ) {
+        this(saleId,receiptNumber,saleTime,storeName,cashierName,customerName,accountNumber,paymentMethod,paymentStatus,deviceId,subtotalAmount,discountPercent,discountAmount,vatAmount,vatRatePercent,vatMode,totalAmount,amountPaid,returnedAmount,cashCollected,changeDue,items,"");
+    }
+    public ReceiptData(int saleId,String receiptNumber,Timestamp saleTime,String storeName,String cashierName,String customerName,String accountNumber,String paymentMethod,String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,BigDecimal cashCollected,BigDecimal changeDue,List<ReceiptItem>items,String representativeName){
         this.saleId = saleId;
         this.receiptNumber = receiptNumber == null ? "" : receiptNumber;
         this.saleTime = saleTime;
@@ -61,6 +65,7 @@ public class ReceiptData {
         this.cashierName = cashierName == null ? "" : cashierName;
         this.customerName = customerName == null ? "" : customerName;
         this.accountNumber = accountNumber == null ? "" : accountNumber;
+        this.representativeName=representativeName==null?"":representativeName;
         this.paymentMethod = paymentMethod == null ? "" : paymentMethod;
         this.paymentStatus = paymentStatus == null ? "" : paymentStatus;
         this.deviceId = deviceId == null ? "" : deviceId;
@@ -105,6 +110,7 @@ public class ReceiptData {
     public String getAccountNumber() {
         return accountNumber;
     }
+    public String getRepresentativeName(){return representativeName;}
 
     public String getPaymentMethod() {
         return paymentMethod;

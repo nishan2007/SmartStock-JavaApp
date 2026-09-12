@@ -61,7 +61,9 @@ public final class MobileItemWebServer implements AutoCloseable {
         String host=LanTlsIdentity.mobileWebHostName();
         HttpsServer ui=null,api=null;ExecutorService pool=null;
         try{
-            ui=HttpsServer.create(new InetSocketAddress(UI_PORT),20);api=HttpsServer.create(new InetSocketAddress(API_PORT),40);
+            InetAddress ipv4Any=InetAddress.getByName("0.0.0.0");
+            ui=HttpsServer.create(new InetSocketAddress(ipv4Any,UI_PORT),20);
+            api=HttpsServer.create(new InetSocketAddress(ipv4Any,API_PORT),40);
             ui.setHttpsConfigurator(new HttpsConfigurator(identity.sslContext()));api.setHttpsConfigurator(new HttpsConfigurator(identity.sslContext()));
             pool=Executors.newFixedThreadPool(8,r->{Thread t=new Thread(r,"smartstock-mobile-web");t.setDaemon(true);return t;});
             ui.setExecutor(pool);api.setExecutor(pool);MobileItemWebServer server=new MobileItemWebServer(ui,api,pool,owner,host);

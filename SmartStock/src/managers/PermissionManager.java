@@ -38,7 +38,8 @@ public class PermissionManager {
             return;
         }
 
-        if (cachedPermissions != null && role.equalsIgnoreCase(cachedRole)) {
+        if (cachedPermissions != null && role.equalsIgnoreCase(cachedRole)
+                && cachedPermissions.equals(SessionManager.getCurrentPermissions())) {
             return;
         }
 
@@ -189,6 +190,7 @@ public class PermissionManager {
 
                 if (canAccessScreen(screenName)) {
                     try {
+                        if (frame instanceof ui.screens.ReturnSale returns) returns.refreshLookupPermission();
                         frame.setJMenuBar(AppMenuBar.create(frame, screenName));
                         frame.revalidate();
                         frame.repaint();

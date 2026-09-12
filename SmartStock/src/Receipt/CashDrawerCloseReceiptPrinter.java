@@ -113,7 +113,7 @@ public final class CashDrawerCloseReceiptPrinter {
                     line.quantity(), line.floatQuantity(), line.cihQuantity()));
         }
         receipt.append(String.format("%-7s %10s %10s %10s%n", "TOTAL",
-                money(session.countedCash()), money(floatCash), money(cashInHand)));
+                money(session.countedCash()), optionalMoney(floatCash), optionalMoney(cashInHand)));
         receipt.append("----------------------------------------\n");
         pair(receipt, "Set Cash", money(session.openingCash()));
         pair(receipt, "Expected Cash", money(session.expectedCash()));
@@ -121,8 +121,8 @@ public final class CashDrawerCloseReceiptPrinter {
         pair(receipt, "Returned Amount", money(returnedAmount));
         pair(receipt, "Counted Cash", money(session.countedCash()));
         pair(receipt, "Variance", money(session.variance()));
-        pair(receipt, "CIH", money(cashInHand));
-        pair(receipt, "Float", money(floatCash));
+        pair(receipt, "CIH", optionalMoney(cashInHand));
+        pair(receipt, "Float", optionalMoney(floatCash));
         pair(receipt, "Cash to Remove", money(session.cashToRemove()));
         receipt.append("----------------------------------------\n");
         center(receipt, footerLine, 40);
@@ -164,6 +164,10 @@ public final class CashDrawerCloseReceiptPrinter {
 
     private static String money(BigDecimal amount) {
         return CURRENCY.format(amount == null ? BigDecimal.ZERO : amount);
+    }
+
+    private static String optionalMoney(BigDecimal amount) {
+        return amount==null?"Not recorded":money(amount);
     }
 
     private static BigDecimal defaultZero(BigDecimal amount){return amount==null?BigDecimal.ZERO:amount;}

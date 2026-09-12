@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.0.144</version>
+  <version>1.0.179</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -16,6 +16,11 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna-platform</artifactId>
+      <version>5.17.0</version>
+    </dependency>
     <dependency>
         <groupId>org.postgresql</groupId>
         <artifactId>postgresql</artifactId>
@@ -70,6 +75,7 @@
           <include>Images/**</include>
           <include>mobile-web/**</include>
           <include>scheduler-web/**</include>
+          <include>employee-registration-web/**</include>
         </includes>
       </resource>
       <resource>

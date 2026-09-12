@@ -14,6 +14,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SmartStockUpdaterTest {
+    @Test
+    void extractsPowerShellDirectoryEntries(@TempDir Path tempDir) throws Exception {
+        Path zip = tempDir.resolve("release.zip");
+        try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(zip))) {
+            out.putNextEntry(new java.util.zip.ZipEntry("dependency\\cloudflared\\"));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("dependency\\cloudflared\\windows-amd64\\cloudflared.exe"));
+            out.write("test executable".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+        var unzip = SmartStockUpdater.class.getDeclaredMethod("unzip", Path.class, Path.class);
+        unzip.setAccessible(true);
+        Path extracted = tempDir.resolve("extracted");
+        unzip.invoke(null, zip, extracted);
+        assertEquals("test executable", Files.readString(
+                extracted.resolve("dependency/cloudflared/windows-amd64/cloudflared.exe")));
+    }
+
     private static final Path PLIST = Path.of("/Users/test/Library/LaunchAgents/com.smartstock.sync.plist");
 
     @Test

@@ -1,0 +1,4 @@
+Fix Windows update handoff ordering.
+
+- Record and terminate the exact desktop process that launched the updater.
+- Wait for that process to exit before replacing application files or relaunching SmartStock.

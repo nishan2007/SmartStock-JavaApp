@@ -1,0 +1,4 @@
+Fix Windows update extraction and shutdown races.
+
+- Use a unique extraction directory for every update so locked Cloudflare dependency folders cannot block extraction.
+- Preserve exact desktop process shutdown and wait before replacing or relaunching SmartStock.

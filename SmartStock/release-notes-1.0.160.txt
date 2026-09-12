@@ -1,0 +1,4 @@
+Fix Windows updates when the bundled Cloudflare dependency changes file and directory layout.
+
+- Make updater payload copying safe when Windows encounters an existing path with the opposite type.
+- Preserve rollback and service restart behavior when replacing the bundled server dependency tree.

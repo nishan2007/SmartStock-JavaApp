@@ -1,0 +1,8 @@
+SmartStock 1.0.145
+
+- Adds server-authoritative drawer-count drafts that autosave denomination entries without closing the drawer and restore on another assigned register.
+- Adds immutable drawer lifecycle history for count edits, clears, float calculations, handovers, closes, and corrections with user and device attribution.
+- Adds permission-controlled drawer-history drill-down from current and previously submitted balance sheets, including exact session links and clearly labelled legacy matches.
+- Preserves blank denomination entries separately from explicitly entered zero values and prevents stale registers from silently overwriting newer drafts.
+- Adds scheduler-link email notification settings and delivery support.
+- Strengthens update publishing and checksum validation so release metadata is published only after the uploaded artifact is verified byte-for-byte.

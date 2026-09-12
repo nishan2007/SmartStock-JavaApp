@@ -1,0 +1,9 @@
+Application portal verification and recovery email delivery through SmartStock Gmail.
+
+- Add a signed Supabase Send Email receiver using the store's connected Gmail sender.
+- Add verification email configuration in Company Preferences > Application portal.
+- Send portal verification and recovery codes, with a Send a new code option.
+- Report email delivery failures accurately and prevent completed webhook retries from sending twice.
+- Keep existing Supabase account identities and password verification.
+
+Update the store server first. Configure and verify the signing secret and Gmail delivery before enabling the project-wide Supabase Send Email hook. The portal server must remain online for authentication emails.

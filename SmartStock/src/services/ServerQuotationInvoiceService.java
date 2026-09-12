@@ -357,9 +357,15 @@ public final class ServerQuotationInvoiceService {
 
     public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason)throws SQLException{chargeInvoiceToAccount(conn,invoiceId,reason,false,null);}
     public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason,boolean creditLimitOverride,String creditOverrideReason)throws SQLException{
+        try{chargeInvoiceToAccount(conn,invoiceId,reason,creditLimitOverride,creditOverrideReason,null,null,ServerRequestIdentity.userId()==null?0:ServerRequestIdentity.userId(),ServerRequestIdentity.userName());}catch(SQLException e){throw e;}catch(Exception e){throw new SQLException(e.getMessage(),e);}
+    }
+    public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason,boolean creditLimitOverride,String creditOverrideReason,
+                                              CustomerChargeAuthorizationService.Authorization authorization,java.util.UUID deviceId,int userId,String userName)throws Exception{
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);InvoiceHeader invoice=lockInvoice(conn,invoiceId);
         if(hasAccountCharge(conn,invoiceId))throw new SQLException("This invoice is already on the customer account.");if(invoice.balanceDue().signum()<=0)throw new SQLException("This invoice has no remaining balance to place on account.");
+        CustomerChargeAuthorizationService.validateRequired(conn,invoice.customerId(),authorization);
         boolean exceeded=updateCustomerBalance(conn,invoice.customerId(),invoice.balanceDue(),invoice.locationId(),creditLimitOverride);long transaction=insertAccountCharge(conn,invoice,reason);insertAccountAllocation(conn,transaction,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);
+        CustomerChargeAuthorizationService.insert(conn,transaction,invoice.customerId(),invoice.locationId(),"INVOICE",invoiceId,authorization,userId,userName,deviceId,currentDocumentDeviceName());
         QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"ACCOUNT_CHARGE_CREATED","balance_due",null,invoice.balanceDue(),reason);if(exceeded)QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"CREDIT_LIMIT_OVERRIDE","balance_due",null,invoice.balanceDue(),creditOverrideReason);SyncOutboxService.recordEvent(conn,"INVOICE_ACCOUNT_CHARGE_CREATED",Map.of("invoice_id",invoiceId,"amount",invoice.balanceDue()));
     }
 
@@ -434,7 +440,8 @@ public final class ServerQuotationInvoiceService {
                 INSERT INTO quotations (
                     quotation_number, customer_id, customer_name, customer_phone, customer_email,
                     valid_until, production_due_date, quotation_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount,
-                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name
+                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name,
+                    customer_discount_percent,customer_discount_applied
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING quotation_id
@@ -585,7 +592,7 @@ public final class ServerQuotationInvoiceService {
                     invoice_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount, balance_due,
                     location_id, location_name, device_id, device_name, created_by_user_id, created_by_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING invoice_id
                 """)) {
             ps.setString(1, invoiceNumber);
@@ -609,6 +616,7 @@ public final class ServerQuotationInvoiceService {
             ps.setString(19, blankToNull(currentDocumentDeviceName()));
             setNullableInteger(ps, 20, ServerRequestIdentity.userId());
             ps.setString(21, ServerRequestIdentity.userName());
+            ps.setBigDecimal(22,quotation.customerDiscountPercent());ps.setBoolean(23,quotation.customerDiscountApplied());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return rs.getLong("invoice_id");
@@ -995,7 +1003,7 @@ public final class ServerQuotationInvoiceService {
                             rs.getString("vat_mode"),
                             zero(rs.getBigDecimal("total_amount")),
                             nullableInt(rs, "location_id"),
-                            rs.getString("location_name")
+                            rs.getString("location_name"),zero(rs.getBigDecimal("customer_discount_percent")),rs.getBoolean("customer_discount_applied")
                     );
                 }
             }
@@ -1277,7 +1285,8 @@ public final class ServerQuotationInvoiceService {
                                String customerPhone, String customerEmail, String status, LocalDate validUntil,LocalDate productionDueDate,
                                String quotationNotes, BigDecimal subtotalAmount, BigDecimal discountAmount,
                                BigDecimal vatAmount, BigDecimal vatRatePercent, String vatMode,
-                               BigDecimal totalAmount, Integer locationId, String locationName) {
+                               BigDecimal totalAmount, Integer locationId, String locationName,
+                               BigDecimal customerDiscountPercent,boolean customerDiscountApplied) {
     }
     private record LinkedOrder(long id,String number){}
 

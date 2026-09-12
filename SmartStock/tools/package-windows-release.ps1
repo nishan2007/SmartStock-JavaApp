@@ -131,13 +131,28 @@ try {
     # currently installed updater.
     $Zip = Join-Path $Release "smartstock-windows-$Version.zip"
     if (Test-Path $Zip) { Remove-Item -LiteralPath $Zip -Force }
-    Compress-Archive -Path (Join-Path $InputDir "*") -DestinationPath $Zip -CompressionLevel Optimal
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Add-Type -AssemblyName System.IO.Compression
+    # Write portable ZIP names explicitly. Compress-Archive uses backslashes
+    # for directories, which Java ZipEntry does not recognize as directories.
+    $OutputArchive = [System.IO.Compression.ZipFile]::Open($Zip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $InputRoot = (Resolve-Path -LiteralPath $InputDir).Path.TrimEnd('\') + '\'
+        Get-ChildItem -LiteralPath $InputDir -File -Recurse | ForEach-Object {
+            $EntryName = $_.FullName.Substring($InputRoot.Length).Replace('\', '/')
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $OutputArchive, $_.FullName, $EntryName,
+                [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally {
+        $OutputArchive.Dispose()
+    }
     $Archive = [System.IO.Compression.ZipFile]::OpenRead($Zip)
     try {
-        # Compress-Archive may emit Windows separators in entry names. Normalize
-        # before checking the updater's platform-independent archive contract.
-        $ArchiveNames = @($Archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+        $ArchiveNames = @($Archive.Entries | ForEach-Object { $_.FullName })
+        if ($ArchiveNames | Where-Object { $_.Contains('\') }) {
+            throw 'The updater archive contains non-portable backslash entry names.'
+        }
         if ($ArchiveNames -notcontains $Jar.Name) {
             throw "The Windows updater archive does not contain $($Jar.Name) at its root."
         }

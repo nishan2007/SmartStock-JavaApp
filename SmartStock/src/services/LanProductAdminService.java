@@ -38,16 +38,35 @@ final class LanProductAdminService {
 
     private static List<Map<String, Object>> searchEditable(Connection connection, String search,
                                                              int locationId, boolean archived) throws Exception {
+        return searchEditable(connection,search,locationId,archived,null);
+    }
+
+    static List<Map<String,Object>> variantSetupItems(Connection connection,List<Integer> ids,int userId,int locationId)throws Exception {
+        requirePermission(connection,userId,"EDIT_ITEM");
+        if(ids==null||ids.size()>500)throw rule(400,"VALIDATION_ERROR","Select no more than 500 products.");
+        if(ids.stream().anyMatch(id->id==null||id<=0))throw rule(400,"VALIDATION_ERROR","Select a valid item.");
+        List<Map<String,Object>> rows=new ArrayList<>();
+        for(Integer id:new java.util.TreeSet<>(ids)){
+            if(id==null||id<=0)throw rule(400,"VALIDATION_ERROR","Select a valid item.");
+            List<Map<String,Object>> found=searchEditable(connection,String.valueOf(id),locationId,false,id);
+            if(found.isEmpty())found=searchEditable(connection,String.valueOf(id),locationId,true,id);
+            if(found.isEmpty())throw rule(404,"PRODUCT_NOT_FOUND","An item no longer exists.");
+            rows.addAll(found);
+        }
+        return rows;
+    }
+
+    private static List<Map<String,Object>> searchEditable(Connection connection,String search,int locationId,boolean archived,Integer exactId)throws Exception {
         String query = clean(search, 300);
         if (query.isBlank()) return List.of();
-        String predicate=ProductSearchHelper.predicate("p",locationId,query)
+        String predicate=(exactId==null?ProductSearchHelper.predicate("p",locationId,query):"p.is_active = TRUE AND p.product_id="+exactId)
                 .replace("p.is_active = TRUE",archived?"p.is_active = FALSE":"p.is_active = TRUE");
         String sql = """
                 SELECT p.product_id,p.name,COALESCE(p.size,''),COALESCE(p.sku,''),COALESCE(p.barcode,''),
                   COALESCE(p.description,''),COALESCE(p.cost_price,0),COALESCE(p.price,0),
                   COALESCE(p.product_type,'INVENTORY'),COALESCE(i.quantity_on_hand,0),COALESCE(i.reorder_level,0),
                   p.category_id,COALESCE(c.name,''),p.vendor_id,COALESCE(v.name,''),COALESCE(p.image_url,''),
-                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),p.is_active
+                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),p.is_active,p.color,p.flavor
                 FROM products p LEFT JOIN categories c ON c.category_id=p.category_id
                 LEFT JOIN vendors v ON v.vendor_id=p.vendor_id
                 LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
@@ -60,7 +79,7 @@ final class LanProductAdminService {
                 """.formatted(predicate);
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
-            ps.setInt(1, locationId); ps.setInt(2, locationId); ProductSearchHelper.bindTokens(ps, 3, query);
+            ps.setInt(1, locationId); ps.setInt(2, locationId); if(exactId==null)ProductSearchHelper.bindTokens(ps, 3, query);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) rows.add(map(
                         "productId", rs.getInt(1), "name", rs.getString(2), "size", rs.getString(3),
@@ -71,9 +90,10 @@ final class LanProductAdminService {
                         "vendorId", nullableInt(rs, 14), "vendorName", rs.getString(15), "imageUrl", rs.getString(16),
                         "itemTypeName", rs.getString(17), "brandName", rs.getString(18), "shelfName", rs.getString(19),
                         "storageShelfName", rs.getString(20), "additionalBarcodes", additionalBarcodes(connection, rs.getInt(1)),
-                        "active",rs.getBoolean(21)));
+                        "active",rs.getBoolean(21),"color",rs.getString(22),"flavor",rs.getString(23)));
             }
         }
+        ProductVariantService.annotate(connection,rows);
         return rows;
     }
 
@@ -215,6 +235,8 @@ final class LanProductAdminService {
                 productId = keys.getInt(1);
             }
         } catch (SQLException ex) { throw friendlyConstraint(ex); }
+        saveColor(connection,productId,body);
+        saveFlavor(connection,productId,body);
         if (product.inventoryItem()) {
             try (PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO inventory(product_id,location_id,quantity_on_hand,reorder_level) VALUES (?,?,?,?)
@@ -255,6 +277,9 @@ final class LanProductAdminService {
             }
         }
         ValidatedProduct product = validate(connection, request, locationId);
+        ProductVariantService.validateItemEdit(connection,request.productId(),product.size(),product.productType());
+        saveColor(connection,request.productId(),body);
+        saveFlavor(connection,request.productId(),body);
         InventoryState inventory = lockInventory(connection, request.productId(), locationId);
         boolean adjust = request.adjustQuantity() && product.inventoryItem();
         if (adjust) {
@@ -413,7 +438,9 @@ final class LanProductAdminService {
                 if("SMARTSTOCK-MISC".equals(rs.getString(1)))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be edited.");
             }
         }
-        if("QUANTITY".equals(field)){
+        if(List.of("ITEM_TYPE","BRAND","SHELF","STORAGE_SHELF").contains(field)) {
+            updateItemDetailCell(connection,productId,locationId,field,value,expected);
+        }else if("QUANTITY".equals(field)){
             requirePermission(connection,userId,"MANUAL_ADJUSTMENT");
             InventoryState inventory=lockInventory(connection,productId,locationId);
             int next=whole(value,"Enter a valid whole-number quantity.");
@@ -430,7 +457,7 @@ final class LanProductAdminService {
                 ps.setInt(1,next);ps.setInt(2,productId);ps.setInt(3,locationId);ps.executeUpdate();
             }
         }else{
-            String column=switch(field){case"NAME"->"name";case"SIZE"->"size";case"DESCRIPTION"->"description";
+            String column=switch(field){case"NAME"->"name";case"SIZE"->"size";case"COLOR"->"color";case"FLAVOR"->"flavor";case"DESCRIPTION"->"description";
                 case"SKU"->"sku";case"PRODUCT_TYPE"->"product_type";case"COST_PRICE"->"cost_price";case"PRICE"->"price";
                 default->throw rule(400,"VALIDATION_ERROR","This inventory column must be edited from Edit Item.");};
             Object bound=value;
@@ -438,6 +465,9 @@ final class LanProductAdminService {
             if("PRODUCT_TYPE".equals(field)){String normalized=value.toUpperCase().replace(' ','_');
                 if(!List.of("INVENTORY","SERVICE","NON_INVENTORY").contains(normalized))throw rule(400,"VALIDATION_ERROR","Use Inventory, Service, or Non Inventory.");bound=normalized;}
             if("COST_PRICE".equals(field)||"PRICE".equals(field)){BigDecimal money=moneyValue(value);if(money.signum()<0)throw rule(400,"VALIDATION_ERROR","Prices cannot be negative.");bound=money;}
+            ProductVariantService.validateItemEdit(connection,productId,"SIZE".equals(field)?value:null,"PRODUCT_TYPE".equals(field)?bound.toString():null);
+            if("COLOR".equals(field))ProductVariantService.validateColorEdit(connection,productId,clean(value,200));
+            if("FLAVOR".equals(field))ProductVariantService.validateFlavorEdit(connection,productId,clean(value,200));
             try(PreparedStatement ps=connection.prepareStatement("UPDATE products SET "+column+"=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")){
                 ps.setObject(1,bound);ps.setInt(2,productId);ps.executeUpdate();
             }catch(SQLException ex){throw friendlyConstraint(ex);}
@@ -448,6 +478,45 @@ final class LanProductAdminService {
     }
 
     private static int whole(String value,String message)throws RuleViolation{try{return Integer.parseInt(value.trim());}catch(Exception ex){throw rule(400,"VALIDATION_ERROR",message);}}
+
+    private static void updateItemDetailCell(Connection c,int productId,int locationId,String field,String raw,String expected)throws Exception {
+        String value=clean(raw,300);
+        if(value.isBlank()&&!"STORAGE_SHELF".equals(field))
+            throw rule(400,"VALIDATION_ERROR","Item Type, Brand and Shelf cannot be blank.");
+        Integer categoryId,shelfId,storageId;String current;
+        try(PreparedStatement ps=c.prepareStatement("""
+                SELECT p.category_id,psa.shelf_location_id,psa.storage_shelf_location_id,
+                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ss.name,'')
+                FROM products p LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
+                LEFT JOIN item_brands ib ON ib.brand_id=p.brand_id
+                LEFT JOIN product_shelf_assignments psa ON psa.product_id=p.product_id AND psa.location_id=?
+                LEFT JOIN shelf_locations sl ON sl.shelf_location_id=psa.shelf_location_id
+                LEFT JOIN shelf_locations ss ON ss.shelf_location_id=psa.storage_shelf_location_id
+                WHERE p.product_id=?
+                """)) {
+            ps.setInt(1,locationId);ps.setInt(2,productId);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","Item was not found.");
+                categoryId=nullableInt(rs,1);shelfId=nullableInt(rs,2);storageId=nullableInt(rs,3);
+                current=rs.getString(switch(field){case "ITEM_TYPE"->4;case "BRAND"->5;case "SHELF"->6;default->7;});
+            }
+        }
+        if(!current.equals(expected))throw rule(409,"ITEM_CHANGED","This field changed on another register. Reload inventory before editing it.");
+        if("ITEM_TYPE".equals(field)||"BRAND".equals(field)) {
+            if("ITEM_TYPE".equals(field)&&categoryId==null)throw rule(400,"VALIDATION_ERROR","Choose the item's department in Edit Item first.");
+            int id="ITEM_TYPE".equals(field)?ItemDetailsService.resolveItemType(c,categoryId,value):ItemDetailsService.resolveBrand(c,value);
+            String column="ITEM_TYPE".equals(field)?"item_type_id":"brand_id";
+            try(PreparedStatement ps=c.prepareStatement("UPDATE products SET "+column+"=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")) {
+                ps.setInt(1,id);ps.setInt(2,productId);ps.executeUpdate();
+            }
+        }else {
+            if("SHELF".equals(field))shelfId=ItemDetailsService.resolveShelfLocation(c,locationId,value);
+            else {
+                if(shelfId==null)throw rule(400,"VALIDATION_ERROR","Set the item's Shelf before its Storage Shelf.");
+                storageId=value.isBlank()?null:ItemDetailsService.resolveShelfLocation(c,locationId,value);
+            }
+            ItemDetailsService.upsertShelfAssignment(c,productId,locationId,shelfId,storageId);
+        }
+    }
     private static BigDecimal moneyValue(String value)throws RuleViolation{try{return new BigDecimal(value.replace("$","").replace(",","").trim());}catch(Exception ex){throw rule(400,"VALIDATION_ERROR","Enter a valid price.");}}
 
     private record PriceRoundingRequest(List<PriceRoundingLine> lines){}
@@ -615,10 +684,10 @@ final class LanProductAdminService {
         return "23505".equals(ex.getSQLState())
                 ? rule(409, "ITEM_IDENTIFIER_EXISTS", "An item already uses this SKU or barcode.") : ex;
     }
-    private static void requirePermission(Connection connection, int userId, String permission) throws Exception {
+    static void requirePermission(Connection connection, int userId, String permission) throws Exception {
         if (!hasPermission(connection, userId, permission)) throw rule(403, "PERMISSION_DENIED", "You do not have permission for this item action.");
     }
-    private static void requireAnyPermission(Connection connection, int userId, String... permissions) throws Exception {
+    static void requireAnyPermission(Connection connection, int userId, String... permissions) throws Exception {
         for (String permission : permissions) if (hasPermission(connection, userId, permission)) return;
         throw rule(403, "PERMISSION_DENIED", "You do not have permission to view price tag items.");
     }
@@ -631,7 +700,7 @@ final class LanProductAdminService {
             ps.setInt(1, userId); ps.setString(2, permission); try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
         }
     }
-    private static void audit(Connection connection, String type, UUID deviceId, int userId,
+    static void audit(Connection connection, String type, UUID deviceId, int userId,
                               String details) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement("""
                 INSERT INTO security_audit_events(event_type,device_id,actor_user_id,details) VALUES (?,?,?,?)
@@ -657,6 +726,23 @@ final class LanProductAdminService {
         RuleViolation(int status, String code, String message) { super(message); this.status=status; this.code=code; this.safeMessage=message; }
         int status() { return status; } String code() { return code; } String safeMessage() { return safeMessage; }
     }
+    private static void saveColor(Connection connection,int productId,JsonObject body)throws Exception {
+        if(!body.has("color"))return; // Older registers must preserve the field.
+        String color=clean(body.get("color").isJsonNull()?"":body.get("color").getAsString(),200);
+        ProductVariantService.validateColorEdit(connection,productId,color);
+        try(PreparedStatement ps=connection.prepareStatement("UPDATE products SET color=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")) {
+            ps.setString(1,color);ps.setInt(2,productId);ps.executeUpdate();
+        }
+    }
+    private static void saveFlavor(Connection connection,int productId,JsonObject body)throws Exception {
+        if(!body.has("flavor"))return; // Older registers must preserve the field.
+        String flavor=clean(body.get("flavor").isJsonNull()?"":body.get("flavor").getAsString(),200);
+        ProductVariantService.validateFlavorEdit(connection,productId,flavor);
+        try(PreparedStatement ps=connection.prepareStatement("UPDATE products SET flavor=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")) {
+            ps.setString(1,flavor);ps.setInt(2,productId);ps.executeUpdate();
+        }
+    }
+
     private record ProductRequest(Integer productId,String name,String size,String sku,String barcode,String description,
                                   BigDecimal costPrice,BigDecimal price,String productType,Integer categoryId,Integer vendorId,
                                   String imageUrl,String itemTypeName,String brandName,String shelfName,String storageShelfName,

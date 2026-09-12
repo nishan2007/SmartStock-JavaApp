@@ -1,0 +1,3 @@
+Current-period payroll recalculates completed shifts when an employee's pay rate changes, while preserving previous pay periods.
+Receipt Preview has larger printer and format selectors and larger touch-friendly action buttons.
+Touching the Make a Sale search field now uses the Windows touch keyboard with broader touchscreen-driver compatibility.

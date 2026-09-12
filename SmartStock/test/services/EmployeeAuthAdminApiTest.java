@@ -46,9 +46,15 @@ class EmployeeAuthAdminApiTest {
     }
 
     @Test
-    void employeeScreenNoLongerRequiresEmail() throws Exception {
+    void employeeScreenRequiresContactsOnlyWhenCreating() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/EmployeeManagement.java"));
-        assertTrue(source.contains("Email (optional):"));
-        assertFalse(source.contains("missing.add(\"Email\")"));
+        assertTrue(source.contains("Email * (new employee):"));
+        assertTrue(source.contains("Phone Number * (new employee):"));
+        String create = source.substring(source.indexOf("private void addEmployee()"), source.indexOf("private void updateEmployee()"));
+        assertTrue(create.contains("if (email.isBlank())"));
+        assertTrue(create.contains("if (phoneNumber.isBlank())"));
+        String update = source.substring(source.indexOf("private void updateEmployee()"), source.indexOf("private static List<String> missingRequiredEmployeeFields"));
+        assertFalse(update.contains("if (email.isBlank())"));
+        assertFalse(update.contains("if (phoneNumber.isBlank())"));
     }
 }

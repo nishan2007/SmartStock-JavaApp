@@ -1125,7 +1125,7 @@ public final class CashDrawerService {
         return report.toString();
     }
 
-    private static CashDrawerSession mapSession(ResultSet rs) throws SQLException {
+    static CashDrawerSession mapSession(ResultSet rs) throws SQLException {
         return new CashDrawerSession(
                 rs.getLong("cash_drawer_session_id"),
                 rs.getLong("cash_drawer_id"),

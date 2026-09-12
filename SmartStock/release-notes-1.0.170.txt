@@ -1,0 +1,4 @@
+Fix employee registration startup when Apple Wallet enrollment is running.
+
+- Move the LAN employee registration form to HTTPS port 8448 so it no longer conflicts with Wallet enrollment on port 8447.
+- Update the production Windows server installer firewall rule for the registration port.

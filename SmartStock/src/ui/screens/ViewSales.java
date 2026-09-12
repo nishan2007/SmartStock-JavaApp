@@ -452,6 +452,15 @@ public class ViewSales extends JFrame {
         tabs.addTab("Returns (" + returnsModel.getRowCount() + ")", returnsPanel);
         tabs.addTab("Override Audit (" + overrideAuditModel.getRowCount() + ")",
                 new JScrollPane(overrideAuditTable));
+        if(details.authorization()!=null){
+            var authorization=details.authorization();JPanel evidence=new JPanel(new BorderLayout(12,12));evidence.setBorder(new EmptyBorder(14,14,14,14));
+            JTextArea summary=new JTextArea("Representative: "+authorization.representativeName()+"\nCaptured: "+formatEpoch(authorization.capturedAtEpochMillis())+
+                    "\nCashier: "+authorization.capturedByName()+"\nDevice: "+authorization.deviceName()+
+                    (authorization.unsignedReason()==null||authorization.unsignedReason().isBlank()?"":"\nUnsigned reason: "+authorization.unsignedReason()));summary.setEditable(false);summary.setOpaque(false);evidence.add(summary,BorderLayout.NORTH);
+            JLabel signature=new JLabel(authorization.imageExpired()?"Signature image expired":"No signature captured",SwingConstants.CENTER);
+            if(authorization.signaturePngBase64()!=null&&!authorization.signaturePngBase64().isBlank())try{byte[]bytes=java.util.Base64.getDecoder().decode(authorization.signaturePngBase64());java.awt.image.BufferedImage image=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));if(image!=null){Image scaled=image.getScaledInstance(520,200,Image.SCALE_SMOOTH);signature.setIcon(new ImageIcon(scaled));signature.setText("");}}catch(Exception ignored){}
+            signature.setBorder(BorderFactory.createLineBorder(Color.GRAY));evidence.add(signature,BorderLayout.CENTER);tabs.addTab("Account Authorization",evidence);
+        }
         panel.add(tabs, BorderLayout.CENTER);
 
         BigDecimal total = zero(details.totalAmount());

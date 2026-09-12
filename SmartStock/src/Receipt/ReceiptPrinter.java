@@ -225,7 +225,7 @@ public class ReceiptPrinter {
             y += lineHeight;
         }
         if (pageIndex == totalPages - 1) {
-            drawLetterBarcode(g2, pageFormat, receipt, y + 10);
+            drawLetterBarcode(g2, pageFormat, receipt, y + 2);
         }
 
         return Printable.PAGE_EXISTS;
@@ -245,7 +245,7 @@ public class ReceiptPrinter {
         int x = (int) (pageFormat.getImageableX() + ((pageFormat.getImageableWidth() - width) / 2));
         int y = (int) pageFormat.getImageableY();
         graphics.drawImage(logo, x, y, width, height, null);
-        return height + 16;
+        return height + 2;
     }
 
     private static void drawLetterBarcode(Graphics2D graphics, PageFormat pageFormat, ReceiptData receipt, int y) {

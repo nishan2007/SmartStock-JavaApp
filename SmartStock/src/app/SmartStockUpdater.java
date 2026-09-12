@@ -32,7 +32,7 @@ public final class SmartStockUpdater {
             apply(Path.of(args[0]));
             log("Updater completed.");
         } catch (Exception ex) {
-            log("Updater failed: " + rootMessage(ex));
+            log("Updater failed: " + ex.getClass().getName() + ": " + rootMessage(ex));
             ex.printStackTrace();
             try {
                 restartServiceAfterFailure(Path.of(args[0]));
@@ -54,13 +54,15 @@ public final class SmartStockUpdater {
         Path appDir = Path.of(required(props, "app.dir"));
         Path releaseZip = Path.of(required(props, "release.zip"));
         Path backupDir = Path.of(required(props, "backup.dir"));
-        Path extractDir = manifestPath.getParent().resolve("extract");
+        // Keep each attempt isolated from partially extracted earlier attempts.
+        Path extractDir = manifestPath.getParent().resolve("extract-" + UUID.randomUUID());
         Path javaBin = Path.of(required(props, "java.bin"));
         String currentJar = required(props, "current.jar");
         String layout = props.getProperty("install.layout", "jar-dir");
 
         unzip(releaseZip, extractDir);
         Path payloadDir = normalizePayloadDir(extractDir);
+        terminateRecordedDesktopProcess(props);
         Path launchTarget;
         if ("mac-app".equals(layout)) {
             Path currentBundle = Path.of(required(props, "app.bundle.path"));
@@ -113,6 +115,7 @@ public final class SmartStockUpdater {
             launchTarget = launchJar == null ? appDir.resolve(currentJar) : launchJar;
         }
 
+        deleteRecursivelyQuietly(extractDir);
         if (Boolean.parseBoolean(props.getProperty("relaunch", "true"))) {
             if ("mac-app".equals(layout) && isMac()) {
                 relaunchMacApp(launchTarget);
@@ -129,6 +132,10 @@ public final class SmartStockUpdater {
         try (InputStream input = Files.newInputStream(manifestPath)) {
             props.load(input);
         }
+        if (!Boolean.parseBoolean(props.getProperty("relaunch", "true"))) return;
+        // Extraction can fail while the original desktop is still exiting.
+        // Never launch a second desktop while that process remains alive.
+        waitForWindowsDesktopExit(props);
         Path appDir = Path.of(required(props, "app.dir"));
         Path javaBin = Path.of(required(props, "java.bin"));
         Path launchTarget = findReleaseJar(appDir);
@@ -433,6 +440,13 @@ public final class SmartStockUpdater {
         if (parent == null) return;
         Path staged = parent.resolve(".app-update-" + UUID.randomUUID());
         Path previous = parent.resolve(".app-previous-" + UUID.randomUUID());
+        // The scheduled task can respawn its JVM while the task stop command
+        // returns. Repeat the process shutdown immediately before swapping the
+        // directory so Windows has no live handle to the old copy.
+        if (isWindows()) {
+            terminateWindowsJavaSyncProcesses(props);
+            terminateWindowsSyncServiceCloudflareProcesses(props);
+        }
         Files.createDirectories(staged);
         try (Stream<Path> stream = Files.list(appDir)) {
             for (Path source : stream.toList()) {
@@ -444,7 +458,22 @@ public final class SmartStockUpdater {
         }
         validateApplicationPayload(staged);
         try {
-            Files.move(syncServiceAppDir, previous);
+            IOException moveFailure = null;
+            for (int attempt = 0; attempt < 20; attempt++) {
+                try {
+                    Files.move(syncServiceAppDir, previous);
+                    moveFailure = null;
+                    break;
+                } catch (IOException ex) {
+                    moveFailure = ex;
+                    if (isWindows()) {
+                        terminateWindowsJavaSyncProcesses(props);
+                        terminateWindowsSyncServiceCloudflareProcesses(props);
+                    }
+                    sleepQuietly(250);
+                }
+            }
+            if (moveFailure != null) throw moveFailure;
             try {
                 Files.move(staged, syncServiceAppDir);
             } catch (IOException installError) {
@@ -617,11 +646,14 @@ public final class SmartStockUpdater {
         try (ZipInputStream input = new ZipInputStream(Files.newInputStream(zip))) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
-                Path target = targetDir.resolve(entry.getName()).normalize();
+                // Windows Compress-Archive writes backslash directory entries;
+                // ZipEntry.isDirectory() only recognizes a trailing slash.
+                String name = entry.getName().replace('\\', '/');
+                Path target = targetDir.resolve(name).normalize();
                 if (!target.startsWith(targetDir)) {
                     throw new IOException("Unsafe zip entry: " + entry.getName());
                 }
-                if (entry.isDirectory()) {
+                if (name.endsWith("/")) {
                     Files.createDirectories(target);
                 } else {
                     Files.createDirectories(target.getParent());
@@ -692,6 +724,9 @@ public final class SmartStockUpdater {
 
     private static void copyRecursively(Path source, Path target) throws IOException {
         if (Files.isDirectory(source)) {
+            if (Files.exists(target) && !Files.isDirectory(target)) {
+                deleteRecursively(target);
+            }
             Files.createDirectories(target);
             try (Stream<Path> stream = Files.list(source)) {
                 for (Path child : stream.toList()) {
@@ -699,6 +734,9 @@ public final class SmartStockUpdater {
                 }
             }
         } else {
+            if (Files.exists(target) && Files.isDirectory(target)) {
+                deleteRecursively(target);
+            }
             Files.createDirectories(target.getParent());
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
         }
@@ -741,8 +779,31 @@ public final class SmartStockUpdater {
         terminateWindowsApplicationProcessTree();
         runWindowsTaskCommand(props.getProperty("sync.service.task.name"), "/End");
         terminateWindowsServerProcessTree();
+        terminateWindowsDesktopJavaProcesses(props);
         terminateWindowsJavaSyncProcesses(props);
         terminateWindowsSyncServiceCloudflareProcesses(props);
+        waitForWindowsDesktopExit(props);
+    }
+
+    private static void terminateRecordedDesktopProcess(Properties props) {
+        if (!isWindows()) return;
+        String value = props.getProperty("desktop.pid", "").trim();
+        if (value.isEmpty()) return;
+        try {
+            long pid=Long.parseLong(value);
+            ProcessHandle.of(pid).ifPresent(process -> {
+                if (process.pid()!=ProcessHandle.current().pid()) {
+                    process.destroy();
+                    if (process.isAlive()) process.destroyForcibly();
+                }
+            });
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+            while(System.nanoTime()<deadline && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) sleepQuietly(100);
+            if(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false))
+                throw new IllegalStateException("The previous SmartStock desktop process did not close.");
+        } catch(NumberFormatException ignored) {
+            throw new IllegalStateException("The updater manifest contains an invalid desktop process ID.");
+        }
     }
 
     private static void startSyncService(Properties props) {
@@ -828,6 +889,16 @@ public final class SmartStockUpdater {
             Thread.sleep(750);
         } catch (Exception ignored) {
         }
+        // taskkill may return before a jpackage child JVM exits. Kill any
+        // remaining native SmartStock launcher directly, then let the JVM
+        // termination pass below handle javaw.exe.
+        List<ProcessHandle> launchers = ProcessHandle.allProcesses()
+                .filter(process -> process.pid() != ProcessHandle.current().pid())
+                .filter(process -> windowsPath(process.info().command().orElse("")).endsWith("/smartstock.exe"))
+                .toList();
+        launchers.forEach(ProcessHandle::destroy);
+        waitForProcessExit(launchers, 2_000);
+        launchers.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
     }
 
     private static void terminateWindowsServerProcessTree() {
@@ -837,6 +908,58 @@ public final class SmartStockUpdater {
             Thread.sleep(750);
         } catch (Exception ignored) {
         }
+    }
+
+    /** The native launcher can leave its Java child alive after taskkill returns. */
+    private static void terminateWindowsDesktopJavaProcesses(Properties props) {
+        if (!isWindows()) return;
+        String javaBinValue = props.getProperty("java.bin", "").trim();
+        if (javaBinValue.isEmpty()) return;
+        Path javaBin = Path.of(javaBinValue);
+        List<ProcessHandle> matches = desktopJavaProcesses(javaBin);
+        matches.forEach(ProcessHandle::destroy);
+        waitForProcessExit(matches, 2_000);
+        matches.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+        waitForProcessExit(matches, 3_000);
+    }
+
+    private static List<ProcessHandle> desktopJavaProcesses(Path javaBin) {
+        return ProcessHandle.allProcesses()
+                .filter(process -> process.pid() != ProcessHandle.current().pid())
+                .filter(process -> isWindowsDesktopJavaProcess(
+                        process.info().command().orElse(null),
+                        process.info().arguments().orElse(null), javaBin))
+                .toList();
+    }
+
+    static boolean isWindowsDesktopJavaProcess(String command, String[] arguments, Path javaBin) {
+        if (command == null || arguments == null || javaBin == null) return false;
+        String runtimeBin=windowsPath(javaBin.toAbsolutePath().normalize().toString());
+        String executable=windowsPath(command);
+        String javaw=runtimeBin.endsWith("/java.exe")
+                ? runtimeBin.substring(0,runtimeBin.length()-"java.exe".length())+"javaw.exe" : runtimeBin;
+        if (!executable.equals(runtimeBin) && !executable.equals(javaw)) return false;
+        String joined = String.join(" ", arguments).toLowerCase(Locale.ROOT);
+        return joined.contains("inventory-management-") && !joined.contains("--sync-service")
+                && !joined.contains("smartstockupdater");
+    }
+
+    private static void waitForWindowsDesktopExit(Properties props) {
+        if (!isWindows()) return;
+        String javaBinValue = props.getProperty("java.bin", "").trim();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+        while (System.nanoTime() < deadline) {
+            boolean launcherAlive = ProcessHandle.allProcesses()
+                    .filter(process -> process.pid() != ProcessHandle.current().pid())
+                    .anyMatch(process -> {
+                        String command = process.info().command().orElse("");
+                        return windowsPath(command).endsWith("/smartstock.exe");
+                    });
+            boolean javaAlive = !javaBinValue.isEmpty() && !desktopJavaProcesses(Path.of(javaBinValue)).isEmpty();
+            if (!launcherAlive && !javaAlive) return;
+            sleepQuietly(150);
+        }
+        throw new IllegalStateException("The previous SmartStock desktop process did not close before the update.");
     }
 
     private static void terminateWindowsJavaSyncProcesses(Properties props) {
@@ -908,9 +1031,9 @@ public final class SmartStockUpdater {
         String script = "$target=[IO.Path]::GetFullPath('"
                 + powerShellQuote(tunnel.toString()) + "');"
                 + "Get-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" "
-                + "-ErrorAction SilentlyContinue|Where-Object{$_.ExecutablePath-and"
-                + "[IO.Path]::GetFullPath($_.ExecutablePath).Equals($target,"
-                + "[StringComparison]::OrdinalIgnoreCase)}|ForEach-Object{"
+                + "-ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and "
+                + "[IO.Path]::GetFullPath($_.ExecutablePath).Equals($target, "
+                + "[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { "
                 + "$result=Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction Stop;"
                 + "if($result.ReturnValue-ne 0){throw ('Tunnel termination failed with code '+$result.ReturnValue)}}";
         return List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",

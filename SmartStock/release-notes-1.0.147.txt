@@ -1,0 +1,5 @@
+SmartStock 1.0.147
+
+- Fixes Customer Accounts failing to load when WhatsApp consent fields are absent from an upgraded store database.
+- Registers and automatically applies the WhatsApp sales-document schema migration during server startup.
+- Preserves the Company Preferences database-upgrade fix from 1.0.146.

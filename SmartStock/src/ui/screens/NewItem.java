@@ -39,6 +39,8 @@ public class NewItem extends JFrame {
 
     private JTextField nameField;
     private JTextField sizeField;
+    private JTextField colorField;
+    private JTextField flavorField;
     private JTextField skuField;
     private JTextField barcodeField;
     private JTextArea descriptionArea;
@@ -68,6 +70,7 @@ public class NewItem extends JFrame {
     public NewItem(int selectedLocationId) {
         this.selectedLocationId = selectedLocationId;
         this.requireCostPrice = loadRequireCostPricePreference();
+        InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null);
         setTitle("Add New Item");
         setSize(1120, 800);
         setMinimumSize(new Dimension(900, 650));
@@ -95,6 +98,8 @@ public class NewItem extends JFrame {
     private void initializeFields() {
         nameField = new JTextField();
         sizeField = new JTextField();
+        colorField = new JTextField();
+        flavorField = new JTextField();
         skuField = new JTextField();
         barcodeField = new JTextField();
         descriptionArea = new JTextArea(3, 20);
@@ -176,7 +181,9 @@ public class NewItem extends JFrame {
         addField(fields, 1, 1, "SKU", skuField, "Leave blank to generate one automatically.", false, 1);
 
         JScrollPane descriptionScroll = createTextAreaScroll(descriptionArea, 76);
-        addField(fields, 0, 2, "Description", descriptionScroll, "Optional product notes or customer-facing details.", false, 2);
+        addField(fields, 0, 2, "Color", colorField, "Optional. For grouped Color options, use Manage variants.", false, 1);
+        addField(fields, 1, 2, "Flavor", flavorField, "Optional. For grouped Flavor options, use Manage variants.", false, 1);
+        addField(fields, 0, 3, "Description", descriptionScroll, "Optional product notes or customer-facing details.", false, 2);
         return createSectionCard("1", "Item details", "Identify the product so staff can find and scan it quickly.", DeckersPalette.ORANGE, fields);
     }
 
@@ -340,6 +347,9 @@ public class NewItem extends JFrame {
         DeckersSwing.styleUtilityButton(cancelButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
         saveButton.setPreferredSize(new Dimension(130, 40));
+        JButton variantsButton=new JButton("Product with variants...");
+        variantsButton.addActionListener(e->new ProductVariantsDialog(this,java.util.List.of(),null).setVisible(true));
+        actions.add(variantsButton);
         actions.add(clearButton);
         actions.add(cancelButton);
         actions.add(saveButton);
@@ -520,7 +530,7 @@ public class NewItem extends JFrame {
                     categoryId, vendorId, imageInput, itemTypeName,
                     brandName, shelfName,
                     storageShelfName, List.copyOf(extraBarcodes),
-                    quantity, 0, null, true
+                    quantity, 0, null, true, colorField.getText().trim(), flavorField.getText().trim()
             );
             String fingerprint = draft.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
@@ -528,7 +538,7 @@ public class NewItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;
-            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity(),draft.color(),draft.flavor());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
@@ -570,7 +580,7 @@ public class NewItem extends JFrame {
             }
         }
         nameField.setText("");
-        sizeField.setText("");
+        sizeField.setText(""); colorField.setText(""); flavorField.setText("");
         skuField.setText("");
         barcodeField.setText("");
         descriptionArea.setText("");
@@ -604,7 +614,7 @@ public class NewItem extends JFrame {
 
     private boolean isFormDirty() {
         return !nameField.getText().isBlank()
-                || !sizeField.getText().isBlank()
+                || !sizeField.getText().isBlank() || !colorField.getText().isBlank() || !flavorField.getText().isBlank()
                 || !skuField.getText().isBlank()
                 || !barcodeField.getText().isBlank()
                 || !descriptionArea.getText().isBlank()

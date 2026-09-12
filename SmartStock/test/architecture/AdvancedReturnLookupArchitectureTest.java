@@ -34,6 +34,7 @@ class AdvancedReturnLookupArchitectureTest {
         assertTrue(local.contains("EXISTS ("));
         assertTrue(local.contains("sale_items si"));
         assertTrue(local.contains("product_barcodes pb"));
+        assertTrue(ui.contains("PermissionManager.requirePermission(\"ADVANCED_RETURN_LOOKUP\""));
         assertTrue(ui.contains("PermissionManager.hasPermission(\"ADVANCED_RETURN_LOOKUP\")"));
         assertTrue(ui.contains("advancedSearchSalesForReturn"));
         assertTrue(server.contains("/v1/sales/advanced-return-search"));

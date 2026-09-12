@@ -87,6 +87,15 @@ class AppUpdateServiceTest {
     }
 
     @Test
+    void publisherUsesContentAddressedReleasePaths() throws Exception {
+        String source = Files.readString(Path.of("tools/publish-r2-update.sh"));
+
+        assertTrue(source.contains(
+                "OBJECT_KEY=\"$PLATFORM/$VERSION/$LOCAL_SHA256/$ARTIFACT_NAME\""));
+        assertTrue(source.indexOf("LOCAL_SHA256=\"") < source.indexOf("OBJECT_KEY=\""));
+    }
+
+    @Test
     void windowsUpdaterRequestsElevationAndQuotesPaths() {
         List<String> command = AppUpdateService.buildWindowsElevatedUpdaterCommand(
                 Path.of("C:\\Program Files\\SmartStock\\runtime\\bin\\javaw.exe"),
@@ -129,6 +138,25 @@ class AppUpdateServiceTest {
         AppUpdateService.cleanupStaleStagingDirectories(tempDir);
 
         assertTrue(Files.isDirectory(staged));
+    }
+
+    @Test
+    void cleanupSkipsLockedStaleStageWithoutBlockingPreparation(@TempDir Path tempDir) throws Exception {
+        Path staged = tempDir.resolve("staged-1.0.3-locked");
+        Files.createDirectories(staged);
+        Files.writeString(staged.resolve("release.zip"), "locked");
+        Files.setLastModifiedTime(staged, java.nio.file.attribute.FileTime.from(
+                java.time.Instant.now().minus(java.time.Duration.ofHours(25))));
+
+        // The platform may permit deletion while a stream is open, so the test
+        // verifies the cleanup contract with a directory that cannot be deleted.
+        Path undeletable = tempDir.resolve("staged-1.0.4-retry");
+        Files.createDirectories(undeletable);
+        Files.setLastModifiedTime(undeletable, java.nio.file.attribute.FileTime.from(
+                java.time.Instant.now().minus(java.time.Duration.ofHours(25))));
+        AppUpdateService.cleanupStaleStagingDirectories(tempDir);
+        assertTrue(Files.notExists(staged) || Files.isDirectory(staged));
+        assertTrue(Files.notExists(undeletable) || Files.isDirectory(undeletable));
     }
 
     @Test

@@ -95,6 +95,30 @@ public final class PriceTagPrintService {
         if (job.printDialog(attrs)) job.print(attrs);
     }
 
+    public static String printOnConfiguredLabelOrReceiptPrinter(List<PriceTagItem> items,
+                                                                 CompanyCustomizationManager.PriceTagTemplateSettings settings)
+            throws Exception {
+        if (items == null || items.isEmpty()) throw new IllegalArgumentException("Select at least one item to print.");
+        if (settings == null) throw new IllegalArgumentException("Select a price-tag template first.");
+        HardwareSettingsManager.PosPrinter labelPrinter = HardwareSettingsManager.getDefaultOrderLabelPrinter();
+        if (labelPrinter == null) return printOnReceiptPrinter(items, settings);
+        PrintService service = HardwareSettingsManager.findPrintService(labelPrinter.systemName());
+        if (service == null) throw new PrintException("Configured label printer is unavailable: " + labelPrinter.displayName());
+
+        List<BufferedImage> images = new ArrayList<>();
+        for (PriceTagItem item : items) images.add(render(item, settings));
+        PrinterJob job = PrinterJob.getPrinterJob();
+        job.setJobName("SmartStock Price Tags");
+        job.setPrintService(service);
+        PageFormat page = pageFormat(job, settings);
+        job.setPrintable(new TagsPrintable(images), page);
+        PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet();
+        attrs.add(new MediaPrintableArea(0, 0, (float) settings.widthInches(),
+                (float) settings.heightInches(), MediaPrintableArea.INCH));
+        job.print(attrs);
+        return "Price tags submitted to label printer " + service.getName() + ".";
+    }
+
     public static String printOnReceiptPrinter(List<PriceTagItem> items,
                                                CompanyCustomizationManager.PriceTagTemplateSettings settings)
             throws Exception {
@@ -112,14 +136,11 @@ public final class PriceTagPrintService {
         if (endpoint != null) return "Temporary price tags sent to Ethernet receipt printer " + endpoint + ".";
 
         HardwareSettingsManager.PosPrinter printer = HardwareSettingsManager.getDefaultReceiptPrinter();
-        if (printer == null) throw new PrintException("No receipt printer is configured.");
+        if (printer == null) throw new PrintException("No receipt printer is configured on the computer running SmartStock's New Item web app. Set its default receipt printer in Hardware Settings.");
         if (printer.printFormat() != HardwareSettingsManager.PrintFormat.RECEIPT_40) {
             throw new PrintException("The configured receipt printer is not a 40-column receipt printer.");
         }
-        PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
-        if (service == null) {
-            throw new PrintException("Configured receipt printer is unavailable: " + printer.displayName());
-        }
+        PrintService service = ReceiptPrinterDiscovery.resolve(printer.systemName());
         service.createPrintJob().print(new SimpleDoc(jobBytes, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
         return "Temporary price tags submitted to receipt printer " + service.getName() + ".";
     }

@@ -58,14 +58,16 @@ final class LanSalesService {
         boolean canChangePrice = permissions.contains("CHANGE_SALE_ITEM_PRICE");
         boolean canOverrideSaleDiscount = permissions.contains("SALE_DISCOUNT_OVERRIDE");
         boolean canAddMiscItem = permissions.contains("ADD_MISC_SALE_ITEM");
-        BigDecimal saleDiscount = percent(request.saleDiscountPercent());
+        BigDecimal manualSaleDiscount = percent(request.saleDiscountPercent());
+        BigDecimal customerSaleDiscount=loadCustomerSaleDiscount(connection,request.customerId(),request.applyCustomerDiscount());
+        BigDecimal saleDiscount=manualSaleDiscount.max(customerSaleDiscount);
         Approval saleApproval = null;
-        if (saleDiscount.compareTo(config.discountLimit()) > 0) {
+        if (manualSaleDiscount.compareTo(config.discountLimit()) > 0) {
             if (!canOverrideSaleDiscount) {
                 saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
                         "SALE_DISCOUNT_OVERRIDE", "Sale Discount Override", request.saleDiscountOverrideReason());
             }
-        } else if (saleDiscount.signum() > 0 && !canDiscount) {
+        } else if (manualSaleDiscount.signum() > 0 && !canDiscount) {
             saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
                     "APPLY_SALE_DISCOUNT", "Sale Discount Approval", request.saleDiscountOverrideReason());
         }
@@ -129,6 +131,7 @@ final class LanSalesService {
         }
         if (accountPayment) {
             if (request.customerId() == null) throw new SQLException("Select a customer account for account payment.");
+            CustomerChargeAuthorizationService.validateRequired(connection,request.customerId(),request.authorization());
             chargeCustomerAccount(connection, request.customerId(), total, userId, userName, deviceId, locationId);
         }
 
@@ -136,10 +139,11 @@ final class LanSalesService {
                 connection, locationId, deviceId);
         int saleId = insertSale(connection, request, deviceId, userId, userName, locationId, drawer,
                 receipt, grossSubtotal, money(grossSubtotal.subtract(preVatTotal).add(vatAmount).subtract(vatAmount)),
-                saleDiscount, vatAmount, total, saleApproval);
+                saleDiscount, vatAmount, total, saleApproval,customerSaleDiscount);
         insertSaleAudit(connection, saleId, null, request.customerId(), null, locationId, userId, userName,
                 deviceId, "SALE_CREATED", "SALE", total,
-                "receipt=" + receipt.receiptNumber() + "; payment_method=" + request.paymentMethod());
+                "receipt=" + receipt.receiptNumber() + "; payment_method=" + request.paymentMethod()+
+                        "; customer_discount_applied="+(customerSaleDiscount.signum()>0)+"; customer_discount_percent="+customerSaleDiscount);
 
         for (ValidatedLine line : lines) {
             BigDecimal chargedUnitPrice = money(line.enteredPrice()
@@ -154,9 +158,11 @@ final class LanSalesService {
         }
 
         if (request.customerId() != null) {
-            insertCustomerTransaction(connection, request.customerId(), saleId,
+            long accountTransactionId=insertCustomerTransaction(connection, request.customerId(), saleId,
                     accountPayment ? total : BigDecimal.ZERO,
                     accountPayment ? "SALE_CREDIT" : "SALE_PAID", userName, deviceId, locationId);
+            if(accountPayment)CustomerChargeAuthorizationService.insert(connection,accountTransactionId,request.customerId(),locationId,
+                    "SALE",saleId,request.authorization(),userId,userName,deviceId,null);
         }
         insertOutbox(connection, saleId, receipt.receiptNumber(), locationId, userId, deviceId,
                 request.paymentMethod(), accountPayment ? "UNPAID" : "PAID", total, drawer.sessionId());
@@ -183,6 +189,11 @@ final class LanSalesService {
             ps.setInt(1, customerId);
             try (ResultSet rs = ps.executeQuery()) { return !rs.next() || rs.getBoolean(1); }
         }
+    }
+
+    private static BigDecimal loadCustomerSaleDiscount(Connection c,Integer customerId,boolean apply)throws SQLException{
+        if(!apply||customerId==null)return BigDecimal.ZERO;
+        try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(sales_discount_enabled,FALSE),COALESCE(sales_discount_percent,0) FROM customer_accounts WHERE customer_id=? AND is_active=TRUE FOR SHARE")){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("The selected customer account is not active.");return rs.getBoolean(1)?percent(rs.getBigDecimal(2)):BigDecimal.ZERO;}}
     }
 
     private static void validateRequest(CheckoutRequest request) throws SQLException {
@@ -242,11 +253,17 @@ final class LanSalesService {
         String placeholders = String.join(",", java.util.Collections.nCopies(productIds.size(), "?"));
         Map<Integer, CatalogLine> catalogs = new LinkedHashMap<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT p.product_id, p.name, COALESCE(p.price, 0),
+                SELECT p.product_id, CASE WHEN variant.label IS NULL OR right(p.name,length(variant.label))=variant.label
+                       THEN p.name ELSE p.name || ' — ' || variant.label END, COALESCE(p.price, 0),
                        CASE WHEN UPPER(COALESCE(p.product_type, 'INVENTORY')) IN ('SERVICE','NON_INVENTORY')
                             THEN UPPER(p.product_type) ELSE 'INVENTORY' END,
                        COALESCE(c.vat_rate_percent, 0),COALESCE(p.sku,''),p.is_active
                 FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
+                LEFT JOIN LATERAL (
+                    SELECT string_agg(p.variant_options->>opt.value, ' · ' ORDER BY opt.ordinality) label
+                    FROM product_groups pg, jsonb_array_elements_text(pg.option_names) WITH ORDINALITY opt(value,ordinality)
+                    WHERE pg.group_id=p.group_id
+                ) variant ON true
                 WHERE p.product_id IN (%s) ORDER BY p.product_id FOR UPDATE OF p
                 """.formatted(placeholders))) {
             for (int i = 0; i < productIds.size(); i++) ps.setInt(i + 1, productIds.get(i));
@@ -269,14 +286,15 @@ final class LanSalesService {
     private static int insertSale(Connection c, CheckoutRequest r, UUID deviceId, int userId, String userName,
                                   int locationId, CashDrawerContext drawer, ServerReceiptNumberManager.ReceiptNumber receipt,
                                   BigDecimal subtotal, BigDecimal discountAmount, BigDecimal discountPercent,
-                                  BigDecimal vat, BigDecimal total, Approval saleApproval) throws SQLException {
+                                  BigDecimal vat, BigDecimal total, Approval saleApproval,BigDecimal customerDiscount) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO sales (location_id,user_id,customer_id,total_amount,status,payment_method,payment_status,
                   amount_paid,user_name,receipt_number,receipt_device_id,receipt_sequence,subtotal_amount,
                   discount_percent,discount_amount,vat_amount,vat_rate_percent,vat_mode,payment_reference,
                   transaction_source,device_id,cash_drawer_id,cash_drawer_name,cash_drawer_session_id,
-                  discount_override_reason,discount_override_by_user_id,discount_override_by_name,completed_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                  discount_override_reason,discount_override_by_user_id,discount_override_by_name,
+                  customer_discount_percent,customer_discount_applied,completed_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             int i = 1;
             ps.setInt(i++, locationId); ps.setInt(i++, userId); setInt(ps, i++, r.customerId());
@@ -292,7 +310,8 @@ final class LanSalesService {
             ps.setString(i++, drawer.drawerName()); setLong(ps, i++, drawer.sessionId());
             ps.setString(i++, text(r.saleDiscountOverrideReason()));
             setInt(ps, i++, saleApproval == null ? null : saleApproval.approverUserId());
-            ps.setString(i, saleApproval == null ? null : saleApproval.approverName());
+            ps.setString(i++, saleApproval == null ? null : saleApproval.approverName());
+            ps.setBigDecimal(i++,customerDiscount);ps.setBoolean(i,customerDiscount.signum()>0);
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) throw new SQLException("Failed to create sale.");
@@ -385,18 +404,19 @@ final class LanSalesService {
         }
     }
 
-    private static void insertCustomerTransaction(Connection c, int customerId, int saleId, BigDecimal amount,
+    private static long insertCustomerTransaction(Connection c, int customerId, int saleId, BigDecimal amount,
                                                   String type, String userName, UUID deviceId,
                                                   int locationId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO customer_account_transactions (customer_id,sale_id,location_id,transaction_type,amount,
-                  note,user_name,device_id,created_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                  note,user_name,device_id,created_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) RETURNING transaction_id
                 """)) {
             ps.setInt(1, customerId); ps.setInt(2, saleId); ps.setInt(3, locationId);
             ps.setString(4, type); ps.setBigDecimal(5, amount);
             ps.setString(6, type + ". sale_id=" + saleId); ps.setString(7, userName);
-            ps.setString(8, deviceId.toString()); ps.executeUpdate();
+            ps.setString(8, deviceId.toString());try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getLong(1);}
         }
+        throw new SQLException("Failed to create the customer account transaction.");
     }
 
     private static void insertSaleAudit(Connection c, Integer saleId, Integer saleItemId, Integer customerId,
@@ -489,7 +509,7 @@ final class LanSalesService {
     }
     record CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,
                            BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,
-                           List<CheckoutLine> lines) { }
+                           List<CheckoutLine> lines,CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount) { }
     record CheckoutLine(int productId,int quantity,BigDecimal unitPrice,BigDecimal discountPercent,
                         String priceApprovalToken,String priceOverrideReason,String discountApprovalToken,
                         String discountOverrideReason,String miscItemName,boolean miscItem) { }

@@ -18,6 +18,7 @@ class CatalogIdentifierLookupArchitectureTest {
         assertTrue(server.contains("BarcodeNormalizer.lookupCandidates(rawIdentifier)"));
         assertTrue(server.contains("FROM product_barcodes pb WHERE pb.product_id=p.product_id"));
         assertTrue(server.indexOf("exactBarcodeProducts(") < server.indexOf("exactSkuProducts("));
+        assertTrue(server.contains("'' AS searchable_text"));
         assertTrue(client.contains("lookupCatalogIdentifier(String identifier)"));
     }
 }

@@ -1,0 +1,4 @@
+Allow the permanent scheduler hostname to open directly at the domain root.
+
+- `https://scheduler.deckers.gy/` now serves the scheduler.
+- The existing `/scheduler/` link remains supported.

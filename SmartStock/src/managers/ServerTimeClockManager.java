@@ -376,7 +376,9 @@ public final class ServerTimeClockManager {
             BigDecimal priorHours = allocatedHours.getOrDefault(periodKey, BigDecimal.ZERO);
             BigDecimal regularHours = segment.hours;
             BigDecimal overtimeHours = BigDecimal.ZERO;
-            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds);
+            LocalDate today = LocalDate.now(ZoneId.of(currentStoreZoneId()));
+            boolean currentPeriod = !today.isBefore(payPeriod.start()) && !today.isAfter(payPeriod.end());
+            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds, currentPeriod);
             BigDecimal regularPay = basePay;
             BigDecimal overtimePay = BigDecimal.ZERO;
             if (EmployeePayrollSettingsService.isHourly(record.compensationType)) {
@@ -1124,7 +1126,8 @@ public final class ServerTimeClockManager {
         return minutesBetween(overlapStart, overlapEnd);
     }
 
-    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds) {
+    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds,
+                                        boolean currentPeriod) {
         TimeRecord record = segment.record;
         if (record.isDaily()) {
             Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, segment.workDate));
@@ -1135,7 +1138,7 @@ public final class ServerTimeClockManager {
         if (record.isSalary()) {
             return BigDecimal.ZERO;
         }
-        if (record.clockOut != null && record.totalEarned != null && record.totalHoursWorked != null) {
+        if (!currentPeriod && record.clockOut != null && record.totalEarned != null && record.totalHoursWorked != null) {
             BigDecimal totalHours = record.totalHoursWorked.setScale(2, RoundingMode.HALF_UP);
             if (totalHours.compareTo(BigDecimal.ZERO) > 0) {
                 return utils.CurrencyFormatter.normalize(record.totalEarned

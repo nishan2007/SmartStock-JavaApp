@@ -136,7 +136,7 @@ public final class ServerQuotationInvoiceViewService {
     public static List<CustomerOption> listCustomers() throws SQLException {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement("""
-                     SELECT customer_id, account_number, name, is_business
+                     SELECT customer_id, account_number, name, is_business,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0)
                      FROM customer_accounts
                      WHERE is_active = TRUE
                      ORDER BY is_business DESC, name
@@ -149,7 +149,7 @@ public final class ServerQuotationInvoiceViewService {
                         rs.getInt("customer_id"),
                         rs.getString("account_number"),
                         rs.getString("name"),
-                        rs.getBoolean("is_business")
+                        rs.getBoolean("is_business"),rs.getBoolean(5),rs.getBigDecimal(6)
                 ));
             }
             return rows;
@@ -161,7 +161,7 @@ public final class ServerQuotationInvoiceViewService {
         String pattern = "%" + search + "%";
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement("""
-                     SELECT customer_id, account_number, name, is_business
+                     SELECT customer_id, account_number, name, is_business,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0)
                      FROM customer_accounts
                      WHERE is_active = TRUE
                        AND (
@@ -186,7 +186,7 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getInt("customer_id"),
                             rs.getString("account_number"),
                             rs.getString("name"),
-                            rs.getBoolean("is_business")
+                            rs.getBoolean("is_business"),rs.getBoolean(5),rs.getBigDecimal(6)
                     ));
                 }
                 return rows;
@@ -343,7 +343,8 @@ public final class ServerQuotationInvoiceViewService {
                     SELECT i.invoice_id, i.invoice_number, i.total_amount, i.amount_paid, i.balance_due,
                            COALESCE(ca.current_balance, 0) AS customer_balance,
                            COALESCE(ca.credit_limit, 0) AS credit_limit,
-                           GREATEST(COALESCE(ca.credit_limit, 0) - COALESCE(ca.current_balance, 0), 0) AS available_credit
+                           GREATEST(COALESCE(ca.credit_limit, 0) - COALESCE(ca.current_balance, 0), 0) AS available_credit,
+                           i.customer_id,COALESCE(ca.name,''),COALESCE(ca.require_charge_authorization,FALSE)
                     FROM invoices i
                     LEFT JOIN customer_accounts ca ON ca.customer_id = i.customer_id
                     WHERE i.invoice_id = ?
@@ -361,7 +362,7 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getBigDecimal("balance_due"),
                             rs.getBigDecimal("customer_balance"),
                             rs.getBigDecimal("credit_limit"),
-                            rs.getBigDecimal("available_credit")
+                            rs.getBigDecimal("available_credit"),rs.getInt("customer_id"),rs.getString("name"),rs.getBoolean("require_charge_authorization")
                     );
                 }
             }
@@ -393,14 +394,15 @@ public final class ServerQuotationInvoiceViewService {
 
     public record InvoiceFinancials(long invoiceId, String invoiceNumber, BigDecimal totalAmount,
                                   BigDecimal amountPaid, BigDecimal balanceDue, BigDecimal customerBalance,
-                                  BigDecimal creditLimit, BigDecimal availableCredit) {
+                                  BigDecimal creditLimit, BigDecimal availableCredit,int customerId,String customerName,boolean requireChargeAuthorization) {
     }
 
     public record AuditEntry(String createdAt, String document, String actionType, String fieldName,
                              String oldValue, String newValue, String userName, String reason) {
     }
 
-    public record CustomerOption(int customerId, String accountNumber, String name, boolean business) {
+    public record CustomerOption(int customerId, String accountNumber, String name, boolean business,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent) {
+        public CustomerOption(int customerId,String accountNumber,String name,boolean business){this(customerId,accountNumber,name,business,false,BigDecimal.ZERO);}
         @Override
         public String toString() {
             return (business ? "[Business] " : "") + name

@@ -221,6 +221,10 @@ public final class AppUpdateService {
         manifest.setProperty("sync.service.user", windowsServiceUser());
         manifest.setProperty("sync.service.launch.agent.label", "com.smartstock.sync");
         manifest.setProperty("relaunch", "true");
+        // The updater is launched by the current desktop process. Carry its
+        // exact PID so the elevated updater can close this instance before it
+        // touches files or starts the replacement launcher.
+        manifest.setProperty("desktop.pid", Long.toString(ProcessHandle.current().pid()));
         Path manifestPath = stagingDir.resolve("update.properties");
         try (var output = Files.newOutputStream(manifestPath)) {
             manifest.store(output, "SmartStock staged update");
@@ -257,7 +261,15 @@ public final class AppUpdateService {
                 if (Files.isDirectory(entry) && name.startsWith("staged-")
                         && Files.getLastModifiedTime(entry).toInstant()
                         .isBefore(java.time.Instant.now().minus(Duration.ofHours(24)))) {
-                    deleteRecursively(entry);
+                    // Windows may keep a downloaded ZIP or updater JAR open briefly
+                    // (Explorer, antivirus, or an interrupted updater). A locked
+                    // stale stage is harmless; never prevent a fresh update from
+                    // being prepared because cleanup could not remove it.
+                    try {
+                        deleteRecursively(entry);
+                    } catch (IOException ignored) {
+                        // It will be retried on the next update check.
+                    }
                 }
             }
         }

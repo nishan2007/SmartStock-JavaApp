@@ -30,6 +30,16 @@ class MakeASaleItemSearchResetTest {
         assertTrue(source.contains("\"AMBIGUOUS\".equals(lookup.status())"));
     }
 
+    @Test void repeatedScannerEnterDoesNotCancelAnIdenticalLookup() throws Exception {
+        String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
+
+        assertTrue(source.contains("identifier.equals(pendingIdentifierLookup)"));
+        assertTrue(source.contains("pendingIdentifierLookup = identifier;"));
+        assertTrue(source.contains("pendingIdentifierLookup = \"\";"));
+        assertTrue(source.contains("searchField.getText().trim().equals(pendingIdentifierLookup)"));
+        assertTrue(source.contains("UiTaskRunner.cancel(this, \"make-sale.identifier-lookup\")"));
+    }
+
     @Test void enterAcceptsTheRowChosenWithArrowKeys() throws Exception {
         String source = Files.readString(Path.of("src/ui/screens/MakeASale.java"));
 

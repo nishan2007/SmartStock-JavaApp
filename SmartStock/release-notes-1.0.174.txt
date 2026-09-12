@@ -1,0 +1,9 @@
+Dedicated Color field for inventory items and variants.
+
+- Add or edit item colors in New Item, Edit Item, and the Inventory Color column.
+- Show Color alongside Size in inventory, Edit Item search, and checkout search results.
+- Search items by color, including the cached checkout catalog.
+- Populate item colors from existing variant Color options and keep variant option combinations consistent.
+- Preserve saved colors when older registers omit the field.
+
+Update the store server before registers so the automatic local color-field upgrade is available.

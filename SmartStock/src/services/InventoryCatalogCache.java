@@ -37,6 +37,14 @@ public final class InventoryCatalogCache {
         return refresh();
     }
 
+    /** Returns the warmed catalog filtered locally for responsive item pickers. */
+    public static List<LanApiClient.CatalogProduct> search(String query) {
+        String normalized = query == null ? "" : query.trim();
+        return current().map(snapshot -> snapshot.products().stream()
+                .filter(product -> ProductSearchHelper.textMatches(product.searchableText(), normalized))
+                .toList()).orElse(List.of());
+    }
+
     public static synchronized CompletableFuture<Snapshot> refresh() {
         Scope requestedScope = currentScope();
         if (!requestedScope.isUsable()) {
@@ -47,6 +55,7 @@ public final class InventoryCatalogCache {
         activeScope = requestedScope;
         activeLoad = CompletableFuture.supplyAsync(() -> {
             try {
+                LanApiClient.loadProductGroups();
                 List<LanApiClient.CatalogProduct> products = List.copyOf(LanApiClient.searchCatalog(""));
                 return new Snapshot(requestedScope, products, Instant.now());
             } catch (Exception ex) {

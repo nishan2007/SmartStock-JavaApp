@@ -119,7 +119,7 @@ public final class EpsonReceiptPrintService {
     }
 
     private static void appendCut(ByteArrayOutputStream out) {
-        out.writeBytes(new byte[]{0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00});
+        out.writeBytes(new byte[]{0x1B, 0x64, 0x01, 0x1D, 0x56, 0x42, 0x00});
     }
 
     private static void submit(PrintService service, byte[] bytes, String jobName) throws PrintException {

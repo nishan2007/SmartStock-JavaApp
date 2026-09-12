@@ -46,6 +46,7 @@ class MobileItemWebArchitectureTest {
         assertTrue(api.contains("origin.equalsIgnoreCase(allowed)"));
         assertTrue(api.contains("LanProductAdminService.create"));
         assertTrue(api.contains("LanTlsIdentity.mobileWebHostName()"));
+        assertTrue(api.contains("InetAddress.getByName(\"0.0.0.0\")"));
         assertTrue(api.contains("LanProductAdminService.update"));
         assertTrue(api.contains("device_name='WEB APP'"));
         assertTrue(api.contains("smartstock-mobile-item-web:"));

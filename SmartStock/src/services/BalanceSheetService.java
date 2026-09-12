@@ -120,6 +120,7 @@ public final class BalanceSheetService {
     public static List<DrawSessionRange> findDrawSessionRanges(String storeZoneId, LocalDate from, LocalDate to) throws SQLException {
         JsonObject body=range(from,to);body.addProperty("storeZoneId",storeZoneId);return array(read("DRAW_RANGES",body),"rows",DrawSessionRange[].class);
     }
+    public static List<DrawerHistoryOption> drawerHistoryOptions(Long submissionId,String label,LocalDate from,LocalDate to,String zone)throws SQLException{JsonObject body=range(from,to);if(submissionId!=null)body.addProperty("submissionId",submissionId);body.addProperty("label",label);body.addProperty("storeZoneId",zone);return array(read("DRAWER_HISTORY_OPTIONS",body),"rows",DrawerHistoryOption[].class);}
 
     private static JsonObject read(String action,JsonObject body)throws SQLException{try{return LanApiClient.balanceSheetRead(action,body);}catch(Exception e){throw sql(e);}}
     private static JsonObject mutate(String action,JsonObject body)throws SQLException{try{return LanApiClient.balanceSheetMutation(action,body,UUID.randomUUID().toString());}catch(Exception e){throw sql(e);}}
@@ -146,6 +147,7 @@ public final class BalanceSheetService {
     public record SheetLine(String label,BigDecimal amount){}
     public record BankTransactionLine(String transaction,String direction,BigDecimal amount){}
     public record DrawSessionRange(long sessionId,LocalDate openedDate,LocalDate closedDate,String label,String status){}
+    public record DrawerHistoryOption(long sessionId,String label,BigDecimal amount,boolean inferred){public String toString(){return "Session #"+sessionId+" - "+label+" - "+zero(amount)+(inferred?" (inferred)":"");}}
     public record LegacyCashRecovery(String sourceType,long sourceId,Long beforeSessionId,long afterSessionId,long drawerId,String drawerName){}
     public record SubmissionOption(long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,BigDecimal balanceCf,int revisionNo,LocalDateTime lastEditedAt,String lastEditedByName,LocalDateTime editExpiresAt,boolean latestWithinWindow){public String toString(){return periodStart+" to "+periodEnd+" - "+text(submittedByName)+" - CF "+zero(balanceCf).toPlainString()+(revisionNo>0?" - Rev "+revisionNo:"");}}
     public record BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf){}

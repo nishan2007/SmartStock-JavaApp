@@ -17,6 +17,7 @@ public class CustomerInfoPanel extends JPanel {
     private final JTextField phoneField = new JTextField();
     private final JTextField accountNumberField = new JTextField();
     private final JTextField emailField = new JTextField();
+    private final JCheckBox applyCustomerDiscountBox=new JCheckBox("Apply customer custom-order discount");
     private JComponent trailingField;
     private String trailingLabel;
     private final JPopupMenu searchPopup = new JPopupMenu();
@@ -54,6 +55,7 @@ public class CustomerInfoPanel extends JPanel {
 
     public String getCustomerAccountNumber(){return accountNumberField.getText().trim();}
     public String getCustomerEmail(){return emailField.getText().trim();}
+    public boolean applyCustomerDiscount(){return applyCustomerDiscountBox.isSelected();}
 
     public void clear() {
         selectedCustomer = null;
@@ -64,6 +66,7 @@ public class CustomerInfoPanel extends JPanel {
         phoneField.setText("");
         accountNumberField.setText("");
         emailField.setText("");
+        applyCustomerDiscountBox.setSelected(false);applyCustomerDiscountBox.setVisible(false);
         searchPopup.setVisible(false);
     }
 
@@ -104,6 +107,7 @@ public class CustomerInfoPanel extends JPanel {
         gbc.gridx=1;gbc.weightx=1;add(accountNumberField,gbc);
         gbc.gridx=2;gbc.weightx=0;add(new JLabel("Email:"),gbc);
         gbc.gridx=3;gbc.weightx=.35;add(emailField,gbc);
+        gbc.gridx=0;gbc.gridy=3;gbc.gridwidth=4;gbc.weightx=1;applyCustomerDiscountBox.setVisible(false);add(applyCustomerDiscountBox,gbc);gbc.gridwidth=1;
         if (trailingField != null) {
             gbc.gridx = 4;
             gbc.gridy = 1;
@@ -217,6 +221,7 @@ public class CustomerInfoPanel extends JPanel {
         phoneField.setText(customer.phone() == null ? "" : customer.phone());
         accountNumberField.setText(customer.accountNumber() == null ? "" : customer.accountNumber());
         emailField.setText(customer.email() == null ? "" : customer.email());
+        boolean discount=customer.customOrderDiscountEnabled()&&customer.customOrderDiscountPercent()!=null&&customer.customOrderDiscountPercent().signum()>0;applyCustomerDiscountBox.setVisible(discount);applyCustomerDiscountBox.setSelected(discount);applyCustomerDiscountBox.setText(discount?"Apply customer custom-order discount ("+customer.customOrderDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer custom-order discount");
         searchPopup.setVisible(false);
         phoneField.requestFocusInWindow();
     }

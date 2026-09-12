@@ -1,0 +1,6 @@
+Preserve permanent scheduler links across application updates.
+
+- Read the server's saved HTTPS scheduler origin from its local scheduler.properties file.
+- Keep the scheduler link, QR code, and link notifications on the configured permanent address after updates rebuild the server startup task.
+- Preserve the environment override and temporary links for unconfigured servers.
+- Reject invalid saved addresses instead of silently switching to a temporary public link.

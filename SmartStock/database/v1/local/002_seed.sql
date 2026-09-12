@@ -144,6 +144,8 @@ INSERT INTO public.roles (role_id, role_name, description, created_at, updated_a
 --
 
 INSERT INTO public.role_permissions (role_id, permission_id, updated_at) VALUES (1, 4, '2026-08-09 13:36:57.537097-04');
+INSERT INTO public.permissions(permission_id,permission_key,permission_name,description,permission_group,permission_subgroup) SELECT COALESCE(MAX(permission_id),0)+1,'MANAGE_CUSTOMER_DISCOUNTS','Manage Customer Discounts','Allows configuring automatic customer discounts.','Customers','Discounts' FROM public.permissions WHERE NOT EXISTS(SELECT 1 FROM public.permissions WHERE permission_key='MANAGE_CUSTOMER_DISCOUNTS');
+INSERT INTO public.role_permissions(role_id,permission_id) SELECT 1,permission_id FROM public.permissions WHERE permission_key='MANAGE_CUSTOMER_DISCOUNTS' ON CONFLICT(role_id,permission_id) DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_id, updated_at) VALUES (1, 5, '2026-08-09 13:36:57.537097-04');
 INSERT INTO public.role_permissions (role_id, permission_id, updated_at) VALUES (1, 6, '2026-08-09 13:36:57.537097-04');
 INSERT INTO public.role_permissions (role_id, permission_id, updated_at) VALUES (1, 1, '2026-08-09 13:36:57.542608-04');
@@ -324,6 +326,18 @@ ON CONFLICT (permission_key) DO UPDATE SET permission_name=EXCLUDED.permission_n
 INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
 SELECT r.role_id,p.permission_id,CURRENT_TIMESTAMP FROM public.roles r CROSS JOIN public.permissions p
 WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='ADVANCED_RETURN_LOOKUP'
+ON CONFLICT (role_id,permission_id) DO NOTHING;
+
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup,created_at)
+VALUES ('VIEW_DRAWER_HISTORY','View Drawer History',
+        'Allows viewing the permanent drawer count and lifecycle history.',
+        'Operations','Cash Drawer',CURRENT_TIMESTAMP)
+ON CONFLICT (permission_key) DO UPDATE SET permission_name=EXCLUDED.permission_name,
+ description=EXCLUDED.description,permission_group=EXCLUDED.permission_group,
+ permission_subgroup=EXCLUDED.permission_subgroup;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,CURRENT_TIMESTAMP FROM public.roles r CROSS JOIN public.permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='VIEW_DRAWER_HISTORY'
 ON CONFLICT (role_id,permission_id) DO NOTHING;
 SELECT pg_catalog.setval(pg_get_serial_sequence('public.permissions','permission_id'),
  GREATEST((SELECT MAX(permission_id) FROM public.permissions),1),TRUE);

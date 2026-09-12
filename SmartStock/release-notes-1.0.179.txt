@@ -1,0 +1,8 @@
+Automatic customer discounts.
+
+- Configure independent percentage discounts for sales, invoices and quotations, and custom orders on each customer account.
+- Automatically apply the relevant customer discount when the account is selected, with a per-transaction option to turn it off.
+- Use the larger of the customer rate and an existing manual document or line discount to avoid unintended double-discounting.
+- Calculate VAT, cash due, change, deposits, and account balances from the discounted totals.
+- Preserve the selected discount behavior in held carts and snapshot applied discounts on completed sales, quotations, invoices, and custom orders.
+- Restrict customer discount configuration to the new Manage Customer Discounts administrator permission.

@@ -204,6 +204,23 @@ public final class ServerEmailOutboxService {
         }
     }
 
+    static long queueSchedulerLinkChanged(Connection conn, int locationId, String recipient, String schedulerUrl) throws SQLException {
+        EmailSchemaInstaller.ensureSchema(conn);
+        StoreEmailSettings settings = loadSettings(conn, locationId);
+        if (isBlank(settings.senderEmail())) throw new SQLException("This store does not have an email sender address configured.");
+        String text = "The SmartStock employee scheduler link has changed.\n\nNew scheduler link:\n"
+                + schedulerUrl + "\n\nPlease use this link from now on; the previous tunnel link may no longer work.";
+        String html = "<html><body style=\"font-family:Arial,sans-serif;color:#1f2937\">"
+                + "<h2>SmartStock Scheduler Link Updated</h2><p>The employee scheduler link has changed.</p>"
+                + "<p><a href=\"" + htmlEscape(schedulerUrl) + "\">" + htmlEscape(schedulerUrl) + "</a></p>"
+                + "<p>Please use this link from now on; the previous tunnel link may no longer work.</p></body></html>";
+        EmailDraft draft = new EmailDraft(settings, recipient, "SmartStock Scheduler link changed",
+                text, html, null, null, null, "SCHEDULER_LINK", schedulerUrl);
+        long outboxId = insertDraft(conn, draft);
+        recordEvent(conn, outboxId, "QUEUED", "Updated scheduler link queued.");
+        return outboxId;
+    }
+
     public static List<SendResult> processQueued(int limit) throws SQLException {
         List<Long> ids = new ArrayList<>();
         try (ConnectionLease lease = connectionLease()) {

@@ -21,6 +21,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 
 public class ReceivingHistory extends JFrame {
+    private List<List<LanApiClient.ReceivingHistoryRow>> slips = List.of();
     private final JTextField searchField = new JTextField();
     private final JTextField fromDateField = new JTextField();
     private final JTextField toDateField = new JTextField();
@@ -44,7 +45,7 @@ public class ReceivingHistory extends JFrame {
         root.add(buildHeaderPanel(), BorderLayout.NORTH);
 
         tableModel = new DefaultTableModel(
-                new Object[]{"Receive ID", "Movement ID", "Date / Time", "Product", "SKU", "Store", "Qty Received", "Received By", "Note"},
+                new Object[]{"Receive ID", "Date / Time", "Store", "Items", "Units Received", "Received By"},
                 0
         ) {
             @Override
@@ -57,18 +58,20 @@ public class ReceivingHistory extends JFrame {
         historyTable.setRowHeight(28);
         historyTable.getTableHeader().setReorderingAllowed(false);
         historyTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        historyTable.getColumnModel().getColumn(0).setPreferredWidth(210);
-        historyTable.getColumnModel().getColumn(1).setPreferredWidth(90);
-        historyTable.getColumnModel().getColumn(2).setPreferredWidth(170);
-        historyTable.getColumnModel().getColumn(3).setPreferredWidth(220);
-        historyTable.getColumnModel().getColumn(4).setPreferredWidth(140);
-        historyTable.getColumnModel().getColumn(5).setPreferredWidth(170);
-        historyTable.getColumnModel().getColumn(6).setPreferredWidth(110);
-        historyTable.getColumnModel().getColumn(7).setPreferredWidth(170);
-        historyTable.getColumnModel().getColumn(8).setPreferredWidth(260);
-
+        for(int c=0;c<6;c++) historyTable.getColumnModel().getColumn(c).setPreferredWidth(180);
+        historyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        historyTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if(e.getClickCount()==2 && SwingUtilities.isLeftMouseButton(e) && historyTable.rowAtPoint(e.getPoint())>=0) showDetails();
+            }
+        });
+        JButton detailsButton = new JButton("View Details");
+        detailsButton.addActionListener(e -> showDetails());
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.add(detailsButton,BorderLayout.WEST);
+        footer.add(loadingState,BorderLayout.CENTER);
         root.add(new JScrollPane(historyTable), BorderLayout.CENTER);
-        root.add(loadingState, BorderLayout.SOUTH);
+        root.add(footer, BorderLayout.SOUTH);
         add(root);
 
         loadReceivingHistory();
@@ -183,15 +186,46 @@ public class ReceivingHistory extends JFrame {
 
     private void applyReceivingHistory(ReceivingSnapshot snapshot) {
         tableModel.setRowCount(0);
-        int totalUnits = 0;
-        for (LanApiClient.ReceivingHistoryRow row : snapshot.rows()) {
-                totalUnits += row.changeQuantity();
-                tableModel.addRow(new Object[]{row.receiveId(), row.movementId(),
-                        formatTimestamp(row.createdAtEpochMillis()), row.productName(), row.sku(),
-                        row.storeName(), row.changeQuantity(),
-                        formatReceivedBy(row.receivedBy(), row.note()), row.note()});
+        var grouped = new java.util.LinkedHashMap<String,List<LanApiClient.ReceivingHistoryRow>>();
+        for(var row:snapshot.rows()) grouped.computeIfAbsent(slipId(row),k -> new java.util.ArrayList<>()).add(row);
+        slips = new java.util.ArrayList<>(grouped.values());
+        long totalUnits = 0;
+        for(var lines:slips) {
+            var row=lines.get(0);
+            long units=lines.stream().mapToLong(LanApiClient.ReceivingHistoryRow::changeQuantity).sum();
+            totalUnits+=units;
+            tableModel.addRow(new Object[]{slipId(row),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),lines.size(),units,formatReceivedBy(row.receivedBy(),row.note())});
         }
-        summaryLabel.setText("Records: " + tableModel.getRowCount() + "   Units: " + totalUnits);
+        summaryLabel.setText("Slips: "+slips.size()+"   Units: "+totalUnits);
+    }
+
+    private String slipId(LanApiClient.ReceivingHistoryRow row) {
+        return row.receiveId()==null || row.receiveId().isBlank() ? "Legacy movement #"+row.movementId() : row.receiveId();
+    }
+
+    private void showDetails() {
+        int selected=historyTable.getSelectedRow();
+        if(selected<0) { JOptionPane.showMessageDialog(this,"Select a receiving slip first."); return; }
+        var lines=slips.get(historyTable.convertRowIndexToModel(selected));
+        var first=lines.get(0);
+        DefaultTableModel details=new DefaultTableModel(new Object[]{"Movement ID","Product","SKU","Qty Received","Note"},0) {
+            public boolean isCellEditable(int r,int c) { return false; }
+        };
+        for(var row:lines) details.addRow(new Object[]{row.movementId(),row.productName(),row.sku(),row.changeQuantity(),row.note()});
+        JTable items=new JTable(details);
+        items.setRowHeight(28);
+        JDialog dialog=new JDialog(this,"Receiving Slip — "+slipId(first),true);
+        JPanel content=new JPanel(new BorderLayout(10,10));
+        content.setBorder(new EmptyBorder(12,12,12,12));
+        content.add(new JLabel(slipId(first)+" | "+formatTimestamp(first.createdAtEpochMillis())+" | "+first.storeName()+" | "+formatReceivedBy(first.receivedBy(),first.note())),BorderLayout.NORTH);
+        content.add(new JScrollPane(items),BorderLayout.CENTER);
+        JButton close=new JButton("Close");
+        close.addActionListener(e -> dialog.dispose());
+        content.add(close,BorderLayout.SOUTH);
+        dialog.setContentPane(content);
+        dialog.setSize(Math.min(1000,getWidth()),Math.min(550,getHeight()));
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
     private record ReceivingSnapshot(List<LanApiClient.ReceivingHistoryRow> rows) { }

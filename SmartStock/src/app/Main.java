@@ -54,6 +54,8 @@ public class Main {
             try {
                 ThemeManager.applyLookAndFeelDefaults();
                 AppIconManager.install();
+                ui.helpers.TouchScrollSupport.install();
+                ui.helpers.TouchSearchKeyboard.installGlobal();
                 LanApiClient.setConnectionLossHandler(NavigationManager::returnToWelcomeForConnectionLoss);
                 WelcomeFrame frame = new WelcomeFrame();
                 frame.setVisible(true);

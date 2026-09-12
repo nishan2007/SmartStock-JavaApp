@@ -42,6 +42,8 @@ public class EditItem extends JFrame {
 
     private JTextField nameField;
     private JTextField sizeField;
+    private JTextField colorField;
+    private JTextField flavorField;
     private JTextField skuField;
     private JTextField barcodeField;
     private JTextArea descriptionArea;
@@ -74,6 +76,7 @@ public class EditItem extends JFrame {
     private final boolean canManualAdjustment = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
 
     public EditItem() {
+        InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null);
         setTitle("Edit Item");
         setSize(1280, 780);
         setMinimumSize(new Dimension(900, 650));
@@ -102,6 +105,8 @@ public class EditItem extends JFrame {
         searchBtn = new JButton("Search");
         nameField = new JTextField();
         sizeField = new JTextField();
+        colorField = new JTextField();
+        flavorField = new JTextField();
         skuField = new JTextField();
         barcodeField = new JTextField();
         descriptionArea = new JTextArea(3, 20);
@@ -228,7 +233,9 @@ public class EditItem extends JFrame {
         addField(fields, 1, 0, "Primary barcode", BarcodeGenerationHelper.field(this, barcodeField), "Scan, enter, or generate the main barcode.", true, 1);
         addField(fields, 0, 1, "Size", sizeField, "Optional, such as Small, 10 mm, or 5 lb.", false, 1);
         addField(fields, 1, 1, "SKU", skuField, "The product's permanent stock identifier.", true, 1);
-        addField(fields, 0, 2, "Description", createTextAreaScroll(descriptionArea, 76),
+        addField(fields, 0, 2, "Color", colorField, "Optional. For grouped Color options, use Manage variants.", false, 1);
+        addField(fields, 1, 2, "Flavor", flavorField, "Optional. For grouped Flavor options, use Manage variants.", false, 1);
+        addField(fields, 0, 3, "Description", createTextAreaScroll(descriptionArea, 76),
                 "Optional product notes or customer-facing details.", false, 2);
         return createSectionCard("1", "Item details", "Review the product identity and searchable information.", DeckersPalette.ORANGE, fields);
     }
@@ -391,6 +398,9 @@ public class EditItem extends JFrame {
         DeckersSwing.styleUtilityButton(cancelButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(saveButton, DeckersPalette.LIME);
         saveButton.setPreferredSize(new Dimension(145, 40));
+        JButton variantsButton=new JButton("Manage variants...");
+        variantsButton.addActionListener(e->{if(selectedProductId>0)new ProductVariantsDialog(this,java.util.List.of(selectedProductId),null).setVisible(true);else JOptionPane.showMessageDialog(this,"Select an item first.");});
+        actions.add(variantsButton);
         actions.add(clearButton);
         if(PermissionManager.hasPermission("PRODUCT_ARCHIVE"))actions.add(archiveButton);
         actions.add(cancelButton);
@@ -458,22 +468,34 @@ public class EditItem extends JFrame {
         }
 
         try {
-            List<LanApiClient.EditableProduct> products = archivedProductsBox.isSelected()
-                    ? LanApiClient.searchArchivedProducts(searchText) : LanApiClient.searchEditableProducts(searchText);
+            String cacheKey = "edit-item-search:" + (archivedProductsBox.isSelected() ? "archived:" : "active:") + searchText.toUpperCase(java.util.Locale.ROOT);
+            List<LanApiClient.EditableProduct> products = ui.helpers.SessionDataCache
+                    .get(cacheKey, java.util.List.class, ui.helpers.SessionDataCache.SCREEN_TTL)
+                    .map(value -> (List<LanApiClient.EditableProduct>) value.value())
+                    .orElseGet(() -> {
+                        try {
+                            List<LanApiClient.EditableProduct> loaded = archivedProductsBox.isSelected()
+                                    ? LanApiClient.searchArchivedProducts(searchText) : LanApiClient.searchEditableProducts(searchText);
+                            ui.helpers.SessionDataCache.put(cacheKey, loaded);
+                            return loaded;
+                        } catch (Exception ex) {
+                            throw new RuntimeException(ex);
+                        }
+                    });
             if (products.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No matching products found.");
                 return;
             }
             String[] columns = {"ID", "Name", "Size", "SKU", "Barcode", "Description", "Cost Price", "Price",
                     "Classification", "Quantity", "Reorder Qty", "Department ID", "Department", "Vendor ID",
-                    "Vendor", "Image URL", "Item Type", "Brand", "Shelf", "Storage Shelf"};
+                    "Vendor", "Image URL", "Item Type", "Brand", "Shelf", "Storage Shelf", "Color", "Flavor"};
             Object[][] rows = products.stream().map(product -> new Object[]{
                     product.productId(), product.name(), product.size(), product.sku(), product.barcode(),
                     product.description(), product.costPrice().doubleValue(), product.price().doubleValue(),
                     product.productType(), product.quantity(), product.reorderLevel(),
                     product.categoryId() == null ? "" : product.categoryId(), product.categoryName(),
                     product.vendorId() == null ? "" : product.vendorId(), product.vendorName(), product.imageUrl(),
-                    product.itemTypeName(), product.brandName(), product.shelfName(), product.storageShelfName()
+                    product.itemTypeName(), product.brandName(), product.shelfName(), product.storageShelfName(), product.color(), product.flavor()
             }).toArray(Object[][]::new);
             DefaultTableModel model = new DefaultTableModel(rows, columns) {
                 @Override public boolean isCellEditable(int row, int column) { return false; }
@@ -486,6 +508,8 @@ public class EditItem extends JFrame {
             table.setRowHeight(30);
             int[] hiddenColumns = {0, 5, 6, 10, 11, 13, 15, 18, 19};
             for (int columnIndex : hiddenColumns) hideColumn(table, columnIndex);
+            table.moveColumn(table.convertColumnIndexToView(model.findColumn("Color")),3);
+            table.moveColumn(table.convertColumnIndexToView(model.findColumn("Flavor")),4);
             TableImageHoverPreview.install(this, table, 15, DeckersPalette.PURPLE);
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setPreferredSize(new Dimension(900, 300));
@@ -504,7 +528,7 @@ public class EditItem extends JFrame {
             selectedProductId = product.productId();
             selectedProductActive = product.active();
             nameField.setText(product.name());
-            sizeField.setText(product.size());
+            sizeField.setText(product.size()); colorField.setText(product.color()); flavorField.setText(product.flavor());
             skuField.setText(product.sku());
             barcodeField.setText(product.barcode());
             descriptionArea.setText(product.description());
@@ -698,7 +722,7 @@ public class EditItem extends JFrame {
                     brandName, shelfName,
                     storageShelfName, List.copyOf(extraBarcodes),
                     quantity, reorderLevel, selectedOriginalQuantity,
-                    inventoryItem && canManualAdjustment
+                    inventoryItem && canManualAdjustment, colorField.getText().trim(), flavorField.getText().trim()
             );
             String fingerprint = draft.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
@@ -706,7 +730,7 @@ public class EditItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;Integer productId=selectedProductId;Integer originalQuantity=selectedOriginalQuantity;int requestedQuantity=quantity,requestedReorderLevel=reorderLevel;boolean adjust=inventoryItem&&canManualAdjustment;
-            UiTaskRunner.submit(this,"items.update",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust);return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.update",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust,draft.color(),draft.flavor());return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update item: " + ex.getMessage());
         }
@@ -754,7 +778,7 @@ public class EditItem extends JFrame {
         selectedProductType = "INVENTORY";
         selectedProductActive = true;
         nameField.setText("");
-        sizeField.setText("");
+        sizeField.setText(""); colorField.setText(""); flavorField.setText("");
         skuField.setText("");
         barcodeField.setText("");
         descriptionArea.setText("");
@@ -776,7 +800,7 @@ public class EditItem extends JFrame {
 
     private void setFormEnabled(boolean enabled) {
         nameField.setEnabled(enabled);
-        sizeField.setEnabled(enabled);
+        sizeField.setEnabled(enabled); colorField.setEnabled(enabled); flavorField.setEnabled(enabled);
         skuField.setEnabled(enabled);
         barcodeField.setEnabled(enabled);
         descriptionArea.setEnabled(enabled);

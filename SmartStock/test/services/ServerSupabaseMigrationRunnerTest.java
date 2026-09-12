@@ -51,11 +51,21 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(17, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(23, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260909120000_employment_portal.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260831150000_wallet_template.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"));
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
         }

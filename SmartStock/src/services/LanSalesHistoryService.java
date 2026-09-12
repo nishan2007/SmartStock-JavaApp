@@ -123,7 +123,20 @@ final class LanSalesHistoryService {
         result.put("returnItems", queryReturnItems(connection, saleId));
         result.put("overrideAudit", hasPermission(connection, userId, "VIEW_SALE_AUDIT")
                 ? queryAudit(connection, saleId) : List.of());
+        result.put("authorization",queryAuthorization(connection,saleId));
         return result;
+    }
+
+    private static Map<String,Object> queryAuthorization(Connection c,int saleId)throws SQLException{
+        CustomerChargeAuthorizationService.purgeExpired(c);
+        try(PreparedStatement p=c.prepareStatement("""
+                SELECT representative_name,signature_png,unsigned_reason,captured_at,signature_purged_at,
+                       COALESCE(captured_by_name,''),COALESCE(device_name,'')
+                FROM customer_charge_authorizations WHERE document_type='SALE' AND document_id=?
+                """)){p.setInt(1,saleId);try(ResultSet r=p.executeQuery()){if(!r.next())return null;
+            byte[]png=r.getBytes(2);return map("representativeName",r.getString(1),"signaturePngBase64",png==null?null:java.util.Base64.getEncoder().encodeToString(png),
+                    "unsignedReason",r.getString(3),"capturedAtEpochMillis",r.getTimestamp(4).getTime(),"imageExpired",r.getTimestamp(5)!=null,
+                    "capturedByName",r.getString(6),"deviceName",r.getString(7));}}
     }
 
     private static List<Map<String, Object>> queryItems(Connection c, int saleId) throws SQLException {

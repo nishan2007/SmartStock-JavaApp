@@ -1,0 +1,5 @@
+Fix Windows update archive extraction.
+
+- Recognize backslash directory entries produced by PowerShell Compress-Archive.
+- Package updates with standard forward-slash ZIP paths compatible with existing updaters.
+- Wait for the existing desktop to exit before relaunching after an update failure.

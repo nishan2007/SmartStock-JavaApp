@@ -16,7 +16,7 @@ class EpsonReceiptPrintServiceTest {
         byte[] job = EpsonReceiptPrintService.composeJob(receipt, settings, true);
         assertArrayEquals(receipt, java.util.Arrays.copyOf(job, receipt.length));
         assertTrue(indexOf(job, new byte[]{0x1B, 0x70, 0x00, 60, 120}) >= receipt.length);
-        assertTrue(indexOf(job, new byte[]{0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00})
+        assertTrue(indexOf(job, new byte[]{0x1B, 0x64, 0x01, 0x1D, 0x56, 0x42, 0x00})
                 > indexOf(job, new byte[]{0x1B, 0x70}));
     }
 

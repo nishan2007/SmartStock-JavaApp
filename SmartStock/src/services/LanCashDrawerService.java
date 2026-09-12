@@ -29,22 +29,63 @@ final class LanCashDrawerService {
     static Map<String,Object> open(Connection c,UUID deviceId,int userId,String userName,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");return map("session",CashDrawerService.openSessionForDevice(c,locationId,deviceId.toString(),deviceName(c,deviceId),userId,userName,null));
     }
-    static Map<String,Object> handover(Connection c,JsonObject body,int userId,String userName)throws Exception{
+    static Map<String,Object> handover(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
-        CashDrawerHandover result=CashDrawerService.recordHandover(c,id,count,text(body,"notes"),userId,userName);return map("handover",result);
+        CashDrawerHandover result=CashDrawerService.recordHandover(c,id,count,text(body,"notes"),userId,userName);CashDrawerCountHistoryService.appendLifecycle(c,id,"HANDOVER",body,userId,userName,deviceId,deviceName,text(body,"notes"));return map("handover",result);
     }
-    static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName)throws Exception{
+    static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
         CashDrawerSession result=CashDrawerService.closeSession(c,id,count,text(body,"notes"),userId,userName);
+        CashDrawerCountHistoryService.appendLifecycle(c,id,"CLOSE",body,userId,userName,deviceId,deviceName,text(body,"notes"));
         return map("session",result,"handlers",CashDrawerService.listCashHandlers(c,id),
                 "returnedAmount",CashDrawerService.calculateReturnedCash(c,id));
     }
     static Map<String,Object> recent(Connection c,int userId,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");return map("sessions",CashDrawerService.listRecentSessions(c,locationId,null,false));
     }
-    static Map<String,Object> revise(Connection c,JsonObject body,int userId,String userName)throws Exception{
+
+    static Map<String,Object> reprint(Connection c,JsonObject body,UUID deviceId,int userId,int locationId)throws Exception {
+        require(c,userId,"BALANCE_DRAWER");
+        java.time.LocalDate date;
+        try{date=java.time.LocalDate.parse(required(body,"date"));}catch(Exception e){throw rule(400,"VALIDATION_ERROR","Choose a valid date (YYYY-MM-DD).");}
+        CashDrawerContext drawer=CashDrawerService.resolveDrawerForDevice(c,locationId,deviceId.toString());
+        if(drawer==null||drawer.cashDrawerId()==null)throw rule(400,"DRAWER_NOT_ASSIGNED","This device has no assigned drawer.");
+        String zone="America/Guyana";
+        try(PreparedStatement ps=c.prepareStatement("SELECT timezone FROM locations WHERE location_id=?")) {
+            ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){if(rs.next()&&rs.getString(1)!=null&&!rs.getString(1).isBlank())zone=rs.getString(1);}
+        }
+        java.time.ZoneId zoneId=java.time.ZoneId.of(zone);
+        Long selected=body.has("sessionId")?requiredLong(body,"sessionId"):null;
+        java.util.List<CashDrawerSession> sessions=new java.util.ArrayList<>();
+        try(PreparedStatement ps=c.prepareStatement("SELECT * FROM cash_drawer_sessions WHERE location_id=? AND cash_drawer_id=? AND status='CLOSED' AND closed_at>=? AND closed_at<? ORDER BY closed_at DESC,cash_drawer_session_id DESC")) {
+            ps.setInt(1,locationId);ps.setLong(2,drawer.cashDrawerId());
+            ps.setTimestamp(3,java.sql.Timestamp.from(date.atStartOfDay(zoneId).toInstant()));
+            ps.setTimestamp(4,java.sql.Timestamp.from(date.plusDays(1).atStartOfDay(zoneId).toInstant()));
+            try(ResultSet rs=ps.executeQuery()){while(rs.next())sessions.add(CashDrawerService.mapSession(rs));}
+        }
+        if(selected==null)return map("sessions",sessions,"drawerName",drawer.drawerName());
+        CashDrawerSession session=sessions.stream().filter(s->s.sessionId()==selected).findFirst().orElseThrow(()->rule(404,"DRAWER_NOT_FOUND","The submitted draw is not available for this device's assigned drawer and date."));
+        JsonObject receiptSession=LanJson.create().toJsonTree(session).getAsJsonObject();
+        BigDecimal floatCash=null,cih=null;
+        JsonObject counts=new JsonObject(),floats=new JsonObject();boolean savedBreakdown=false;
+        // Reproduce the original submitted close, rather than mixing a later correction with its old cash breakdown.
+        try(PreparedStatement ps=c.prepareStatement("SELECT denomination_counts,float_counts,counted_cash,float_total,cash_in_hand,expected_cash FROM cash_drawer_count_events WHERE cash_drawer_session_id=? AND event_type='CLOSE' ORDER BY revision_no DESC LIMIT 1")) {
+            ps.setLong(1,selected);try(ResultSet rs=ps.executeQuery()){if(rs.next()) {
+                counts=com.google.gson.JsonParser.parseString(rs.getString(1)).getAsJsonObject();floats=com.google.gson.JsonParser.parseString(rs.getString(2)).getAsJsonObject();
+                savedBreakdown=!counts.isEmpty();
+                if(savedBreakdown){floatCash=rs.getBigDecimal(4);cih=rs.getBigDecimal(5);
+                    BigDecimal counted=rs.getBigDecimal(3),expected=rs.getBigDecimal(6);
+                    receiptSession.addProperty("countedCash",counted);receiptSession.addProperty("expectedCash",expected);
+                    receiptSession.addProperty("variance",counted.subtract(expected));receiptSession.addProperty("cashToRemove",counted.subtract(session.openingCash()));
+                }
+            }}
+        }
+        return map("session",receiptSession,"handlers",CashDrawerService.listCashHandlers(c,selected),"returnedAmount",CashDrawerService.calculateReturnedCash(c,selected),
+                "floatCash",floatCash,"cashInHand",cih,"denominationCounts",counts,"floatCounts",floats,"savedBreakdown",savedBreakdown);
+    }
+    static Map<String,Object> revise(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
         require(c,userId,"BALANCE_DRAWER");CashDrawerSession result=CashDrawerService.reviseClosedSessionCount(c,requiredLong(body,"sessionId"),
-                requiredMoney(body,"countedCash"),text(body,"notes"),userId,userName);return map("session",result);
+                requiredMoney(body,"countedCash"),text(body,"notes"),userId,userName);CashDrawerCountHistoryService.appendLifecycle(c,result.sessionId(),"CORRECTION",body,userId,userName,deviceId,deviceName,text(body,"notes"));return map("session",result);
     }
 
     static Map<String,Object> adminState(Connection c,JsonObject body,int userId)throws Exception{
@@ -75,7 +116,7 @@ final class LanCashDrawerService {
     }
 
     private static void require(Connection c,int userId,String permission)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM users u JOIN role_permissions rp ON rp.role_id=u.role_id JOIN permissions p ON p.permission_id=rp.permission_id WHERE u.user_id=? AND UPPER(p.permission_key)=? LIMIT 1")){ps.setInt(1,userId);ps.setString(2,permission);try(ResultSet rs=ps.executeQuery()){if(rs.next())return;}}throw rule(403,"PERMISSION_DENIED","You do not have permission for this cash drawer operation.");}
-    private static String deviceName(Connection c,UUID id)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(device_name,''),NULLIF(hostname,''),'LAN API Register') FROM devices WHERE device_id=?")){ps.setObject(1,id);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getString(1):"LAN API Register";}}}
+    static String deviceName(Connection c,UUID id)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(device_name,''),NULLIF(hostname,''),'LAN API Register') FROM devices WHERE device_id=?")){ps.setObject(1,id);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getString(1):"LAN API Register";}}}
     private static int requiredInt(JsonObject b,String k)throws RuleViolation{if(!b.has(k))throw rule(400,"VALIDATION_ERROR",k+" is required.");try{return b.get(k).getAsInt();}catch(Exception e){throw rule(400,"VALIDATION_ERROR",k+" is invalid.");}}
     private static Integer nullableInt(JsonObject b,String k)throws RuleViolation{if(!b.has(k)||b.get(k).isJsonNull())return null;return requiredInt(b,k);}
     private static long requiredLong(JsonObject b,String k)throws RuleViolation{if(!b.has(k))throw rule(400,"VALIDATION_ERROR",k+" is required.");try{return b.get(k).getAsLong();}catch(Exception e){throw rule(400,"VALIDATION_ERROR",k+" is invalid.");}}

@@ -87,6 +87,8 @@ class NfcAuthenticationCoverageTest {
                 "ui/screens/Login.java",
                 "ui/screens/ServerSetupWizard.java",
                 "ui/screens/SupabaseProjectInitializerDialog.java",
+                // Administrative webhook secret entry; not an employee sign-in surface.
+                "ui/screens/companyprefs/EmploymentPortalPanel.java",
                 "ui/helpers/NfcBadgePromptController.java"
         ).stream().sorted().toList(), files);
     }

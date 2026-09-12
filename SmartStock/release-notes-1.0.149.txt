@@ -1,0 +1,4 @@
+SmartStock 1.0.149
+
+- Fixes Windows updates failing when an older staged update folder is still locked by another process.
+- Skips locked stale staging folders safely so a fresh update can be downloaded and prepared.

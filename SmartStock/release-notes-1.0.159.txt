@@ -1,0 +1,6 @@
+Add employee registration and manager approval workflow.
+
+- Provide a store-network-only mobile registration form for employee details, ID documents, and passwords.
+- Keep submitted identities blocked until an authorized employee manager approves and activates them.
+- Add Employees, Pending Employees, and Applications tabs to Employee Management.
+- Add rejection, reopening, protected document access, and resumable approval handling.

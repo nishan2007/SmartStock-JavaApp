@@ -96,6 +96,33 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
         save("BADGE_SECURITY", settings);
     }
 
+    public static SchedulerLinkEmailSettings loadSchedulerLinkEmailSettings() {
+        return read("SCHEDULER_LINK_EMAIL", SchedulerLinkEmailSettings.class);
+    }
+
+    public static void saveSchedulerLinkEmailSettings(SchedulerLinkEmailSettings settings) throws IOException, SQLException {
+        save("SCHEDULER_LINK_EMAIL", settings);
+    }
+    public static ItemTypeQuickPickSettings loadItemTypeQuickPickSettings() {
+        try {
+            return GSON.fromJson(LanApiClient.companyCustomizationRead("ITEM_TYPE_QUICK_PICK", null).get("settings"), ItemTypeQuickPickSettings.class);
+        } catch (Exception ex) { throw unavailable(ex); }
+    }
+    public static void saveItemTypeQuickPickSettings(List<Integer> itemTypeIds) throws IOException, SQLException {
+        save("ITEM_TYPE_QUICK_PICK", itemTypeIds == null ? List.of() : List.copyOf(itemTypeIds));
+    }
+    public record ItemTypeOption(int itemTypeId, String name, String departmentName) {
+        @Override public String toString() { return name + (departmentName == null || departmentName.isBlank() ? "" : " — " + departmentName); }
+    }
+    public record ItemTypeQuickPickSettings(List<Integer> selectedItemTypeIds, List<ItemTypeOption> availableItemTypes) {
+        public ItemTypeQuickPickSettings {
+            selectedItemTypeIds = selectedItemTypeIds == null ? List.of() : List.copyOf(selectedItemTypeIds);
+            availableItemTypes = availableItemTypes == null ? List.of() : List.copyOf(availableItemTypes);
+        }
+    }
+    public static int loadAccountSignatureRetentionYears(){return read("ACCOUNT_SIGNATURE_RETENTION",Integer.class);}
+    public static void saveAccountSignatureRetentionYears(int years)throws IOException,SQLException{save("ACCOUNT_SIGNATURE_RETENTION",years);}
+
     public static List<PriceTagTemplateSettings> loadPriceTagTemplateSettings() {
         try {
             JsonObject response = LanApiClient.companyCustomizationRead("PRICE_TAGS", null);
@@ -119,6 +146,7 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
                     GSON.fromJson(settings.get("quotationInvoice"), QuotationInvoicePrintSettings.class),
                     GSON.fromJson(settings.get("badgeTemplate"), BadgeTemplateSettings.class),
                     GSON.fromJson(settings.get("badgeSecurity"), BadgeSecuritySettings.class),
+                    GSON.fromJson(settings.get("schedulerLinkEmail"), SchedulerLinkEmailSettings.class),
                     GSON.fromJson(settings.get("priceTags"), new TypeToken<List<PriceTagTemplateSettings>>() { }.getType())
             );
         } catch (Exception ex) {
@@ -131,6 +159,7 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
                               QuotationInvoicePrintSettings quotationInvoice,
                               BadgeTemplateSettings badgeTemplate,
                               BadgeSecuritySettings badgeSecurity,
+                              SchedulerLinkEmailSettings schedulerLinkEmail,
                               List<PriceTagTemplateSettings> priceTags) { }
 
     public static PriceTagTemplateSettings loadPriceTagTemplateSettings(int slot) {

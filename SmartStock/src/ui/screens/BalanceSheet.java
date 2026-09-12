@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -72,6 +73,7 @@ public class BalanceSheet extends JFrame {
     private final DefaultTableModel expenseModel = tableModel();
     private final DefaultTableModel payableModel = tableModel();
     private final DefaultTableModel drawerCashModel = tableModel();
+    private final JTable drawerCashTable = new JTable(drawerCashModel);
     private final DefaultTableModel deviceActivityModel = deviceActivityTableModel();
     private final DefaultTableModel pendingChequeModel = pendingChequeTableModel();
     private final DefaultTableModel bankTransactionModel = bankTransactionTableModel();
@@ -186,7 +188,7 @@ public class BalanceSheet extends JFrame {
         grid.setOpaque(false);
         grid.add(column(
                 section("Income", incomeTable(), new Color(219, 234, 254), addIncomeHeaderButton, deleteIncomeHeaderButton),
-                section("Drawer Cash In Hand", new JTable(drawerCashModel), new Color(226, 232, 240)),
+                section("Drawer Cash In Hand", drawerCashTable, new Color(226, 232, 240)),
                 section("Device Sales", new JTable(deviceActivityModel), new Color(224, 231, 255))
         ));
         grid.add(column(
@@ -206,6 +208,9 @@ public class BalanceSheet extends JFrame {
         mainPanel.add(top, BorderLayout.NORTH);
         mainPanel.add(grid, BorderLayout.CENTER);
         add(mainPanel, BorderLayout.CENTER);
+
+        drawerCashTable.setToolTipText("Double-click a drawer to view its count history.");
+        drawerCashTable.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){if(e.getClickCount()==2&&drawerCashTable.getSelectedRow()>=0)showDrawerHistory(drawerCashTable.getSelectedRow());}});
 
         refreshButton.addActionListener(e -> loadSheet());
         editBalanceBfButton.addActionListener(e -> showBalanceBfDialog());
@@ -533,6 +538,53 @@ public class BalanceSheet extends JFrame {
         netLabel.setText((net.compareTo(BigDecimal.ZERO) < 0 ? "Deficit: " : "Surplus: ") + money(net.abs()));
         cfExpectedTotal = defaultZero(sheet.balanceCf());
         recalculateCfChecker();
+    }
+
+    private void showDrawerHistory(int row){
+        if(!PermissionManager.hasPermission("VIEW_DRAWER_HISTORY")){JOptionPane.showMessageDialog(this,"You do not have permission to view drawer history.","Drawer History",JOptionPane.WARNING_MESSAGE);return;}
+        if(currentSheet==null||row<0||row>=drawerCashModel.getRowCount())return;
+        String label=String.valueOf(drawerCashModel.getValueAt(row,0));
+        LocalDate from=currentSheet.periodStart()!=null?currentSheet.periodStart():parseDate(fromField.getText().trim(),"From");
+        LocalDate to=currentSheet.periodEnd()!=null?currentSheet.periodEnd():parseDate(toField.getText().trim(),"To");
+        if(from==null||to==null)return;
+        try{
+            List<BalanceSheetService.DrawerHistoryOption> options=ResponsiveTask.await(this,"Finding drawer session...",()->BalanceSheetService.drawerHistoryOptions(currentSheet.submissionId(),label,from,to,StoreTimeZoneHelper.getStoreZoneId()));
+            if(options==null||options.isEmpty()){JOptionPane.showMessageDialog(this,"No drawer session history was found for this row.","Drawer History",JOptionPane.INFORMATION_MESSAGE);return;}
+            BalanceSheetService.DrawerHistoryOption option=options.size()==1?options.get(0):(BalanceSheetService.DrawerHistoryOption)JOptionPane.showInputDialog(this,"Select the drawer session:","Drawer History",JOptionPane.PLAIN_MESSAGE,null,options.toArray(),options.get(0));
+            if(option==null)return;
+            List<services.LanApiClient.DrawerCountEvent> events=ResponsiveTask.await(this,"Loading drawer history...",()->services.LanApiClient.loadCashDrawerHistory(option.sessionId()));
+            if(events==null)return;
+            StringBuilder text=new StringBuilder();
+            if(option.inferred())text.append("Legacy balance sheet: session match inferred from store, period, and row label.\n\n");
+            Map<String,Integer> previous=Map.of();
+            for(var event:events){
+                Map<String,Integer> current=event.denominationCounts()==null?Map.of():event.denominationCounts();
+                java.util.Set<String> keys=new java.util.TreeSet<>((a,b)->Integer.compare(Integer.parseInt(b),Integer.parseInt(a)));
+                keys.addAll(previous.keySet());keys.addAll(current.keySet());
+                List<String> changed=new ArrayList<>();
+                for(String key:keys)if(!java.util.Objects.equals(previous.get(key),current.get(key)))changed.add("$"+key+": "+(previous.containsKey(key)?previous.get(key):"blank")+"→"+(current.containsKey(key)?current.get(key):"blank"));
+                text.append('#').append(event.revision()).append("  ").append(event.createdAt()).append("  ").append(event.eventType()).append('\n')
+                        .append("User: ").append(event.changedByName()==null?"Unknown":event.changedByName()).append("  Device: ").append(event.deviceName()==null?"Unknown":event.deviceName()).append('\n')
+                        .append("Counted: ").append(money(event.countedCash())).append("  Float: ").append(money(event.floatTotal())).append("  CIH: ").append(money(event.cashInHand())).append("  Expected: ").append(money(event.expectedCash())).append('\n')
+                        .append("Changed: ").append(changed.isEmpty()?"No denomination changes":String.join(", ",changed)).append('\n')
+                        .append("Denominations: ").append(current).append('\n');
+                if("CLOSE".equalsIgnoreCase(event.eventType())){
+                    Map<String,Integer> floatCounts=event.floatCounts()==null?Map.of():event.floatCounts();
+                    Map<String,Integer> cihCounts=new java.util.LinkedHashMap<>();
+                    for(String key:keys){
+                        int counted=Math.max(current.getOrDefault(key,0),0);
+                        int retained=Math.max(floatCounts.getOrDefault(key,0),0);
+                        cihCounts.put(key,Math.max(counted-retained,0));
+                    }
+                    text.append("Float breakdown: ").append(floatCounts).append('\n')
+                            .append("CIH to remove breakdown: ").append(cihCounts).append('\n');
+                }
+                if(event.reason()!=null&&!event.reason().isBlank())text.append("Reason: ").append(event.reason()).append('\n');
+                text.append('\n');previous=current;
+            }
+            JTextArea area=new JTextArea(text.toString(),24,86);area.setEditable(false);area.setCaretPosition(0);
+            JOptionPane.showMessageDialog(this,new JScrollPane(area),"Drawer Session #"+option.sessionId()+" History",JOptionPane.INFORMATION_MESSAGE);
+        }catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to load drawer history: "+ex.getMessage(),"Drawer History",JOptionPane.ERROR_MESSAGE);}
     }
 
     private void showBalanceBfDialog() {

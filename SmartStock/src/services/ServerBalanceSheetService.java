@@ -588,6 +588,8 @@ public final class ServerBalanceSheetService {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         long submissionId = rs.getLong("balance_sheet_submission_id");
+                        linkDrawerSessions(conn, submissionId, from, to, storeZoneId,
+                                ServerRequestIdentity.locationId(), cashDrawerSessionIds);
                         SyncOutboxService.recordEvent(conn, "BALANCE_SHEET_SUBMITTED", Map.of(
                                 "balance_sheet_submission_id", submissionId,
                                 "location_id", ServerRequestIdentity.locationId() == null ? "" : ServerRequestIdentity.locationId(),
@@ -797,8 +799,27 @@ public final class ServerBalanceSheetService {
                 INSERT INTO balance_sheet_submissions (location_id,location_name,period_start,period_end,store_timezone,balance_bf,cash_in_hand,total_income,total_receivables,total_expenses,total_payables,balance_cf,income_lines,receivable_lines,expense_lines,payable_lines,drawer_cash_lines,device_sales_lines,device_order_lines,device_payment_lines,account_payment_lines,bank_transaction_lines,pending_cheque_lines,drawer_check_lines,submitted_by_user_id,submitted_by_name,notes)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING balance_sheet_submission_id
                 """)){setNullableInteger(ps,1,ServerRequestIdentity.locationId());ps.setString(2,ServerRequestIdentity.locationName());ps.setDate(3,Date.valueOf(from));ps.setDate(4,Date.valueOf(to));ps.setString(5,zone);ps.setBigDecimal(6,sheet.balanceBf());ps.setBigDecimal(7,sheet.cashInHand());ps.setBigDecimal(8,sheet.totalIncome());ps.setBigDecimal(9,sheet.totalReceivables());ps.setBigDecimal(10,sheet.totalExpenses());ps.setBigDecimal(11,sheet.totalPayables());ps.setBigDecimal(12,sheet.balanceCf());ps.setString(13,encodeLines(sheet.income()));ps.setString(14,encodeLines(sheet.receivables()));ps.setString(15,encodeLines(sheet.expenses()));ps.setString(16,encodeLines(sheet.payables()));ps.setString(17,encodeLines(sheet.drawerCash()));ps.setString(18,encodeLines(sheet.deviceSales()));ps.setString(19,encodeLines(sheet.deviceOrders()));ps.setString(20,encodeLines(sheet.devicePayments()));ps.setString(21,encodeLines(sheet.accountPayments()));ps.setString(22,encodeBankTransactions(sheet.bankTransactions()));ps.setString(23,encodeCheques(sheet.pendingCheques()));ps.setString(24,encodeLines(sheet.drawerChecks()));setNullableInteger(ps,25,ServerRequestIdentity.userId());ps.setString(26,ServerRequestIdentity.userName());ps.setString(27,blankToNull(notes));
-            try(ResultSet rs=ps.executeQuery()){if(rs.next()){long id=rs.getLong(1);SyncOutboxService.recordEvent(conn,"BALANCE_SHEET_SUBMITTED",Map.of("balance_sheet_submission_id",id,"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"period_start",from,"period_end",to,"cash_in_hand",sheet.cashInHand(),"balance_cf",sheet.balanceCf(),"submitted_by_user_id",ServerRequestIdentity.userId()==null?"":ServerRequestIdentity.userId()));return id;}}}
+            try(ResultSet rs=ps.executeQuery()){if(rs.next()){long id=rs.getLong(1);linkDrawerSessions(conn,id,from,to,zone,ServerRequestIdentity.locationId(),sessionIds);SyncOutboxService.recordEvent(conn,"BALANCE_SHEET_SUBMITTED",Map.of("balance_sheet_submission_id",id,"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"period_start",from,"period_end",to,"cash_in_hand",sheet.cashInHand(),"balance_cf",sheet.balanceCf(),"submitted_by_user_id",ServerRequestIdentity.userId()==null?"":ServerRequestIdentity.userId()));return id;}}}
         throw new SQLException("Balance sheet submission did not return an id.");
+    }
+
+    private static void linkDrawerSessions(Connection c,long submissionId,LocalDate from,LocalDate to,String zone,Integer location,List<Long>selected)throws SQLException{
+        String filter=sessionFilterSql(selected,"cash_drawer_session_id");String sql="""
+            SELECT cash_drawer_session_id,COALESCE(NULLIF(TRIM(device_name),''),device_id::text,'Device')||' / '||COALESCE(NULLIF(TRIM(drawer_name),''),'Drawer')||' CIH' label,
+                   GREATEST(COALESCE(cash_to_remove,COALESCE(counted_cash,0)-COALESCE(opening_cash,0),0),0) amount
+            FROM cash_drawer_sessions WHERE (? IS NULL OR location_id=?) AND status='CLOSED' AND closed_at IS NOT NULL
+              AND (closed_at AT TIME ZONE ?)::date BETWEEN ? AND ?
+            """+filter;
+        try(PreparedStatement q=c.prepareStatement(sql)){int i=1;setNullableInteger(q,i++,location);setNullableInteger(q,i++,location);q.setString(i++,zone);q.setDate(i++,Date.valueOf(from));q.setDate(i++,Date.valueOf(to));bindSessionIds(q,i,selected);try(ResultSet r=q.executeQuery();PreparedStatement ins=c.prepareStatement("INSERT INTO balance_sheet_drawer_sessions(balance_sheet_submission_id,cash_drawer_session_id,snapshot_label,snapshot_amount) VALUES(?,?,?,?) ON CONFLICT DO NOTHING")){while(r.next()){ins.setLong(1,submissionId);ins.setLong(2,r.getLong(1));ins.setString(3,r.getString(2));ins.setBigDecimal(4,r.getBigDecimal(3));ins.addBatch();}ins.executeBatch();}}
+    }
+
+    public static List<DrawerHistoryOption> drawerHistoryOptions(Connection c,Long submissionId,String label,LocalDate from,LocalDate to,String zone)throws SQLException{
+        List<DrawerHistoryOption> out=new ArrayList<>();
+        if(submissionId!=null)try(PreparedStatement p=c.prepareStatement("SELECT cash_drawer_session_id,snapshot_label,snapshot_amount FROM balance_sheet_drawer_sessions WHERE balance_sheet_submission_id=? AND snapshot_label=? ORDER BY cash_drawer_session_id")){p.setLong(1,submissionId);p.setString(2,label);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new DrawerHistoryOption(r.getLong(1),r.getString(2),r.getBigDecimal(3),false));}}
+        if(!out.isEmpty())return out;
+        String sql="SELECT cash_drawer_session_id,COALESCE(NULLIF(TRIM(device_name),''),device_id::text,'Device')||' / '||COALESCE(NULLIF(TRIM(drawer_name),''),'Drawer')||' CIH' label,GREATEST(COALESCE(cash_to_remove,COALESCE(counted_cash,0)-COALESCE(opening_cash,0),0),0) amount FROM cash_drawer_sessions WHERE location_id=? AND status='CLOSED' AND (closed_at AT TIME ZONE ?)::date BETWEEN ? AND ?";
+        try(PreparedStatement p=c.prepareStatement(sql)){p.setInt(1,ServerRequestIdentity.locationId());p.setString(2,zone);p.setDate(3,Date.valueOf(from));p.setDate(4,Date.valueOf(to));try(ResultSet r=p.executeQuery()){while(r.next())if(label.equals(r.getString(2)))out.add(new DrawerHistoryOption(r.getLong(1),r.getString(2),r.getBigDecimal(3),submissionId!=null));}}
+        return out;
     }
 
     public static List<SubmissionOption> listSubmissions() throws SQLException {
@@ -2567,6 +2588,7 @@ public final class ServerBalanceSheetService {
 
     public record SheetLine(String label, BigDecimal amount) {
     }
+    public record DrawerHistoryOption(long sessionId,String label,BigDecimal amount,boolean inferred){public String toString(){return "Session #"+sessionId+" - "+label+" - "+amount+(inferred?" (inferred)":"");}}
 
     public record BankTransactionLine(String transaction, String direction, BigDecimal amount) {
     }

@@ -1,0 +1,7 @@
+Add optional representative authorization for customer account charges.
+
+- Require a representative name and drawn signature or an audited unsigned reason for selected customer accounts.
+- Capture signatures by touchscreen, stylus, or mouse in sales, custom orders, and invoice account charges.
+- Show authorization evidence in sales, customer-account, and custom-order history while printing only the representative name on receipts.
+- Add configurable signature retention, protected cloud recovery, and automatic image expiry.
+- Include the recent inventory variants, receiving history, advanced return search, quick-pick, touchscreen, payroll, receipt preview, mobile Add Item, updater, and cash-drawer improvements.

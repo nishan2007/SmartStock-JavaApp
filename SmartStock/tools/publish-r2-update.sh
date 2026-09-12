@@ -41,6 +41,18 @@ if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "Build number must be a positive integer." >&2
   exit 1
 fi
+VERSION_CORE="${VERSION%%[-_]*}"
+IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH VERSION_REVISION <<<"$VERSION_CORE"
+VERSION_PATCH="${VERSION_PATCH:-0}"
+VERSION_REVISION="${VERSION_REVISION:-0}"
+EXPECTED_BUILD_NUMBER=$((10#$VERSION_MAJOR * 100000 + 10#$VERSION_MINOR * 1000 + 10#$VERSION_PATCH))
+if (( VERSION_REVISION > 0 )); then
+  EXPECTED_BUILD_NUMBER=$((EXPECTED_BUILD_NUMBER * 100 + 10#$VERSION_REVISION))
+fi
+if (( 10#$BUILD_NUMBER != EXPECTED_BUILD_NUMBER )); then
+  echo "Build number $BUILD_NUMBER does not match version $VERSION (expected $EXPECTED_BUILD_NUMBER)." >&2
+  exit 1
+fi
 if [[ -n "$NOTES_FILE" && ! -f "$NOTES_FILE" ]]; then
   echo "Release notes file not found: $NOTES_FILE" >&2
   exit 1
@@ -69,8 +81,6 @@ wrangler() {
 
 SUPABASE_SERVER_KEY="${SUPABASE_SECRET_KEY:-${SUPABASE_SERVICE_ROLE_KEY}}"
 ARTIFACT_NAME="$(basename "$ARTIFACT_PATH")"
-OBJECT_KEY="$PLATFORM/$VERSION/$ARTIFACT_NAME"
-OBJECT_PATH="$R2_BUCKET/$OBJECT_KEY"
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -87,6 +97,10 @@ file_size() {
 }
 LOCAL_SHA256="$(sha256_file "$ARTIFACT_PATH")"
 LOCAL_SIZE="$(file_size "$ARTIFACT_PATH")"
+# Release objects are content-addressed so retrying an already-published build
+# with different bytes cannot overwrite the artifact referenced by its metadata.
+OBJECT_KEY="$PLATFORM/$VERSION/$LOCAL_SHA256/$ARTIFACT_NAME"
+OBJECT_PATH="$R2_BUCKET/$OBJECT_KEY"
 VERIFY_FILE="$(mktemp "${TMPDIR:-/tmp}/smartstock-r2-verify.XXXXXX")"
 trap 'rm -f "$VERIFY_FILE"' EXIT
 

@@ -1,0 +1,4 @@
+Fix Windows updater desktop process shutdown.
+
+- Detect both bundled java.exe and javaw.exe desktop processes.
+- Terminate remaining SmartStock launchers directly and wait for the old app to exit before replacement.

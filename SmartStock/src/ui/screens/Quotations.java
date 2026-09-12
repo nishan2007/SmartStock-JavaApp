@@ -3,6 +3,7 @@ package ui.screens;
 import managers.PermissionManager;
 import services.ManagerApprovalService;
 import services.QuotationInvoiceService;
+import services.LanApiClient;
 import services.QuotationInvoiceViewService;
 import services.CustomOrderDataService;
 import ui.components.AppMenuBar;
@@ -228,10 +229,12 @@ public class Quotations extends JFrame {
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
                 CreditOverride creditOverride = creditOverride(this, updated, BigDecimal.ZERO);
                 if (creditOverride == null) return;
+                LanApiClient.ChargeAuthorization authorization=updated.requireChargeAuthorization()?ui.helpers.CustomerChargeAuthorizationDialog.capture(this,updated.customerName()):null;
+                if(updated.requireChargeAuthorization()&&authorization==null)return;
                 ResponsiveTask.await(this, "Charging remaining balance to account...", () -> {
                     QuotationInvoiceService.chargeInvoiceToAccount(invoiceId,
                             "Remaining balance from accepted quotation.",
-                            creditOverride.approvalToken(), creditOverride.reason());
+                            creditOverride.approvalToken(), creditOverride.reason(),authorization);
                     return Boolean.TRUE;
                 });
             }
@@ -530,6 +533,7 @@ public class Quotations extends JFrame {
         private final JTextField validUntilField = new JTextField(LocalDate.now().plusDays(30).toString());
         private final JTextField productionDueDateField = new JTextField();
         private final JTextArea notesArea = new JTextArea(3, 40);
+        private final JCheckBox applyCustomerDiscountBox=new JCheckBox("Apply customer invoice discount");
         private final DefaultTableModel lineModel = new DefaultTableModel(new String[]{
                 "Product ID", "Item", "SKU", "Qty", "Unit", "Disc %", "Delivery", "Notes",
                 "Original Unit", "Override Reason", "Override By User ID", "Override By", "Override Token", "Custom Configuration"
@@ -575,7 +579,8 @@ public class Quotations extends JFrame {
                 loadExistingQuotation(editData);
             }
             productionDueDateField.setToolTipText("Optional; use YYYY-MM-DD.");
-            main.add(formPanel(new String[]{"Customer", "Valid Until", "Production Due Date", "Notes"}, new JComponent[]{customerBox, validUntilField, productionDueDateField, new JScrollPane(notesArea)}), BorderLayout.NORTH);
+            main.add(formPanel(new String[]{"Customer", "Valid Until", "Production Due Date", "Customer Discount", "Notes"}, new JComponent[]{customerBox, validUntilField, productionDueDateField,applyCustomerDiscountBox, new JScrollPane(notesArea)}), BorderLayout.NORTH);
+            customerBox.addActionListener(e->refreshCustomerDiscount());
             JTable lineTable = new JTable(lineModel);
             styleTable(lineTable);
             hideInternalLineColumns(lineTable);
@@ -864,8 +869,8 @@ public class Quotations extends JFrame {
             Thread createThread = new Thread(() -> {
                 try {
                     QuotationInvoiceService.QuotationResult result = editQuotationId == null
-                            ? QuotationInvoiceService.createQuotation(customer.customerId(), validUntil, dueDate, notes, lines)
-                            : QuotationInvoiceService.updateDraftQuotation(editQuotationId, customer.customerId(), validUntil, dueDate, notes, lines);
+                            ? QuotationInvoiceService.createQuotation(customer.customerId(), validUntil, dueDate, notes, lines,applyCustomerDiscountBox.isSelected())
+                            : QuotationInvoiceService.updateDraftQuotation(editQuotationId, customer.customerId(), validUntil, dueDate, notes, lines,applyCustomerDiscountBox.isSelected());
                     SwingUtilities.invokeLater(() -> {
                         created = true;
                         setCreatingQuotation(false);
@@ -883,6 +888,8 @@ public class Quotations extends JFrame {
             createThread.setDaemon(true);
             createThread.start();
         }
+
+        private void refreshCustomerDiscount(){QuotationInvoiceViewService.CustomerOption customer=selectedCustomer();boolean available=customer!=null&&customer.invoiceDiscountEnabled()&&customer.invoiceDiscountPercent()!=null&&customer.invoiceDiscountPercent().signum()>0;applyCustomerDiscountBox.setVisible(available);applyCustomerDiscountBox.setSelected(available);applyCustomerDiscountBox.setText(available?"Apply customer invoice discount ("+customer.invoiceDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer invoice discount");}
 
         private void setCreatingQuotation(boolean creating) {
             createButton.setEnabled(!creating);

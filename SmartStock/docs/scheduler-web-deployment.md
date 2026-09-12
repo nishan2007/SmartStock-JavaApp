@@ -24,9 +24,13 @@ its internet connection is offline.
    The SmartStock user must have the same `auth_user_id` for normal deployment.
 4. Set the production Supabase URL and publishable key on the server. Never put
    a secret or service-role key in the browser or reverse-proxy configuration.
-5. For a permanent hostname, set `SMARTSTOCK_SCHEDULER_PUBLIC_ORIGIN` to the
+5. For a permanent hostname, save `public.origin=https://scheduler.example.com`
+   in `~/.smartstock/scheduler.properties` on the active server (UTF-8).
+   This machine-local file survives app updates and startup-task replacement;
+   do not include it or tunnel credentials in release artifacts. Alternatively,
+   set `SMARTSTOCK_SCHEDULER_PUBLIC_ORIGIN` to the
    exact HTTPS origin, such as `https://scheduler.example.com`. For temporary
-   operation, leave it unset; the Windows package bundles a pinned, SHA-256-checked
+   operation, leave both settings unset; the Windows package bundles a pinned, SHA-256-checked
    `cloudflared` client under `dependency/cloudflared/windows-amd64`. SmartStock will create
    and display a random `trycloudflare.com` address whenever the web app starts.
 

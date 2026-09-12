@@ -1,6 +1,7 @@
 package ui.screens;
 
 import services.QuotationInvoiceService;
+import services.LanApiClient;
 import services.QuotationInvoiceViewService;
 import ui.components.AppMenuBar;
 import ui.components.LoadingStatePanel;
@@ -347,9 +348,11 @@ public class Invoices extends JFrame {
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
                 Quotations.CreditOverride creditOverride = Quotations.creditOverride(this, updated, BigDecimal.ZERO);
                 if (creditOverride == null) return;
+                LanApiClient.ChargeAuthorization authorization=updated.requireChargeAuthorization()?ui.helpers.CustomerChargeAuthorizationDialog.capture(this,updated.customerName()):null;
+                if(updated.requireChargeAuthorization()&&authorization==null)return;
                 ResponsiveTask.await(this, "Charging remaining balance to account...", () -> {
                     QuotationInvoiceService.chargeInvoiceToAccount(invoiceId,
-                            "Remaining balance from accepted quotation.",creditOverride.approvalToken(),creditOverride.reason());
+                            "Remaining balance from accepted quotation.",creditOverride.approvalToken(),creditOverride.reason(),authorization);
                     return Boolean.TRUE;
                 });
             }

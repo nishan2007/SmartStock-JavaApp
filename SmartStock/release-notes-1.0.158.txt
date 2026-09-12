@@ -1,0 +1,4 @@
+Fix signed customer-account charges failing at the final transaction step.
+
+- Read signature-retention settings from the sale's store location.
+- Preserve atomic checkout behavior so failed authorization writes do not create partial sales or account charges.

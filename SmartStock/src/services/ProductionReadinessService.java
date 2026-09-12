@@ -22,7 +22,8 @@ public final class ProductionReadinessService {
             "locations", "roles", "permissions", "users", "user_locations",
             "products", "product_lifecycle_audit", "product_barcodes", "inventory", "vendors", "image_cloud_configuration",
             "customer_accounts", "sales", "sale_items", "sale_returns",
-            "cash_drawers", "cash_drawer_sessions", "custom_orders",
+            "cash_drawers", "cash_drawer_sessions", "cash_drawer_count_events",
+            "balance_sheet_submissions", "balance_sheet_drawer_sessions", "custom_orders",
             "quotations", "invoices", "employee_time_clock", "payroll_payments",
             "expenses", "bank_transactions"
     );

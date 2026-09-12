@@ -50,6 +50,7 @@ public class ReturnSale extends JFrame {
 
     private final JTextField saleSearchField = new JTextField();
     private final JTextField advancedItemField = new JTextField(24);
+    private JPanel advancedLookupPanel;
     private final JSpinner advancedDateSpinner = new JSpinner(new SpinnerDateModel());
     private final JLabel saleInfoLabel = new JLabel("Load a sale to begin.");
     private final JComboBox<String> refundMethodBox = new JComboBox<>(
@@ -180,9 +181,9 @@ public class ReturnSale extends JFrame {
         JPanel lookup = new JPanel(new BorderLayout(0, 8));
         lookup.setOpaque(false);
         lookup.add(searchPanel, BorderLayout.NORTH);
-        if (PermissionManager.hasPermission("ADVANCED_RETURN_LOOKUP")) {
-            lookup.add(buildAdvancedLookupPanel(), BorderLayout.CENTER);
-        }
+        advancedLookupPanel = buildAdvancedLookupPanel();
+        lookup.add(advancedLookupPanel, BorderLayout.CENTER);
+        refreshLookupPermission();
         lookup.add(saleInfoLabel, BorderLayout.SOUTH);
 
         loadButton.addActionListener(e -> loadSale());
@@ -196,6 +197,13 @@ public class ReturnSale extends JFrame {
         panel.add(hero, BorderLayout.NORTH);
         panel.add(lookup, BorderLayout.SOUTH);
         return panel;
+    }
+
+    public void refreshLookupPermission() {
+        if (advancedLookupPanel == null) return;
+        advancedLookupPanel.setVisible(PermissionManager.hasPermission("ADVANCED_RETURN_LOOKUP"));
+        advancedLookupPanel.revalidate();
+        advancedLookupPanel.repaint();
     }
 
     private JPanel buildAdvancedLookupPanel() {

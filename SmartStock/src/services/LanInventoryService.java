@@ -130,7 +130,7 @@ final class LanInventoryService {
                   COALESCE(p.description,''),COALESCE(p.product_type,'INVENTORY'),COALESCE(cat.name,''),
                   COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),
                   COALESCE(v.name,''),COALESCE(p.cost_price,0),COALESCE(p.price,0),
-                  COALESCE(i.quantity_on_hand,0),COALESCE(i.reorder_level,0),COALESCE(p.created_by_name,'')
+                  COALESCE(i.quantity_on_hand,0),COALESCE(i.reorder_level,0),COALESCE(p.created_by_name,''),p.color,p.flavor
                 FROM products p LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
                 LEFT JOIN categories cat ON cat.category_id=p.category_id
                 LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
@@ -141,6 +141,7 @@ final class LanInventoryService {
                 LEFT JOIN vendors v ON v.vendor_id=p.vendor_id WHERE TRUE
                 """);
         List<Object> args = new ArrayList<>(List.of(locationId, locationId));
+        if (r == null || !r.includeArchived()) sql.append(" AND COALESCE(p.is_active,TRUE)=TRUE");
         if (!search.isBlank()) {
             sql.append(" AND ").append(ProductSearchHelper.predicate("p", locationId, search, showVendor));
             for (String token : ProductSearchHelper.tokens(search)) args.add("%" + token + "%");
@@ -170,11 +171,12 @@ final class LanInventoryService {
                     row.put("vendor", showVendor ? rs.getString(13) : "");
                     row.put("costPrice", showCost ? rs.getBigDecimal(14) : null); row.put("price", rs.getBigDecimal(15));
                     row.put("quantityOnHand", rs.getInt(16)); row.put("reorderLevel", rs.getInt(17));
-                    row.put("createdBy", showCreatedBy ? rs.getString(18) : ""); rows.add(row);
+                    row.put("color",rs.getString(19)); row.put("flavor",rs.getString(20)); row.put("createdBy", showCreatedBy ? rs.getString(18) : ""); rows.add(row);
                     if ("INVENTORY".equals(normalizeProductType(rs.getString(7)))) units += rs.getInt(16);
                 }
             }
         }
+        ProductVariantService.annotate(c,rows);
         return map("products", rows, "totalProducts", rows.size(), "totalUnits", units,
                 "canViewVendor", showVendor, "canViewCostPrice", showCost, "canViewCreatedBy", showCreatedBy);
     }
@@ -231,10 +233,8 @@ final class LanInventoryService {
         ZoneId zone = storeZone(c, locationId);
         Instant from = dateBoundary(r == null ? null : r.fromDate(), zone, false);
         Instant to = dateBoundary(r == null ? null : r.toDate(), zone, true);
-        StringBuilder sql = new StringBuilder("""
-                SELECT im.movement_id,COALESCE(im.receive_id,''),im.created_at,COALESCE(p.name,'Unknown'),
-                  COALESCE(p.sku,''),COALESCE(l.name,'Unknown'),COALESCE(im.change_qty,0),
-                  COALESCE(im.user_name,rb.user_name,u.full_name,u.username,''),COALESCE(im.note,'')
+        StringBuilder matches = new StringBuilder("""
+                SELECT COALESCE(NULLIF(im.receive_id,''),'movement:'||im.movement_id) AS slip_key,MAX(im.created_at) AS latest
                 FROM inventory_movements im LEFT JOIN receiving_batches rb ON rb.receive_id=im.receive_id
                 LEFT JOIN products p ON p.product_id=im.product_id LEFT JOIN locations l ON l.location_id=im.location_id
                 LEFT JOIN users u ON u.user_id=rb.user_id
@@ -242,12 +242,27 @@ final class LanInventoryService {
                 """);
         List<Object> args = new ArrayList<>(List.of(locationId));
         if (!search.isBlank()) {
-            sql.append(" AND (CAST(im.movement_id AS TEXT) ILIKE ? OR COALESCE(im.receive_id,'') ILIKE ? OR COALESCE(p.name,'') ILIKE ? OR COALESCE(p.sku,'') ILIKE ? OR COALESCE(l.name,'') ILIKE ? OR COALESCE(im.user_name,rb.user_name,u.full_name,u.username,'') ILIKE ? OR COALESCE(im.note,'') ILIKE ?)");
+            matches.append(" AND (CAST(im.movement_id AS TEXT) ILIKE ? OR COALESCE(im.receive_id,'') ILIKE ? OR COALESCE(p.name,'') ILIKE ? OR COALESCE(p.sku,'') ILIKE ? OR COALESCE(l.name,'') ILIKE ? OR COALESCE(im.user_name,rb.user_name,u.full_name,u.username,'') ILIKE ? OR COALESCE(im.note,'') ILIKE ?)");
             for (int i = 0; i < 7; i++) args.add("%" + search + "%");
         }
-        if (from != null) { sql.append(" AND im.created_at>=?"); args.add(Timestamp.from(from)); }
-        if (to != null) { sql.append(" AND im.created_at<?"); args.add(Timestamp.from(to)); }
-        sql.append(" ORDER BY im.created_at DESC,im.movement_id DESC LIMIT 2000");
+        if (from != null) { matches.append(" AND im.created_at>=?"); args.add(Timestamp.from(from)); }
+        if (to != null) { matches.append(" AND im.created_at<?"); args.add(Timestamp.from(to)); }
+        matches.append(" GROUP BY slip_key ORDER BY latest DESC,slip_key DESC LIMIT 2000");
+        String sql="WITH matched AS ("+matches+"""
+                )
+                SELECT im.movement_id,COALESCE(im.receive_id,''),im.created_at,COALESCE(p.name,'Unknown'),
+                  COALESCE(p.sku,''),COALESCE(l.name,'Unknown'),COALESCE(im.change_qty,0),
+                  COALESCE(im.user_name,rb.user_name,u.full_name,u.username,''),COALESCE(im.note,'')
+                FROM inventory_movements im
+                JOIN matched ON matched.slip_key=COALESCE(NULLIF(im.receive_id,''),'movement:'||im.movement_id)
+                LEFT JOIN receiving_batches rb ON rb.receive_id=im.receive_id
+                LEFT JOIN products p ON p.product_id=im.product_id
+                LEFT JOIN locations l ON l.location_id=im.location_id
+                LEFT JOIN users u ON u.user_id=rb.user_id
+                WHERE UPPER(COALESCE(im.reason,''))='INVENTORY_ENTRY' AND im.location_id=?
+                ORDER BY matched.latest DESC,matched.slip_key DESC,im.movement_id
+                """;
+        args.add(locationId);
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
             bind(ps, args); try (ResultSet rs = ps.executeQuery()) { while (rs.next()) rows.add(map(
@@ -498,7 +513,7 @@ final class LanInventoryService {
         RuleViolation(int status,String code,String safeMessage){super(safeMessage);this.status=status;this.code=code;this.safeMessage=safeMessage;}
         int status(){return status;} String code(){return code;} String safeMessage(){return safeMessage;}
     }
-    private record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf){}
+    private record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf,boolean includeArchived){}
     private record HistoryRequest(String search,String fromDate,String toDate){}
     private record ReceiveRequest(String overrideApprovalToken,String overrideReason,List<ReceiveLine> lines){}
     private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity){}

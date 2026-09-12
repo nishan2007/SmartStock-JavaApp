@@ -64,6 +64,18 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260831170000_product_archiving.sql"
             ,"database/migrations/v1_after/20260902170000_wallet_session_auth_sources.sql"
             ,"database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"
+            ,"database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"
+            ,"database/migrations/v1_after/20260904120000_scheduler_link_email_notifications.sql"
+            ,"database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"
+            ,"database/migrations/v1_after/20260906120000_product_variants.sql"
+            ,"database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"
+            ,"database/migrations/v1_after/20260908120000_employee_registration.sql"
+            ,"database/migrations/v1_after/20260909120000_employment_portal.sql"
+            ,"database/migrations/v1_after/20260910120000_product_group_barcodes.sql"
+            ,"database/migrations/v1_after/20260910140000_inventory_item_color.sql"
+            ,"database/migrations/v1_after/20260911010000_sale_receipt_visibility.sql"
+            ,"database/migrations/v1_after/20260911120000_inventory_item_flavor.sql"
+            ,"database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -80,6 +92,12 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
             ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
             ,"database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"
+            ,"database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"
+            ,"database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"
+            ,"database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"
+            ,"database/migrations/v1_after/20260908120000_employee_registration.sql"
+            ,"database/migrations/v1_after/20260909120000_employment_portal.sql"
+            ,"database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -89,7 +107,7 @@ public final class SchemaContractService {
             "SET_CREDIT_LIMIT", "EDIT_ACCOUNT_NUMBER", "VIEW_ITEM_DETAILS",
             "EMPLOYEE_MANAGEMENT", "ROLE_MANAGEMENT", "VIEW_REPORTS", "CHANGE_STORE",
             "COMPANY_CUSTOMIZATION", "LOCAL_DEVICE_SETTINGS", "CUSTOM_ORDER_PRICE_OVERRIDE",
-            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM");
+            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM", "VIEW_DRAWER_HISTORY");
 
 
     private SchemaContractService() {
@@ -435,6 +453,19 @@ public final class SchemaContractService {
         upgradeCrossStoreTimeClockIdentity(connection);
         ensureMobileItemWebUpgrade(connection);
         ensureOneDriveImageUpgrade(connection);
+        ensureWhatsAppSalesDocumentsUpgrade(connection);
+        ensureSchedulerLinkEmailUpgrade(connection);
+        ensureCashDrawerCountHistoryUpgrade(connection);
+        ensureProductVariantsUpgrade(connection);
+        ensureProductGroupBarcodesUpgrade(connection);
+        ensureInventoryItemColorUpgrade(connection);
+        ensureInventoryItemFlavorUpgrade(connection);
+        ensureSaleReceiptVisibilityUpgrade(connection);
+        ensureSaleQuickPickItemTypesUpgrade(connection);
+        ensureCustomerChargeAuthorizationUpgrade(connection);
+        ensureAutomaticCustomerDiscountUpgrade(connection);
+        ensureEmployeeRegistrationUpgrade(connection);
+        ensureEmploymentPortalUpgrade(connection);
         ensureBuiltinPermissionsUpgrade(connection);
         ensureProductArchivingUpgrade(connection);
         ensureMiscSaleItemsUpgrade(connection);
@@ -451,6 +482,197 @@ public final class SchemaContractService {
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    public static void ensureEmploymentPortalUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","employee_application_attachments"))return;
+        try(PreparedStatement p=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            p.setInt(1,BASELINE_VERSION);try(ResultSet r=p.executeQuery()){if(!r.next()||!catalogFingerprint(connection,List.of("public"),false).equals(r.getString(1)))throw new SQLException("The local schema has drifted; application portal upgrade is blocked.","55000");}
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260909120000_employment_portal.sql"));
+            try(PreparedStatement p=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+            }connection.commit();
+        }catch(Exception e){connection.rollback();if(e instanceof SQLException sql)throw sql;throw new SQLException("Application portal could not be installed.",e);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureEmployeeRegistrationUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","employee_registrations"))return;
+        try(PreparedStatement p=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            p.setInt(1,BASELINE_VERSION);try(ResultSet r=p.executeQuery()){if(!r.next()||!catalogFingerprint(connection,List.of("public"),false).equals(r.getString(1)))throw new SQLException("The local schema has drifted; automatic employee registration installation is blocked.","55000");}
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260908120000_employee_registration.sql"));
+            try(PreparedStatement p=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+            }connection.commit();
+        }catch(Exception e){connection.rollback();if(e instanceof SQLException sql)throw sql;throw new SQLException("Employee registration could not be installed.",e);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureProductVariantsUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","product_groups"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic variant installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260906120000_product_variants.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Product variants could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureProductGroupBarcodesUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","product_groups","additional_barcodes"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic group barcode installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260910120000_product_group_barcodes.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Group barcodes could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureInventoryItemColorUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","products","color"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic item color installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260910140000_inventory_item_color.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Item color could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureInventoryItemFlavorUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","products","flavor"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic item flavor installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260911120000_inventory_item_flavor.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Inventory item Flavor could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureSaleReceiptVisibilityUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","company_customization","sale_receipt_visibility"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic receipt visibility installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260911010000_sale_receipt_visibility.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Receipt visibility could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureSaleQuickPickItemTypesUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","company_customization","sale_quick_pick_item_type_ids"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic sale quick-pick installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Sale quick-pick preferences could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomerChargeAuthorizationUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||(tableExists(connection,"public","customer_charge_authorizations")
+                &&columnExists(connection,"public","customer_accounts","require_charge_authorization")
+                &&columnExists(connection,"public","company_customization","account_signature_retention_years")))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Customer charge authorization support could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureAutomaticCustomerDiscountUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||(columnExists(connection,"public","customer_accounts","sales_discount_enabled")&&columnExists(connection,"public","customer_accounts","invoice_discount_enabled")&&columnExists(connection,"public","customer_accounts","custom_order_discount_enabled")&&columnExists(connection,"public","sales","customer_discount_applied")&&columnExists(connection,"public","quotations","customer_discount_applied")&&columnExists(connection,"public","invoices","customer_discount_applied")&&columnExists(connection,"public","custom_orders","customer_discount_applied")))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260911150000_automatic_customer_discounts.sql"));try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}connection.commit();}catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Automatic customer discounts could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCashDrawerCountHistoryUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","cash_drawer_count_events"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Cash drawer count history could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureSchedulerLinkEmailUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||!tableExists(connection,"public","company_customization")
+                ||(columnExists(connection,"public","company_customization","scheduler_link_email_enabled")
+                &&columnExists(connection,"public","company_customization","scheduler_link_notification_email")
+                &&columnExists(connection,"public","scheduler_web_runtime","last_notified_origin")
+                &&columnExists(connection,"public","scheduler_web_runtime","last_notified_recipient")))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260904120000_scheduler_link_email_notifications.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Scheduler link email settings could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureWhatsAppSalesDocumentsUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||!tableExists(connection,"public","customer_accounts"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("WhatsApp sales document support could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     public static void ensureProductArchivingUpgrade(Connection connection)throws SQLException{
@@ -793,10 +1015,13 @@ public final class SchemaContractService {
             }
         }
         String actualBefore=catalogFingerprint(connection,List.of("public"),false);
-        if(storedCatalog!=null&&!actualBefore.equals(storedCatalog))
-            throw new SQLException("The local schema has drifted; automatic OneDrive image installation is blocked.","55000");
         if(!providerUpgrade&&!sharedConfigurationUpgrade){
-            if(storedResource!=null&&!expectedResource.equals(storedResource)){
+            // A later migration may already have changed the catalog while its
+            // contract metadata is still being reconciled below.  Once the
+            // OneDrive objects themselves are complete, this older upgrade
+            // must not block those newer idempotent migrations from running.
+            if(storedResource!=null&&!expectedResource.equals(storedResource)
+                    &&(storedCatalog==null||actualBefore.equals(storedCatalog))){
                 try(PreparedStatement update=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=? AND resource_fingerprint_sha256=? AND catalog_fingerprint_sha256=?")){
                     update.setString(1,expectedResource);update.setInt(2,BASELINE_VERSION);update.setString(3,storedResource);update.setString(4,actualBefore);
                     if(update.executeUpdate()!=1)throw new SQLException("Local OneDrive schema metadata changed during normalization.");
@@ -804,6 +1029,8 @@ public final class SchemaContractService {
             }
             return;
         }
+        if(storedCatalog!=null&&!actualBefore.equals(storedCatalog))
+            throw new SQLException("The local schema has drifted; automatic OneDrive image installation is blocked.","55000");
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{
             if(providerUpgrade)SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20260819120000_onedrive_image_provider.sql"));

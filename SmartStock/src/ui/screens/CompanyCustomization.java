@@ -40,6 +40,7 @@ import ui.screens.companyprefs.CustomOrderReceiptPanel;
 import ui.screens.companyprefs.SaleReceiptPanel;
 import ui.screens.companyprefs.QuotationInvoicePrintPanel;
 import ui.screens.companyprefs.ImageStoragePanel;
+import ui.screens.companyprefs.EmploymentPortalPanel;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -82,8 +83,10 @@ public class CompanyCustomization extends JFrame {
     public static final String NAV_CASH_DRAWER_MANAGER = "Cash Drawer Manager";
     private static final String NAV_BACKUPS = "Backups";
     private static final String NAV_TIME_CLOCK_SAFETY = "Time Clock Safety";
+    private static final String NAV_SCHEDULER_LINK_EMAIL = "Scheduler Link Email";
     private static final String NAV_SALE = "Sale";
     private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
+    private static final String NAV_SALE_ITEM_TYPE_BUTTONS = "Sale Item-Type Buttons";
     private static final String NAV_ACCOUNT_PAYMENT_RECEIPTS = "Account Payment Receipts";
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
     private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
@@ -91,6 +94,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_QUOTATION_ORDER_PRINTING = "Quotation/Invoice Printouts";
     private static final String NAV_PRICE_TAG_TEMPLATE = "Price Tag Template";
     private static final String NAV_IMAGE_STORAGE = "Image Storage";
+    private static final String NAV_EMPLOYMENT_PORTAL = "Employment Portal";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -135,12 +139,15 @@ public class CompanyCustomization extends JFrame {
     private final JSpinner scheduledDetectionDelaySpinner = new JSpinner(new SpinnerNumberModel(4, 0, 24, 1));
     private final JSpinner unscheduledDetectionHoursSpinner = new JSpinner(new SpinnerNumberModel(12, 1, 48, 1));
     private final JSpinner maximumAutomaticWorkHoursSpinner = new JSpinner(new SpinnerNumberModel(8, 1, 24, 1));
+    private final JCheckBox schedulerLinkEmailEnabledBox = new JCheckBox("Email the scheduler link whenever it changes");
+    private final JTextField schedulerLinkNotificationEmailField = new JTextField();
     private final JCheckBox showLogoBox = new JCheckBox("Show logo on receipt");
     private final JCheckBox showSaleIdBox = new JCheckBox("Show sale ID");
     private final JCheckBox showDeviceBox = new JCheckBox("Show device ID");
     private final JCheckBox showCustomerBox = new JCheckBox("Show customer/account");
     private final JCheckBox showSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox showItemDiscountBox = new JCheckBox("Show item discounts");
+    private final JCheckBox showCompanyNameBox=new JCheckBox("Show company name"),showSubtotalBox=new JCheckBox("Show subtotal"),showPaidBox=new JCheckBox("Show paid amount"),showPaymentBox=new JCheckBox("Show payment method"),showPoweredByBox=new JCheckBox("Show Powered by SmartStock");
     private final JCheckBox showPaymentStatusBox = new JCheckBox("Show payment status");
     private final JCheckBox alwaysPrintSaleReceiptBox = new JCheckBox("Always print receipt");
     private final JTextField accountPaymentReceiptTitleField = new JTextField("CUSTOMER ACCOUNT PAYMENT");
@@ -161,6 +168,7 @@ public class CompanyCustomization extends JFrame {
     private final JTextField saleReturnApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox requireCostPriceOnNewItemBox = new JCheckBox("Require cost price when adding a new inventory item", true);
     private final JCheckBox roundSalesToNearestTwentyBox = new JCheckBox("Round final sale total to nearest $20", true);
+    private final JSpinner accountSignatureRetentionYearsSpinner=new JSpinner(new SpinnerNumberModel(3,1,25,1));
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
     private final JCheckBox roundCustomOrdersToNearestTwentyBox = new JCheckBox("Round custom-order line prices to nearest $20", true);
@@ -289,6 +297,10 @@ public class CompanyCustomization extends JFrame {
     private BigDecimal loadedChangeBasketTargetAmount = BigDecimal.valueOf(60000);
     private CompanyCustomizationManager.SaleSafetySettings loadedSaleSafetySettings;
     private CompanyCustomizationManager.CustomOrderSettings loadedCustomOrderSettings;
+    private final DefaultListModel<CompanyCustomizationManager.ItemTypeOption> availableQuickPickTypesModel = new DefaultListModel<>();
+    private final DefaultListModel<CompanyCustomizationManager.ItemTypeOption> selectedQuickPickTypesModel = new DefaultListModel<>();
+    private final JList<CompanyCustomizationManager.ItemTypeOption> availableQuickPickTypesList = new JList<>(availableQuickPickTypesModel);
+    private final JList<CompanyCustomizationManager.ItemTypeOption> selectedQuickPickTypesList = new JList<>(selectedQuickPickTypesModel);
     private CompanyBackupScheduler.BackupScheduleSettings loadedBackupSettings;
     private final String initialPreferenceSection;
 
@@ -386,10 +398,13 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_CASH_DRAWER_MANAGER);
         addNodeIfPermitted(root, NAV_BACKUPS);
         addNodeIfPermitted(root, NAV_IMAGE_STORAGE);
+        addNodeIfPermitted(root, NAV_EMPLOYMENT_PORTAL);
         addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
+        addNodeIfPermitted(root, NAV_SCHEDULER_LINK_EMAIL);
 
         DefaultMutableTreeNode saleNode = new DefaultMutableTreeNode(NAV_SALE);
         addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
+        addNodeIfPermitted(saleNode, NAV_SALE_ITEM_TYPE_BUTTONS);
         addNodeIfPermitted(saleNode, NAV_ACCOUNT_PAYMENT_RECEIPTS);
         if (saleNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_SALE)) {
             root.add(saleNode);
@@ -507,8 +522,11 @@ public class CompanyCustomization extends JFrame {
             case NAV_CASH_DRAWER_MANAGER -> buildCashDrawerEmbeddedScreen();
             case NAV_BACKUPS -> buildBackupSchedulerScreen();
             case NAV_IMAGE_STORAGE -> new ImageStoragePanel();
+            case NAV_EMPLOYMENT_PORTAL -> new EmploymentPortalPanel();
             case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
+            case NAV_SCHEDULER_LINK_EMAIL -> buildSchedulerLinkEmailScreen();
             case NAV_SALE_RECEIPT_FORMATTING -> buildSaleReceiptPreferencesScreen();
+            case NAV_SALE_ITEM_TYPE_BUTTONS -> buildSaleItemTypeButtonsScreen();
             case NAV_ACCOUNT_PAYMENT_RECEIPTS -> buildAccountPaymentReceiptPreferencesScreen();
             case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> buildCustomOrderDepositRefundScreen();
             case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> buildCustomOrderSlipPreferencesScreen();
@@ -585,7 +603,9 @@ public class CompanyCustomization extends JFrame {
             case NAV_BACKUPS -> "Automatic encrypted company backups and retention settings.";
             case NAV_IMAGE_STORAGE -> "Company image storage, upload status, and maintenance.";
             case NAV_TIME_CLOCK_SAFETY -> "Automatic safeguards for stale and unusually long shifts.";
+            case NAV_SCHEDULER_LINK_EMAIL -> "Automatically notify a designated address when the public employee scheduler link changes.";
             case NAV_SALE_RECEIPT_FORMATTING -> "Sales rules and the information printed on receipts.";
+            case NAV_SALE_ITEM_TYPE_BUTTONS -> "Choose and order the item-type buttons shown beside the sale cart for this store.";
             case NAV_ACCOUNT_PAYMENT_RECEIPTS -> "Fields and layout used for account-payment receipts.";
             case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> "Deposit requirements and manager refund approval limits.";
             case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> "Custom-order receipt behavior, fields, and appearance.";
@@ -669,8 +689,10 @@ public class CompanyCustomization extends JFrame {
         return new String[]{
                 NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE,
                 NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
+                NAV_SCHEDULER_LINK_EMAIL,
                 NAV_IMAGE_STORAGE,
-                NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS,
+                NAV_EMPLOYMENT_PORTAL,
+                NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS,
                 NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
         };
@@ -698,8 +720,8 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
-            case NAV_IMAGE_STORAGE -> canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
+            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL -> canEditCompanyPreferences();
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SCHEDULER_LINK_EMAIL, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
@@ -725,8 +747,10 @@ public class CompanyCustomization extends JFrame {
                 NAV_CASH_DRAWER_MANAGER,
                 NAV_BACKUPS,
                 NAV_IMAGE_STORAGE,
+                NAV_SCHEDULER_LINK_EMAIL,
                 NAV_SALE,
                 NAV_SALE_RECEIPT_FORMATTING,
+                NAV_SALE_ITEM_TYPE_BUTTONS,
                 NAV_ACCOUNT_PAYMENT_RECEIPTS,
                 NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDERS,
@@ -795,10 +819,74 @@ public class CompanyCustomization extends JFrame {
         inventoryRules.setOpaque(false);
         requireCostPriceOnNewItemBox.setToolTipText("When disabled, a blank cost price is saved as $0.00.");
         inventoryRules.add(requireCostPriceOnNewItemBox);
+        inventoryRules.add(Box.createHorizontalStrut(24));inventoryRules.add(new JLabel("Account signature retention (years): "));inventoryRules.add(accountSignatureRetentionYearsSpinner);
         contentPanel.add(inventoryRules, BorderLayout.NORTH);
         contentPanel.add(buildReceiptFormattingPanel(), BorderLayout.CENTER);
         contentPanel.add(buildSamplePreviewPanel(), BorderLayout.EAST);
         return contentPanel;
+    }
+
+    private JPanel buildSaleItemTypeButtonsScreen() {
+        availableQuickPickTypesList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        selectedQuickPickTypesList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JPanel lists = new JPanel(new GridLayout(1, 2, 14, 0));
+        lists.setOpaque(false);
+        lists.add(labeledList("Available item types", availableQuickPickTypesList));
+        lists.add(labeledList("Buttons shown beside cart", selectedQuickPickTypesList));
+
+        JButton add = new JButton("Add →");
+        JButton remove = new JButton("← Remove");
+        JButton up = new JButton("Move Up");
+        JButton down = new JButton("Move Down");
+        add.addActionListener(e -> {
+            for (var option : availableQuickPickTypesList.getSelectedValuesList()) {
+                availableQuickPickTypesModel.removeElement(option);
+                selectedQuickPickTypesModel.addElement(option);
+            }
+        });
+        remove.addActionListener(e -> {
+            var option = selectedQuickPickTypesList.getSelectedValue();
+            if (option == null) return;
+            selectedQuickPickTypesModel.removeElement(option);
+            availableQuickPickTypesModel.addElement(option);
+        });
+        up.addActionListener(e -> moveSelectedQuickPickType(-1));
+        down.addActionListener(e -> moveSelectedQuickPickType(1));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        actions.setOpaque(false); actions.add(add); actions.add(remove); actions.add(up); actions.add(down);
+        JPanel panel = new JPanel(new BorderLayout(0, 12));
+        panel.setOpaque(false); panel.add(lists, BorderLayout.CENTER); panel.add(actions, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel labeledList(String title, JList<?> list) {
+        JPanel panel = new JPanel(new BorderLayout(0, 6)); panel.setOpaque(false);
+        panel.add(new JLabel(title), BorderLayout.NORTH); panel.add(new JScrollPane(list), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void moveSelectedQuickPickType(int offset) {
+        int from = selectedQuickPickTypesList.getSelectedIndex(), to = from + offset;
+        if (from < 0 || to < 0 || to >= selectedQuickPickTypesModel.size()) return;
+        var option = selectedQuickPickTypesModel.remove(from);
+        selectedQuickPickTypesModel.add(to, option);
+        selectedQuickPickTypesList.setSelectedIndex(to);
+    }
+
+    private void loadItemTypeQuickPickFields(CompanyCustomizationManager.ItemTypeQuickPickSettings settings) {
+        availableQuickPickTypesModel.clear(); selectedQuickPickTypesModel.clear();
+        Map<Integer,CompanyCustomizationManager.ItemTypeOption> byId = new LinkedHashMap<>();
+        for (var option : settings.availableItemTypes()) byId.put(option.itemTypeId(), option);
+        for (Integer id : settings.selectedItemTypeIds()) {
+            var option = byId.remove(id); if (option != null) selectedQuickPickTypesModel.addElement(option);
+        }
+        byId.values().forEach(availableQuickPickTypesModel::addElement);
+    }
+
+    private List<Integer> selectedItemTypeQuickPickIds() {
+        List<Integer> ids = new ArrayList<>();
+        for (int i=0;i<selectedQuickPickTypesModel.size();i++) ids.add(selectedQuickPickTypesModel.get(i).itemTypeId());
+        return ids;
     }
 
     private JPanel buildAccountPaymentReceiptPreferencesScreen() {
@@ -1009,6 +1097,28 @@ public class CompanyCustomization extends JFrame {
         panel.add(heading, BorderLayout.NORTH);
         panel.add(form, BorderLayout.CENTER);
         panel.add(note, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel buildSchedulerLinkEmailScreen() {
+        JPanel panel = new JPanel(new BorderLayout(0, 16));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(220, 224, 230)), new EmptyBorder(22, 22, 22, 22)));
+        JPanel form = new JPanel(new GridBagLayout());
+        form.setOpaque(false);
+        addBackupCheckRow(form, 0, "Automatic email", schedulerLinkEmailEnabledBox);
+        addBackupLabel(form, 1, "Recipient");
+        panel.add(form, BorderLayout.CENTER);
+        form.add(schedulerLinkNotificationEmailField, backupValueConstraints(1));
+        JTextArea note = new JTextArea("When the Cloudflare scheduler tunnel receives a new public address, SmartStock queues the new /scheduler/ link through the store's configured email sender. This setting is off by default.");
+        note.setEditable(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+        note.setOpaque(false);
+        note.setForeground(new Color(75, 85, 99));
+        panel.add(note, BorderLayout.SOUTH);
+        schedulerLinkEmailEnabledBox.addActionListener(e -> schedulerLinkNotificationEmailField.setEnabled(schedulerLinkEmailEnabledBox.isSelected()));
         return panel;
     }
 
@@ -2324,7 +2434,7 @@ public class CompanyCustomization extends JFrame {
                 showCustomerBox,
                 showSkuBox,
                 showItemDiscountBox,
-                showPaymentStatusBox,
+                showPaymentStatusBox,showCompanyNameBox,showSubtotalBox,showPaidBox,showPaymentBox,showPoweredByBox,
                 vatEnabledBox,
                 vatUseDepartmentRatesBox,
                 vatFixedRatePercentField
@@ -2563,7 +2673,8 @@ public class CompanyCustomization extends JFrame {
                     var all = UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadAllSettings);
                     var clock = UiTaskRunner.supplyAsync(CompanyCustomization::loadTimeClockSettingsSafely);
                     var backup = UiTaskRunner.supplyAsync(CompanyBackupScheduler::loadSettings);
-                    return new PreferencesSnapshot(all.join(), clock.join(),backup.join());
+                    var quickPick = UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadItemTypeQuickPickSettings);
+                    return new PreferencesSnapshot(all.join(), clock.join(),backup.join(),quickPick.join());
                 }, this::applySettings);
     }
 
@@ -2603,6 +2714,7 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.setSelected(settings.showSku());
         showItemDiscountBox.setSelected(settings.showItemDiscount());
         showPaymentStatusBox.setSelected(settings.showPaymentStatus());
+        showCompanyNameBox.setSelected(settings.visibility().showCompanyName());showSubtotalBox.setSelected(settings.visibility().showSubtotal());showPaidBox.setSelected(settings.visibility().showPaid());showPaymentBox.setSelected(settings.visibility().showPayment());showPoweredByBox.setSelected(settings.visibility().showPoweredBy());
         alwaysPrintSaleReceiptBox.setSelected(settings.alwaysPrintSaleReceipt());
         vatEnabledBox.setSelected(settings.vatEnabled());
         vatUseDepartmentRatesBox.setSelected(settings.vatUseDepartmentRates());
@@ -2610,6 +2722,7 @@ public class CompanyCustomization extends JFrame {
         receiptStartCounterField.setText(String.valueOf(settings.nextReceiptCounter()));
         loadAccountPaymentReceiptFields(settings.accountPaymentReceiptSettings());
         CompanyCustomizationManager.SaleSafetySettings saleSafetySettings = all.saleSafety();
+        try{accountSignatureRetentionYearsSpinner.setValue(CompanyCustomizationManager.loadAccountSignatureRetentionYears());}catch(Exception ignored){accountSignatureRetentionYearsSpinner.setValue(3);}
         loadedSaleSafetySettings=saleSafetySettings;
         saleDiscountLimitPercentField.setText(saleSafetySettings.discountLimitPercent().stripTrailingZeros().toPlainString());
         saleReturnApprovalLimitField.setText(utils.CurrencyFormatter.normalize(saleSafetySettings.returnApprovalLimit()).toPlainString());
@@ -2628,8 +2741,13 @@ public class CompanyCustomization extends JFrame {
         loadBadgeTemplateFields(badgeTemplateSettings);
         requireBadgePinLoginBox.setSelected(all.badgeSecurity() == null
                 || all.badgeSecurity().requireBadgePinLogin());
+        var schedulerEmail = all.schedulerLinkEmail();
+        schedulerLinkEmailEnabledBox.setSelected(schedulerEmail != null && schedulerEmail.enabled());
+        schedulerLinkNotificationEmailField.setText(schedulerEmail == null ? "" : schedulerEmail.recipientEmail());
+        schedulerLinkNotificationEmailField.setEnabled(schedulerLinkEmailEnabledBox.isSelected());
         priceTagTemplates = new ArrayList<>(all.priceTags() == null ? List.of() : all.priceTags());
         loadPriceTagTemplateFields();
+        loadItemTypeQuickPickFields(snapshot.quickPick());
         AutoCloseSettings timeClockSettings = snapshot.timeClock();
         timeClockAutoCloseEnabledBox.setSelected(timeClockSettings.enabled());
         scheduledDetectionDelaySpinner.setValue(timeClockSettings.scheduledDelayHours());
@@ -2648,7 +2766,8 @@ public class CompanyCustomization extends JFrame {
 
     private record PreferencesSnapshot(CompanyCustomizationManager.AllSettings settings,
                                        AutoCloseSettings timeClock,
-                                       CompanyBackupScheduler.BackupScheduleSettings backup) { }
+                                       CompanyBackupScheduler.BackupScheduleSettings backup,
+                                       CompanyCustomizationManager.ItemTypeQuickPickSettings quickPick) { }
 
     private void saveSettings() {
         try {
@@ -2658,6 +2777,9 @@ public class CompanyCustomization extends JFrame {
             var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled()||roundCustomOrdersToNearestTwentyBox.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
             var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
             var badgeSecurity=new CompanyCustomizationManager.BadgeSecuritySettings(requireBadgePinLoginBox.isSelected());
+            String schedulerRecipient=schedulerLinkNotificationEmailField.getText().trim();
+            if(schedulerLinkEmailEnabledBox.isSelected()&&!schedulerRecipient.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"))throw new IllegalArgumentException("Enter a valid scheduler notification email address.");
+            var schedulerEmail=new CompanyCustomizationManager.SchedulerLinkEmailSettings(schedulerLinkEmailEnabledBox.isSelected(),schedulerRecipient);
             var clock=new AutoCloseSettings(
                     timeClockAutoCloseEnabledBox.isSelected(),
                     ((Number) scheduledDetectionDelaySpinner.getValue()).intValue(),
@@ -2666,7 +2788,8 @@ public class CompanyCustomization extends JFrame {
                     null,
                     null);
             loadingStatePanel.loading(true,Instant.now());
-            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);CompanyCustomizationManager.saveBadgeSecuritySettings(badgeSecurity);TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
+            var quickPickIds=selectedItemTypeQuickPickIds();
+            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);CompanyCustomizationManager.saveBadgeSecuritySettings(badgeSecurity);CompanyCustomizationManager.saveSchedulerLinkEmailSettings(schedulerEmail);CompanyCustomizationManager.saveItemTypeQuickPickSettings(quickPickIds);CompanyCustomizationManager.saveAccountSignatureRetentionYears((Integer)accountSignatureRetentionYearsSpinner.getValue());TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
         } catch (Exception ex) {
             loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings);
         }
@@ -2903,7 +3026,7 @@ public class CompanyCustomization extends JFrame {
                 parsePositiveCounter(receiptStartCounterField.getText()),
                 loadedChangeBasketTargetAmount,
                 alwaysPrintSaleReceiptBox.isSelected(),
-                getAccountPaymentReceiptSettingsFromFields()
+                getAccountPaymentReceiptSettingsFromFields(),new CompanyCustomizationManager.SaleReceiptVisibility(showCompanyNameBox.isSelected(),showSubtotalBox.isSelected(),showPaidBox.isSelected(),showPaymentBox.isSelected(),showPoweredByBox.isSelected())
         );
     }
 
@@ -3449,6 +3572,7 @@ public class CompanyCustomization extends JFrame {
         showSkuBox.addActionListener(e -> refreshSamplePreview());
         showItemDiscountBox.addActionListener(e -> refreshSamplePreview());
         showPaymentStatusBox.addActionListener(e -> refreshSamplePreview());
+        for(JCheckBox box:java.util.List.of(showCompanyNameBox,showSubtotalBox,showPaidBox,showPaymentBox,showPoweredByBox))box.addActionListener(e->refreshSamplePreview());
         vatEnabledBox.addActionListener(e -> refreshSamplePreview());
         vatUseDepartmentRatesBox.addActionListener(e -> refreshSamplePreview());
 

@@ -22,6 +22,7 @@ public final class SchedulerWebRuntimeController implements AutoCloseable {
     private volatile boolean closed;
     private Connection lease;
     private Instant retryAfter = Instant.EPOCH;
+    private Instant notificationRetryAfter = Instant.EPOCH;
     private Object runningGeneration;
 
     private SchedulerWebRuntimeController() {
@@ -64,6 +65,16 @@ public final class SchedulerWebRuntimeController implements AutoCloseable {
                 runningGeneration = requestedGeneration;
             }
             if (!enabled && server != null) stopServer();
+            if (server != null && !Instant.now().isBefore(notificationRetryAfter)) {
+                try {
+                    SchedulerLinkNotificationService.notifyIfChanged(publicOrigin);
+                    notificationRetryAfter = Instant.now().plusSeconds(30);
+                } catch (Exception notificationError) {
+                    notificationRetryAfter = Instant.now().plusSeconds(300);
+                    System.err.println("Scheduler link email could not be queued; retrying in 5 minutes ("
+                            + notificationError.getClass().getSimpleName() + ").");
+                }
+            }
             if (closed) { stopServer(); return; }
             try (Connection connection = DB.getConnection(); PreparedStatement heartbeat = connection.prepareStatement(
                     "UPDATE scheduler_web_runtime SET gateway_heartbeat_at=?, gateway_running=?, public_origin=? WHERE runtime_id=1")) {
@@ -112,7 +123,7 @@ public final class SchedulerWebRuntimeController implements AutoCloseable {
     }
 
     private void startServer() throws Exception {
-        String configuredOrigin = System.getenv("SMARTSTOCK_SCHEDULER_PUBLIC_ORIGIN");
+        String configuredOrigin = SchedulerWebConfig.publicOrigin();
         if (configuredOrigin == null || configuredOrigin.isBlank()) {
             int port = Integer.getInteger("smartstock.scheduler.web.port", SchedulerWebServer.DEFAULT_PORT);
             quickTunnel = CloudflareQuickTunnel.start(port);
@@ -120,6 +131,7 @@ public final class SchedulerWebRuntimeController implements AutoCloseable {
         } else publicOrigin = configuredOrigin.trim();
         try {
             server = SchedulerWebServer.start(publicOrigin);
+            notificationRetryAfter = Instant.EPOCH;
         } catch (Exception exception) {
             if (quickTunnel != null) { quickTunnel.close(); quickTunnel = null; }
             publicOrigin = null;

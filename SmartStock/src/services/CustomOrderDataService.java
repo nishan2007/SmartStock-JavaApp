@@ -101,7 +101,7 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
         @Override public String toString() {
             String account=accountNumber==null||accountNumber.isBlank()?"":accountNumber+" - ";
             String contact=email!=null&&!email.isBlank()?email:phone;
@@ -125,7 +125,20 @@ public final class CustomOrderDataService {
             Integer locationId, String locationName, String deviceId, String deviceName,
             BigDecimal minimumDepositRequired, String depositOverrideReason, Integer depositOverrideByUserId,
             String depositOverrideByName, String orderNotes, List<OrderLineRequest> lines,
-            String depositApprovalToken) { }
+            String depositApprovalToken,LanApiClient.ChargeAuthorization authorization,boolean applyCustomerDiscount) {
+        public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,
+                                BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,
+                                String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,
+                                Integer locationId,String locationName,String deviceId,String deviceName,
+                                BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,
+                                String depositOverrideByName,String orderNotes,List<OrderLineRequest> lines,String depositApprovalToken){
+            this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,
+                    paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,
+                    minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,
+                    lines,depositApprovalToken,null,true);
+        }
+        public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,Integer locationId,String locationName,String deviceId,String deviceName,BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,String depositOverrideByName,String orderNotes,List<OrderLineRequest>lines,String depositApprovalToken,LanApiClient.ChargeAuthorization authorization){this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,authorization,true);}
+    }
 
     public record OrderLineRequest(
             Long customItemId, Long customVariantId, String itemName, String variantName, String pricingType,

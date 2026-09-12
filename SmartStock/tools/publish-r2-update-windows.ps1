@@ -25,20 +25,19 @@ $PlainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
 $Secret = [Text.Encoding]::UTF8.GetString($PlainBytes).Trim()
 
 try {
-    $Start = [Diagnostics.ProcessStartInfo]::new()
-    $Start.FileName = 'C:\Program Files\Git\bin\bash.exe'
-    $Start.WorkingDirectory = $Root
-    foreach ($Value in @('./tools/publish-r2-update.sh', $Artifact, $Version,
-            $BuildNumber.ToString(), 'windows', $ReleaseNotes)) {
-        $Start.ArgumentList.Add($Value)
-    }
-    $Start.Environment['SUPABASE_URL'] = $SupabaseUrl
-    $Start.Environment['SUPABASE_SECRET_KEY'] = $Secret
-    $Start.UseShellExecute = $false
-    $Process = [Diagnostics.Process]::Start($Start)
-    $Process.WaitForExit()
-    if ($Process.ExitCode -ne 0) { throw "Publishing failed with exit code $($Process.ExitCode)." }
+    # Windows PowerShell 5 does not expose ProcessStartInfo.ArgumentList.
+    # Set the protected values only in this process environment and let Git
+    # Bash receive the arguments through its normal argv handling.
+    $env:SUPABASE_URL = $SupabaseUrl
+    $env:SUPABASE_SECRET_KEY = $Secret
+    Push-Location $Root
+    try {
+        & 'C:\Program Files\Git\bin\bash.exe' './tools/publish-r2-update.sh' $Artifact $Version $BuildNumber.ToString() 'windows' $ReleaseNotes
+        if ($LASTEXITCODE -ne 0) { throw "Publishing failed with exit code $LASTEXITCODE." }
+    } finally { Pop-Location }
 } finally {
+    $env:SUPABASE_URL = $null
+    $env:SUPABASE_SECRET_KEY = $null
     if ($PlainBytes) { [Array]::Clear($PlainBytes, 0, $PlainBytes.Length) }
     $Secret = $null
 }

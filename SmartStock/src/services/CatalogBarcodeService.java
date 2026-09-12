@@ -30,6 +30,12 @@ public final class CatalogBarcodeService {
     public static void requireAvailable(Connection connection, Collection<String> barcodes,
                                         Integer productId, Long customItemId, Long customVariantId)
             throws SQLException {
+        requireAvailable(connection,barcodes,productId,customItemId,customVariantId,null);
+    }
+
+    static void requireAvailable(Connection connection, Collection<String> barcodes,
+                                 Integer productId, Long customItemId, Long customVariantId,
+                                 java.util.UUID groupId) throws SQLException {
         Set<String> normalized = new LinkedHashSet<>();
         for (String barcode : barcodes == null ? List.<String>of() : barcodes) {
             String value = BarcodeNormalizer.normalize(barcode);
@@ -40,10 +46,10 @@ public final class CatalogBarcodeService {
                 }
             }
         }
-        for (String candidate : normalized) {
+        for (String candidate : new java.util.TreeSet<>(normalized)) {
             lock(connection, candidate);
-            if (conflicts(connection, candidate, productId, customItemId, customVariantId)) {
-                throw new ConflictException("Another product or custom item already uses barcode " + candidate + ".");
+            if (conflicts(connection, candidate, productId, customItemId, customVariantId,groupId)) {
+                throw new ConflictException("Another product, variant group or custom item already uses barcode " + candidate + ".");
             }
         }
     }
@@ -57,8 +63,14 @@ public final class CatalogBarcodeService {
 
     static boolean conflicts(Connection connection, String barcode, Integer productId,
                              Long customItemId, Long customVariantId) throws SQLException {
+        return conflicts(connection,barcode,productId,customItemId,customVariantId,null);
+    }
+
+    private static boolean conflicts(Connection connection, String barcode, Integer productId,
+                             Long customItemId, Long customVariantId, java.util.UUID groupId) throws SQLException {
         List<String> candidates = BarcodeNormalizer.lookupCandidates(barcode);
         if (candidates.isEmpty()) return false;
+        if(!matchingGroups(connection,candidates,groupId).isEmpty())return true;
         String placeholders = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
         String normalized = "UPPER(REGEXP_REPLACE(COALESCE(barcode,''), '[\\s-]+', '', 'g'))";
         String sql = "SELECT EXISTS(" +
@@ -81,6 +93,19 @@ public final class CatalogBarcodeService {
                 rs.next();
                 return rs.getBoolean(1);
             }
+        }
+    }
+
+    static List<java.util.UUID> matchingGroups(Connection connection,List<String> candidates,java.util.UUID excluded) throws SQLException {
+        if(candidates.isEmpty())return List.of();
+        String clause=String.join(" OR ",java.util.Collections.nCopies(candidates.size(),"(barcode=? OR additional_barcodes @> ?::jsonb)"));
+        try(PreparedStatement ps=connection.prepareStatement("SELECT group_id FROM product_groups WHERE ("+clause+") AND (?::uuid IS NULL OR group_id<>?::uuid) ORDER BY group_id")) {
+            int index=1;
+            for(String value:candidates){ps.setString(index++,value);ps.setString(index++,new com.google.gson.Gson().toJson(List.of(value)));}
+            ps.setObject(index++,excluded);ps.setObject(index,excluded);
+            List<java.util.UUID> groups=new java.util.ArrayList<>();
+            try(ResultSet rs=ps.executeQuery()){while(rs.next())groups.add(rs.getObject(1,java.util.UUID.class));}
+            return groups;
         }
     }
 

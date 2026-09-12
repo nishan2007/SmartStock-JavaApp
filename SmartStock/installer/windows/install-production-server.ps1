@@ -78,7 +78,8 @@ $serviceInstaller = Join-Path $PSScriptRoot "install-sync-service.ps1"
 $lanRules = @(
     @{ Name = "SmartStock LAN API $LanApiPort"; Port = $LanApiPort },
     @{ Name = "SmartStock Mobile Item Web UI 8444"; Port = 8444 },
-    @{ Name = "SmartStock Mobile Item Web API 8445"; Port = 8445 }
+    @{ Name = "SmartStock Mobile Item Web API 8445"; Port = 8445 },
+    @{ Name = "SmartStock Employee Registration 8448"; Port = 8448 }
 )
 foreach ($rule in $lanRules) {
     $existingRule = Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue

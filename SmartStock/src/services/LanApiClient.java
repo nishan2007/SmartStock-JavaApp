@@ -568,6 +568,7 @@ public final class LanApiClient {
     }
 
     public static InventoryResult loadInventory(InventoryRequest request)throws Exception{
+        loadProductGroups();
         return GSON.fromJson(post("/v1/inventory/list",GSON.toJsonTree(request).getAsJsonObject(),true,true),InventoryResult.class);
     }
 
@@ -846,13 +847,22 @@ public final class LanApiClient {
     public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);
         return GSON.fromJson(post("/v1/cash/drawer/handover",r,true,true,Map.of("Idempotency-Key",key)).get("handover"),CashDrawerHandover.class);}
+    public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key)throws Exception{
+        JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);
+        return GSON.fromJson(post("/v1/cash/drawer/handover",r,true,true,Map.of("Idempotency-Key",key)).get("handover"),CashDrawerHandover.class);}
     public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);
+        return GSON.fromJson(post("/v1/cash/drawer/close",r,true,true,Map.of("Idempotency-Key",key)),CashDrawerCloseResult.class);}
+    public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key)throws Exception{
+        JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);
         return GSON.fromJson(post("/v1/cash/drawer/close",r,true,true,Map.of("Idempotency-Key",key)),CashDrawerCloseResult.class);}
     public static List<CashDrawerSession> loadRecentCashDrawers()throws Exception{JsonObject d=post("/v1/cash/drawer/recent",new JsonObject(),true,true);
         CashDrawerSession[] rows=GSON.fromJson(d.getAsJsonArray("sessions"),CashDrawerSession[].class);return rows==null?List.of():List.of(rows);}
     public static CashDrawerSession reviseCashDrawer(long sessionId,BigDecimal count,String notes,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);return cashDrawerSessionMutation("/v1/cash/drawer/revise",r,key);}
+    public static DrawerCountDraft loadCashDrawerDraft(long sessionId)throws Exception{JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);JsonObject d=post("/v1/cash/drawer/draft/load",r,true,true);return d.has("draft")&&!d.get("draft").isJsonNull()?GSON.fromJson(d.get("draft"),DrawerCountDraft.class):null;}
+    public static DrawerCountDraft saveCashDrawerDraft(DrawerDraftRequest draft,String key)throws Exception{requireIdempotencyKey(key,"Drawer draft idempotency key is required.");JsonObject d=post("/v1/cash/drawer/draft/save",GSON.toJsonTree(draft).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key));return GSON.fromJson(d.get("draft"),DrawerCountDraft.class);}
+    public static List<DrawerCountEvent> loadCashDrawerHistory(long sessionId)throws Exception{JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);JsonObject d=post("/v1/cash/drawer/history",r,true,true);DrawerCountEvent[] rows=GSON.fromJson(d.getAsJsonArray("events"),DrawerCountEvent[].class);return rows==null?List.of():List.of(rows);}
     public static CashDrawerAdminState loadCashDrawerAdminState(Integer locationId,boolean includeInactive)throws Exception{JsonObject r=new JsonObject();
         if(locationId!=null)r.addProperty("locationId",locationId);r.addProperty("includeInactive",includeInactive);return GSON.fromJson(post("/v1/cash/drawer/admin-state",r,true,true),CashDrawerAdminState.class);}
     public static long saveCashDrawer(CashDrawerSaveRequest request,String key)throws Exception{return post("/v1/cash/drawer/save",GSON.toJsonTree(request).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key)).get("drawerId").getAsLong();}
@@ -950,6 +960,19 @@ public final class LanApiClient {
     public static JsonObject employeeWallet(String action,int userId)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("userId",userId);return post("/v1/employees/wallet",r,true,true);}
     public static LanEmployeeAdminService.State loadEmployeeAdminState(Integer userId)throws Exception{JsonObject r=new JsonObject();if(userId!=null)r.addProperty("userId",userId);return GSON.fromJson(post("/v1/employees/admin/state",r,true,true).get("state"),LanEmployeeAdminService.State.class);}
     public static JsonObject updateEmployeeAdmin(String action,Integer userId,LanEmployeeAdminService.SaveRequest employee,List<Integer>locations,String token,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(userId!=null)r.addProperty("userId",userId);if(employee!=null)r.add("employee",GSON.toJsonTree(employee));if(locations!=null)r.add("locationIds",GSON.toJsonTree(locations));if(token!=null)r.addProperty("supabaseAccessToken",token);return post("/v1/employees/admin/update",r,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject employeeRegistrationAction(String action,UUID registrationId,LanEmployeeAdminService.SaveRequest employee,String reason,boolean includeRejected)throws Exception {
+        JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("includeRejected",includeRejected);
+        if(registrationId!=null)r.addProperty("registrationId",registrationId.toString());
+        if(employee!=null)r.add("employee",GSON.toJsonTree(employee));if(reason!=null)r.addProperty("reason",reason);
+        return post("/v1/employees/registrations",r,true,true);
+    }
+    public static JsonObject employeeApplicationRequest(String action,UUID id,JsonObject body)throws Exception {
+        JsonObject request=body==null?new JsonObject():body.deepCopy();request.addProperty("action",action);request.addProperty("registrationId",id.toString());
+        return post("/v1/employees/registrations",request,true,true);
+    }
+    public static List<EmployeeRegistrationService.Registration> employeeRegistrations(boolean rejected)throws Exception {
+        return List.of(GSON.fromJson(employeeRegistrationAction("LIST",null,null,null,rejected).get("registrations"),EmployeeRegistrationService.Registration[].class));
+    }
     public static JsonObject quotationRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/read",r,true,true);}
     public static JsonObject quotationMutation(String action,JsonObject body,String key)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static String loadQuotationDocument(String type,long id)throws Exception{JsonObject r=new JsonObject();r.addProperty("type",type);r.addProperty("documentId",id);return post("/v1/documents/quotation-invoice",r,true,true).get("text").getAsString();}
@@ -1112,7 +1135,7 @@ public final class LanApiClient {
                 payload.customerName(), payload.accountNumber(), payload.paymentMethod(), payload.paymentStatus(),
                 payload.deviceId(), payload.subtotalAmount(), payload.discountPercent(), payload.discountAmount(),
                 payload.vatAmount(), payload.vatRatePercent(), payload.vatMode(), payload.totalAmount(),
-                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items);
+                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items,payload.representativeName());
     }
 
     public static void logout() {
@@ -1559,9 +1582,35 @@ public final class LanApiClient {
                        int locationId, String locationName, String locationTimezone) { }
     public record ApprovalResult(String approvalToken, String expiresAt, int approverUserId, String approverName) { }
     public record BadgeStatus(boolean pinConfigured, boolean pinRequired) { }
+    private record GroupSnapshot(String scope,List<ProductGroup> groups) { }
+    private static volatile GroupSnapshot groupSnapshot=new GroupSnapshot("",List.of());
+    private static String groupScope(){return String.valueOf(cachedBaseUri)+"|"+managers.SessionManager.getCurrentUserId()+"|"+managers.SessionManager.getCurrentLocationId();}
+    public static List<ProductGroup> cachedProductGroups(){GroupSnapshot snapshot=groupSnapshot;return snapshot.scope().equals(groupScope())?snapshot.groups():List.of();}
+    public record VariantInfo(String groupId,String groupName,List<String> optionNames,long revision,Map<String,String> options) { public String label(){return String.join(" · ",optionNames.stream().map(key->options.getOrDefault(key,"")).toList());} }
+    public record VariantMember(int productId,java.util.Map<String,String> options,boolean active,String imageUrl,String name,int quantityOnHand,BigDecimal price) { }
+    public record ProductGroup(String groupId,String name,List<String> optionNames,long revision,List<VariantMember> members,String barcode,List<String> additionalBarcodes) {
+        public ProductGroup { barcode=barcode==null?"":barcode;additionalBarcodes=additionalBarcodes==null?List.of():List.copyOf(additionalBarcodes); }
+        public ProductGroup(String groupId,String name,List<String> optionNames,long revision,List<VariantMember> members){this(groupId,name,optionNames,revision,members,"",List.of());}
+    }
+    public static List<ProductGroup> loadProductGroups() throws Exception {
+        baseUri();String scope=groupScope();
+        ProductGroup[] groups=GSON.fromJson(post("/v1/products/groups/list",new JsonObject(),true,true).getAsJsonArray("groups"),ProductGroup[].class);
+        List<ProductGroup> result=groups==null?List.of():List.of(groups);
+        if(scope.equals(groupScope()))groupSnapshot=new GroupSnapshot(scope,result);
+        return result;
+    }
+    public static List<EditableProduct> loadVariantSetupItems(List<Integer> ids)throws Exception {
+        JsonObject request=new JsonObject();request.add("productIds",GSON.toJsonTree(ids));
+        EditableProduct[] products=GSON.fromJson(post("/v1/products/groups/items",request,true,true).getAsJsonArray("products"),EditableProduct[].class);
+        return products==null?List.of():List.of(products);
+    }
+    public static JsonObject saveProductGroup(JsonObject request,String key) throws Exception {
+        return post("/v1/products/groups/save",request,true,true,Map.of("Idempotency-Key",key));
+    }
     public record CatalogProduct(int productId, String name, String size, String description, String sku,
                                  BigDecimal price, String productType, Integer categoryId,
-                                 int quantityOnHand, String brandName, String imageUrl, String searchableText) { }
+                                 int quantityOnHand, String brandName, String imageUrl, String searchableText,
+                                 VariantInfo variant, String color, String flavor, Integer itemTypeId, String itemTypeName) { }
     public record CatalogIdentifierLookup(String status, String normalizedIdentifier,
                                           List<CatalogProduct> products) {
         public CatalogIdentifierLookup {
@@ -1571,7 +1620,8 @@ public final class LanApiClient {
     public record CustomerAccount(int customerId, String accountNumber, String customerName,
                                   BigDecimal creditLimit, BigDecimal currentBalance,
                                   BigDecimal availableCredit, boolean business,
-                                  String customerTypeName, String phone) { }
+                                  String customerTypeName, String phone,boolean requireChargeAuthorization,
+                                  boolean salesDiscountEnabled,BigDecimal salesDiscountPercent) { }
     public record CashDrawerStatus(Long cashDrawerId, String drawerName, Long sessionId,
                                    boolean assigned, boolean activeSession) { }
     public record SalesSettings(boolean vatEnabled, boolean departmentVat, BigDecimal fixedVatRate,
@@ -1582,7 +1632,7 @@ public final class LanApiClient {
                                         BigDecimal saleDiscountPercent,
                                         String saleDiscountApprovalToken,
                                         String saleDiscountOverrideReason,
-                                        List<HeldCartCreateLine> lines) { }
+                                        List<HeldCartCreateLine> lines,boolean applyCustomerDiscount) { }
     public record HeldCartCreateLine(int productId, int quantity, BigDecimal unitPrice,
                                      BigDecimal discountPercent,
                                      String priceApprovalToken, String priceOverrideReason,
@@ -1592,7 +1642,7 @@ public final class LanApiClient {
     public record HeldCartSummary(int heldCartId, long createdAtEpochMillis, String holdName,
                                   String userName, String customerName, int itemCount, BigDecimal total) { }
     public record HeldCartPayload(int heldCartId, Integer customerId, String paymentMethod,
-                                  BigDecimal saleDiscountPercent, List<HeldCartItem> items) { }
+                                  BigDecimal saleDiscountPercent, List<HeldCartItem> items,boolean applyCustomerDiscount) { }
     public record HeldCartItem(int productId, String productName, String size, String description, String sku,
                                BigDecimal unitPrice, BigDecimal catalogPrice,
                                int quantity, BigDecimal discountPercent,
@@ -1610,7 +1660,9 @@ public final class LanApiClient {
                                      List<SaleHistoryItem> items, List<SaleHistoryReturn> returns,
                                      List<SaleHistoryReturnItem> returnItems,
                                      List<SaleHistoryAudit> overrideAudit,Integer sourceLocationId,String sourceStoreName,
-                                     long cacheRefreshedAtEpochMillis,String cacheStatus) { }
+                                     long cacheRefreshedAtEpochMillis,String cacheStatus,ChargeAuthorizationEvidence authorization) { }
+    public record ChargeAuthorizationEvidence(String representativeName,String signaturePngBase64,String unsignedReason,
+                                               long capturedAtEpochMillis,boolean imageExpired,String capturedByName,String deviceName) { }
     public record SaleHistoryItem(int productId, String productName, int quantity, int returnedQuantity,
                                   BigDecimal originalUnitPrice, BigDecimal discountPercent,
                                   BigDecimal discountAmount, BigDecimal unitPrice, BigDecimal lineTotal) { }
@@ -1630,14 +1682,18 @@ public final class LanApiClient {
     public record ReceivingBarcodeRequest(String itemType,int itemId,String barcode) { }
     public record ReceivingBarcodeResult(String itemType,int itemId,String barcode,String destination) { }
     public record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,
-                                   String shelf,String storageShelf) { }
+                                   String shelf,String storageShelf,boolean includeArchived) {
+        public InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf) {
+            this(search,stockFilter,department,productType,itemType,brand,shelf,storageShelf,false);
+        }
+    }
     public record InventoryResult(List<InventoryProduct> products,int totalProducts,int totalUnits,
                                   boolean canViewVendor,boolean canViewCostPrice,boolean canViewCreatedBy) { }
     public record InventoryCellUpdate(int productId,String field,String value,String expectedValue) { }
     public record InventoryProduct(int productId,String sku,String barcode,String name,String size,String description,String productType,
                                    String department,String itemType,String brand,String shelf,String storageShelf,
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,
-                                   int reorderLevel,String createdBy) { }
+                                   int reorderLevel,String createdBy,VariantInfo variant,String color,String flavor) { }
     public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities) { }
     public record CrossStoreInventoryResult(List<CrossStoreStoreOption> stores,List<CrossStoreInventoryItem> items) { }
     public record CrossStoreStoreOption(int locationId,String name,String status,long refreshedAtEpochMillis) { }
@@ -1681,7 +1737,7 @@ public final class LanApiClient {
                                   BigDecimal costPrice,BigDecimal price,String productType,int quantity,int reorderLevel,
                                   Integer categoryId,String categoryName,Integer vendorId,String vendorName,String imageUrl,
                                   String itemTypeName,String brandName,String shelfName,String storageShelfName,
-                                  List<String> additionalBarcodes,boolean active) { }
+                                  List<String> additionalBarcodes,boolean active,VariantInfo variant,String color,String flavor) { }
     public record PriceTagCatalogItem(String itemType,String name,String size,String description,String code,
                                       BigDecimal price,long itemId) { }
     public record PriceTagSettings(String encodedTemplates,boolean showCompany,boolean showSku,boolean showBarcode,
@@ -1690,7 +1746,7 @@ public final class LanApiClient {
                                      BigDecimal costPrice,BigDecimal price,String productType,Integer categoryId,Integer vendorId,
                                      String imageUrl,String itemTypeName,String brandName,String shelfName,String storageShelfName,
                                      List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
-                                     boolean adjustQuantity) { }
+                                     boolean adjustQuantity,String color,String flavor) { }
     public record SavedProduct(int productId,String sku,int quantity) { }
     public record ProductLifecycleResult(int productId,String name,boolean active) { }
     public record NonRoundedPriceItem(int productId,String sku,String name,String size,
@@ -1719,15 +1775,23 @@ public final class LanApiClient {
                                         boolean business,boolean active,String accountNotes,Integer customerTypeId,
                                         String customerTypeName,int customerCardTemplateSlot,Integer customerSince,
                                         String customerPhotoUrl,java.time.LocalDate customerCardIssuedOn,java.time.LocalDate customerCardExpiresOn,
-                                        boolean whatsappOptIn,String whatsappConsentPhone) { }
+                                        boolean whatsappOptIn,String whatsappConsentPhone,boolean requireChargeAuthorization,
+                                        boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
+                                        boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
+                                        boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                              String phone,String email,BigDecimal creditLimit,boolean business,
-                                             boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn) {
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,false);}
+                                             boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,
+                                             boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
+                                             boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
+                                             boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,false,BigDecimal.ZERO,false,BigDecimal.ZERO,false,BigDecimal.ZERO);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,false);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,false,false);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                           String phone,String email,BigDecimal creditLimit,boolean business,
-                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null,false);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null,false);}
+                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null,false,false);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null,false,false);}
     }
     public record CustomerCardDates(java.time.LocalDate issuedOn,java.time.LocalDate expiresOn) { }
     public record SavedCustomerAccount(int customerId,String accountNumber) { }
@@ -1744,7 +1808,7 @@ public final class LanApiClient {
                                             String transactionType,String documentType,Long documentId,String documentNumber,
                                             String paymentMethod,String paymentReference,Integer saleId,Long customOrderId,Long invoiceId,
                                             Long quotationId,BigDecimal amount,String note,String paymentStatus,String documentStatus,
-                                            BigDecimal chargeTotal,boolean remote) { }
+                                            BigDecimal chargeTotal,boolean remote,ChargeAuthorizationEvidence authorization) { }
     public record CustomerPaymentResult(List<CustomerPaymentRecord> payments,int paymentCount,int rowCount,
                                         BigDecimal totalPayments,BigDecimal totalApplied) { }
     public record CustomerPaymentRecord(String paymentId,long transactionId,long paymentDateEpochMillis,String userName,
@@ -1761,6 +1825,21 @@ public final class LanApiClient {
     public record ChangeBasketState(String storeName,BigDecimal targetAmount) { }
     public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix) { }
     public record CashDrawerCloseResult(CashDrawerSession session,List<String>handlers,BigDecimal returnedAmount) { }
+    public record CashDrawerReprint(CashDrawerSession session,List<String> handlers,BigDecimal returnedAmount,
+                                    BigDecimal floatCash,BigDecimal cashInHand,Map<String,Integer> denominationCounts,
+                                    Map<String,Integer> floatCounts,boolean savedBreakdown) { }
+    public static List<CashDrawerSession> loadSubmittedDrawers(String date)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("date",date);
+        CashDrawerSession[] sessions=GSON.fromJson(post("/v1/cash/drawer/reprint",body,true,true).get("sessions"),CashDrawerSession[].class);
+        return sessions==null?List.of():List.of(sessions);
+    }
+    public static CashDrawerReprint loadDrawerCloseReceipt(String date,long sessionId)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("date",date);body.addProperty("sessionId",sessionId);
+        return GSON.fromJson(post("/v1/cash/drawer/reprint",body,true,true),CashDrawerReprint.class);
+    }
+    public record DrawerDraftRequest(long sessionId,int expectedRevision,String eventType,Map<String,Integer>denominationCounts,Map<String,Integer>floatCounts,BigDecimal countedCash,BigDecimal floatTotal,BigDecimal cashInHand,boolean complete,String reason) { }
+    public record DrawerCountDraft(long sessionId,int revisionNo,String eventType,Map<String,Integer>denominationCounts,Map<String,Integer>floatCounts,BigDecimal countedCash,BigDecimal floatTotal,BigDecimal cashInHand,BigDecimal expectedCash,boolean complete,String reason,String changedByName,String deviceName,String createdAt) { }
+    public record DrawerCountEvent(int revision,String eventType,Map<String,Integer>denominationCounts,Map<String,Integer>floatCounts,BigDecimal countedCash,BigDecimal floatTotal,BigDecimal cashInHand,BigDecimal expectedCash,boolean complete,String reason,String changedByName,String deviceName,String createdAt) { }
     public record CashDrawerAdminState(List<CashDrawerService.StoreOption>stores,List<CashDrawerService.DeviceOption>devices,
                                        List<CashDrawer>drawers,List<CashDrawerAssignment>assignments,BigDecimal changeBasketTarget) { }
     public record CashDrawerSaveRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,
@@ -1811,7 +1890,14 @@ public final class LanApiClient {
     public record CheckoutRequest(String paymentMethod, String paymentReference, Integer customerId,
                                   BigDecimal saleDiscountPercent, BigDecimal cashCollected,
                                   String saleDiscountApprovalToken, String saleDiscountOverrideReason,
-                                  List<CheckoutLine> lines) { }
+                                  List<CheckoutLine> lines,ChargeAuthorization authorization,boolean applyCustomerDiscount) {
+        public CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,
+                               BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,List<CheckoutLine>lines){
+            this(paymentMethod,paymentReference,customerId,saleDiscountPercent,cashCollected,saleDiscountApprovalToken,saleDiscountOverrideReason,lines,null,true);
+        }
+        public CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,List<CheckoutLine>lines,ChargeAuthorization authorization){this(paymentMethod,paymentReference,customerId,saleDiscountPercent,cashCollected,saleDiscountApprovalToken,saleDiscountOverrideReason,lines,authorization,true);}
+    }
+    public record ChargeAuthorization(String representativeName,String signaturePngBase64,String unsignedReason) { }
     public record CheckoutLine(int productId, int quantity, BigDecimal unitPrice, BigDecimal discountPercent,
                                String priceApprovalToken, String priceOverrideReason,
                                String discountApprovalToken, String discountOverrideReason,
@@ -1849,7 +1935,7 @@ public final class LanApiClient {
                                   String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,
                                   BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,
                                   BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,
-                                  List<ReceiptItemPayload> items) { }
+                                  List<ReceiptItemPayload> items,String representativeName) { }
     private record ReceiptItemPayload(String name,String sku,int quantity,BigDecimal originalUnitPrice,
                                       BigDecimal finalUnitPrice,BigDecimal discountPercent,BigDecimal lineTotal) { }
 

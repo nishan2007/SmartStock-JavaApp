@@ -1,0 +1,5 @@
+SmartStock 1.0.146
+
+- Fixes Company Preferences failing to load after the 1.0.145 update.
+- Registers and automatically applies the scheduler-link email database upgrade before preference data is read.
+- Retains the persistent drawer-count drafts and immutable drawer audit history introduced in 1.0.145.

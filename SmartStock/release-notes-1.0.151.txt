@@ -1,0 +1,5 @@
+Hide archived inventory by default; use Show archived items to include them.
+Receiving History shows one receiving slip per Receive ID with View Details and double-click item details.
+Advanced return lookup remains permission-controlled and updates when session permissions refresh.
+Quick Pick uses the preloaded checkout catalog instead of requesting items on every opening.
+Touching the checkout search field opens the Windows on-screen keyboard; mouse clicks do not.

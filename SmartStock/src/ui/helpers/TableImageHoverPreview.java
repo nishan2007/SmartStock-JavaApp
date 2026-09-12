@@ -17,6 +17,63 @@ public final class TableImageHoverPreview {
         table.addMouseListener(preview);
     }
 
+    public record Picture(String url,String label) { }
+    public static void install(Window owner,JTable table,java.util.function.IntFunction<java.util.List<Picture>> pictures,Color accent) {
+        JWindow popup=new JWindow(owner);popup.setFocusableWindowState(false);
+        class GridPreview extends MouseAdapter {
+            int row=-1;long generation;Timer timer;SwingWorker<java.util.List<ImageIcon>,Void> worker;
+            void hide(){generation++;row=-1;if(timer!=null)timer.stop();if(worker!=null)worker.cancel(true);popup.setVisible(false);}
+            @Override public void mouseExited(MouseEvent e){hide();}
+            @Override public void mouseMoved(MouseEvent e){
+                int next=table.rowAtPoint(e.getPoint());if(next==row)return;hide();if(next<0)return;
+                row=next;long expected=generation;Point anchor=e.getLocationOnScreen();
+                timer=new Timer(300,event->{
+                    java.util.List<Picture> items=java.util.List.copyOf(pictures.apply(next));
+                    if(items.isEmpty())return;
+                    int count=Math.min(9,items.size()),edge=count==1?200:110;
+                    worker=new SwingWorker<>(){
+                        protected java.util.List<ImageIcon> doInBackground(){
+                            java.util.List<ImageIcon> icons=new java.util.ArrayList<>();
+                            for(Picture item:items.subList(0,count)) {
+                                if(isCancelled())break;
+                                ImageIcon icon=null;
+                                try {
+                                    Image raw=item.url()==null||item.url().isBlank()?null:ImageCacheManager.loadImage(item.url());
+                                    if(raw!=null&&raw.getWidth(null)>0&&raw.getHeight(null)>0){
+                                        double scale=Math.min((double)edge/raw.getWidth(null),(double)edge/raw.getHeight(null));
+                                        icon=new ImageIcon(raw.getScaledInstance(Math.max(1,(int)(raw.getWidth(null)*scale)),Math.max(1,(int)(raw.getHeight(null)*scale)),Image.SCALE_SMOOTH));
+                                    }
+                                }catch(Exception ignored){ }
+                                icons.add(icon);
+                            }
+                            return icons;
+                        }
+                        protected void done(){
+                            if(isCancelled()||generation!=expected||row!=next||!table.isShowing())return;
+                            java.util.List<ImageIcon> icons;try{icons=get();}catch(Exception ignored){return;}
+                            JPanel content=new JPanel(new BorderLayout(5,5));content.setBackground(DeckersPalette.surface());
+                            content.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(accent),BorderFactory.createEmptyBorder(6,6,6,6)));
+                            JPanel grid=new JPanel(new GridLayout(0,count==1?1:Math.min(3,count),6,6));grid.setOpaque(false);
+                            for(int i=0;i<count;i++){
+                                Picture item=items.get(i);JPanel cell=new JPanel(new BorderLayout());cell.setOpaque(false);
+                                JLabel image=new JLabel(icons.get(i));image.setHorizontalAlignment(SwingConstants.CENTER);image.setPreferredSize(new Dimension(edge,edge));
+                                if(icons.get(i)==null)image.setText(item.url()==null||item.url().isBlank()?"No Image":"Image unavailable");
+                                cell.add(image);JLabel label=new JLabel(item.label(),SwingConstants.CENTER);label.setPreferredSize(new Dimension(edge,22));label.setForeground(DeckersPalette.muted());cell.add(label,BorderLayout.SOUTH);grid.add(cell);
+                            }
+                            content.add(grid);if(items.size()>9)content.add(new JLabel("+"+(items.size()-9)+" more - expand the product to see all options"),BorderLayout.SOUTH);
+                            popup.setContentPane(content);popup.pack();Rectangle bounds=table.getGraphicsConfiguration().getBounds();
+                            popup.setLocation(Math.max(bounds.x,Math.min(anchor.x+18,bounds.x+bounds.width-popup.getWidth())),Math.max(bounds.y,Math.min(anchor.y,bounds.y+bounds.height-popup.getHeight())));popup.setVisible(true);
+                        }
+                    };worker.execute();
+                });timer.setRepeats(false);timer.start();
+            }
+        }
+        GridPreview listener=new GridPreview();table.addMouseListener(listener);table.addMouseMotionListener(listener);
+        table.getModel().addTableModelListener(e->listener.hide());
+        table.addHierarchyListener(e->{if(!table.isShowing())listener.hide();});
+        owner.addWindowListener(new WindowAdapter(){@Override public void windowClosed(WindowEvent e){listener.hide();popup.dispose();}});
+    }
+
     private static final class Preview extends MouseAdapter implements MouseMotionListener {
         private final JTable table;
         private final int imageColumn;

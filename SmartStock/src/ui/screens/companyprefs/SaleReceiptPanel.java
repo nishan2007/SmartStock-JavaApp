@@ -19,7 +19,7 @@ public class SaleReceiptPanel extends JPanel {
                             JCheckBox showCustomerBox,
                             JCheckBox showSkuBox,
                             JCheckBox showItemDiscountBox,
-                            JCheckBox showPaymentStatusBox,
+                            JCheckBox showPaymentStatusBox,JCheckBox showCompanyNameBox,JCheckBox showSubtotalBox,JCheckBox showPaidBox,JCheckBox showPaymentBox,JCheckBox showPoweredByBox,
                             JCheckBox vatEnabledBox,
                             JCheckBox vatUseDepartmentRatesBox,
                             JTextField vatFixedRatePercentField) {
@@ -53,6 +53,7 @@ public class SaleReceiptPanel extends JPanel {
         optionsPanel.add(showSkuBox);
         optionsPanel.add(showItemDiscountBox);
         optionsPanel.add(showPaymentStatusBox);
+        for(JCheckBox box:java.util.List.of(showCompanyNameBox,showSubtotalBox,showPaidBox,showPaymentBox,showPoweredByBox))optionsPanel.add(box);
         optionsPanel.add(vatEnabledBox);
         optionsPanel.add(vatUseDepartmentRatesBox);
         addWide(this, optionsPanel, 8);

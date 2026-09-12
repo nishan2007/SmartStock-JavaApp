@@ -46,6 +46,9 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 public class EmployeeManagement extends JFrame {
+    private JTabbedPane employeeTabs;
+    private EmployeeRegistrationPanel registrationsPanel;
+    private services.EmployeeRegistrationService.Registration selectedRegistration;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
     private static final Color PAGE_BG = DeckersPalette.background();
     private static final Color CARD_BG = DeckersPalette.surface();
@@ -197,8 +200,20 @@ public class EmployeeManagement extends JFrame {
         leftPanel.setMinimumSize(new Dimension(320, 0));
         tableScrollPane.setBorder(BorderFactory.createEmptyBorder());
         tableScrollPane.getViewport().setBackground(DeckersPalette.tableBody(DeckersPalette.ORANGE));
-        leftPanel.add(searchPanel, BorderLayout.NORTH);
-        leftPanel.add(tableScrollPane, BorderLayout.CENTER);
+        JPanel tableHeader=new JPanel(new BorderLayout(4,4));tableHeader.setOpaque(false);
+        tableHeader.add(searchPanel,BorderLayout.CENTER);
+        JButton registrationLink=new JButton("Registration link / QR");styleButton(registrationLink,false);
+        registrationLink.addActionListener(e->showRegistrationGateway());tableHeader.add(registrationLink,BorderLayout.SOUTH);
+        leftPanel.add(tableHeader, BorderLayout.NORTH);
+        employeeTabs=new JTabbedPane();employeeTabs.addTab("Employees",tableScrollPane);
+        registrationsPanel=new EmployeeRegistrationPanel(this::selectRegistration,this::styleTable);
+        employeeTabs.addTab("Applications",registrationsPanel);
+        JPanel applications=new JPanel(new BorderLayout());applications.setOpaque(false);
+        JTable applicationTable=new JTable(new DefaultTableModel(new String[]{"Submitted","Name","Status"},0));styleTable(applicationTable);
+        applications.add(new JScrollPane(applicationTable),BorderLayout.CENTER);
+        applications.add(new JLabel("Applications are not available yet."),BorderLayout.SOUTH);
+        employeeTabs.addTab("Applications",applications);
+        leftPanel.add(employeeTabs, BorderLayout.CENTER);
         styleTable(employeeTable);
         employeeTable.getColumnModel().getColumn(0).setPreferredWidth(70);
         employeeTable.getColumnModel().getColumn(0).setMinWidth(60);
@@ -248,7 +263,7 @@ public class EmployeeManagement extends JFrame {
         lastNameField = new JTextField();
         nicknameField = new JTextField();
         emailField = new JTextField();
-        emailField.setToolTipText("Optional. If blank, SmartStock creates a unique alias using the manager's email mailbox.");
+        emailField.setToolTipText("Required for new employees. Existing employees may keep their current email.");
         phoneField = new JTextField();
         employeePhotoField = new JTextField();
         employeePhotoField.setColumns(24);
@@ -368,7 +383,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 6;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Email (optional):"), gbc);
+        formPanel.add(new JLabel("Email * (new employee):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -377,7 +392,7 @@ public class EmployeeManagement extends JFrame {
         gbc.gridx = 0;
         gbc.gridy = 7;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Phone Number (optional):"), gbc);
+        formPanel.add(new JLabel("Phone Number * (new employee):"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -753,6 +768,7 @@ public class EmployeeManagement extends JFrame {
         enrollWalletButton.setEnabled(false);
         replaceWalletButton.setEnabled(false);
         revokeWalletButton.setEnabled(false);
+        employeeTabs.addChangeListener(e->{clearFields();registrationsPanel.clearSelection();employeeSearchField.setText("");applyRegistrationControls();if(employeeTabs.getSelectedIndex()==1)registrationsPanel.reload();});
         loadRoles();
         loadStoresForUser(null);
         loadEmployees();
@@ -770,6 +786,33 @@ public class EmployeeManagement extends JFrame {
         column.setPreferredWidth(0);
         column.setMaxWidth(0);
         column.setResizable(false);
+    }
+
+    private void applyRegistrationControls(){
+        if(addButton==null)return;
+        boolean employees=employeeTabs.getSelectedIndex()==0;
+        boolean pending=employeeTabs.getSelectedIndex()==1;
+        boolean canApprove=pending&&selectedRegistration!=null&&Set.of("PENDING","UNDER_REVIEW","INTERVIEW","APPROVING").contains(selectedRegistration.status());
+        addButton.setText(employees?"Add Employee":selectedRegistration!=null&&"APPROVING".equals(selectedRegistration.status())?"Retry Activation":"Approve and Activate");
+        addButton.setEnabled(employees||canApprove);updateButton.setEnabled(employees&&selectedUserId!=null);
+        passwordField.setEnabled(employees);emailField.setEditable(employees);activeCheckBox.setEnabled(employees);
+        if(!employees){passwordField.setText("");activeCheckBox.setSelected(true);}
+    }
+    private void selectRegistration(services.EmployeeRegistrationService.Registration r){
+        if(employeeTabs.getSelectedIndex()!=1||addButton==null)return;
+        clearFields();selectedRegistration=r;
+        if(r!=null){firstNameField.setText(r.firstName());middleNameField.setText(r.middleName());lastNameField.setText(r.lastName());nicknameField.setText(r.nickname());emailField.setText(r.email());phoneField.setText(r.phone());dateOfBirthField.setText(r.dateOfBirth()==null?"":r.dateOfBirth().toString());employeeIdCardDocumentField.setText(r.documentUrl());}
+        applyRegistrationControls();
+    }
+    private void showRegistrationGateway(){
+        UiTaskRunner.submit(this,"employees.registration-status",()->LanApiClient.employeeRegistrationAction("STATUS",null,null,null,false),state->{
+            boolean running=state.get("running").getAsBoolean();
+            JPanel panel=new JPanel(new BorderLayout(8,8));
+            if(running){String url=state.get("url").getAsString();JTextField link=new JTextField(url);link.setEditable(false);panel.add(link,BorderLayout.NORTH);panel.add(new JLabel(new ImageIcon(walletQr(url,240))),BorderLayout.CENTER);JPanel bottom=new JPanel(new FlowLayout());JButton copy=new JButton("Copy application link");copy.addActionListener(e->java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(url),null));bottom.add(copy);JButton health=new JButton("Check public health");health.addActionListener(e->UiTaskRunner.submit(this,"applications.health",()->{var response=java.net.http.HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url+"/health")).timeout(java.time.Duration.ofSeconds(15)).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofString());return response.statusCode()==200&&response.body().contains("true");},ok->JOptionPane.showMessageDialog(this,ok?"The public application portal is reachable.":"The public portal is not ready. Check the proxy and active server."),ex->JOptionPane.showMessageDialog(this,"The public portal could not be reached.")));bottom.add(health);panel.add(bottom,BorderLayout.SOUTH);}
+            else panel.add(new JLabel("The employee registration form is stopped."));
+            int choice=JOptionPane.showOptionDialog(this,panel,"Employee Registration",JOptionPane.DEFAULT_OPTION,JOptionPane.PLAIN_MESSAGE,null,new String[]{running?"Stop Registration":"Start Registration","Close"},"Close");
+            if(choice==0)UiTaskRunner.submit(this,"employees.registration-toggle",()->LanApiClient.employeeRegistrationAction(running?"STOP":"START",null,null,null,false),ignored->{if(!running)showRegistrationGateway();},ex->JOptionPane.showMessageDialog(this,"Could not change registration access: "+ex.getMessage()));
+        },ex->JOptionPane.showMessageDialog(this,"Could not load registration access: "+ex.getMessage()));
     }
 
     private void styleEmployeeInputs() {
@@ -1368,6 +1411,7 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void loadSelectedEmployee() {
+        if(employeeTabs.getSelectedIndex()!=0)return;
         int selectedRow = employeeTable.getSelectedRow();
         if (selectedRow == -1) {
             return;
@@ -1452,6 +1496,11 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void addEmployee() {
+        final var registration=selectedRegistration;
+        if(employeeTabs.getSelectedIndex()!=0&&registration==null)return;
+        if(registration!=null&&"APPROVING".equals(registration.status())){
+            UiTaskRunner.submit(this,"employees.approve",()->LanApiClient.employeeRegistrationAction("APPROVE",registration.id(),null,null,false),r->registrationApproved(),ex->JOptionPane.showMessageDialog(this,"Activation could not finish. Refresh and retry: "+getFriendlyEmployeeError(ex)));return;
+        }
         String username = usernameField.getText().trim();
         String password = passwordField.getText().trim();
         String firstName = firstNameField.getText().trim();
@@ -1481,7 +1530,9 @@ public class EmployeeManagement extends JFrame {
         boolean isActive = activeCheckBox.isSelected();
 
         List<String> missingFields = missingRequiredEmployeeFields(
-                true, password, firstName, lastName, salaryAmountField.getText(), role);
+                registration==null, password, firstName, lastName, salaryAmountField.getText(), role);
+        if (email.isBlank()) missingFields.add("Email");
+        if (phoneNumber.isBlank()) missingFields.add("Phone Number");
         if (!missingFields.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Complete the required fields: " + String.join(", ", missingFields) + ".");
             return;
@@ -1502,9 +1553,10 @@ public class EmployeeManagement extends JFrame {
                 String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
                 String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
                 LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,null);
-                int newUserId=LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey).get("userId").getAsInt();
+                int newUserId=(registration==null?LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey):LanApiClient.employeeRegistrationAction("APPROVE",registration.id(),request,null,false)).get("userId").getAsInt();
                 return new EmployeeSaveResult(newUserId,uploadedPhoto,uploadedDocument);
         },result->{
+                if(registration!=null){registrationApproved();return;}
                 employeePhotoField.setText(result.photoUrl());employeeIdCardDocumentField.setText(result.documentUrl());refreshEmployeePhotoPreview();
                 SessionDataCache.invalidate("employee-admin:");
                 JOptionPane.showMessageDialog(this, "Employee added successfully.");
@@ -1513,7 +1565,14 @@ public class EmployeeManagement extends JFrame {
         },ex->JOptionPane.showMessageDialog(this,"Failed to add employee: "+getFriendlyEmployeeError(ex)));
     }
 
+    private void registrationApproved(){
+        SessionDataCache.invalidate("employee-admin:");
+        clearFields();registrationsPanel.reload();employeeTabs.setSelectedIndex(0);loadEmployees();
+        JOptionPane.showMessageDialog(this,"Employee approved and activated. They can now use the password they submitted.");
+    }
+
     private void updateEmployee() {
+        if(employeeTabs.getSelectedIndex()!=0)return;
         if (selectedUserId == null) {
             JOptionPane.showMessageDialog(this, "Select an employee first.");
             return;
@@ -1597,6 +1656,7 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void clearFields() {
+        selectedRegistration=null;
         selectedUserId = null;
         usernameField.setText("");
         passwordField.setText("");
@@ -1651,6 +1711,7 @@ public class EmployeeManagement extends JFrame {
         replaceWalletButton.setEnabled(false);
         revokeWalletButton.setEnabled(false);
         usernameField.requestFocusInWindow();
+        applyRegistrationControls();
     }
 
     private LocalDate parseOptionalDateOfBirth() {
@@ -2132,6 +2193,7 @@ public class EmployeeManagement extends JFrame {
     }
 
     private void applyEmployeeFilter() {
+        if(registrationsPanel!=null)registrationsPanel.filter(employeeSearchField.getText().trim());
         if (employeeSorter == null) {
             return;
         }

@@ -43,7 +43,7 @@ public class ReceiptFormatter {
     private static String formatColumnText(ReceiptData receipt, int width, CompanyCustomizationManager.ReceiptSettings settings) {
         settings = settings == null ? getReceiptSettings() : settings;
         StringBuilder builder = new StringBuilder();
-        appendCentered(builder, settings.companyName(), width);
+        if(settings.visibility().showCompanyName())appendCentered(builder, settings.companyName(), width);
         appendCentered(builder, emptyDefault(receipt.getStoreName(), "Store"), width);
         if (!settings.headerLine().isBlank()) {
             appendCentered(builder, settings.headerLine(), width);
@@ -61,6 +61,7 @@ public class ReceiptFormatter {
         if (settings.showCustomer() && !receipt.getCustomerName().isBlank()) {
             appendPair(builder, "Customer", receipt.getCustomerName(), width);
         }
+        if(!receipt.getRepresentativeName().isBlank())appendPair(builder,"Account authorized by",receipt.getRepresentativeName(),width);
         if (settings.showCustomer() && !receipt.getAccountNumber().isBlank()) {
             appendPair(builder, "Account", receipt.getAccountNumber(), width);
         }
@@ -79,7 +80,7 @@ public class ReceiptFormatter {
         }
 
         builder.append(repeat("-", width)).append('\n');
-        appendPair(builder, "Subtotal", money(receipt.getSubtotalAmount()), width);
+        if(settings.visibility().showSubtotal())appendPair(builder, "Subtotal", money(receipt.getSubtotalAmount()), width);
         if (receipt.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
             appendPair(builder, "Discount", money(receipt.getDiscountAmount()), width);
         }
@@ -87,11 +88,11 @@ public class ReceiptFormatter {
             appendPair(builder, vatLabel(receipt), money(receipt.getVatAmount()), width);
         }
         appendPair(builder, "Total", money(receipt.getTotalAmount()), width);
-        appendPair(builder, "Payment", receipt.getPaymentMethod(), width);
+        if(settings.visibility().showPayment())appendPair(builder, "Payment", receipt.getPaymentMethod(), width);
         if (settings.showPaymentStatus()) {
             appendPair(builder, "Status", receipt.getPaymentStatus(), width);
         }
-        appendPair(builder, "Paid", money(receipt.getAmountPaid()), width);
+        if(settings.visibility().showPaid())appendPair(builder, "Paid", money(receipt.getAmountPaid()), width);
         if (receipt.getCashCollected() != null) {
             appendPair(builder, "Cash Collected", money(receipt.getCashCollected()), width);
             appendPair(builder, "Change Due", money(receipt.getChangeDue()), width);
@@ -101,8 +102,7 @@ public class ReceiptFormatter {
         }
         builder.append(repeat("-", width)).append('\n');
         appendCentered(builder, settings.footerLine(), width);
-        appendCentered(builder, "Powered by SmartStock", width);
-        builder.append('\n');
+        if(settings.visibility().showPoweredBy())appendCentered(builder, "Powered by SmartStock", width);
         return builder.toString();
     }
 

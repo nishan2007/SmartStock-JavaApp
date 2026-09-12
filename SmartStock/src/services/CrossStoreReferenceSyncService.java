@@ -53,7 +53,9 @@ final class CrossStoreReferenceSyncService {
         int announced = 0;
         for (TableSnapshot table : TABLES) {
             try (PreparedStatement ps = connection.prepareStatement("SELECT " + table.keySql()
-                    + ",("+table.rowSql()+")::text,"+table.timestampSql()+" FROM " + table.name() + " t ORDER BY "
+                    + ",("+table.rowSql()+")::text,"+table.timestampSql()+" FROM " + table.name() + " t "
+                    + (java.util.Set.of("users","user_locations","employee_payroll_settings").contains(table.name())
+                        ? "WHERE NOT EXISTS (SELECT 1 FROM employee_registrations er WHERE er.employee_id=t.user_id AND er.status<>'APPROVED') " : "") + "ORDER BY "
                     + table.orderSql())) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {

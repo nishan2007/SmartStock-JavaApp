@@ -1,0 +1,8 @@
+Main inventory item barcodes for products with variants.
+
+- Manage the main product name, primary barcode, and multiple additional barcodes in Group / manage variants.
+- Scan any main barcode at checkout to choose the variant to sell, with price and stock shown.
+- Keep individual variant barcode scanning unchanged and reject duplicate catalog barcodes.
+- Automatically upgrade the local store schema and preserve main barcodes when older registers save group details.
+
+Update the store server before registers to enable main item barcodes.

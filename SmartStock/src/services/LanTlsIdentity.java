@@ -92,6 +92,16 @@ public final class LanTlsIdentity {
 
     /** Bonjour/mDNS name used by iPhone browsers on the store LAN. */
     public static String mobileWebHostName() throws Exception {
+        // Prefer the store's primary LAN address when it is present.  Hostname
+        // resolution can return Hyper-V/WSL adapters first, which makes the
+        // QR target unreachable from phones on the main 10.1.1.x network.
+        for (var iface : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {
+            for (var address : java.util.Collections.list(iface.getInetAddresses())) {
+                if (address instanceof java.net.Inet4Address && "10.1.1.221".equals(address.getHostAddress())) {
+                    return address.getHostAddress();
+                }
+            }
+        }
         String hostname = tlsHostName();
         return hostname.endsWith(".local") ? hostname : hostname + ".local";
     }

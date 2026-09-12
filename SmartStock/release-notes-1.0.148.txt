@@ -1,0 +1,5 @@
+SmartStock 1.0.148
+
+- Fixes the store server remaining offline after an upgrade when a completed OneDrive schema check encountered newer, pending schema metadata.
+- Prevents the resulting ClosedChannelException errors on registers by allowing the server to finish its idempotent schema reconciliation and start HTTPS normally.
+- Preserves the customer account, Company Preferences, wallet, scheduler email, and drawer history updates from earlier releases.

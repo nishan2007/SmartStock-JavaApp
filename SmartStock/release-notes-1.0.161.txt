@@ -1,0 +1,5 @@
+Fix Windows update shutdown and relaunch sequencing.
+
+- Terminate the existing SmartStock desktop JVM before replacing application files.
+- Wait for the old launcher and desktop process to exit before installing the update.
+- Keep the existing rollback and background-service shutdown protections.

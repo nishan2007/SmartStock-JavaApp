@@ -350,6 +350,66 @@ public class ServerCompanyCustomizationRepository {
 
     public record BadgeSecuritySettings(boolean requireBadgePinLogin) { }
 
+    public static SchedulerLinkEmailSettings loadSchedulerLinkEmailSettings() {
+        Integer locationId = ServerRequestIdentity.locationId();
+        if (locationId == null) return new SchedulerLinkEmailSettings(false, "");
+        try (Connection conn = DB.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT COALESCE(scheduler_link_email_enabled, FALSE),
+                            COALESCE(scheduler_link_notification_email, '')
+                     FROM company_customization WHERE location_id = ?
+                     """)) {
+            ps.setInt(1, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new SchedulerLinkEmailSettings(rs.getBoolean(1), rs.getString(2))
+                        : new SchedulerLinkEmailSettings(false, "");
+            }
+        } catch (SQLException ex) {
+            throw new IllegalStateException("Scheduler link email settings could not be loaded.", ex);
+        }
+    }
+
+    public static void saveSchedulerLinkEmailSettings(SchedulerLinkEmailSettings settings) throws IOException, SQLException {
+        Integer locationId = ServerRequestIdentity.locationId();
+        if (locationId == null) throw new SQLException("A store must be selected before scheduler email settings can be saved.");
+        String recipient = settings == null || settings.recipientEmail() == null ? "" : settings.recipientEmail().trim();
+        if (settings != null && settings.enabled() && !recipient.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new SQLException("Enter a valid scheduler notification email address.");
+        }
+        try (Connection conn = DB.getConnection()) {
+            conn.setAutoCommit(false);
+            boolean resetNotification = settings != null && settings.enabled();
+            try (PreparedStatement current = conn.prepareStatement("SELECT scheduler_link_email_enabled, COALESCE(scheduler_link_notification_email,'') FROM company_customization WHERE location_id=?")) {
+                current.setInt(1, locationId);
+                try (ResultSet rs = current.executeQuery()) {
+                    if (rs.next()) resetNotification = !rs.getBoolean(1) || !recipient.equalsIgnoreCase(rs.getString(2).trim());
+                }
+            }
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    INSERT INTO company_customization (location_id, scheduler_link_email_enabled,
+                        scheduler_link_notification_email, updated_at)
+                    VALUES (?, ?, ?, NOW())
+                    ON CONFLICT (location_id) DO UPDATE SET
+                        scheduler_link_email_enabled = EXCLUDED.scheduler_link_email_enabled,
+                        scheduler_link_notification_email = EXCLUDED.scheduler_link_notification_email,
+                        updated_at = NOW()
+                    """)) {
+                ps.setInt(1, locationId);
+                ps.setBoolean(2, settings != null && settings.enabled());
+                ps.setString(3, recipient);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement reset = conn.prepareStatement(
+                    "UPDATE scheduler_web_runtime SET last_notified_origin=NULL, last_notified_recipient=NULL WHERE runtime_id=1 AND ?")) {
+                reset.setBoolean(1, resetNotification);
+                reset.executeUpdate();
+            }
+            conn.commit();
+        }
+    }
+
+    public record SchedulerLinkEmailSettings(boolean enabled, String recipientEmail) { }
+
     /** Five shared price-tag designs, each with its own physical label size. */
     public static List<PriceTagTemplateSettings> loadPriceTagTemplateSettings() {
         Integer locationId = ServerRequestIdentity.locationId();
@@ -433,7 +493,7 @@ public class ServerCompanyCustomizationRepository {
                        COALESCE(cc.show_customer, TRUE) AS show_customer,
                        COALESCE(cc.show_sku, TRUE) AS show_sku,
                        COALESCE(cc.show_item_discount, TRUE) AS show_item_discount,
-                       COALESCE(cc.show_payment_status, TRUE) AS show_payment_status,
+                       COALESCE(cc.show_payment_status, TRUE) AS show_payment_status, cc.sale_receipt_visibility,
                        COALESCE(cc.vat_enabled, FALSE) AS vat_enabled,
                        COALESCE(cc.vat_use_department_rates, FALSE) AS vat_use_department_rates,
                        COALESCE(cc.vat_fixed_rate_percent, 0) AS vat_fixed_rate_percent,
@@ -506,7 +566,7 @@ public class ServerCompanyCustomizationRepository {
                                 rs.getBoolean("account_payment_receipt_show_allocations"),
                                 rs.getBoolean("account_payment_receipt_show_balance"),
                                 rs.getBoolean("account_payment_receipt_show_barcode")
-                        )
+                        ), new com.google.gson.Gson().fromJson(rs.getString("sale_receipt_visibility"),SaleReceiptVisibility.class)
                 );
             }
             }
@@ -632,6 +692,7 @@ public class ServerCompanyCustomizationRepository {
                 ps.setBoolean(27, paymentReceiptSettings.showBarcode());
                 ps.executeUpdate();
             }
+            if(settings.saleReceiptVisibility()!=null)try(PreparedStatement ps=conn.prepareStatement("UPDATE company_customization SET sale_receipt_visibility=?::jsonb,updated_at=CURRENT_TIMESTAMP WHERE location_id=?")) {ps.setString(1,new com.google.gson.Gson().toJson(settings.visibility()));ps.setInt(2,locationId);ps.executeUpdate();}
         }
     }
 
@@ -1216,7 +1277,7 @@ public class ServerCompanyCustomizationRepository {
                         Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_allocations", "true")),
                         Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_balance", "true")),
                         Boolean.parseBoolean(properties.getProperty("account_payment_receipt.show_barcode", "true"))
-                )
+                ), new com.google.gson.Gson().fromJson(properties.getProperty("receipt.visibility","null"),SaleReceiptVisibility.class)
         );
     }
 
@@ -1367,7 +1428,7 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("receipt.show_customer", String.valueOf(settings.showCustomer()));
         properties.setProperty("receipt.show_sku", String.valueOf(settings.showSku()));
         properties.setProperty("receipt.show_item_discount", String.valueOf(settings.showItemDiscount()));
-        properties.setProperty("receipt.show_payment_status", String.valueOf(settings.showPaymentStatus()));
+        properties.setProperty("receipt.show_payment_status", String.valueOf(settings.showPaymentStatus())); properties.setProperty("receipt.visibility",new com.google.gson.Gson().toJson(settings.visibility()));
         properties.setProperty("receipt.vat_enabled", String.valueOf(settings.vatEnabled()));
         properties.setProperty("receipt.vat_use_department_rates", String.valueOf(settings.vatUseDepartmentRates()));
         properties.setProperty("receipt.vat_fixed_rate_percent", settings.vatFixedRatePercent().toPlainString());
@@ -1692,7 +1753,7 @@ public class ServerCompanyCustomizationRepository {
             return null;
         }
 
-        return loadCompanyLogo(settings);
+        return Receipt.ReceiptLogoLayout.trim(loadCompanyLogo(settings));
     }
 
     public static BufferedImage loadCompanyLogo(ReceiptSettings settings) {
@@ -1979,6 +2040,8 @@ public class ServerCompanyCustomizationRepository {
         }
     }
 
+    public record SaleReceiptVisibility(boolean showCompanyName,boolean showSubtotal,boolean showPaid,boolean showPayment,boolean showPoweredBy) { }
+
     public record ReceiptSettings(
             String companyName,
             String addressLine1,
@@ -2007,7 +2070,40 @@ public class ServerCompanyCustomizationRepository {
             java.math.BigDecimal changeBasketTargetAmount,
             boolean alwaysPrintSaleReceipt,
             AccountPaymentReceiptSettings accountPaymentReceiptSettings
+,
+            SaleReceiptVisibility saleReceiptVisibility
     ) {
+        public ReceiptSettings(
+            String companyName,
+            String addressLine1,
+            String addressLine2,
+            String addressLine3,
+            String phoneLine1,
+            String phoneLine2,
+            String emailLine1,
+            String emailLine2,
+            String mottoLine1,
+            String mottoLine2,
+            String headerLine,
+            String footerLine,
+            String logoPath,
+            boolean showLogo,
+            boolean showSaleId,
+            boolean showDevice,
+            boolean showCustomer,
+            boolean showSku,
+            boolean showItemDiscount,
+            boolean showPaymentStatus,
+            boolean vatEnabled,
+            boolean vatUseDepartmentRates,
+            java.math.BigDecimal vatFixedRatePercent,
+            int nextReceiptCounter,
+            java.math.BigDecimal changeBasketTargetAmount,
+            boolean alwaysPrintSaleReceipt,
+            AccountPaymentReceiptSettings accountPaymentReceiptSettings
+) { this(companyName, addressLine1, addressLine2, addressLine3, phoneLine1, phoneLine2, emailLine1, emailLine2, mottoLine1, mottoLine2, headerLine, footerLine, logoPath, showLogo, showSaleId, showDevice, showCustomer, showSku, showItemDiscount, showPaymentStatus, vatEnabled, vatUseDepartmentRates, vatFixedRatePercent, nextReceiptCounter, changeBasketTargetAmount, alwaysPrintSaleReceipt, accountPaymentReceiptSettings, null); }
+        public SaleReceiptVisibility visibility() { return saleReceiptVisibility==null?new SaleReceiptVisibility(true,true,true,true,true):saleReceiptVisibility; }
+
         public ReceiptSettings {
             companyName = clean(companyName, "SmartStock");
             addressLine1 = Objects.requireNonNullElse(addressLine1, "").trim();

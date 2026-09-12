@@ -1,0 +1,10 @@
+Application portal email-code update.
+
+This release packages the current portal and SmartStock Gmail authentication email integration from 1.0.175 as the next Windows update.
+
+- Configure verification and recovery emails in Company Preferences > Application portal.
+- Deliver Supabase-generated codes through the store's connected Gmail sender using a signed Send Email hook.
+- Request another code from the portal and show delivery failures without a false success message.
+- Preserve applicant accounts and existing employee workflows.
+
+Update the store server first. The Supabase Send Email hook must be configured and tested before enabling it. This release does not automatically enable that hook; live email delivery requires the updated portal server to remain online.

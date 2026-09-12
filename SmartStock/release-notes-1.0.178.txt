@@ -1,0 +1,16 @@
+Simpler mobile-friendly employment application portal.
+
+- Reduce the application to three steps: Personal details, Education & experience, and Documents & review.
+- Remove availability, earliest start, preferred store, and nickname from the applicant form.
+- Move Areas of interest and A little about you into Personal details.
+- Remove document type and description inputs; applicants select photos or PDFs directly, with the existing optional uploads and 10-file limit.
+- Show the company motto below the logo without repeating the company name beside it.
+- Update server submission validation to accept applications without the removed work-preference fields.
+
+Update the store server to serve the revised portal and validation rules. Refresh the portal page after the update. Company branding continues to come from saved SmartStock preferences.
+
+Product catalog flavors.
+
+- Add an optional Flavor field alongside Color in item creation, editing, inventory, search, and checkout.
+- Support Flavor as a managed product-variant option while preserving it when a product is detached.
+- Preserve Flavor values during updates from older registers and during catalog synchronization and recovery.

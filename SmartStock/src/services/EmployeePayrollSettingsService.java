@@ -286,6 +286,26 @@ public final class EmployeePayrollSettingsService {
             ps.setString(9, SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
         }
+        // Keep the corrected current-period earnings after the period closes.
+        // Earlier periods are outside this update's date range.
+        if (isHourly(compensationType)) {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    UPDATE employee_time_clock tc
+                    SET total_earned = ROUND(tc.total_hours_worked * COALESCE((
+                        SELECT eps.pay_rate FROM employee_payroll_settings eps
+                        WHERE eps.user_id=tc.user_id AND eps.effective_from<=tc.work_date
+                        ORDER BY eps.effective_from DESC,eps.updated_at DESC LIMIT 1
+                    ), ?), 2)
+                    WHERE tc.user_id=? AND tc.work_date>=? AND tc.work_date<=?
+                      AND tc.clock_out IS NOT NULL AND tc.total_hours_worked IS NOT NULL
+                    """)) {
+                ps.setBigDecimal(1, normalizeRate(rate));
+                ps.setInt(2, userId);
+                ps.setDate(3, Date.valueOf(effectiveFrom));
+                ps.setDate(4, Date.valueOf(periodFor(current.periodType(), current.workHourLimit(), today).end()));
+                ps.executeUpdate();
+            }
+        }
     }
 
     public static PayRate payRateFor(Connection conn, int userId, LocalDate date) throws SQLException {

@@ -79,6 +79,7 @@ public class MakeASale extends JFrame {
     private JLabel discountAmountLabel;
     private JLabel vatAmountLabel;
     private JTextField discountPercentField;
+    private JCheckBox applyCustomerDiscountBox;
     private ButtonGroup paymentMethodGroup;
     private JToggleButton cashPaymentButton;
     private JToggleButton cardPaymentButton;
@@ -96,6 +97,7 @@ public class MakeASale extends JFrame {
     private JButton quickPickItemsBtn;
     private JButton addMiscItemBtn;
     private JButton removeCartItemBtn;
+    private JPanel itemTypeLauncher;
     private JLabel overrideStatusLabel;
     private JLabel selectedStoreLabel;
     private JLabel currentUserLabel;
@@ -111,6 +113,7 @@ public class MakeASale extends JFrame {
     private JLabel currentTimeLabel;
     private String lastShownDate;
     private JPopupMenu searchPopup;
+    private ui.helpers.GroupedProductRows variantRows;
     private JTable searchResultsTable;
     private JScrollPane searchResultsScrollPane;
     private javax.swing.Timer searchDebounceTimer;
@@ -118,6 +121,7 @@ public class MakeASale extends JFrame {
     private long latestSearchRequestId = 0L;
     private long productSearchGeneration;
     private long identifierLookupGeneration;
+    private String pendingIdentifierLookup = "";
     private String searchResultsQuery = "";
     private boolean productSearchSelectionNavigated;
     private boolean resettingProductSearch;
@@ -228,6 +232,7 @@ public class MakeASale extends JFrame {
 
        newItemBtn = createUtilityButton("New Item", DeckersPalette.LIME);
        searchField = new PromptTextField("Scan or enter item information");
+       ui.helpers.TouchSearchKeyboard.install(MakeASale.this, searchField);
        DeckersSwing.styleField(searchField);
        setFixedControlHeight(searchField, 0);
        searchField.putClientProperty("JTextField.placeholderText", "Scan or enter item information");
@@ -342,8 +347,17 @@ public class MakeASale extends JFrame {
        DeckersSwing.styleBand(cartSection, DeckersPalette.LIME, new Insets(6, 6, 6, 6));
        cartSection.add(cartScrollPane, BorderLayout.CENTER);
 
+       itemTypeLauncher = new JPanel(new BorderLayout());
+       itemTypeLauncher.setOpaque(false);
+       itemTypeLauncher.setPreferredSize(new Dimension(224, 0));
+       itemTypeLauncher.setVisible(false);
+       JPanel cartAndLauncher = new JPanel(new BorderLayout(10, 0));
+       cartAndLauncher.setOpaque(false);
+       cartAndLauncher.add(itemTypeLauncher, BorderLayout.WEST);
+       cartAndLauncher.add(cartSection, BorderLayout.CENTER);
+
        panel.add(searchPanel, BorderLayout.NORTH);
-       panel.add(cartSection, BorderLayout.CENTER);
+       panel.add(cartAndLauncher, BorderLayout.CENTER);
 
        customerAccountBox = new JComboBox<>();
        customerAccountBox.setEditable(true);
@@ -352,7 +366,7 @@ public class MakeASale extends JFrame {
        customerAccountBox.setBackground(DeckersPalette.fieldBackground());
        customerAccountBox.setForeground(DeckersPalette.text());
        customerAccountBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
-       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false, ""));
+       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false, "",false,false,BigDecimal.ZERO));
        setFixedControlHeight(customerAccountBox, 360);
        customerAccountBox.setRenderer(new CustomerAccountRenderer());
        addCustomerAccountButton = createUtilityButton("New Customer", DeckersPalette.MAGENTA);
@@ -373,6 +387,7 @@ public class MakeASale extends JFrame {
 	           discountPercentField.setToolTipText("A manager approval is required to apply a sale discount.");
 	       }
        setFixedControlHeight(discountPercentField, 70);
+       applyCustomerDiscountBox=new JCheckBox("Apply customer discount");applyCustomerDiscountBox.setOpaque(false);applyCustomerDiscountBox.setVisible(false);
 
        JPanel customerControlsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
        customerControlsPanel.setOpaque(false);
@@ -395,6 +410,7 @@ public class MakeASale extends JFrame {
        transactionPanel.add(accountPaymentButton);
        transactionPanel.add(buildLabeledControl("Reference", paymentReferenceField));
        totalsPanel.add(buildLabeledControl("Discount %", discountPercentField));
+       totalsPanel.add(applyCustomerDiscountBox);
 	       subtotalLabel = createTotalLabel("Subtotal: $0", false);
 	       totalsPanel.add(subtotalLabel);
 	       discountAmountLabel = createTotalLabel("Discount: $0", false);
@@ -444,6 +460,7 @@ public class MakeASale extends JFrame {
        add(panel);
        refreshPermissionButtons();
        warmProductSearchCacheInBackground();
+       loadConfiguredItemTypeLauncher();
 
        //Action Listeners
        newItemBtn.addActionListener(new ActionListener() {
@@ -496,9 +513,15 @@ public class MakeASale extends JFrame {
        });
        searchField.getDocument().addDocumentListener(new DocumentListener() {
            private void restartSearchDebounce() {
-               if (resettingProductSearch) {
-                   return;
-               }
+                if (resettingProductSearch) {
+                    return;
+                }
+                if (!pendingIdentifierLookup.isEmpty()) {
+                    if (searchField.getText().trim().equals(pendingIdentifierLookup)) {
+                        return;
+                    }
+                    pendingIdentifierLookup = "";
+                }
                hideImagePreview();
                if (searchDebounceTimer == null) {
                    searchDebounceTimer = new javax.swing.Timer(300, e -> searchProducts(false));
@@ -532,6 +555,12 @@ public class MakeASale extends JFrame {
 
                int selectedRow = searchResultsTable.getSelectedRow();
 
+               if (variantRows!=null&&variantRows.groupAt(selectedRow)!=null
+                       &&(e.getKeyCode()==java.awt.event.KeyEvent.VK_RIGHT||e.getKeyCode()==java.awt.event.KeyEvent.VK_LEFT)){
+                   String action=e.getKeyCode()==java.awt.event.KeyEvent.VK_RIGHT?"variants-expand":"variants-collapse";
+                   searchResultsTable.getActionMap().get(action).actionPerformed(new java.awt.event.ActionEvent(searchResultsTable,0,action));
+                   productSearchSelectionNavigated=true;e.consume();return;
+               }
                if (e.getKeyCode() == java.awt.event.KeyEvent.VK_DOWN) {
                    int nextRow = Math.min(selectedRow + 1, searchResultsTable.getRowCount() - 1);
                    if (nextRow >= 0) {
@@ -607,6 +636,8 @@ public class MakeASale extends JFrame {
            }
        });
 	       addCustomerAccountButton.addActionListener(e -> openQuickCustomerAccount());
+	       customerAccountBox.addActionListener(e->refreshCustomerDiscount());
+	       applyCustomerDiscountBox.addActionListener(e->updateOverallTotal());
 	       discountPercentField.getDocument().addDocumentListener(new DocumentListener() {
 	           private void refreshTotals() {
                    if (suppressDiscountFieldEvents) {
@@ -677,7 +708,7 @@ public class MakeASale extends JFrame {
         CustomerAccountOption selectedBeforeReload = getSelectedCustomerAccount();
         customerAccountOptions = new java.util.ArrayList<>();
         customerAccountBox.removeAllItems();
-        for (LanApiClient.CustomerAccount account : accounts) customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),account.customerName(), account.creditLimit(), account.currentBalance(),account.availableCredit(), account.business(), account.customerTypeName()));
+        for (LanApiClient.CustomerAccount account : accounts) customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),account.customerName(), account.creditLimit(), account.currentBalance(),account.availableCredit(), account.business(), account.customerTypeName(),account.requireChargeAuthorization(),account.salesDiscountEnabled(),account.salesDiscountPercent()));
         applyCustomerAccountFilter("", false);
         if (selectedBeforeReload != null) selectCustomerById(selectedBeforeReload.customerId);
     }
@@ -841,13 +872,84 @@ public class MakeASale extends JFrame {
         return button;
     }
 
+    private void loadConfiguredItemTypeLauncher() {
+        UiTaskRunner.submit(this, "make-sale.item-type-launcher", () -> {
+            var settings = CompanyCustomizationManager.loadItemTypeQuickPickSettings();
+            var catalog = InventoryCatalogCache.warmIfNeeded().get();
+            return new ItemTypeLauncherData(settings, catalog.products());
+        }, this::showConfiguredItemTypeLauncher, failure -> {
+            itemTypeLauncher.setVisible(false);
+            itemTypeLauncher.getParent().revalidate();
+        });
+    }
+
+    private void showConfiguredItemTypeLauncher(ItemTypeLauncherData data) {
+        Map<Integer,CompanyCustomizationManager.ItemTypeOption> options = new java.util.HashMap<>();
+        for (var option : data.settings().availableItemTypes()) options.put(option.itemTypeId(), option);
+        Map<Integer,java.util.List<LanApiClient.CatalogProduct>> products = data.products().stream()
+                .filter(product -> product.itemTypeId() != null)
+                .collect(java.util.stream.Collectors.groupingBy(LanApiClient.CatalogProduct::itemTypeId));
+        JPanel buttons = new JPanel();
+        buttons.setOpaque(false);
+        buttons.setLayout(new BoxLayout(buttons, BoxLayout.Y_AXIS));
+        for (Integer id : data.settings().selectedItemTypeIds()) {
+            var option = options.get(id); var matching = products.get(id);
+            if (option == null || matching == null || matching.isEmpty()) continue;
+            JButton button = createLauncherItemTypeButton(option.name(), matching.size());
+            button.addActionListener(e -> showConfiguredItemTypeProducts(option, matching));
+            buttons.add(button); buttons.add(Box.createVerticalStrut(8));
+        }
+        itemTypeLauncher.removeAll();
+        if (buttons.getComponentCount() == 0) {
+            itemTypeLauncher.setVisible(false);
+        } else {
+            JLabel title = new JLabel("Item Types", SwingConstants.CENTER);
+            title.setFont(new Font("SansSerif", Font.BOLD, 16));
+            title.setBorder(BorderFactory.createEmptyBorder(2, 2, 8, 2));
+            JScrollPane scroll = new JScrollPane(buttons);
+            scroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.YELLOW)));
+            scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+            scroll.getVerticalScrollBar().setUnitIncrement(24);
+            itemTypeLauncher.add(title, BorderLayout.NORTH); itemTypeLauncher.add(scroll, BorderLayout.CENTER);
+            itemTypeLauncher.setVisible(true);
+        }
+        itemTypeLauncher.getParent().revalidate(); itemTypeLauncher.getParent().repaint();
+    }
+
+    private JButton createLauncherItemTypeButton(String name, int count) {
+        JButton button = createQuickPickTypeButton(name, count);
+        button.setAlignmentX(Component.CENTER_ALIGNMENT);
+        button.setMaximumSize(new Dimension(210, 88));
+        button.setPreferredSize(new Dimension(210, 88));
+        return button;
+    }
+
+    private void showConfiguredItemTypeProducts(CompanyCustomizationManager.ItemTypeOption option,
+                                                java.util.List<LanApiClient.CatalogProduct> products) {
+        JDialog dialog = new JDialog(this, option.name(), true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        dialog.setMinimumSize(new Dimension(560, 420)); dialog.setSize(820, 620); dialog.setLocationRelativeTo(this);
+        JPanel content = new JPanel(new BorderLayout(12,12));
+        content.setBackground(DeckersPalette.background()); content.setBorder(BorderFactory.createEmptyBorder(16,16,16,16));
+        JLabel heading = new JLabel(option.toString()); heading.setFont(new Font("SansSerif",Font.BOLD,22));
+        heading.setForeground(DeckersPalette.text()); content.add(heading,BorderLayout.NORTH);
+        JPanel grid=createQuickPickGrid(); products.forEach(product -> grid.add(createServiceQuickPickButton(product)));
+        content.add(createQuickPickScrollPane(grid),BorderLayout.CENTER);
+        JButton done=createActionUtilityButton("Done"); done.addActionListener(e->dialog.dispose());
+        JPanel footer=new JPanel(new FlowLayout(FlowLayout.RIGHT,0,0));footer.setOpaque(false);footer.add(done);content.add(footer,BorderLayout.SOUTH);
+        dialog.setContentPane(content); dialog.setVisible(true);
+    }
+
+    private record ItemTypeLauncherData(CompanyCustomizationManager.ItemTypeQuickPickSettings settings,
+                                        java.util.List<LanApiClient.CatalogProduct> products) { }
+
     private void showServiceQuickPick() {
         if (SessionManager.getCurrentLocationId() == null) {
             JOptionPane.showMessageDialog(this, "No store is selected for this session.");
             return;
         }
 
-        JDialog dialog = new JDialog(this, "Quick Pick Service Items", true);
+        JDialog dialog = new JDialog(this, "Quick Pick Items", true);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         dialog.setMinimumSize(new Dimension(560, 420));
         dialog.setSize(820, 620);
@@ -857,7 +959,7 @@ public class MakeASale extends JFrame {
         content.setBackground(DeckersPalette.background());
         content.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
 
-        JLabel heading = new JLabel("Quick Pick Service Items");
+        JLabel heading = new JLabel("Quick Pick Item Types");
         heading.setFont(new Font("SansSerif", Font.BOLD, 22));
         heading.setForeground(DeckersPalette.text());
         heading.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
@@ -875,11 +977,16 @@ public class MakeASale extends JFrame {
         content.add(footer, BorderLayout.SOUTH);
 
         dialog.setContentPane(content);
-        loadServiceQuickPickItems(dialog, center);
+        loadServiceQuickPickItems(dialog, center, heading);
         dialog.setVisible(true);
     }
 
-    private void loadServiceQuickPickItems(JDialog dialog, JPanel center) {
+    private void loadServiceQuickPickItems(JDialog dialog, JPanel center, JLabel heading) {
+        var cached = InventoryCatalogCache.current();
+        if (cached.isPresent()) {
+            showServiceQuickPickGroups(center, heading, serviceQuickPickProducts(cached.get()));
+            return;
+        }
         center.removeAll();
         JLabel loading = new JLabel("Loading service items...", SwingConstants.CENTER);
         loading.setFont(new Font("SansSerif", Font.PLAIN, 16));
@@ -889,19 +996,58 @@ public class MakeASale extends JFrame {
         center.repaint();
 
         UiTaskRunner.submit(dialog, "make-sale.quick-pick-services",
-                () -> LanApiClient.searchCatalog("", "SERVICE"),
+                () -> serviceQuickPickProducts(InventoryCatalogCache.warmIfNeeded().get()),
                 products -> {
                     if (!dialog.isDisplayable()) return;
-                    showServiceQuickPickItems(center, products);
+                    showServiceQuickPickGroups(center, heading, products);
                 },
                 failure -> {
                     if (!dialog.isDisplayable()) return;
-                    showServiceQuickPickError(dialog, center, failure);
+                    showServiceQuickPickError(dialog, center, heading, failure);
                 });
     }
 
+    private java.util.List<LanApiClient.CatalogProduct> serviceQuickPickProducts(InventoryCatalogCache.Snapshot snapshot) {
+        return snapshot.products().stream()
+                .filter(product -> "SERVICE".equalsIgnoreCase(product.productType()))
+                .toList();
+    }
+
+    private void showServiceQuickPickGroups(JPanel center, JLabel heading,
+                                            java.util.List<LanApiClient.CatalogProduct> products) {
+        heading.setText("Quick Pick Item Types");
+        java.util.Map<String, java.util.List<LanApiClient.CatalogProduct>> groups = products.stream()
+                .collect(java.util.stream.Collectors.groupingBy(this::quickPickItemTypeName,
+                        java.util.TreeMap::new, java.util.stream.Collectors.toList()));
+        center.removeAll();
+        if (groups.isEmpty()) {
+            showServiceQuickPickItems(center, heading, products, null);
+            return;
+        }
+
+        JPanel grid = createQuickPickGrid();
+        groups.forEach((itemType, items) -> {
+            JButton button = createQuickPickTypeButton(itemType, items.size());
+            button.addActionListener(e -> showServiceQuickPickItems(center, heading, products, itemType));
+            grid.add(button);
+        });
+        center.add(createQuickPickScrollPane(grid), BorderLayout.CENTER);
+        center.revalidate();
+        center.repaint();
+    }
+
+    private String quickPickItemTypeName(LanApiClient.CatalogProduct product) {
+        String itemType = product.itemTypeName();
+        return itemType == null || itemType.isBlank() ? "Other" : itemType.trim();
+    }
+
     private void showServiceQuickPickItems(JPanel center,
-                                           java.util.List<LanApiClient.CatalogProduct> products) {
+                                           JLabel heading,
+                                           java.util.List<LanApiClient.CatalogProduct> allProducts,
+                                           String selectedItemType) {
+        java.util.List<LanApiClient.CatalogProduct> products = selectedItemType == null ? allProducts
+                : allProducts.stream().filter(product -> selectedItemType.equals(quickPickItemTypeName(product))).toList();
+        heading.setText(selectedItemType == null ? "Quick Pick Items" : selectedItemType);
         center.removeAll();
         if (products.isEmpty()) {
             JLabel empty = new JLabel("No service items are available for this store.", SwingConstants.CENTER);
@@ -909,33 +1055,69 @@ public class MakeASale extends JFrame {
             empty.setForeground(DeckersPalette.muted());
             center.add(empty, BorderLayout.CENTER);
         } else {
-            JPanel grid = new JPanel(new GridLayout(0, 3, 12, 12));
-            grid.setBackground(DeckersPalette.background());
-            grid.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+            JPanel grid = createQuickPickGrid();
             for (LanApiClient.CatalogProduct product : products) {
                 grid.add(createServiceQuickPickButton(product));
             }
-
-            JScrollPane scrollPane = new JScrollPane(grid);
-            scrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
-            scrollPane.getVerticalScrollBar().setUnitIncrement(24);
-            scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-            scrollPane.getViewport().setBackground(DeckersPalette.background());
-            scrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
-                @Override
-                public void componentResized(java.awt.event.ComponentEvent event) {
-                    int columns = Math.max(1, scrollPane.getViewport().getWidth() / 230);
-                    GridLayout layout = (GridLayout) grid.getLayout();
-                    if (layout.getColumns() != columns) {
-                        layout.setColumns(columns);
-                        grid.revalidate();
-                    }
-                }
-            });
-            center.add(scrollPane, BorderLayout.CENTER);
+            if (selectedItemType != null) {
+                JButton back = createActionUtilityButton("Back to Item Types");
+                back.addActionListener(e -> showServiceQuickPickGroups(center, heading, allProducts));
+                JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+                navigation.setOpaque(false);
+                navigation.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+                navigation.add(back);
+                center.add(navigation, BorderLayout.NORTH);
+            }
+            center.add(createQuickPickScrollPane(grid), BorderLayout.CENTER);
         }
         center.revalidate();
         center.repaint();
+    }
+
+    private JPanel createQuickPickGrid() {
+        JPanel grid = new JPanel(new GridLayout(0, 3, 12, 12));
+        grid.setBackground(DeckersPalette.background());
+        grid.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        return grid;
+    }
+
+    private JScrollPane createQuickPickScrollPane(JPanel grid) {
+        JScrollPane scrollPane = new JScrollPane(grid);
+        scrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+        scrollPane.getVerticalScrollBar().setUnitIncrement(24);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.getViewport().setBackground(DeckersPalette.background());
+        scrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                int columns = Math.max(1, scrollPane.getViewport().getWidth() / 230);
+                GridLayout layout = (GridLayout) grid.getLayout();
+                if (layout.getColumns() != columns) {
+                    layout.setColumns(columns);
+                    grid.revalidate();
+                }
+            }
+        });
+        return scrollPane;
+    }
+
+    private JButton createQuickPickTypeButton(String itemType, int itemCount) {
+        JButton button = new RoundedFillButton("<html><center>" + escapeHtml(itemType)
+                + "<br><font size='3'>" + itemCount + (itemCount == 1 ? " item" : " items")
+                + "</font></center></html>");
+        button.setFont(new Font("SansSerif", Font.BOLD, 17));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(DeckersPalette.YELLOW));
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setFocusPainted(false);
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.sectionBorder(DeckersPalette.YELLOW),
+                4, 14, new Insets(16, 12, 16, 12)));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(210, 104));
+        button.setToolTipText("Show " + itemType + " items");
+        return button;
     }
 
     private JButton createServiceQuickPickButton(LanApiClient.CatalogProduct product) {
@@ -983,7 +1165,7 @@ public class MakeASale extends JFrame {
                 .replace("'", "&#39;");
     }
 
-    private void showServiceQuickPickError(JDialog dialog, JPanel center, Throwable failure) {
+    private void showServiceQuickPickError(JDialog dialog, JPanel center, JLabel heading, Throwable failure) {
         center.removeAll();
         JPanel errorPanel = new JPanel();
         errorPanel.setOpaque(false);
@@ -995,7 +1177,7 @@ public class MakeASale extends JFrame {
         message.setForeground(DeckersPalette.text());
         JButton retry = createActionUtilityButton("Retry");
         retry.setAlignmentX(Component.CENTER_ALIGNMENT);
-        retry.addActionListener(e -> loadServiceQuickPickItems(dialog, center));
+        retry.addActionListener(e -> loadServiceQuickPickItems(dialog, center, heading));
         errorPanel.add(Box.createVerticalGlue());
         errorPanel.add(message);
         errorPanel.add(Box.createVerticalStrut(14));
@@ -1606,7 +1788,7 @@ public class MakeASale extends JFrame {
                 break;
             }
             Object[] row = catalogRow(product);
-            if (ProductSearchHelper.textMatches(rowValue(row, 11), searchText)) {
+            if (ProductSearchHelper.textMatches(product.searchableText(), searchText)) {
                 rows.add(row);
             }
         }
@@ -1627,7 +1809,7 @@ public class MakeASale extends JFrame {
     private static Object[] catalogRow(LanApiClient.CatalogProduct product) {
         return new Object[]{product.productId(), product.name(), product.size(), product.description(),
                 product.sku(), product.price(), product.productType(), product.categoryId(),
-                product.quantityOnHand(), product.brandName(), product.imageUrl(), product.searchableText()};
+                product.quantityOnHand(), product.brandName(), product.imageUrl(), product.color(), product.flavor()};
     }
 
 
@@ -1642,7 +1824,7 @@ public class MakeASale extends JFrame {
                 @Override public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { hideImagePreview(); }
             });
 
-            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock", "Brand", "Image"};
+            String[] columns = {"ID", "Name", "Size", "Description", "SKU", "Price", "Type", "Department ID", "Stock", "Brand", "Image", "Color", "Flavor"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -1654,6 +1836,13 @@ public class MakeASale extends JFrame {
             DeckersSwing.styleTable(searchResultsTable);
             searchResultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             searchResultsTable.setAutoCreateRowSorter(false);
+            variantRows=new ui.helpers.GroupedProductRows(searchResultsTable,0,1,5,8);
+            ui.helpers.TableImageHoverPreview.install(this,searchResultsTable,row->{
+                var pictures=variantRows.pictures(row);
+                if(!pictures.isEmpty())return pictures;
+                Object url=searchResultsTable.getModel().getValueAt(searchResultsTable.convertRowIndexToModel(row),10);
+                return java.util.List.of(new ui.helpers.TableImageHoverPreview.Picture(url==null?"":url.toString(),""));
+            },DeckersPalette.MAGENTA);
             searchResultsTable.setRowHeight(24);
             JTableHeader header = searchResultsTable.getTableHeader();
             header.setReorderingAllowed(false);
@@ -1671,7 +1860,7 @@ public class MakeASale extends JFrame {
 
                 @Override
                 public void mouseMoved(java.awt.event.MouseEvent e) {
-                    updateImagePreviewHover(searchResultsTable.rowAtPoint(e.getPoint()), e.getLocationOnScreen());
+                    // Shared hover handles single pictures and group grids.
                 }
 
                 @Override
@@ -1697,6 +1886,7 @@ public class MakeASale extends JFrame {
         for (Object[] row : rows) {
             model.addRow(row);
         }
+        variantRows.capture(LanApiClient.cachedProductGroups(),searchText);
         searchResultsQuery = searchText == null ? "" : searchText.trim();
         productSearchSelectionNavigated = false;
 
@@ -1720,6 +1910,8 @@ public class MakeASale extends JFrame {
         setSearchResultColumnWidth(8, 40, Integer.MAX_VALUE, 70);
         setSearchResultColumnWidth(9, 60, Integer.MAX_VALUE, 140);
         setSearchResultColumnWidth(10, 0, 0, 0);
+        setSearchResultColumnWidth(11, 55, Integer.MAX_VALUE, 100);
+        searchResultsTable.moveColumn(searchResultsTable.convertColumnIndexToView(11),searchResultsTable.convertColumnIndexToView(2)+1);
 
         int priceViewColumn = searchResultsTable.convertColumnIndexToView(5);
         searchResultsTable.getColumnModel().getColumn(priceViewColumn).setCellRenderer(
@@ -1728,7 +1920,7 @@ public class MakeASale extends JFrame {
                     protected void setValue(Object value) {
                         setText(value instanceof Number number
                                 ? utils.CurrencyFormatter.format(number)
-                                : "");
+                                : String.valueOf(value));
                     }
                 });
 
@@ -1758,19 +1950,33 @@ public class MakeASale extends JFrame {
         if (identifier.isEmpty()) {
             return;
         }
+        if (identifier.equals(pendingIdentifierLookup)) {
+            return;
+        }
         if (searchDebounceTimer != null) {
             searchDebounceTimer.stop();
         }
         productSearchGeneration++;
         final long lookupGeneration = ++identifierLookupGeneration;
+        pendingIdentifierLookup = identifier;
         UiTaskRunner.submit(this, "make-sale.identifier-lookup",
                 () -> LanApiClient.lookupCatalogIdentifier(identifier),
                 lookup -> {
-                    if (lookupGeneration != identifierLookupGeneration
-                            || !identifier.equals(searchField.getText().trim())) {
+                    if (lookupGeneration != identifierLookupGeneration) {
                         return;
                     }
-                    if ("MATCH".equals(lookup.status()) && lookup.products().size() == 1) {
+                    pendingIdentifierLookup = "";
+                    if (!identifier.equals(searchField.getText().trim())) {
+                        return;
+                    }
+                    if ("VARIANT_CHOICES".equals(lookup.status())) {
+                        closeSearchPopup();
+                        if(lookup.products().isEmpty()) {
+                            JOptionPane.showMessageDialog(this,"This main item has no active variants to sell.");
+                            return;
+                        }
+                        chooseScannedVariant(lookup.products());
+                    } else if ("MATCH".equals(lookup.status()) && lookup.products().size() == 1) {
                         addCatalogProductToCart(lookup.products().get(0), 1);
                         resetProductSearchAfterAdd();
                     } else if ("AMBIGUOUS".equals(lookup.status())) {
@@ -1785,14 +1991,33 @@ public class MakeASale extends JFrame {
                         searchProducts(false);
                     }
                 },
-                failure -> JOptionPane.showMessageDialog(this,
-                        "Unable to look up item barcode: " + failure.getMessage()));
+                failure -> {
+                    if (lookupGeneration != identifierLookupGeneration) return;
+                    pendingIdentifierLookup = "";
+                    focusProductSearch();
+                    JOptionPane.showMessageDialog(this,
+                            "Unable to look up item barcode: " + failure.getMessage());
+                });
     }
 
     private void addCatalogProductToCart(LanApiClient.CatalogProduct product, int quantity) {
-        addToCart(product.productId(), product.name(), product.size(), product.description(),
+        addToCart(product.productId(), product.variant()==null||product.name().endsWith(product.variant().label())?product.name():product.name()+" — "+product.variant().label(), product.size(), product.description(),
                 product.sku(), product.price().doubleValue(), quantity,
                 normalizeProductType(product.productType()), product.categoryId());
+    }
+
+    private void chooseScannedVariant(java.util.List<LanApiClient.CatalogProduct> products) {
+        String[] labels=products.stream().map(product ->
+                (product.variant()==null?product.name():product.variant().label())
+                +" | "+utils.CurrencyFormatter.format(product.price())
+                +" | Stock: "+product.quantityOnHand()+" | "+product.sku()).toArray(String[]::new);
+        String title=products.get(0).variant()==null?"Choose variant":products.get(0).variant().groupName();
+        String selected=(String)JOptionPane.showInputDialog(this,"Select the variant to sell:",title,
+                JOptionPane.PLAIN_MESSAGE,null,labels,labels[0]);
+        if(selected!=null) {
+            addCatalogProductToCart(products.get(java.util.Arrays.asList(labels).indexOf(selected)),1);
+            resetProductSearchAfterAdd();
+        } else SwingUtilities.invokeLater(searchField::requestFocusInWindow);
     }
 
     private void addSelectedSearchResultToCart() {
@@ -1803,10 +2028,13 @@ public class MakeASale extends JFrame {
             return;
         }
 
+        if(variantRows!=null&&variantRows.expandSelected())return;
         int selectedRow = searchResultsTable.convertRowIndexToModel(searchResultsTable.getSelectedRow());
 
         int productId = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 0)).intValue();
-        String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 1));
+        if(productId<=0)return;
+        String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 1)).trim();
+        name=variantRows.displayName(productId,name);
         String size = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
         String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
         String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
@@ -1834,6 +2062,8 @@ public class MakeASale extends JFrame {
     private void resetProductSearchAfterAdd() {
         productSearchGeneration++;
         identifierLookupGeneration++;
+        pendingIdentifierLookup = "";
+        UiTaskRunner.cancel(this, "make-sale.identifier-lookup");
         if (searchDebounceTimer != null) {
             searchDebounceTimer.stop();
         }
@@ -2498,7 +2728,9 @@ public class MakeASale extends JFrame {
             if (percent.compareTo(BigDecimal.valueOf(100)) > 0) {
                 return BigDecimal.valueOf(100);
             }
-            return percent;
+            CustomerAccountOption customer=getSelectedCustomerAccount();
+            BigDecimal automatic=applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected()&&customer!=null&&customer.salesDiscountEnabled?customer.salesDiscountPercent:BigDecimal.ZERO;
+            return percent.max(automatic);
         } catch (NumberFormatException ex) {
             return BigDecimal.ZERO;
         }
@@ -2804,6 +3036,16 @@ public class MakeASale extends JFrame {
         return null;
     }
 
+    private void refreshCustomerDiscount(){
+        if(applyCustomerDiscountBox==null)return;
+        CustomerAccountOption customer=getSelectedCustomerAccount();
+        boolean available=customer!=null&&customer.salesDiscountEnabled&&customer.salesDiscountPercent.signum()>0;
+        applyCustomerDiscountBox.setVisible(available);
+        applyCustomerDiscountBox.setSelected(available);
+        applyCustomerDiscountBox.setText(available?"Apply customer discount ("+customer.salesDiscountPercent.stripTrailingZeros().toPlainString()+"%)":"Apply customer discount");
+        updateOverallTotal();
+    }
+
     private void checkout(boolean showReceiptPreview) {
         if (!commitCurrentCartEdit()) {
             return;
@@ -2882,14 +3124,20 @@ public class MakeASale extends JFrame {
             }
         }
 
+        LanApiClient.ChargeAuthorization authorization=null;
+        if(chargeCustomerAccount&&selectedCustomer.requireChargeAuthorization){
+            authorization=ui.helpers.CustomerChargeAuthorizationDialog.capture(this,selectedCustomer.name);
+            if(authorization==null)return;
+        }
         checkoutThroughLanApi(showReceiptPreview, paymentMethod, paymentReference, selectedCustomer,
-                discountPercent, cashCollected, saleDiscountApprovalToken, saleDiscountOverrideReason);
+                discountPercent, cashCollected, saleDiscountApprovalToken, saleDiscountOverrideReason,authorization);
     }
 
     private void checkoutThroughLanApi(boolean showReceiptPreview, String paymentMethod,
                                        String paymentReference, CustomerAccountOption customer,
                                        BigDecimal saleDiscountPercent, BigDecimal cashCollected,
-                                       String saleApprovalToken, String saleApprovalReason) {
+                                       String saleApprovalToken, String saleApprovalReason,
+                                       LanApiClient.ChargeAuthorization authorization) {
         java.util.List<LanApiClient.CheckoutLine> lines = new java.util.ArrayList<>();
         for (int row = 0; row < cartModel.getRowCount(); row++) {
             int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
@@ -2910,7 +3158,8 @@ public class MakeASale extends JFrame {
         }
         LanApiClient.CheckoutRequest request = new LanApiClient.CheckoutRequest(
                 paymentMethod, paymentReference, customer == null ? null : customer.customerId,
-                saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason, lines);
+                saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason, lines,authorization,
+                applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected());
         String requestFingerprint = request.toString();
         if (pendingCheckoutKey == null || !requestFingerprint.equals(pendingCheckoutFingerprint)) {
             pendingCheckoutKey = UUID.randomUUID().toString();
@@ -3020,7 +3269,7 @@ public class MakeASale extends JFrame {
             checkoutPrintBtn.setEnabled(true);
             loadingState.actionFailed("Sale", failure.getMessage(),
                     () -> checkoutThroughLanApi(showReceiptPreview, paymentMethod, paymentReference,
-                            customer, saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason));
+                            customer, saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason,authorization));
         });
     }
 
@@ -3081,7 +3330,7 @@ public class MakeASale extends JFrame {
                 saleDiscount,
                 saleApproval == null ? null : saleApproval.lanApprovalToken(),
                 saleApproval == null ? null : saleApproval.reason(),
-                lines);
+                lines,applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected());
         String fingerprint = request.toString();
         if (pendingHoldKey == null || !fingerprint.equals(pendingHoldFingerprint)) {
             pendingHoldKey = UUID.randomUUID().toString();
@@ -3202,6 +3451,7 @@ public class MakeASale extends JFrame {
         }
         handleSaleDiscountEditOverride();
         selectCustomerById(held.customerId());
+        if(applyCustomerDiscountBox!=null)applyCustomerDiscountBox.setSelected(held.applyCustomerDiscount());
         configureCartTableColumns();
         updateLineTotals();
     }
@@ -3441,8 +3691,10 @@ public class MakeASale extends JFrame {
         private final BigDecimal availableCredit;
         private final boolean businessAccount;
         private final String customerTypeName;
+        private final boolean requireChargeAuthorization;
+        private final boolean salesDiscountEnabled;private final BigDecimal salesDiscountPercent;
 
-        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount, String customerTypeName) {
+        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount, String customerTypeName,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent) {
             this.customerId = customerId;
             this.accountNumber = accountNumber == null ? "" : accountNumber;
             this.name = name == null ? "" : name;
@@ -3451,6 +3703,8 @@ public class MakeASale extends JFrame {
             this.availableCredit = availableCredit == null ? BigDecimal.ZERO : availableCredit;
             this.businessAccount = businessAccount;
             this.customerTypeName = customerTypeName == null ? "" : customerTypeName;
+            this.requireChargeAuthorization=requireChargeAuthorization;
+            this.salesDiscountEnabled=salesDiscountEnabled;this.salesDiscountPercent=salesDiscountPercent==null?BigDecimal.ZERO:salesDiscountPercent;
         }
 
         @Override

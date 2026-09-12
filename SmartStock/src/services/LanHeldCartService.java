@@ -78,14 +78,15 @@ final class LanHeldCartService {
         boolean canChangePrice = hasPermission(connection, userId, "CHANGE_SALE_ITEM_PRICE");
         boolean canDiscount = hasPermission(connection, userId, "APPLY_SALE_DISCOUNT");
         boolean canOverrideSaleDiscount = hasPermission(connection, userId, "SALE_DISCOUNT_OVERRIDE");
-        BigDecimal saleDiscount = percent(request.saleDiscountPercent());
+        BigDecimal manualSaleDiscount = percent(request.saleDiscountPercent());
+        BigDecimal saleDiscount=manualSaleDiscount.max(customerSaleDiscount(connection,request.customerId(),request.applyCustomerDiscount()));
         BigDecimal discountLimit = loadDiscountLimit(connection, locationId);
-        if (saleDiscount.compareTo(discountLimit) > 0) {
+        if (manualSaleDiscount.compareTo(discountLimit) > 0) {
             if (!canOverrideSaleDiscount) {
                 approvals.consume(request.saleDiscountApprovalToken(), "SALE_DISCOUNT_OVERRIDE",
                         "Sale Discount Override", request.saleDiscountOverrideReason());
             }
-        } else if (saleDiscount.signum() > 0 && !canDiscount) {
+        } else if (manualSaleDiscount.signum() > 0 && !canDiscount) {
             approvals.consume(request.saleDiscountApprovalToken(), "APPLY_SALE_DISCOUNT",
                     "Sale Discount Approval", request.saleDiscountOverrideReason());
         }
@@ -125,13 +126,14 @@ final class LanHeldCartService {
         int heldCartId;
         try (PreparedStatement ps = connection.prepareStatement("""
                 INSERT INTO held_carts(location_id,user_id,user_name,customer_id,hold_name,payment_method,
-                  subtotal_amount,discount_percent,discount_amount,total_amount,status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,'OPEN')
+                  subtotal_amount,discount_percent,discount_amount,total_amount,status,apply_customer_discount)
+                VALUES (?,?,?,?,?,?,?,?,?,?,'OPEN',?)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, locationId); ps.setInt(2, userId); ps.setString(3, userName);
             setInt(ps, 4, request.customerId()); ps.setString(5, clean(request.holdName()));
             ps.setString(6, payment(request.paymentMethod())); ps.setBigDecimal(7, money(gross));
             ps.setBigDecimal(8, saleDiscount); ps.setBigDecimal(9, allDiscounts); ps.setBigDecimal(10, total);
+            ps.setBoolean(11,request.applyCustomerDiscount());
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) throw new SQLException("Held cart could not be created.");
@@ -189,7 +191,7 @@ final class LanHeldCartService {
         requirePermission(connection, userId, "MAKE_SALE");
         Map<String, Object> result = new LinkedHashMap<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT customer_id,COALESCE(payment_method,''),COALESCE(discount_percent,0)
+                SELECT customer_id,COALESCE(payment_method,''),COALESCE(discount_percent,0),COALESCE(apply_customer_discount,TRUE)
                 FROM held_carts
                 WHERE held_cart_id=? AND location_id=? AND UPPER(COALESCE(status,'OPEN'))='OPEN'
                 FOR UPDATE
@@ -199,6 +201,7 @@ final class LanHeldCartService {
                 if (!rs.next()) throw rule(404, "HELD_CART_NOT_FOUND", "Held cart is no longer available.");
                 result.put("heldCartId", heldCartId); result.put("customerId", rs.getObject(1));
                 result.put("paymentMethod", rs.getString(2)); result.put("saleDiscountPercent", rs.getBigDecimal(3));
+                result.put("applyCustomerDiscount",rs.getBoolean(4));
             }
         }
         List<Map<String, Object>> items = new ArrayList<>();
@@ -270,6 +273,7 @@ final class LanHeldCartService {
             }
         }
     }
+    private static BigDecimal customerSaleDiscount(Connection c,Integer customerId,boolean apply)throws SQLException{if(!apply||customerId==null)return BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(sales_discount_enabled,FALSE),COALESCE(sales_discount_percent,0) FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){return rs.next()&&rs.getBoolean(1)?percent(rs.getBigDecimal(2)):BigDecimal.ZERO;}}}
 
     private static String validateMiscLine(Connection c,int userId,CreateLine line,CatalogLine catalog)throws Exception{
         if(!line.miscItem()){
@@ -371,7 +375,7 @@ final class LanHeldCartService {
     record CreateRequest(String holdName, String paymentMethod, Integer customerId,
                          BigDecimal saleDiscountPercent,
                          String saleDiscountApprovalToken, String saleDiscountOverrideReason,
-                         List<CreateLine> lines) { }
+                         List<CreateLine> lines,boolean applyCustomerDiscount) { }
     record CreateLine(int productId, int quantity, BigDecimal unitPrice, BigDecimal discountPercent,
                       String priceApprovalToken, String priceOverrideReason,
                       String discountApprovalToken, String discountOverrideReason,

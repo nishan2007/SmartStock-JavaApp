@@ -1,0 +1,5 @@
+Fix Customer Accounts failing to load after the account-charge authorization update.
+
+- Register and apply the customer authorization schema migration during server upgrades.
+- Preserve customer listing, creation, editing, account history, authorization settings, and existing customer data.
+- Apply restricted cloud access to stored signature evidence.

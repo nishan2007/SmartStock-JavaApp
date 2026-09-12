@@ -1,0 +1,1 @@
+Product ID sorting now orders inventory numerically in ascending or descending order.

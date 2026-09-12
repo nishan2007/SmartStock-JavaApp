@@ -34,7 +34,10 @@ final class LanCustomerAccountService {
                   COALESCE(ca.current_balance,0)+COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),COALESCE(ca.is_business,FALSE),
                   COALESCE(ca.is_active,TRUE),COALESCE(ca.account_notes,''),ca.customer_type_id,COALESCE(ct.name,''),
                   COALESCE(ct.customer_card_template_slot,4),ca.customer_since,COALESCE(ca.customer_photo_url,''),ca.customer_card_issued_on,ca.customer_card_expires_on,
-                  COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,'')
+                  COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,''),COALESCE(ca.require_charge_authorization,FALSE),
+                  COALESCE(ca.sales_discount_enabled,FALSE),COALESCE(ca.sales_discount_percent,0),
+                  COALESCE(ca.invoice_discount_enabled,FALSE),COALESCE(ca.invoice_discount_percent,0),
+                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0)
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
                 ORDER BY ca.name
                 """)){try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(account(rs));}}
@@ -51,7 +54,10 @@ final class LanCustomerAccountService {
                   COALESCE(ca.current_balance,0)+COALESCE((SELECT SUM(balance_due) FROM custom_orders o WHERE o.customer_id=ca.customer_id AND COALESCE(o.payment_status,'UNPAID')<>'PAID'),0)+COALESCE((SELECT SUM(document_balance) FROM sync_cross_store_customer_history_cache r WHERE r.customer_id=ca.customer_id AND r.event_type='CUSTOM_ORDER' AND r.cache_status='CURRENT'),0),COALESCE(ca.is_business,FALSE),
                   COALESCE(ca.is_active,TRUE),COALESCE(ca.account_notes,''),ca.customer_type_id,COALESCE(ct.name,''),
                   COALESCE(ct.customer_card_template_slot,4),ca.customer_since,COALESCE(ca.customer_photo_url,''),ca.customer_card_issued_on,ca.customer_card_expires_on,
-                  COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,'')
+                  COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,''),COALESCE(ca.require_charge_authorization,FALSE),
+                  COALESCE(ca.sales_discount_enabled,FALSE),COALESCE(ca.sales_discount_percent,0),
+                  COALESCE(ca.invoice_discount_enabled,FALSE),COALESCE(ca.invoice_discount_percent,0),
+                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0)
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
                 WHERE ca.customer_id=?
                 """)){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){
@@ -91,6 +97,10 @@ final class LanCustomerAccountService {
         int currentYear=java.time.Year.now().getValue();Integer since=r.customerSince();if(r.customerId()==null&&since==null)since=currentYear;
         if(since!=null&&(since<1900||since>currentYear))throw rule(400,"VALIDATION_ERROR","Customer Since must be a four-digit year from 1900 through "+currentYear+".");
         BigDecimal credit=money(r.creditLimit());if(credit.signum()<0)throw rule(400,"VALIDATION_ERROR","Credit limit cannot be negative.");
+        BigDecimal salesDiscount=percent(r.salesDiscountPercent()),invoiceDiscount=percent(r.invoiceDiscountPercent()),customOrderDiscount=percent(r.customOrderDiscountPercent());
+        boolean salesEnabled=r.salesDiscountEnabled(),invoiceEnabled=r.invoiceDiscountEnabled(),customOrderEnabled=r.customOrderDiscountEnabled(),canManageDiscounts=has(c,userId,"MANAGE_CUSTOMER_DISCOUNTS");
+        boolean changesDiscounts=salesEnabled||salesDiscount.signum()>0||invoiceEnabled||invoiceDiscount.signum()>0||customOrderEnabled||customOrderDiscount.signum()>0;
+        if(r.customerId()==null&&changesDiscounts&&!canManageDiscounts)throw rule(403,"PERMISSION_DENIED","You do not have permission to manage customer discounts.");
         if(credit.signum()!=0&&!has(c,userId,"SET_CREDIT_LIMIT"))throw rule(403,"PERMISSION_DENIED","You do not have permission to set credit limits.");
         if(r.customerTypeId()!=null)requireReference(c,"customer_types","customer_type_id",r.customerTypeId(),"Customer type");
         // Baseline customer-card contract: customer_since,customer_photo_url) VALUES; WhatsApp consent columns follow it.
@@ -98,28 +108,30 @@ final class LanCustomerAccountService {
         if(r.customerId()==null){
             try(PreparedStatement ps=c.prepareStatement("""
                     INSERT INTO customer_accounts(name,customer_type_id,phone,email,credit_limit,current_balance,
-                      is_business,is_active,account_notes,customer_since,customer_photo_url,whatsapp_opt_in,whatsapp_consent_phone,whatsapp_consent_at,whatsapp_consent_by_user_id)
-                    VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?,?) RETURNING customer_id,account_number
+                      is_business,is_active,account_notes,customer_since,customer_photo_url,whatsapp_opt_in,whatsapp_consent_phone,whatsapp_consent_at,whatsapp_consent_by_user_id,require_charge_authorization,
+                      sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent)
+                    VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING customer_id,account_number
                     """)){ps.setString(1,name);setInt(ps,2,r.customerTypeId());ps.setString(3,blank(phone));ps.setString(4,blank(email));
                 ps.setBigDecimal(5,credit);ps.setBoolean(6,r.business());ps.setBoolean(7,r.active());ps.setString(8,blank(notes));
                 setInt(ps,9,since);ps.setString(10,blank(photo));ps.setBoolean(11,r.whatsappOptIn());ps.setString(12,r.whatsappOptIn()?blank(phone):null);ps.setObject(13,r.whatsappOptIn()?java.time.OffsetDateTime.now():null);if(r.whatsappOptIn())ps.setInt(14,userId);else ps.setNull(14,java.sql.Types.INTEGER);
-                try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account could not be created.");id=rs.getInt(1);number=rs.getString(2);}}
+                ps.setBoolean(15,r.requireChargeAuthorization());ps.setBoolean(16,salesEnabled);ps.setBigDecimal(17,salesDiscount);ps.setBoolean(18,invoiceEnabled);ps.setBigDecimal(19,invoiceDiscount);ps.setBoolean(20,customOrderEnabled);ps.setBigDecimal(21,customOrderDiscount);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account could not be created.");id=rs.getInt(1);number=rs.getString(2);}}
         }else{
             id=r.customerId();String accountNumber=clean(r.accountNumber(),100);
-            try(PreparedStatement lock=c.prepareStatement("SELECT account_number,credit_limit,COALESCE(customer_photo_url,'') FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
+            try(PreparedStatement lock=c.prepareStatement("SELECT account_number,credit_limit,COALESCE(customer_photo_url,''),sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
                 lock.setInt(1,id);try(ResultSet rs=lock.executeQuery()){if(!rs.next())throw rule(404,"CUSTOMER_NOT_FOUND","Customer account was not found.");
                     String existingNumber=rs.getString(1);BigDecimal existingCredit=money(rs.getBigDecimal(2));
                     if(!has(c,userId,"EDIT_ACCOUNT_NUMBER"))accountNumber=existingNumber;
-                    if(!has(c,userId,"SET_CREDIT_LIMIT"))credit=existingCredit;if(photo==null)photo=rs.getString(3);}}
+                    if(!has(c,userId,"SET_CREDIT_LIMIT"))credit=existingCredit;if(photo==null)photo=rs.getString(3);if(!canManageDiscounts){salesEnabled=rs.getBoolean(4);salesDiscount=rs.getBigDecimal(5);invoiceEnabled=rs.getBoolean(6);invoiceDiscount=rs.getBigDecimal(7);customOrderEnabled=rs.getBoolean(8);customOrderDiscount=rs.getBigDecimal(9);}}}
             accountNumber=required(accountNumber,100,"Account number is required.");
             try(PreparedStatement ps=c.prepareStatement("""
                     UPDATE customer_accounts SET account_number=?,name=?,customer_type_id=?,phone=?,email=?,credit_limit=?,
                       is_business=?,is_active=?,account_notes=?,customer_since=?,customer_photo_url=?,whatsapp_opt_in=?,
                       whatsapp_consent_phone=CASE WHEN ? THEN ? ELSE NULL END,whatsapp_consent_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
-                      whatsapp_consent_by_user_id=CASE WHEN ? THEN ? ELSE NULL END WHERE customer_id=?
+                      whatsapp_consent_by_user_id=CASE WHEN ? THEN ? ELSE NULL END,require_charge_authorization=?,
+                      sales_discount_enabled=?,sales_discount_percent=?,invoice_discount_enabled=?,invoice_discount_percent=?,custom_order_discount_enabled=?,custom_order_discount_percent=? WHERE customer_id=?
                     """)){ps.setString(1,accountNumber);ps.setString(2,name);setInt(ps,3,r.customerTypeId());ps.setString(4,blank(phone));
                 ps.setString(5,blank(email));ps.setBigDecimal(6,credit);ps.setBoolean(7,r.business());ps.setBoolean(8,r.active());
-                ps.setString(9,blank(notes));setInt(ps,10,since);ps.setString(11,blank(photo));ps.setBoolean(12,r.whatsappOptIn());ps.setBoolean(13,r.whatsappOptIn());ps.setString(14,blank(phone));ps.setBoolean(15,r.whatsappOptIn());ps.setBoolean(16,r.whatsappOptIn());ps.setInt(17,userId);ps.setInt(18,id);ps.executeUpdate();number=accountNumber;}
+                ps.setString(9,blank(notes));setInt(ps,10,since);ps.setString(11,blank(photo));ps.setBoolean(12,r.whatsappOptIn());ps.setBoolean(13,r.whatsappOptIn());ps.setString(14,blank(phone));ps.setBoolean(15,r.whatsappOptIn());ps.setBoolean(16,r.whatsappOptIn());ps.setInt(17,userId);ps.setBoolean(18,r.requireChargeAuthorization());ps.setBoolean(19,salesEnabled);ps.setBigDecimal(20,salesDiscount);ps.setBoolean(21,invoiceEnabled);ps.setBigDecimal(22,invoiceDiscount);ps.setBoolean(23,customOrderEnabled);ps.setBigDecimal(24,customOrderDiscount);ps.setInt(25,id);ps.executeUpdate();number=accountNumber;}
         }
         audit(c,"LAN_CUSTOMER_ACCOUNT_SAVED",deviceId,userId,GSON.toJson(Map.of("customer_id",id,"account_number",number==null?"":number)));
         audit(c,r.whatsappOptIn()?"WHATSAPP_CUSTOMER_OPTED_IN":"WHATSAPP_CUSTOMER_OPTED_OUT",deviceId,userId,GSON.toJson(Map.of("customer_id",id)));
@@ -349,7 +361,7 @@ final class LanCustomerAccountService {
                 ) history ORDER BY created_at DESC,event_id DESC
                 """.formatted(CustomerAccountLedgerService.balanceDeltaSql("t"));
         try(PreparedStatement ps=c.prepareStatement(sql)){for(int n=1;n<=5;n++)ps.setInt(n,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
-            rows.add(historyMap(rs,false));}}}
+            Map<String,Object> row=historyMap(rs,false);Long transactionId=(Long)row.get("transactionId");if(transactionId!=null)row.put("authorization",authorization(c,transactionId));rows.add(row);}}}
         rows.addAll(CrossStoreCustomerHistoryService.rows(c,customerId,currentLocationId));
         Map<String,Map<String,Object>>unique=new LinkedHashMap<>();for(Map<String,Object> row:rows)unique.putIfAbsent(historyIdentity(row),row);
         rows=new ArrayList<>(unique.values());rows.sort((a,b)->Long.compare(((Number)b.get("createdAtEpochMillis")).longValue(),((Number)a.get("createdAtEpochMillis")).longValue()));
@@ -357,6 +369,11 @@ final class LanCustomerAccountService {
             if(List.of("PAYMENT","RETURN","CUSTOM_ORDER_REFUND").contains(type))payments=payments.add(amount.abs());
             else if(List.of("SALE_CREDIT","CUSTOM_ORDER_CREDIT","INVOICE_CREDIT","MANUAL_CHARGE").contains(type))charges=charges.add(amount.abs());}
         return map("transactions",List.copyOf(rows),"count",rows.size(),"totalCharges",charges,"totalPayments",payments);
+    }
+
+    private static Map<String,Object> authorization(Connection c,long transactionId)throws SQLException{
+        CustomerChargeAuthorizationService.purgeExpired(c);
+        try(PreparedStatement p=c.prepareStatement("SELECT representative_name,signature_png,unsigned_reason,captured_at,signature_purged_at,COALESCE(captured_by_name,''),COALESCE(device_name,'') FROM customer_charge_authorizations WHERE transaction_id=?")){p.setLong(1,transactionId);try(ResultSet r=p.executeQuery()){if(!r.next())return null;byte[]png=r.getBytes(2);return map("representativeName",r.getString(1),"signaturePngBase64",png==null?null:java.util.Base64.getEncoder().encodeToString(png),"unsignedReason",r.getString(3),"capturedAtEpochMillis",epoch(r.getTimestamp(4)),"imageExpired",r.getTimestamp(5)!=null,"capturedByName",r.getString(6),"deviceName",r.getString(7));}}
     }
 
     private static String historyIdentity(Map<String,Object> row){String event=String.valueOf(row.get("eventId"));int marker=event.indexOf(':',7);
@@ -423,7 +440,10 @@ final class LanCustomerAccountService {
             "active",rs.getBoolean(12),"accountNotes",rs.getString(13),"customerTypeId",nullableInt(rs,14),"customerTypeName",rs.getString(15),
             "customerCardTemplateSlot",rs.getInt(16),"customerSince",nullableInt(rs,17),"customerPhotoUrl",rs.getString(18),
             "customerCardIssuedOn",rs.getObject(19,java.time.LocalDate.class),"customerCardExpiresOn",rs.getObject(20,java.time.LocalDate.class),
-            "whatsappOptIn",rs.getBoolean(21),"whatsappConsentPhone",rs.getString(22));}
+            "whatsappOptIn",rs.getBoolean(21),"whatsappConsentPhone",rs.getString(22),"requireChargeAuthorization",rs.getBoolean(23),
+            "salesDiscountEnabled",rs.getBoolean(24),"salesDiscountPercent",rs.getBigDecimal(25),
+            "invoiceDiscountEnabled",rs.getBoolean(26),"invoiceDiscountPercent",rs.getBigDecimal(27),
+            "customOrderDiscountEnabled",rs.getBoolean(28),"customOrderDiscountPercent",rs.getBigDecimal(29));}
     private static Request parsed(JsonObject b)throws RuleViolation{try{Request r=GSON.fromJson(b,Request.class);if(r==null)throw rule(400,"VALIDATION_ERROR","Customer details are required.");return r;}catch(RuleViolation e){throw e;}catch(Exception e){throw rule(400,"VALIDATION_ERROR","Customer details are invalid.");}}
     private static void requireReference(Connection c,String table,String column,int id,String label)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM "+table+" WHERE "+column+"=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(400,"VALIDATION_ERROR",label+" was not found.");}}}
     private static void require(Connection c,int u,String p)throws Exception{if(!has(c,u,p))throw rule(403,"PERMISSION_DENIED","You do not have permission to manage customer accounts.");}
@@ -433,6 +453,7 @@ final class LanCustomerAccountService {
     private static String clean(String v,int max)throws RuleViolation{String x=v==null?"":v.trim();if(x.length()>max)throw rule(400,"VALIDATION_ERROR","A customer field is too long.");return x;}
     private static String blank(String v){return v==null||v.isBlank()?null:v;}
     private static BigDecimal money(BigDecimal v){return v==null?BigDecimal.ZERO:v;}
+    private static BigDecimal percent(BigDecimal v)throws RuleViolation{BigDecimal p=v==null?BigDecimal.ZERO:v;if(p.signum()<0||p.compareTo(BigDecimal.valueOf(100))>0)throw rule(400,"VALIDATION_ERROR","Customer discounts must be between 0 and 100%.");return p.setScale(4,java.math.RoundingMode.HALF_UP);}
     private static long epoch(Timestamp t){return t==null?0:t.getTime();}
     private static Integer nullableInt(ResultSet r,int i)throws SQLException{int v=r.getInt(i);return r.wasNull()?null:v;}
     private static Long nullableLong(ResultSet r,int i)throws SQLException{long v=r.getLong(i);return r.wasNull()?null:v;}
@@ -441,7 +462,9 @@ final class LanCustomerAccountService {
     private static Map<String,Object>map(Object...v){Map<String,Object>m=new LinkedHashMap<>();for(int i=0;i<v.length;i+=2)m.put((String)v[i],v[i+1]);return m;}
     private static RuleViolation rule(int s,String c,String m){return new RuleViolation(s,c,m);}
     private record Request(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,
-                           BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn){}
+                           BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,
+                           boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
+                           boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){}
     private record Adjustment(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,List<PaymentAllocation> allocations){}
     private record PaymentAllocation(String documentType,Long documentId,BigDecimal amount){}
     static final class RuleViolation extends Exception{private final int status;private final String code;private final String safeMessage;

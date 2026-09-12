@@ -23,11 +23,13 @@
       <div class="schedule-controls"><label>Store<select id="location"></select></label><label>View<select id="periodMode"><option value="semi">Semi-monthly</option><option value="week">Weekly</option></select></label><label>Layout<select id="detailMode"><option value="detailed">Detailed</option><option value="compact">Compact</option></select></label><button id="auto" type="button">Auto Schedule</button><button id="shifts" class="ghost" type="button">Manage Shifts</button><button id="clear" class="danger" type="button">Clear Schedule</button></div>
       <div class="period-controls"><strong id="range"></strong><div><button id="prev" class="ghost" type="button">Previous</button><button id="today" class="ghost" type="button">Current</button><button id="next" class="ghost" type="button">Next</button></div></div>
     </div>
+    <button id="exportSchedule" class="ghost" type="button" disabled>Export schedule image</button>
     <div id="days" class="days" aria-live="polite"></div><p id="scheduleStatus" class="schedule-status"></p>
     <nav class="phone-nav" aria-label="Schedule actions"><button id="phoneShifts" class="ghost" type="button">Shifts</button><button id="holiday" class="ghost" type="button">Holiday</button><button id="phoneAuto" type="button">Auto Schedule</button><button id="phoneClear" class="danger" type="button">Clear</button></nav>
   </section>
 </main>
 <dialog id="dialog"><form method="dialog"><h2 id="dialogTitle"></h2><div id="dialogBody"></div><div class="actions"><button value="cancel" class="ghost">Cancel</button><button id="dialogSave" value="default">Save</button></div></form></dialog>
+<dialog id="exportDialog"><h2>Schedule image</h2><p id="exportHelp">On your phone, choose Save Image from the share sheet, or download the PNG.</p><img id="exportPreview" width="280" alt="Selected schedule period"><p id="exportMessage" role="status"></p><div class="actions"><button id="exportClose" class="ghost" type="button">Close</button><button id="exportDownload" class="ghost" type="button">Download PNG</button><button id="exportShare" type="button">Save / Share</button></div></dialog>
 <script src="/scheduler/app.js" defer></script>
 </body>
 </html>

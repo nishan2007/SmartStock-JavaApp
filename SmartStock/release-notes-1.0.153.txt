@@ -1,0 +1,1 @@
+Fix the Add Item mobile web service so its HTTPS page and API accept IPv4 connections on the store's 10.1.1.221 network interface.

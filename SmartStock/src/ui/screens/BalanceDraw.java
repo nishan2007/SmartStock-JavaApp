@@ -30,6 +30,7 @@ import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -57,6 +58,12 @@ public class BalanceDraw extends JFrame {
     private String pendingMutationFingerprint;
     private final JLabel cihLabel = new JLabel();
     private final JLabel varianceLabel = new JLabel();
+    private final JLabel draftStatusLabel = new JLabel(" ");
+    private final Timer draftTimer = new Timer(700, e -> saveServerDraft("COUNT_EDIT"));
+    private int draftRevision;
+    private boolean draftSaving;
+    private boolean draftDirty;
+    private String pendingDraftEventType = "COUNT_EDIT";
     private final DefaultTableModel denominationModel;
     private final JTable denominationTable;
     private final JButton startButton = new JButton("Start Draw");
@@ -65,6 +72,7 @@ public class BalanceDraw extends JFrame {
     private final JButton handoverButton = new JButton("Confirm Handover");
     private final JButton closeButton = new JButton("Close Draw");
     private final JButton editClosedButton = new JButton("Edit Closed Draw");
+    private final JButton reprintCloseButton = new JButton("Reprint Draw Close Receipt");
     private final JButton refreshButton = new JButton("Refresh");
     private final JButton backButton = new JButton("Main Menu");
 
@@ -85,6 +93,8 @@ public class BalanceDraw extends JFrame {
         setSize(820, 660);
         setLayout(new BorderLayout(14, 14));
         setJMenuBar(AppMenuBar.create(this, "BalanceDraw"));
+        draftTimer.setRepeats(false);
+        addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowClosing(java.awt.event.WindowEvent e){if(draftDirty||draftTimer.isRunning())saveServerDraft(pendingDraftEventType);}});
 
         denominationModel = new DefaultTableModel(new Object[]{"$$", "QTY", "FLOAT", "CIH"}, 0) {
             @Override
@@ -98,6 +108,7 @@ public class BalanceDraw extends JFrame {
             }
         };
         denominationTable = new JTable(denominationModel);
+        denominationTable.addFocusListener(new java.awt.event.FocusAdapter(){@Override public void focusLost(java.awt.event.FocusEvent e){if(denominationTable.isEditing())denominationTable.getCellEditor().stopCellEditing();if(draftDirty||draftTimer.isRunning())saveServerDraft(pendingDraftEventType);}});
         denominationTable.setRowHeight(30);
         denominationTable.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
         denominationTable.getTableHeader().setReorderingAllowed(false);
@@ -131,6 +142,8 @@ public class BalanceDraw extends JFrame {
         handoverButton.addActionListener(e -> confirmHandover());
         closeButton.addActionListener(e -> closeDraw());
         editClosedButton.addActionListener(e -> editClosedDraw());
+        reprintCloseButton.addActionListener(e -> reprintClosedDraw());
+        reprintCloseButton.setEnabled(PermissionManager.hasPermission("BALANCE_DRAWER"));
         refreshButton.addActionListener(e -> loadState());
         backButton.addActionListener(e -> NavigationManager.showMainMenu(this));
 
@@ -160,6 +173,7 @@ public class BalanceDraw extends JFrame {
 
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actions.setOpaque(false);
+        actions.add(reprintCloseButton);
         actions.add(refreshButton);
         actions.add(backButton);
 
@@ -220,6 +234,7 @@ public class BalanceDraw extends JFrame {
         panel.add(handoverButton);
         panel.add(closeButton);
         panel.add(editClosedButton);
+        panel.add(draftStatusLabel);
         panel.add(loadingState);
         return panel;
     }
@@ -289,6 +304,7 @@ public class BalanceDraw extends JFrame {
             editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
             restoreQuantityDraft(activeSession.sessionId());
+            restoreServerDraft(activeSession.sessionId());
     }
 
     private void startDraw() {
@@ -335,7 +351,7 @@ public class BalanceDraw extends JFrame {
             return;
         }
         long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+countedCash);
-        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,key),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,quantitySnapshot(),floatSnapshot(),currentFloatTotal,currentCihTotal,key),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             clearQuantityDraft(sessionId);
             JOptionPane.showMessageDialog(
                     this,
@@ -394,8 +410,10 @@ public class BalanceDraw extends JFrame {
         long sessionId=activeSession.sessionId();String key=mutationKey("close|"+sessionId+"|"+countedCash);
         BigDecimal closingCih=currentCihTotal;BigDecimal closingFloat=currentFloatTotal;
         List<CashDrawerCloseReceiptPrinter.BreakdownLine> closingBreakdown=closingCashBreakdown();
+        draftTimer.stop();
+        Map<String,Integer> finalQuantities=quantitySnapshot(),finalFloats=floatSnapshot();
         UiTaskRunner.submit(this,"cash-drawer.close",()->{
-            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(sessionId,countedCash,null,key);
+            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(sessionId,countedCash,null,finalQuantities,finalFloats,closingFloat,closingCih,key);
             String printError=null;
             try {
                 CashDrawerCloseReceiptPrinter.print(result.session(),closingCih,closingFloat,closingBreakdown,
@@ -449,6 +467,44 @@ public class BalanceDraw extends JFrame {
                     .filter(session -> !session.isOpen())
                     .map(ClosedDrawOption::new)
                     .toList(),this::showClosedDrawEditor,ex->JOptionPane.showMessageDialog(this,"Failed to load closed draws: "+ex.getMessage(),"Balance Draw",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void reprintClosedDraw() {
+        JSpinner date=new JSpinner(new SpinnerDateModel());
+        date.setEditor(new JSpinner.DateEditor(date,"yyyy-MM-dd"));
+        JPanel form=new JPanel(new BorderLayout(8,8));
+        form.add(new JLabel("Close date (store date):"),BorderLayout.WEST);form.add(date,BorderLayout.CENTER);
+        if(JOptionPane.showConfirmDialog(this,form,"Reprint Draw Close Receipt",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+        try{date.commitEdit();}catch(java.text.ParseException ex){JOptionPane.showMessageDialog(this,"Choose a valid date.");return;}
+        String selectedDate=new java.text.SimpleDateFormat("yyyy-MM-dd").format((java.util.Date)date.getValue());
+        reprintCloseButton.setEnabled(false);
+        UiTaskRunner.submit(this,"cash-drawer.reprint-list",()->LanApiClient.loadSubmittedDrawers(selectedDate),sessions->{
+            reprintCloseButton.setEnabled(true);
+            if(sessions.isEmpty()){JOptionPane.showMessageDialog(this,"No submitted draws were found for this device's assigned drawer on "+selectedDate+".");return;}
+            ClosedDrawOption[] options=sessions.stream().map(ClosedDrawOption::new).toArray(ClosedDrawOption[]::new);
+            ClosedDrawOption selected=(ClosedDrawOption)JOptionPane.showInputDialog(this,"Choose a submitted draw:","Reprint Draw Close Receipt",JOptionPane.PLAIN_MESSAGE,null,options,options[0]);
+            if(selected==null)return;
+            reprintCloseButton.setEnabled(false);
+            UiTaskRunner.submit(this,"cash-drawer.reprint-load",()->LanApiClient.loadDrawerCloseReceipt(selectedDate,selected.session().sessionId()),receipt->{
+                if(!receipt.savedBreakdown()&&JOptionPane.showConfirmDialog(this,"This draw has no saved denomination breakdown. Print the available close summary?","Reprint Draw Close Receipt",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION){reprintCloseButton.setEnabled(true);return;}
+                UiTaskRunner.submit(this,"cash-drawer.reprint",()->{
+                    List<CashDrawerCloseReceiptPrinter.BreakdownLine> lines=new ArrayList<>();
+                    if(receipt.savedBreakdown())for(var entry:new java.util.TreeMap<>(receipt.denominationCounts()).entrySet()) {
+                        int denomination=Integer.parseInt(entry.getKey()),quantity=entry.getValue()==null?0:entry.getValue();
+                        int floats=receipt.floatCounts().getOrDefault(entry.getKey(),0);
+                        lines.add(new CashDrawerCloseReceiptPrinter.BreakdownLine(denomination,quantity,floats,Math.max(quantity-floats,0)));
+                    }
+                    lines.sort(java.util.Comparator.comparingInt(CashDrawerCloseReceiptPrinter.BreakdownLine::denomination).reversed());
+                    CashDrawerCloseReceiptPrinter.print(receipt.session(),receipt.cashInHand(),receipt.floatCash(),lines,receipt.handlers(),receipt.returnedAmount(),HardwareSettingsManager.getDefaultReceiptPrinter());
+                    return true;
+                },done->{reprintCloseButton.setEnabled(true);JOptionPane.showMessageDialog(this,"Draw close receipt sent to the printer.");},this::reprintFailed);
+            },this::reprintFailed);
+        },this::reprintFailed);
+    }
+
+    private void reprintFailed(Throwable failure) {
+        reprintCloseButton.setEnabled(true);
+        JOptionPane.showMessageDialog(this,"Could not reprint the draw close receipt: "+failure.getMessage(),"Reprint Draw Close Receipt",JOptionPane.ERROR_MESSAGE);
     }
 
     private void showClosedDrawEditor(List<ClosedDrawOption> options) {
@@ -539,7 +595,7 @@ public class BalanceDraw extends JFrame {
         for (int denomination : DENOMINATIONS) {
             denominationModel.addRow(new Object[]{
                     CURRENCY.format(denomination),
-                    0,
+                    null,
                     0,
                     0
             });
@@ -602,6 +658,7 @@ public class BalanceDraw extends JFrame {
         currentFloatCounts = calculateFloatCountsFromDrawer();
         floatCalculated = true;
         recalculateDenominations();
+        saveServerDraft("FLOAT_CALCULATED");
     }
 
     private void clearQuantities() {
@@ -618,16 +675,38 @@ public class BalanceDraw extends JFrame {
         floatCalculated = false;
         updatingTable = false;
         recalculateDenominations();
+        saveServerDraft("CLEAR");
     }
 
     private void saveQuantityDraft() {
         if (activeSession == null || updatingTable) return;
         List<Integer> quantities = new ArrayList<>(DENOMINATIONS.length);
         for (int row = 0; row < DENOMINATIONS.length; row++) {
-            quantities.add(quantityAt(row, 1));
+            quantities.add(isQuantityCellReady(row)?quantityAt(row,1):null);
         }
         SessionDataCache.put(quantityDraftKey(activeSession.sessionId()),
-                new QuantityDraft(List.copyOf(quantities)));
+                new QuantityDraft(new ArrayList<>(quantities)));
+        draftDirty=true;pendingDraftEventType="COUNT_EDIT";draftStatusLabel.setText("Saving…");draftTimer.restart();
+    }
+
+    private Map<String,Integer> quantitySnapshot(){Map<String,Integer> out=new LinkedHashMap<>();for(int row=0;row<DENOMINATIONS.length;row++){Object raw=denominationModel.getValueAt(row,1);if(raw!=null&&!String.valueOf(raw).trim().isEmpty()&&isQuantityCellReady(row))out.put(String.valueOf(DENOMINATIONS[row]),quantityAt(row,1));}return out;}
+    private Map<String,Integer> floatSnapshot(){Map<String,Integer> out=new LinkedHashMap<>();for(int denomination:DENOMINATIONS)out.put(String.valueOf(denomination),currentFloatCounts.getOrDefault(denomination,0));return out;}
+
+    private void saveServerDraft(String eventType){
+        if(activeSession==null||updatingTable)return;
+        draftTimer.stop();draftDirty=true;
+        if(!"COUNT_EDIT".equals(eventType)||"COUNT_EDIT".equals(pendingDraftEventType))pendingDraftEventType=eventType;
+        if(draftSaving)return;
+        draftSaving=true;draftDirty=false;
+        String eventToSave=pendingDraftEventType;pendingDraftEventType="COUNT_EDIT";
+        long sessionId=activeSession.sessionId();int expected=draftRevision;
+        var request=new LanApiClient.DrawerDraftRequest(sessionId,expected,eventToSave,quantitySnapshot(),floatSnapshot(),countedTotal(),currentFloatTotal,currentCihTotal,allQuantityCellsReady(),null);
+        String key=UUID.randomUUID().toString();draftStatusLabel.setText("Saving…");
+        UiTaskRunner.submit(this,"cash-drawer.draft-save",()->LanApiClient.saveCashDrawerDraft(request,key),saved->{draftSaving=false;draftRevision=saved.revisionNo();draftStatusLabel.setText("Draft saved");if(draftDirty)saveServerDraft(pendingDraftEventType);},ex->{draftSaving=false;draftStatusLabel.setText("Draft not saved — edit to retry");draftDirty=true;if(ex.getMessage()!=null&&ex.getMessage().contains("another register"))restoreServerDraft(sessionId);});
+    }
+
+    private void restoreServerDraft(long sessionId){
+        UiTaskRunner.submit(this,"cash-drawer.draft-load",()->LanApiClient.loadCashDrawerDraft(sessionId),draft->{if(activeSession==null||activeSession.sessionId()!=sessionId)return;if(draft==null){draftRevision=0;draftStatusLabel.setText("No saved draft");return;}draftRevision=draft.revisionNo();updatingTable=true;for(int row=0;row<DENOMINATIONS.length;row++){Integer value=draft.denominationCounts()==null?null:draft.denominationCounts().get(String.valueOf(DENOMINATIONS[row]));denominationModel.setValueAt(value==null?null:Math.max(value,0),row,1);}currentFloatCounts=new HashMap<>();if(draft.floatCounts()!=null)draft.floatCounts().forEach((k,v)->{try{currentFloatCounts.put(Integer.parseInt(k),Math.max(v==null?0:v,0));}catch(Exception ignored){}});floatCalculated=currentFloatCounts.values().stream().anyMatch(v->v!=null&&v>0);updatingTable=false;recalculateDenominations();draftStatusLabel.setText("Draft restored");},ex->draftStatusLabel.setText("Server draft unavailable — local copy kept"));
     }
 
     private void restoreQuantityDraft(long sessionId) {
@@ -637,7 +716,7 @@ public class BalanceDraw extends JFrame {
                     if (quantities.size() != DENOMINATIONS.length) return;
                     updatingTable = true;
                     for (int row = 0; row < DENOMINATIONS.length; row++) {
-                        denominationModel.setValueAt(Math.max(quantities.get(row), 0), row, 1);
+                        Integer value=quantities.get(row);denominationModel.setValueAt(value==null?null:Math.max(value,0), row, 1);
                     }
                     updatingTable = false;
                     currentFloatCounts = calculateFloatCountsFromDrawer();

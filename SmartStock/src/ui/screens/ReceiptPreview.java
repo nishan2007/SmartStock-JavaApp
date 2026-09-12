@@ -42,7 +42,7 @@ public class ReceiptPreview extends JFrame {
         this.reprint = reprint;
 
         setTitle(reprint ? "Receipt Reprint Preview" : "Receipt Preview");
-        setSize(520, 760);
+        setSize(900, 800);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "ReceiptPreview"));
@@ -56,28 +56,31 @@ public class ReceiptPreview extends JFrame {
 
         JLabel titleLabel = new JLabel(reprint ? "Receipt Reprint Preview" : "Receipt Preview");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 24));
-        headerPanel.add(titleLabel, BorderLayout.WEST);
+        headerPanel.add(titleLabel, BorderLayout.NORTH);
 
-        JPanel printerPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel printerPanel = new JPanel(new GridLayout(1, 2, 16, 0));
         printerPanel.setOpaque(false);
-        printerPanel.add(new JLabel("Printer:"));
-        printerBox.setPreferredSize(new Dimension(260, 28));
-        printerPanel.add(printerBox);
-        printerPanel.add(new JLabel("Format:"));
-        formatBox.setPreferredSize(new Dimension(170, 28));
-        printerPanel.add(formatBox);
-        headerPanel.add(printerPanel, BorderLayout.EAST);
+        printerPanel.add(touchSelector("Printer", printerBox));
+        printerPanel.add(touchSelector("Format", formatBox));
+        headerPanel.add(printerPanel, BorderLayout.CENTER);
         mainPanel.add(headerPanel, BorderLayout.NORTH);
 
         JScrollPane previewScrollPane = new JScrollPane(receiptPaperPanel);
         previewScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         mainPanel.add(previewScrollPane, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        JPanel buttonPanel = new JPanel(new GridLayout(2, 2, 12, 12));
         JButton emailButton = new JButton("Email Receipt");
         JButton whatsappButton = new JButton("Send WhatsApp");
         JButton printButton = new JButton("Print Receipt");
         JButton closeButton = new JButton("Close");
+        for (JButton button : List.of(emailButton, whatsappButton, printButton, closeButton)) {
+            styleTouchButton(button);
+        }
+        printButton.setBackground(ui.design.DeckersPalette.PURPLE);
+        printButton.setForeground(Color.WHITE);
+        printButton.setOpaque(true);
+        printButton.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         emailButton.setEnabled(false);
         whatsappButton.setEnabled(false);
         printButton.setEnabled(false);
@@ -110,6 +113,35 @@ public class ReceiptPreview extends JFrame {
                     updateReceiptPreview();
                     loadLogoPreviewAsync();
                 });
+    }
+
+    static JPanel touchSelector(String label, JComboBox<?> selector) {
+        JPanel panel = new JPanel(new BorderLayout(0, 6));
+        panel.setOpaque(false);
+        JLabel caption = new JLabel(label);
+        caption.setFont(new Font("SansSerif", Font.BOLD, 16));
+        caption.setLabelFor(selector);
+        selector.setFont(new Font("SansSerif", Font.PLAIN, 18));
+        selector.setPreferredSize(new Dimension(200, 52));
+        selector.setMinimumSize(new Dimension(100, 52));
+        selector.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object value,
+                    int index, boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list,value,index,selected,focus);
+                setBorder(new EmptyBorder(12,12,12,12));
+                return this;
+            }
+        });
+        selector.setMaximumRowCount(6);
+        panel.add(caption, BorderLayout.NORTH);
+        panel.add(selector, BorderLayout.CENTER);
+        return panel;
+    }
+
+    static void styleTouchButton(JButton button) {
+        button.setFont(new Font("SansSerif", Font.BOLD, 18));
+        button.setPreferredSize(new Dimension(200, 58));
+        button.setMargin(new Insets(12,18,12,18));
     }
 
     private void loadPrinterOptions() {
@@ -264,7 +296,7 @@ public class ReceiptPreview extends JFrame {
         }
 
         void setReceiptText(String receiptText, boolean letterFormat, String barcodeText) {
-            this.receiptText = receiptText == null ? "" : receiptText;
+            this.receiptText = receiptText == null ? "" : receiptText.stripTrailing();
             this.barcodeText = barcodeText == null ? "" : barcodeText.trim();
             this.letterFormat = letterFormat;
             revalidate();
@@ -272,7 +304,7 @@ public class ReceiptPreview extends JFrame {
         }
 
         void setLogo(BufferedImage logo, boolean loading) {
-            this.logo = logo;
+            this.logo = Receipt.ReceiptLogoLayout.trim(logo);
             this.logoLoading = loading;
             revalidate();
             repaint();
@@ -289,9 +321,9 @@ public class ReceiptPreview extends JFrame {
             FontMetrics metrics = getFontMetrics(getPreviewFont());
             int paperWidth = getPaperWidth();
             int textHeight = receiptText.split("\\R", -1).length * metrics.getHeight();
-            int logoHeight = getLogoDisplayHeight(paperWidth) + (hasLogoSpace() ? 12 : 0);
-            int barcodeHeight = getBarcodeDisplayHeight() + (hasBarcode() ? 12 : 0);
-            int paperHeight = Math.max(360, PADDING + logoHeight + textHeight + barcodeHeight + PADDING);
+            int logoHeight = getLogoDisplayHeight(paperWidth) + (hasLogoSpace() ? 2 : 0);
+            int barcodeHeight = getBarcodeDisplayHeight() + (hasBarcode() ? 6 : 0);
+            int paperHeight = Math.max(80, 6 + logoHeight + textHeight + barcodeHeight + 6);
             return new Dimension(paperWidth + 80, paperHeight + 40);
         }
 
@@ -304,14 +336,14 @@ public class ReceiptPreview extends JFrame {
             int paperWidth = getPaperWidth();
             int paperX = Math.max((getWidth() - paperWidth) / 2, 20);
             int paperY = 20;
-            int paperHeight = Math.max(getPreferredSize().height - 40, getHeight() - 40);
+            int paperHeight = getPreferredSize().height - 40;
 
             g2.setColor(Color.WHITE);
             g2.fillRect(paperX, paperY, paperWidth, paperHeight);
             g2.setColor(new Color(203, 213, 225));
             g2.drawRect(paperX, paperY, paperWidth, paperHeight);
 
-            int y = paperY + PADDING;
+            int y = paperY + 6;
             if (logoLoading) {
                 g2.setFont(new Font("SansSerif", Font.PLAIN, 13));
                 g2.setColor(new Color(100, 116, 139));
@@ -323,7 +355,7 @@ public class ReceiptPreview extends JFrame {
                 Dimension logoSize = getLogoDisplaySize(paperWidth);
                 int x = paperX + ((paperWidth - logoSize.width) / 2);
                 g2.drawImage(logo, x, y, logoSize.width, logoSize.height, null);
-                y += logoSize.height + 12;
+                y += logoSize.height + 2;
             }
 
             g2.setFont(getPreviewFont());
@@ -335,7 +367,7 @@ public class ReceiptPreview extends JFrame {
                 g2.drawString(line, textX, y);
             }
             if (hasBarcode()) {
-                y += 12;
+                y += 6;
                 Dimension barcodeSize = getBarcodeDisplaySize(paperWidth);
                 BufferedImage barcode = ReceiptBarcodeRenderer.renderCode128(barcodeText, barcodeSize.width, barcodeSize.height);
                 int x = paperX + ((paperWidth - barcodeSize.width) / 2);
