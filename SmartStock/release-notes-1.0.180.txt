@@ -1,0 +1,11 @@
+SmartStock 1.0.180
+
+Improve barcode scanning reliability and item lookup speed at checkout.
+
+- Prevent a repeated scan of the same barcode from cancelling and restarting the lookup already in progress.
+- Stop the normal product-search debounce from competing with an Enter-terminated barcode scan.
+- Reduce unnecessary database response work during exact barcode and SKU lookups.
+- Restore focus to the checkout item field after a lookup failure so the next scan is received correctly.
+- Include the employee application portal, customer charge authorization and automatic discounts, product variants and catalog fields, receipt and cash-drawer improvements, scheduler reliability, and updater fixes accumulated through 1.0.179.
+
+Update the store server before registers so the matching schema and authenticated lookup behavior are available.
