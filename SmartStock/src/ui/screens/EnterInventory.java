@@ -129,20 +129,21 @@ public class EnterInventory extends JFrame {
         searchPanel.add(searchRow, BorderLayout.SOUTH);
 
         inventoryModel = new DefaultTableModel(
-                new Object[]{"Type", "ID", "Name", "Description", "SKU / Code", "System Stock", "Counted Stock", "Qty to Add", "New Stock"},
+                new Object[]{"Type", "ID", "Name", "Size / Color / Flavor", "Description", "SKU / Code", "System Stock", "Counted Stock", "Quantity", "Cases", "Total to Add", "New Stock"},
                 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 6 || column == 7;
+                return column == 7 || column == 8 || column == 9;
             }
         };
         inventoryTable = new JTable(inventoryModel);
         inventoryTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         inventoryTable.setFillsViewportHeight(true);
         DeckersSwing.styleTable(inventoryTable, DeckersPalette.LIME);
-        inventoryTable.getColumnModel().getColumn(6).setCellEditor(new DefaultCellEditor(new JTextField()));
         inventoryTable.getColumnModel().getColumn(7).setCellEditor(new DefaultCellEditor(new JTextField()));
+        inventoryTable.getColumnModel().getColumn(8).setCellEditor(new DefaultCellEditor(new JTextField()));
+        inventoryTable.getColumnModel().getColumn(9).setCellEditor(new DefaultCellEditor(new JTextField()));
         configureInventoryTableColumns();
 
         JScrollPane inventoryScrollPane = new JScrollPane(inventoryTable);
@@ -246,7 +247,8 @@ public class EnterInventory extends JFrame {
             if (updatingInventoryRows) {
                 return;
             }
-            if (e.getColumn() == 6 || e.getColumn() == 7 || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
+            if (e.getColumn() == 7 || e.getColumn() == 8 || e.getColumn() == 9
+                    || e.getColumn() == javax.swing.event.TableModelEvent.ALL_COLUMNS) {
                 updateNewStockTotals();
             }
         });
@@ -311,7 +313,7 @@ public class EnterInventory extends JFrame {
     }
 
     private void configureInventoryTableColumns() {
-        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 9) {
+        if (inventoryTable == null || inventoryTable.getColumnModel().getColumnCount() < 12) {
             return;
         }
 
@@ -325,19 +327,26 @@ public class EnterInventory extends JFrame {
         columnModel.getColumn(2).setMinWidth(90);
         columnModel.getColumn(2).setMaxWidth(220);
         columnModel.getColumn(2).setPreferredWidth(140);
-        columnModel.getColumn(3).setMinWidth(220);
-        columnModel.getColumn(3).setPreferredWidth(320);
-        columnModel.getColumn(3).setCellRenderer(new MultiLineTableCellRenderer());
-        columnModel.getColumn(4).setMinWidth(90);
-        columnModel.getColumn(4).setPreferredWidth(110);
+        columnModel.getColumn(3).setMinWidth(120);
+        columnModel.getColumn(3).setMaxWidth(240);
+        columnModel.getColumn(3).setPreferredWidth(150);
+        columnModel.getColumn(4).setMinWidth(220);
+        columnModel.getColumn(4).setPreferredWidth(320);
+        columnModel.getColumn(4).setCellRenderer(new MultiLineTableCellRenderer());
         columnModel.getColumn(5).setMinWidth(90);
-        columnModel.getColumn(5).setMaxWidth(120);
-        columnModel.getColumn(6).setMinWidth(80);
+        columnModel.getColumn(5).setPreferredWidth(110);
+        columnModel.getColumn(6).setMinWidth(90);
         columnModel.getColumn(6).setMaxWidth(120);
         columnModel.getColumn(7).setMinWidth(80);
-        columnModel.getColumn(7).setMaxWidth(110);
+        columnModel.getColumn(7).setMaxWidth(120);
         columnModel.getColumn(8).setMinWidth(80);
         columnModel.getColumn(8).setMaxWidth(110);
+        columnModel.getColumn(9).setMinWidth(80);
+        columnModel.getColumn(9).setMaxWidth(110);
+        columnModel.getColumn(10).setMinWidth(90);
+        columnModel.getColumn(10).setMaxWidth(120);
+        columnModel.getColumn(11).setMinWidth(80);
+        columnModel.getColumn(11).setMaxWidth(110);
         updateDescriptionRowHeights();
     }
 
@@ -348,13 +357,13 @@ public class EnterInventory extends JFrame {
 
         for (int row = 0; row < inventoryTable.getRowCount(); row++) {
             int rowHeight = 24;
-            Object value = inventoryTable.getValueAt(row, 3);
+            Object value = inventoryTable.getValueAt(row, 4);
             String text = value == null ? "" : value.toString();
 
-            TableCellRenderer renderer = inventoryTable.getCellRenderer(row, 3);
-            Component component = renderer.getTableCellRendererComponent(inventoryTable, text, false, false, row, 3);
+            TableCellRenderer renderer = inventoryTable.getCellRenderer(row, 4);
+            Component component = renderer.getTableCellRendererComponent(inventoryTable, text, false, false, row, 4);
             if (component instanceof JTextArea textArea) {
-                int columnWidth = inventoryTable.getColumnModel().getColumn(3).getWidth();
+                int columnWidth = inventoryTable.getColumnModel().getColumn(4).getWidth();
                 textArea.setSize(columnWidth, Short.MAX_VALUE);
                 rowHeight = Math.max(rowHeight, textArea.getPreferredSize().height + 4);
             }
@@ -444,7 +453,7 @@ public class EnterInventory extends JFrame {
             for (LanApiClient.LookupItem item : LanApiClient.searchReceivingItems(searchText)) {
                 rows.add(new Object[]{
                         item.itemType(), item.itemId(), item.name(), item.description(), item.code(), item.quantityOnHand(),
-                        item.itemTypeName(), item.brandName(), item.price(), item.imageUrl()
+                        item.itemTypeName(), item.brandName(), item.price(), item.color(), item.flavor(), item.imageUrl(), item.size()
                 });
             }
             return rows;
@@ -474,7 +483,7 @@ public class EnterInventory extends JFrame {
             searchPopup.setFocusable(false);
 
             String[] columns = {"Type", "ID", "Name", "Description", "SKU / Code", "Stock",
-                    "Item Type", "Brand", "Price", "Image URL"};
+                    "Item Type", "Brand", "Price", "Color", "Flavor", "Image URL", "Size"};
             DefaultTableModel resultsModel = new DefaultTableModel(columns, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
@@ -489,8 +498,9 @@ public class EnterInventory extends JFrame {
             searchResultsTable.setRowHeight(24);
             JTableHeader header = searchResultsTable.getTableHeader();
             header.setReorderingAllowed(false);
-            TableImageHoverPreview.install(this, searchResultsTable, 9, DeckersPalette.MAGENTA);
-            searchResultsTable.removeColumn(searchResultsTable.getColumnModel().getColumn(9));
+            TableImageHoverPreview.install(this, searchResultsTable, 11, DeckersPalette.MAGENTA);
+            searchResultsTable.removeColumn(searchResultsTable.getColumnModel().getColumn(12));
+            searchResultsTable.removeColumn(searchResultsTable.getColumnModel().getColumn(11));
             searchResultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent e) {
@@ -531,6 +541,8 @@ public class EnterInventory extends JFrame {
         searchResultsTable.getColumnModel().getColumn(6).setPreferredWidth(110);
         searchResultsTable.getColumnModel().getColumn(7).setPreferredWidth(100);
         searchResultsTable.getColumnModel().getColumn(8).setPreferredWidth(80);
+        searchResultsTable.getColumnModel().getColumn(9).setPreferredWidth(90);
+        searchResultsTable.getColumnModel().getColumn(10).setPreferredWidth(100);
 
         if (searchPopup.isVisible()) {
             searchPopup.setVisible(false);
@@ -556,7 +568,7 @@ public class EnterInventory extends JFrame {
         String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
         int currentStock = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 5)).intValue();
 
-        String qtyText = JOptionPane.showInputDialog(this, "Enter quantity to add:", "1");
+        String qtyText = JOptionPane.showInputDialog(this, "Enter the quantity in each case:", "1");
         if (qtyText == null) {
             return;
         }
@@ -570,11 +582,15 @@ public class EnterInventory extends JFrame {
         }
 
         if (qty <= 0) {
-            JOptionPane.showMessageDialog(this, "Quantity must be greater than zero.");
+            JOptionPane.showMessageDialog(this, "Quantity in the case must be greater than zero.");
             return;
         }
 
-        addToInventoryTable(itemType, itemId, name, description, sku, currentStock, qty);
+        String attributes = availableAttributes(
+                searchResultsTable.getModel().getValueAt(selectedRow, 12),
+                searchResultsTable.getModel().getValueAt(selectedRow, 9),
+                searchResultsTable.getModel().getValueAt(selectedRow, 10));
+        addToInventoryTable(itemType, itemId, name, attributes, description, sku, currentStock, qty);
         clearSearchForNextItem();
         searchField.requestFocusInWindow();
     }
@@ -597,22 +613,22 @@ public class EnterInventory extends JFrame {
         }
     }
 
-    private void addToInventoryTable(String itemType, int itemId, String name, String description, String sku, int currentStock, int qty) {
+    private void addToInventoryTable(String itemType, int itemId, String name, String attributes,
+                                     String description, String sku, int currentStock, int qty) {
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
             String existingType = inventoryModel.getValueAt(i, 0).toString();
             int existingItemId = Integer.parseInt(inventoryModel.getValueAt(i, 1).toString());
             if (existingType.equals(itemType) && existingItemId == itemId) {
-                int existingQty = Integer.parseInt(inventoryModel.getValueAt(i, 7).toString());
-                int newQty = existingQty + qty;
-                inventoryModel.setValueAt(newQty, i, 7);
-                inventoryModel.setValueAt(parseInt(inventoryModel.getValueAt(i, 6), currentStock) + newQty, i, 8);
-                updateTotalUnitsLabel();
-                configureInventoryTableColumns();
+                int existingCases = parsePositiveInt(inventoryModel.getValueAt(i, 9), 1);
+                inventoryModel.setValueAt(qty, i, 8);
+                inventoryModel.setValueAt(existingCases + 1, i, 9);
+                updateNewStockTotals();
                 return;
             }
         }
 
-        inventoryModel.addRow(new Object[]{itemType, itemId, name, description, sku, currentStock, currentStock, qty, currentStock + qty});
+        inventoryModel.addRow(new Object[]{itemType, itemId, name, attributes, description, sku, currentStock,
+                currentStock, qty, 1, qty, (long) currentStock + qty});
         updateNewStockTotals();
         configureInventoryTableColumns();
     }
@@ -621,11 +637,15 @@ public class EnterInventory extends JFrame {
         updatingInventoryRows = true;
         try {
             for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-                int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
-                int qtyToAdd = parsePositiveInt(inventoryModel.getValueAt(i, 7), 1);
-                inventoryModel.setValueAt(countedStock, i, 6);
-                inventoryModel.setValueAt(qtyToAdd, i, 7);
-                inventoryModel.setValueAt(countedStock + qtyToAdd, i, 8);
+                int countedStock = parseInt(inventoryModel.getValueAt(i, 7), 0);
+                int quantityPerCase = parsePositiveInt(inventoryModel.getValueAt(i, 8), 1);
+                int cases = parsePositiveInt(inventoryModel.getValueAt(i, 9), 1);
+                long totalToAdd = calculateTotalToAdd(quantityPerCase, cases);
+                inventoryModel.setValueAt(countedStock, i, 7);
+                inventoryModel.setValueAt(quantityPerCase, i, 8);
+                inventoryModel.setValueAt(cases, i, 9);
+                inventoryModel.setValueAt(totalToAdd, i, 10);
+                inventoryModel.setValueAt((long) countedStock + totalToAdd, i, 11);
             }
             updateTotalUnitsLabel();
             updateDescriptionRowHeights();
@@ -652,10 +672,24 @@ public class EnterInventory extends JFrame {
         }
     }
 
+    static long calculateTotalToAdd(int quantityPerCase, int cases) {
+        return (long) quantityPerCase * cases;
+    }
+
+    static String availableAttributes(Object size, Object color, Object flavor) {
+        return java.util.stream.Stream.of(size, color, flavor)
+                .filter(java.util.Objects::nonNull)
+                .map(value -> value.toString().trim())
+                .filter(value -> !value.isEmpty() && !"null".equalsIgnoreCase(value))
+                .collect(java.util.stream.Collectors.joining(" / "));
+    }
+
     private void updateTotalUnitsLabel() {
-        int total = 0;
+        long total = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            total += parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
+            int quantityPerCase = parsePositiveInt(inventoryModel.getValueAt(i, 8), 0);
+            int cases = parsePositiveInt(inventoryModel.getValueAt(i, 9), 0);
+            total += calculateTotalToAdd(quantityPerCase, cases);
         }
         totalUnitsLabel.setText("Units to Add: " + total);
     }
@@ -762,13 +796,19 @@ public class EnterInventory extends JFrame {
                     default -> "PRODUCT";
                 };
                 int itemId = Integer.parseInt(String.valueOf(inventoryModel.getValueAt(i, 1)));
-                int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
-                int quantity = parsePositiveInt(inventoryModel.getValueAt(i, 7), 0);
-                if (quantity <= 0) {
-                    throw new IllegalArgumentException("Quantity must be greater than zero for "
+                int countedStock = parseInt(inventoryModel.getValueAt(i, 7), 0);
+                int quantityPerCase = parsePositiveInt(inventoryModel.getValueAt(i, 8), 0);
+                int cases = parsePositiveInt(inventoryModel.getValueAt(i, 9), 0);
+                if (quantityPerCase <= 0 || cases <= 0) {
+                    throw new IllegalArgumentException("Quantity per case and number of cases must be greater than zero for "
                             + inventoryModel.getValueAt(i, 2) + ".");
                 }
-                lines.add(new LanApiClient.ReceiveInventoryLine(itemType, itemId, countedStock, quantity));
+                long totalToAdd = calculateTotalToAdd(quantityPerCase, cases);
+                if (totalToAdd > 1_000_000) {
+                    throw new IllegalArgumentException("Total to add cannot exceed 1,000,000 units for "
+                            + inventoryModel.getValueAt(i, 2) + ".");
+                }
+                lines.add(new LanApiClient.ReceiveInventoryLine(itemType, itemId, countedStock, (int) totalToAdd));
             }
 
             LanApiClient.ReceiveInventoryRequest request = new LanApiClient.ReceiveInventoryRequest(
@@ -798,8 +838,8 @@ public class EnterInventory extends JFrame {
 
     private boolean hasStockCountOverrides() {
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 7), 0);
             if (systemStock != countedStock) {
                 return true;
             }
@@ -869,8 +909,8 @@ public class EnterInventory extends JFrame {
         StringBuilder summary = new StringBuilder("<ul>");
         int count = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 7), 0);
             if (systemStock == countedStock) {
                 continue;
             }
@@ -899,8 +939,8 @@ public class EnterInventory extends JFrame {
     private int countStockOverrideRows() {
         int count = 0;
         for (int i = 0; i < inventoryModel.getRowCount(); i++) {
-            int systemStock = parseInt(inventoryModel.getValueAt(i, 5), 0);
-            int countedStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int systemStock = parseInt(inventoryModel.getValueAt(i, 6), 0);
+            int countedStock = parseInt(inventoryModel.getValueAt(i, 7), 0);
             if (systemStock != countedStock) {
                 count++;
             }

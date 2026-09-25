@@ -101,8 +101,12 @@ limit 5;
 ```
 
 ## 6) Handover
-1. While session stays OPEN, log in as User B on Device 1.
-2. In `Balance Draw`, perform `Confirm Handover` with a counted amount.
+1. As User A, count the drawer and perform `Confirm Handover`. The count must match expected cash.
+2. Verify the session stays OPEN with User A as current cashier; the latest HANDOVER count event has reason `AWAITING_TAKEOVER`. Cash sales, payments, refunds, and closing must be blocked until takeover.
+3. Log in as User B on Device 1 (or another register assigned to this physical drawer).
+4. In `Balance Draw`, verify User A's denomination and float entries are retained. Check/adjust the cash count, then click `Confirm Handover / Resume Draw`. The total must match User A's count and expected cash.
+5. Verify User A cannot accept their own handover, another cashier cannot initiate User A's handover, and an unassigned register cannot accept it.
+6. Verify the latest HANDOVER count event now has reason `TAKEOVER_ACCEPTED`; cash operations resume and no new drawer session was opened.
 
 Expected DB checks:
 ```sql

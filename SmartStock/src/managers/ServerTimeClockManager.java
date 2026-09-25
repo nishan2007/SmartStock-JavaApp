@@ -614,10 +614,19 @@ public final class ServerTimeClockManager {
         }
     }
 
-    public static void markPayrollPaid(Connection conn, PayrollSummary summary,
+    public static void markPayrollPaid(Connection conn, PayrollSummary summary, BigDecimal amountPaid,
                                        String paymentMethod, String paymentReference) throws SQLException {
-        BigDecimal paymentAmount = utils.CurrencyFormatter.normalize(summary.amountDue());
+        if (amountPaid == null || amountPaid.stripTrailingZeros().scale() > 0) {
+            throw new SQLException("The amount paid must be entered in whole GYD.");
+        }
+        BigDecimal paymentAmount = utils.CurrencyFormatter.normalize(amountPaid);
         if (paymentAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new SQLException("The amount paid must be greater than zero.");
+        }
+        if (paymentAmount.compareTo(new BigDecimal("9999999999")) > 0) {
+            throw new SQLException("The amount paid must be below GYD 10 billion.");
+        }
+        if (summary.amountDue().compareTo(BigDecimal.ZERO) <= 0) {
             throw new SQLException("This payroll period is already fully paid.");
         }
         String normalizedMethod = paymentMethod == null ? "CASH" : paymentMethod.trim().toUpperCase(java.util.Locale.ROOT);
@@ -725,6 +734,7 @@ public final class ServerTimeClockManager {
                            pay_period_start,
                            pay_period_end,
                            COALESCE(total_pay, 0) AS payment_amount,
+                           UPPER(COALESCE(payment_method, 'CASH')) AS payment_method,
                            (paid_at AT TIME ZONE ?) AS local_paid_at,
                            paid_by_name,
                            ROW_NUMBER() OVER (
@@ -738,7 +748,8 @@ public final class ServerTimeClockManager {
                        pay_period_end,
                        SUM(payment_amount) AS paid_amount,
                        MAX(local_paid_at) AS local_paid_at,
-                       MAX(paid_by_name) FILTER (WHERE latest_rank = 1) AS paid_by_name
+                       MAX(paid_by_name) FILTER (WHERE latest_rank = 1) AS paid_by_name,
+                       MAX(payment_method) FILTER (WHERE latest_rank = 1) AS latest_payment_method
                 FROM ranked
                 GROUP BY user_id, pay_period_start, pay_period_end
                 """;
@@ -756,7 +767,8 @@ public final class ServerTimeClockManager {
                             new PayrollPaymentStatus(
                                     toLocalDateTime(rs.getTimestamp("local_paid_at")),
                                     rs.getString("paid_by_name"),
-                                    defaultZero(rs.getBigDecimal("paid_amount"))
+                                    defaultZero(rs.getBigDecimal("paid_amount")),
+                                    rs.getString("latest_payment_method")
                             )
                     );
                 }
@@ -1224,14 +1236,22 @@ public final class ServerTimeClockManager {
     }
 
     private static BigDecimal amountDue(BigDecimal totalPay, PayrollPaymentStatus status) {
-        BigDecimal due = defaultZero(totalPay).subtract(paidAmount(status));
+        return paymentAmountDue(totalPay, paidAmount(status),
+                status == null ? null : status.latestPaymentMethod());
+    }
+
+    static BigDecimal paymentAmountDue(BigDecimal totalPay, BigDecimal paid, String latestPaymentMethod) {
+        BigDecimal target = "CASH".equalsIgnoreCase(latestPaymentMethod)
+                ? utils.CurrencyFormatter.roundToNearestTwenty(defaultZero(totalPay))
+                : defaultZero(totalPay);
+        BigDecimal due = target.subtract(defaultZero(paid));
         return due.compareTo(BigDecimal.ZERO) <= 0 ? BigDecimal.ZERO : utils.CurrencyFormatter.normalize(due);
     }
 
     private static boolean isFullyPaid(BigDecimal totalPay, PayrollPaymentStatus status) {
         return status != null
                 && paidAmount(status).compareTo(BigDecimal.ZERO) > 0
-                && paidAmount(status).compareTo(defaultZero(totalPay)) >= 0;
+                && amountDue(totalPay, status).signum() == 0;
     }
 
     private static String payrollKey(int userId, LocalDate payPeriodStart, LocalDate payPeriodEnd) {
@@ -1354,7 +1374,8 @@ public final class ServerTimeClockManager {
                                   BigDecimal overtimePay, BigDecimal totalPay) {
     }
 
-    private record PayrollPaymentStatus(LocalDateTime paidAt, String paidByName, BigDecimal paidAmount) {
+    private record PayrollPaymentStatus(LocalDateTime paidAt, String paidByName, BigDecimal paidAmount,
+                                        String latestPaymentMethod) {
     }
 
     private record TimeSegment(

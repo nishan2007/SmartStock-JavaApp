@@ -68,12 +68,13 @@ public final class CustomOrderDataService {
 
     private interface ThrowingSupplier<T> { T get() throws Exception; }
 
-    public record CustomItemOption(Long customItemId, String name, String sku, String productType, String pricingType,
+    public record CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
                                    BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
                                    String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
                                    BigDecimal maxLength) {
         @Override public String toString() {
-            String label = sku == null || sku.isBlank() ? name : name + " [" + sku + "]";
+            String label = attributeLabel(name,size,color);
+            if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
             if (hasVariants) return label + " (variants)";
             if ("FIXED".equals(pricingType) && fixedPrice != null) return label + " ($" + fixedPrice + ")";
             if ("AREA".equals(pricingType)) return label + " (area pricing)";
@@ -81,12 +82,14 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record VariantOption(Long variantId, String name, String sku, BigDecimal fixedPrice) {
+    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) {
         @Override public String toString() {
-            return (sku == null || sku.isBlank() ? name : name + " [" + sku + "]")
+            return (sku == null || sku.isBlank() ? attributeLabel(name,effectiveSize,effectiveColor) : attributeLabel(name,effectiveSize,effectiveColor) + " [" + sku + "]")
                     + (fixedPrice == null ? "" : " ($" + fixedPrice + ")");
         }
     }
+
+    private static String attributeLabel(String name,String size,String color){StringBuilder out=new StringBuilder(name==null?"":name);if(size!=null&&!size.isBlank())out.append(" / ").append(size);if(color!=null&&!color.isBlank())out.append(" / ").append(color);return out.toString();}
 
     public record LookupResult(Long customItemId, Long customVariantId) { }
 
@@ -150,7 +153,9 @@ public final class CustomOrderDataService {
             String lineDiscountByName, String lineDiscountReason, BigDecimal minimumDepositPercent,
             BigDecimal originalBasePrice, BigDecimal priceOverridePrice, String priceOverrideReason,
             Integer priceOverrideByUserId, String priceOverrideByName, List<PrintAddonRequest> printAddons,
-            String lineDiscountApprovalToken, String priceOverrideApprovalToken) { }
+            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor) {
+        public OrderLineRequest(Long customItemId,Long customVariantId,String itemName,String variantName,String pricingType,BigDecimal unitPrice,String customizationDetails,String orderInstructions,BigDecimal widthValue,BigDecimal lengthValue,String dimensionUnit,BigDecimal areaValue,String areaUnit,BigDecimal areaPrice,BigDecimal baseItemPrice,Long printMaterialId,String printMaterialName,Long printSizePresetId,String printSizeName,BigDecimal printCharge,int printLineCount,BigDecimal originalLineTotal,BigDecimal lineDiscountPercent,BigDecimal lineDiscountAmount,Integer lineDiscountByUserId,String lineDiscountByName,String lineDiscountReason,BigDecimal minimumDepositPercent,BigDecimal originalBasePrice,BigDecimal priceOverridePrice,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName,List<PrintAddonRequest>printAddons,String lineDiscountApprovalToken,String priceOverrideApprovalToken){this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,null,null);}
+    }
 
     public record PrintAddonRequest(Long printMaterialId, String materialName, Long printSizePresetId,
                                     String printSizeName, String pricingMode, String printDescription,

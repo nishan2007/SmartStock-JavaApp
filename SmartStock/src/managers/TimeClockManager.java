@@ -67,12 +67,17 @@ public final class TimeClockManager {
     }
 
     public static void markPayrollPaid(PayrollSummary summary) throws SQLException {
-        markPayrollPaid(summary, "CASH", null);
+        markPayrollPaid(summary, summary.amountDue(), "CASH", null);
     }
 
     public static void markPayrollPaid(PayrollSummary summary, String paymentMethod,
                                        String paymentReference) throws SQLException {
-        try { LanApiClient.markPayrollPaid(summary, paymentMethod, paymentReference, UUID.randomUUID().toString()); }
+        markPayrollPaid(summary, summary.amountDue(), paymentMethod, paymentReference);
+    }
+
+    public static void markPayrollPaid(PayrollSummary summary, BigDecimal amountPaid, String paymentMethod,
+                                       String paymentReference) throws SQLException {
+        try { LanApiClient.markPayrollPaid(summary, amountPaid, paymentMethod, paymentReference, UUID.randomUUID().toString()); }
         catch (Exception ex) { throw sql("Unable to record payroll payment through the SmartStock server.", ex); }
     }
 

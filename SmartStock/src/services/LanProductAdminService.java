@@ -207,8 +207,8 @@ final class LanProductAdminService {
         requireAnyPermission(connection,userId,"VIEW_INVENTORY","EDIT_ITEM","NEW_ITEM","MAKE_SALE");
         String normalized=clean(itemType,20).toLowerCase(java.util.Locale.ROOT);String sql=switch(normalized){
             case "product"->"SELECT p.name,COALESCE(p.size,''),COALESCE(p.description,''),COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id),COALESCE(p.price,0) FROM products p WHERE p.product_id=? AND p.sku<>'SMARTSTOCK-MISC' AND p.is_active=TRUE";
-            case "custom"->"SELECT coi.item_name,'',COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE";
-            case "variant"->"SELECT coi.item_name||' - '||v.variant_name,v.variant_name,COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND v.is_active=TRUE";
+            case "custom"->"SELECT coi.item_name,CONCAT_WS(' / ',NULLIF(coi.size,''),NULLIF(coi.color,'')),COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE";
+            case "variant"->"SELECT coi.item_name||' - '||v.variant_name,CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(coi.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(coi.color,''))),COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND v.is_active=TRUE";
             default->throw rule(400,"VALIDATION_ERROR","The saved item type is invalid.");};
         try(PreparedStatement ps=connection.prepareStatement(sql)){ps.setLong(1,itemId);try(ResultSet rs=ps.executeQuery()){
             if(!rs.next())throw rule(404,"ITEM_NOT_FOUND","The saved item could not be loaded for printing.");
@@ -438,7 +438,9 @@ final class LanProductAdminService {
                 if("SMARTSTOCK-MISC".equals(rs.getString(1)))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be edited.");
             }
         }
-        if(List.of("ITEM_TYPE","BRAND","SHELF","STORAGE_SHELF").contains(field)) {
+        if("CATEGORY".equals(field)) {
+            updateCategoryCell(connection,productId,value,expected);
+        }else if(List.of("ITEM_TYPE","BRAND","SHELF","STORAGE_SHELF").contains(field)) {
             updateItemDetailCell(connection,productId,locationId,field,value,expected);
         }else if("QUANTITY".equals(field)){
             requirePermission(connection,userId,"MANUAL_ADJUSTMENT");
@@ -478,6 +480,40 @@ final class LanProductAdminService {
     }
 
     private static int whole(String value,String message)throws RuleViolation{try{return Integer.parseInt(value.trim());}catch(Exception ex){throw rule(400,"VALIDATION_ERROR",message);}}
+
+    private static void updateCategoryCell(Connection c,int productId,String value,String expected)throws Exception {
+        if(value.isBlank())throw rule(400,"VALIDATION_ERROR","Choose a category.");
+        String currentCategory,currentItemType;
+        try(PreparedStatement ps=c.prepareStatement("""
+                SELECT COALESCE(cat.name,''),COALESCE(it.name,'')
+                FROM products p
+                LEFT JOIN categories cat ON cat.category_id=p.category_id
+                LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
+                WHERE p.product_id=?
+                """)){
+            ps.setInt(1,productId);
+            try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())throw rule(404,"PRODUCT_NOT_FOUND","Item was not found.");
+                currentCategory=rs.getString(1);currentItemType=rs.getString(2);
+            }
+        }
+        if(!currentCategory.equals(expected))throw rule(409,"ITEM_CHANGED","Category changed on another register. Reload inventory before editing it.");
+        int categoryId;
+        try(PreparedStatement ps=c.prepareStatement("SELECT category_id FROM categories WHERE UPPER(BTRIM(name))=UPPER(BTRIM(?)) ORDER BY category_id LIMIT 1")){
+            ps.setString(1,value);
+            try(ResultSet rs=ps.executeQuery()){
+                if(!rs.next())throw rule(400,"VALIDATION_ERROR","Choose an existing category.");
+                categoryId=rs.getInt(1);
+            }
+        }
+        Integer itemTypeId=currentItemType.isBlank()?null:ItemDetailsService.resolveItemType(c,categoryId,currentItemType);
+        try(PreparedStatement ps=c.prepareStatement("UPDATE products SET category_id=?,item_type_id=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")){
+            ps.setInt(1,categoryId);
+            if(itemTypeId==null)ps.setNull(2,Types.INTEGER);else ps.setInt(2,itemTypeId);
+            ps.setInt(3,productId);
+            ps.executeUpdate();
+        }
+    }
 
     private static void updateItemDetailCell(Connection c,int productId,int locationId,String field,String raw,String expected)throws Exception {
         String value=clean(raw,300);

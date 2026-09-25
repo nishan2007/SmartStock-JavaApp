@@ -9,6 +9,7 @@ import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.ResponsiveTask;
+import ui.helpers.ThemeManager;
 import ui.helpers.WindowHelper;
 
 import javax.swing.*;
@@ -29,10 +30,12 @@ public class Invoices extends JFrame {
     private final DefaultTableModel quotationModel = Quotations.readOnlyModel("ID", "Quotation #", "Customer", "Status", "Valid Until", "Total");
     private final DefaultTableModel invoiceModel = Quotations.readOnlyModel("ID", "Invoice #", "Customer", "Status", "Payment", "Balance", "Quotation #");
     private final DefaultTableModel deliveryModel = Quotations.readOnlyModel("ID", "Delivery #", "Invoice #", "Customer", "Method", "Balance", "Created");
+    private final DefaultTableModel paymentModel = Quotations.readOnlyModel("Receipt ID", "Customer ID", "Invoice #", "Customer", "Amount", "Method", "Reference", "Taken By", "Date");
     private final DefaultTableModel auditModel = Quotations.readOnlyModel("Time", "Document", "Action", "Field", "Old", "New", "User", "Reason");
     private final JTable quotationTable = new JTable(quotationModel);
     private final JTable invoiceTable = new JTable(invoiceModel);
     private final JTable deliveryTable = new JTable(deliveryModel);
+    private final JTable paymentTable = new JTable(paymentModel);
     private final JTable auditTable = new JTable(auditModel);
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
@@ -59,7 +62,14 @@ public class Invoices extends JFrame {
         tabs.addTab("Quotations", tablePanel(quotationTable, quotationButtons()));
         tabs.addTab("Invoices", tablePanel(invoiceTable, invoiceButtons()));
         tabs.addTab("Deliveries", tablePanel(deliveryTable, deliveryButtons()));
+        tabs.addTab("Payments", tablePanel(paymentTable, paymentButtons()));
         tabs.addTab("Audit", tablePanel(auditTable, auditButtons()));
+        paymentTable.removeColumn(paymentTable.getColumnModel().getColumn(1));
+        paymentTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (event.getClickCount() == 2) reprintPaymentReceipt();
+            }
+        });
         tabs.setSelectedIndex(initialTab == InitialTab.QUOTATIONS ? 0 : 1);
         mainPanel.add(tabs, BorderLayout.CENTER);
         mainPanel.add(loadingState, BorderLayout.SOUTH);
@@ -140,6 +150,19 @@ public class Invoices extends JFrame {
         return panel;
     }
 
+    private JPanel paymentButtons() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JButton reprint = new JButton("Reprint Receipt");
+        JButton refresh = new JButton("Refresh");
+        panel.add(reprint);
+        panel.add(refresh);
+        Quotations.stylePrimaryButton(reprint);
+        Quotations.styleSecondaryButton(refresh);
+        reprint.addActionListener(e -> reprintPaymentReceipt());
+        refresh.addActionListener(e -> refreshAll());
+        return panel;
+    }
+
     private JPanel tablePanel(JTable table, JPanel buttons) {
         table.setAutoCreateRowSorter(true);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -156,6 +179,7 @@ public class Invoices extends JFrame {
                         UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listQuotations),
                         UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listInvoices),
                         UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listDeliveries),
+                        UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listPayments),
                         UiTaskRunner.supplyAsync(QuotationInvoiceViewService::listAudit)
                 ).joined(),this::applySnapshot);
     }
@@ -167,6 +191,8 @@ public class Invoices extends JFrame {
         for (var row : snapshot.invoices()) invoiceModel.addRow(new Object[]{row.invoiceId(),row.invoiceNumber(),row.customerName(),row.status(),row.paymentStatus(),row.balanceDue(),row.quotationNumber()});
         deliveryModel.setRowCount(0);
         for (var row : snapshot.deliveries()) deliveryModel.addRow(new Object[]{row.deliveryEventId(),row.deliveryNumber(),row.invoiceNumber(),row.customerName(),row.deliveryMethod(),row.balanceDue(),row.createdAt()});
+        paymentModel.setRowCount(0);
+        for (var row : snapshot.payments()) paymentModel.addRow(new Object[]{row.transactionId(),row.customerId(),row.invoiceNumber(),row.customerName(),row.amount(),row.paymentMethod(),row.paymentReference(),row.takenBy(),row.createdAt()});
         auditModel.setRowCount(0);
         for (var row : snapshot.audit()) auditModel.addRow(new Object[]{row.createdAt(),row.document(),row.actionType(),row.fieldName(),row.oldValue(),row.newValue(),row.userName(),row.reason()});
     }
@@ -174,12 +200,14 @@ public class Invoices extends JFrame {
     private record InvoiceSnapshot(List<QuotationInvoiceViewService.QuotationSummary> quotations,
                                    List<QuotationInvoiceViewService.InvoiceSummary> invoices,
                                    List<QuotationInvoiceViewService.DeliverySummary> deliveries,
+                                   List<QuotationInvoiceViewService.PaymentSummary> payments,
                                    List<QuotationInvoiceViewService.AuditEntry> audit) {
         private InvoiceSnapshot(java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.QuotationSummary>> quotations,
                                 java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.InvoiceSummary>> invoices,
                                 java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.DeliverySummary>> deliveries,
+                                java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.PaymentSummary>> payments,
                                 java.util.concurrent.CompletableFuture<List<QuotationInvoiceViewService.AuditEntry>> audit) {
-            this(quotations.join(),invoices.join(),deliveries.join(),audit.join());
+            this(quotations.join(),invoices.join(),deliveries.join(),payments.join(),audit.join());
         }
         private InvoiceSnapshot joined() { return this; }
     }
@@ -245,6 +273,18 @@ public class Invoices extends JFrame {
         }
         WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(
                 receiptRef.customerId(), receiptRef.transactionId()), this);
+    }
+
+    private void reprintPaymentReceipt() {
+        int viewRow = paymentTable.getSelectedRow();
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(this, "Select a payment to reprint.", "Payments", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int row = paymentTable.convertRowIndexToModel(viewRow);
+        long transactionId = ((Number) paymentModel.getValueAt(row, 0)).longValue();
+        int customerId = ((Number) paymentModel.getValueAt(row, 1)).intValue();
+        WindowHelper.showPosWindow(new AccountPaymentReceiptPreview(customerId, transactionId), this);
     }
 
     private void previewInvoice() {
@@ -330,6 +370,7 @@ public class Invoices extends JFrame {
             Quotations.PaymentPrompt prompt = new Quotations.PaymentPrompt(this, financials);
             prompt.setVisible(true);
             Quotations.PaymentInput payment = prompt.paymentInput();
+            if (payment == null) return;
             boolean paymentRecorded = false;
             if (payment.amount().compareTo(BigDecimal.ZERO) > 0) {
                 try {
@@ -346,6 +387,7 @@ public class Invoices extends JFrame {
             QuotationInvoiceViewService.InvoiceFinancials updated = ResponsiveTask.await(this,"Refreshing invoice balance...",()->QuotationInvoiceViewService.loadInvoiceFinancials(invoiceId));
             if(updated==null)return;
             if (!paymentRecorded && updated.balanceDue().compareTo(BigDecimal.ZERO) > 0) {
+                if (!Quotations.confirmAccountCharge(this, updated)) return;
                 Quotations.CreditOverride creditOverride = Quotations.creditOverride(this, updated, BigDecimal.ZERO);
                 if (creditOverride == null) return;
                 LanApiClient.ChargeAuthorization authorization=updated.requireChargeAuthorization()?ui.helpers.CustomerChargeAuthorizationDialog.capture(this,updated.customerName()):null;
@@ -436,7 +478,7 @@ public class Invoices extends JFrame {
         private final JComboBox<String> methodBox = new JComboBox<>(new String[]{"PICKUP", "LOCAL_DELIVERY", "SHIP", "INSTALLATION"});
         private final JTextField receiverField = new JTextField();
         private final JTextField notesField = new JTextField();
-        private final DefaultTableModel lineModel = new DefaultTableModel(new String[]{"Line ID", "Item", "Invoiceed", "Delivered", "Remaining", "Available", "Deliver Now"}, 0) {
+        private final DefaultTableModel lineModel = new DefaultTableModel(new String[]{"Line ID", "Item", "Invoiced", "Delivered", "Remaining", "Available", "Deliver Now"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return column == 6;
@@ -457,6 +499,11 @@ public class Invoices extends JFrame {
             main.add(Quotations.formPanel(new String[]{"Method", "Receiver", "Notes"}, new JComponent[]{methodBox, receiverField, notesField}), BorderLayout.NORTH);
             JTable table = new JTable(lineModel);
             Quotations.styleTable(table);
+            table.removeColumn(table.getColumnModel().getColumn(0));
+            table.getColumnModel().getColumn(0).setPreferredWidth(260);
+            for (int column = 1; column < table.getColumnCount(); column++) {
+                table.getColumnModel().getColumn(column).setPreferredWidth(column == 5 ? 110 : 85);
+            }
             main.add(new JScrollPane(table), BorderLayout.CENTER);
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
             JButton post = new JButton("Post Delivery");
@@ -468,6 +515,7 @@ public class Invoices extends JFrame {
             main.add(buttons, BorderLayout.SOUTH);
             post.addActionListener(e -> post());
             cancel.addActionListener(e -> dispose());
+            ThemeManager.applyToWindow(this);
             loadLines();
         }
 

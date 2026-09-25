@@ -171,9 +171,12 @@ final class LanRefundService {
 
         List<Map<String, Object>> items = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT si.sale_item_id, si.product_id, COALESCE(p.sku, ''),
-                       COALESCE(p.name, 'Unknown')
-                         || CASE WHEN COALESCE(p.size, '') = '' THEN '' ELSE ' (' || p.size || ')' END,
+                SELECT si.sale_item_id, COALESCE(si.product_id,0), COALESCE(NULLIF(si.sku_snapshot,''),p.sku,''),
+                       CASE WHEN si.is_misc_item
+                              THEN COALESCE(NULLIF(BTRIM(si.item_name), ''), 'Misc Item')
+                            ELSE COALESCE(NULLIF(si.item_name,''),p.name, 'Unknown')
+                              || CASE WHEN COALESCE(si.size_snapshot,p.size, '') = '' THEN '' ELSE ' (' || COALESCE(si.size_snapshot,p.size) || ')' END
+                       END,
                        CASE WHEN UPPER(COALESCE(si.product_type, p.product_type, 'INVENTORY'))
                                       IN ('SERVICE', 'NON_INVENTORY')
                             THEN UPPER(COALESCE(si.product_type, p.product_type)) ELSE 'INVENTORY' END,
@@ -183,7 +186,7 @@ final class LanRefundService {
                 FROM sale_items si
                 LEFT JOIN products p ON p.product_id = si.product_id
                 JOIN sales s ON s.sale_id = si.sale_id
-                WHERE si.sale_id = ? AND s.location_id = ? AND NOT si.is_misc_item
+                WHERE si.sale_id = ? AND s.location_id = ?
                 ORDER BY si.sale_item_id
                 """)) {
             ps.setInt(1, saleId);
@@ -379,16 +382,16 @@ final class LanRefundService {
         List<ValidatedLine> result = new ArrayList<>();
         Set<Integer> found = new HashSet<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT si.sale_item_id, si.product_id, COALESCE(si.quantity, 0),
+                SELECT si.sale_item_id, COALESCE(si.product_id,0), COALESCE(si.quantity, 0),
                        COALESCE(si.unit_price, 0),
                        CASE WHEN UPPER(COALESCE(si.product_type, p.product_type, 'INVENTORY'))
                                       IN ('SERVICE', 'NON_INVENTORY')
                             THEN UPPER(COALESCE(si.product_type, p.product_type)) ELSE 'INVENTORY' END,
                        COALESCE((SELECT SUM(sri.quantity) FROM sale_return_items sri
-                                 WHERE sri.sale_item_id = si.sale_item_id), 0)
+                                 WHERE sri.sale_item_id = si.sale_item_id), 0),si.custom_item_id,si.custom_variant_id
                 FROM sale_items si
                 LEFT JOIN products p ON p.product_id = si.product_id
-                WHERE si.sale_id = ? AND NOT si.is_misc_item
+                WHERE si.sale_id = ?
                 ORDER BY si.sale_item_id
                 FOR UPDATE OF si
                 """)) {
@@ -407,7 +410,7 @@ final class LanRefundService {
                     }
                     found.add(saleItemId);
                     result.add(new ValidatedLine(saleItemId, rs.getInt(2), requested,
-                            money(rs.getBigDecimal(4)), rs.getString(5)));
+                            money(rs.getBigDecimal(4)), rs.getString(5),(Long)rs.getObject(7),(Long)rs.getObject(8)));
                 }
             }
         }
@@ -472,14 +475,16 @@ final class LanRefundService {
     private static long insertReturnItem(Connection c, long returnId, ValidatedLine line)
             throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO sale_return_items (return_id,sale_item_id,product_id,quantity,unit_price)
-                VALUES (?,?,?,?,?)
+                INSERT INTO sale_return_items (return_id,sale_item_id,product_id,quantity,unit_price,custom_item_id,custom_variant_id)
+                VALUES (?,?,?,?,?,?,?)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, returnId);
             ps.setInt(2, line.saleItemId());
-            ps.setInt(3, line.productId());
+            if(line.productId()>0)ps.setInt(3,line.productId());else ps.setNull(3,Types.INTEGER);
             ps.setInt(4, line.quantity());
             ps.setBigDecimal(5, line.unitPrice());
+            if(line.customItemId()==null)ps.setNull(6,Types.BIGINT);else ps.setLong(6,line.customItemId());
+            if(line.customVariantId()==null)ps.setNull(7,Types.BIGINT);else ps.setLong(7,line.customVariantId());
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) {
@@ -493,6 +498,7 @@ final class LanRefundService {
     private static void restoreInventory(Connection c, Sale sale, long returnId, ValidatedLine line,
                                          int locationId, int userId, String userName, UUID deviceId,
                                          String deviceName) throws SQLException {
+        if(line.customItemId()!=null){restoreCustomInventory(c,sale,returnId,line,locationId,userId,userName,deviceId,deviceName);return;}
         try (PreparedStatement ensure = c.prepareStatement("""
                      INSERT INTO inventory (product_id,location_id,quantity_on_hand,reorder_level)
                      VALUES (?,?,0,0) ON CONFLICT (product_id,location_id) DO NOTHING
@@ -530,6 +536,13 @@ final class LanRefundService {
             movement.setInt(12, userId);
             movement.executeUpdate();
         }
+    }
+
+    private static void restoreCustomInventory(Connection c,Sale sale,long returnId,ValidatedLine line,int locationId,int userId,String userName,UUID deviceId,String deviceName)throws SQLException{
+        String table=line.customVariantId()==null?"custom_order_items":"custom_order_item_variants",key=line.customVariantId()==null?"custom_item_id":"custom_variant_id";long id=line.customVariantId()==null?line.customItemId():line.customVariantId();
+        try(PreparedStatement ps=c.prepareStatement("UPDATE "+table+" SET quantity_on_hand=quantity_on_hand+?,sold_quantity=GREATEST(COALESCE(sold_quantity,0)-?,0),updated_at=CURRENT_TIMESTAMP WHERE "+key+"=?")){ps.setInt(1,line.quantity());ps.setInt(2,line.quantity());ps.setLong(3,id);if(ps.executeUpdate()!=1)throw new SQLException("Custom inventory could not be restored.");}
+        if(line.customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("UPDATE custom_order_items i SET quantity_on_hand=(SELECT COALESCE(SUM(quantity_on_hand),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id AND is_active),sold_quantity=(SELECT COALESCE(SUM(sold_quantity),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id),updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?")){ps.setLong(1,line.customItemId());ps.executeUpdate();}
+        try(PreparedStatement ps=c.prepareStatement("INSERT INTO custom_order_item_movements(custom_item_id,custom_variant_id,location_id,change_qty,reason,note,user_name,user_id,device_id,device_name,sale_id,sale_item_id) VALUES(?,?,?,?,'RETURN',?,?,?,?,?,?,?)")){ps.setLong(1,line.customItemId());if(line.customVariantId()==null)ps.setNull(2,Types.BIGINT);else ps.setLong(2,line.customVariantId());ps.setInt(3,locationId);ps.setInt(4,line.quantity());ps.setString(5,"return_id="+returnId+"; receipt="+sale.receiptNumber());ps.setString(6,userName);ps.setInt(7,userId);ps.setString(8,deviceId.toString());ps.setString(9,deviceName);ps.setInt(10,sale.saleId());ps.setInt(11,line.saleItemId());ps.executeUpdate();}
     }
 
     private static void updateSale(Connection c, int saleId, BigDecimal amount) throws SQLException {
@@ -780,7 +793,7 @@ final class LanRefundService {
     }
 
     private record ValidatedLine(int saleItemId, int productId, int quantity,
-                                 BigDecimal unitPrice, String productType) {
+                                 BigDecimal unitPrice, String productType,Long customItemId,Long customVariantId) {
     }
 
     private record BalanceChange(BigDecimal before, BigDecimal after) {

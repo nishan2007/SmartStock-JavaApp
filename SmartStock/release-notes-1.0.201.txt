@@ -1,0 +1,8 @@
+SmartStock 1.0.201
+
+Make the custom item catalog permission easier to assign.
+
+- The existing Manage Custom Order Items permission appears as Add/Edit Custom Items in role settings.
+- That permission now shows and opens Custom Order Items from the Main Menu and application menu.
+- Manual Adjustment is no longer required to open the custom item screen.
+- Existing custom catalog role grants continue to work.

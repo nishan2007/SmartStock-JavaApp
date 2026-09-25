@@ -330,7 +330,7 @@ public final class ServerQuotationInvoiceService {
             CustomLineInput c=GSON.fromJson(rs.getString("custom_configuration"),CustomLineInput.class);if(c==null)continue;int quantity=rs.getInt("quantity");BigDecimal lineTotal=zero(rs.getBigDecimal("line_total")),unroundedEach=utils.CurrencyFormatter.normalize(lineTotal.divide(BigDecimal.valueOf(quantity),2,RoundingMode.HALF_UP)),each=roundToNearestTwenty?utils.CurrencyFormatter.roundToNearestTwenty(unroundedEach):unroundedEach;customTotal=customTotal.add(each.multiply(BigDecimal.valueOf(quantity)));
             List<ServerCustomOrderDataService.PrintAddonRequest> addons=new ArrayList<>();if(c.printAddons()!=null)for(PrintAddonInput a:c.printAddons())addons.add(new ServerCustomOrderDataService.PrintAddonRequest(a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()));
             BigDecimal addonTotal=addons.stream().map(ServerCustomOrderDataService.PrintAddonRequest::printCharge).filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO,BigDecimal::add);
-            for(int i=0;i<quantity;i++)orderLines.add(new ServerCustomOrderDataService.OrderLineRequest(c.customItemId(),c.customVariantId(),rs.getString("item_name"),c.variantName(),c.pricingType(),each,c.customizationDetails(),c.orderInstructions(),c.widthValue(),c.lengthValue(),c.dimensionUnit(),c.areaValue(),c.areaUnit(),c.areaPrice(),each.subtract(addonTotal).max(BigDecimal.ZERO),null,null,null,null,addonTotal,addons.stream().mapToInt(ServerCustomOrderDataService.PrintAddonRequest::printLineCount).sum(),each,rs.getBigDecimal("discount_percent"),BigDecimal.ZERO,null,null,null,BigDecimal.ZERO,each,null,rs.getString("price_override_reason"),null,null,addons,null,null));
+            for(int i=0;i<quantity;i++)orderLines.add(new ServerCustomOrderDataService.OrderLineRequest(c.customItemId(),c.customVariantId(),rs.getString("item_name"),c.variantName(),c.pricingType(),each,c.customizationDetails(),c.orderInstructions(),c.widthValue(),c.lengthValue(),c.dimensionUnit(),c.areaValue(),c.areaUnit(),c.areaPrice(),each.subtract(addonTotal).max(BigDecimal.ZERO),null,null,null,null,addonTotal,addons.stream().mapToInt(ServerCustomOrderDataService.PrintAddonRequest::printLineCount).sum(),each,rs.getBigDecimal("discount_percent"),BigDecimal.ZERO,null,null,null,BigDecimal.ZERO,each,null,rs.getString("price_override_reason"),null,null,addons,null,null,c.itemSize(),c.itemColor()));
         }}}
         if(orderLines.isEmpty())return null;
         var customer=new ServerCustomOrderDataService.CustomerOption(quotation.customerId(),quotation.customerName(),quotation.customerPhone(),null,quotation.customerEmail());
@@ -440,8 +440,7 @@ public final class ServerQuotationInvoiceService {
                 INSERT INTO quotations (
                     quotation_number, customer_id, customer_name, customer_phone, customer_email,
                     valid_until, production_due_date, quotation_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount,
-                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name,
-                    customer_discount_percent,customer_discount_applied
+                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING quotation_id
@@ -503,7 +502,7 @@ public final class ServerQuotationInvoiceService {
             ps.setString(9, blankToNull(line.priceOverrideReason()));
             setNullableInteger(ps, 10, line.priceOverrideByUserId());
             ps.setString(11, blankToNull(line.priceOverrideByName()));
-            CustomLineInput custom=line.custom();
+            CustomLineInput custom=withEffectiveAttributes(conn,line.custom());
             setNullableLong(ps,12,custom==null?null:custom.customItemId());
             setNullableLong(ps,13,custom==null?null:custom.customVariantId());
             if(custom==null)ps.setNull(14,Types.OTHER);else ps.setObject(14,GSON.toJson(custom),Types.OTHER);
@@ -532,6 +531,18 @@ public final class ServerQuotationInvoiceService {
 
     private static void insertQuotationPrintAddons(Connection conn,long lineId,CustomLineInput custom)throws SQLException{
         if(custom==null||custom.printAddons()==null)return;try(PreparedStatement ps=conn.prepareStatement("INSERT INTO quotation_line_print_addons(quotation_line_id,print_material_id,material_name,print_size_preset_id,print_size_name,pricing_mode,print_description,print_line_count,print_charge,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?)")){int sort=0;for(PrintAddonInput a:custom.printAddons()){ps.setLong(1,lineId);setNullableLong(ps,2,a.printMaterialId());ps.setString(3,a.materialName());setNullableLong(ps,4,a.printSizePresetId());ps.setString(5,a.printSizeName());ps.setString(6,a.pricingMode());ps.setString(7,blankToNull(a.description()));ps.setInt(8,Math.max(1,a.lineCount()));ps.setBigDecimal(9,money(a.charge()));ps.setInt(10,sort++);ps.addBatch();}ps.executeBatch();}
+    }
+
+    private static CustomLineInput withEffectiveAttributes(Connection conn,CustomLineInput custom)throws SQLException{
+        if(custom==null||custom.customItemId()==null)return custom;
+        String size=blankToNull(custom.itemSize()),color=blankToNull(custom.itemColor());
+        if(size==null||color==null){
+            try(PreparedStatement ps=conn.prepareStatement("SELECT COALESCE(NULLIF(BTRIM(v.size),''),NULLIF(BTRIM(i.size),'')),COALESCE(NULLIF(BTRIM(v.color),''),NULLIF(BTRIM(i.color),'')) FROM custom_order_items i LEFT JOIN custom_order_item_variants v ON v.custom_variant_id=? AND v.custom_item_id=i.custom_item_id WHERE i.custom_item_id=?")){
+                setNullableLong(ps,1,custom.customVariantId());ps.setLong(2,custom.customItemId());
+                try(ResultSet rs=ps.executeQuery()){if(rs.next()){if(size==null)size=blankToNull(rs.getString(1));if(color==null)color=blankToNull(rs.getString(2));}}
+            }
+        }
+        return new CustomLineInput(custom.customItemId(),custom.customVariantId(),custom.variantName(),custom.pricingType(),custom.widthValue(),custom.lengthValue(),custom.dimensionUnit(),custom.areaValue(),custom.areaUnit(),custom.areaPrice(),custom.customizationDetails(),custom.orderInstructions(),custom.printAddons(),size,color);
     }
 
     private static void updateQuotationHeader(Connection conn, long quotationId, CustomerInfo customer,
@@ -590,7 +601,8 @@ public final class ServerQuotationInvoiceService {
                 INSERT INTO invoices (
                     invoice_number, quotation_id, quotation_number, customer_id, customer_name, customer_phone, customer_email,
                     invoice_notes, subtotal_amount, discount_amount, vat_amount, vat_rate_percent, vat_mode, total_amount, balance_due,
-                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name
+                    location_id, location_name, device_id, device_name, created_by_user_id, created_by_name,
+                    customer_discount_percent, customer_discount_applied
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING invoice_id
@@ -1260,7 +1272,7 @@ public final class ServerQuotationInvoiceService {
                                  String priceOverrideByName, String priceOverrideApprovalToken,CustomLineInput custom) {
     }
 
-    public record CustomLineInput(Long customItemId,Long customVariantId,String variantName,String pricingType,BigDecimal widthValue,BigDecimal lengthValue,String dimensionUnit,BigDecimal areaValue,String areaUnit,BigDecimal areaPrice,String customizationDetails,String orderInstructions,List<PrintAddonInput>printAddons){}
+    public record CustomLineInput(Long customItemId,Long customVariantId,String variantName,String pricingType,BigDecimal widthValue,BigDecimal lengthValue,String dimensionUnit,BigDecimal areaValue,String areaUnit,BigDecimal areaPrice,String customizationDetails,String orderInstructions,List<PrintAddonInput>printAddons,String itemSize,String itemColor){}
     public record PrintAddonInput(Long printMaterialId,String materialName,Long printSizePresetId,String printSizeName,String pricingMode,String description,int lineCount,BigDecimal charge){}
 
     public record DeliveryLineInput(long salesInvoiceLineId, int quantityDelivered) {

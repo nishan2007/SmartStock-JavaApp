@@ -1,0 +1,9 @@
+SmartStock 1.0.190
+
+Fix Windows update startup and recovery.
+
+- Keep SmartStock open while Windows waits for administrator approval.
+- Close SmartStock only after the elevated updater confirms it started.
+- Show a clear error and keep the app open when elevation is canceled or updater startup fails.
+- Record updater launcher output for diagnosis.
+- Prevent a canceled launcher from applying the update afterward.

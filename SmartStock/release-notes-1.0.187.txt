@@ -1,0 +1,9 @@
+SmartStock 1.0.187
+
+Apply employee hour-limit edits to the current payroll period.
+
+- Apply hour-limit edits to the current pay period even when a different period type is pending.
+- Correct the current period's limit across later pay-rate snapshots without changing their pay rates.
+- Show the current hour limit in Employee Management.
+- Clear payroll cache after employee updates and when Payroll Refresh is clicked.
+- Keep pay-period type changes scheduled separately for the next applicable boundary.

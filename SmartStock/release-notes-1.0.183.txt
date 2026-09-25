@@ -1,0 +1,7 @@
+SmartStock 1.0.183
+
+Fit more item-type shortcuts beside the sale cart.
+
+- Reduce the cart-side item-type button height by half.
+- Tighten button padding while keeping the item name and product count visible.
+- Leave the full-size buttons inside Quick Pick dialogs unchanged.

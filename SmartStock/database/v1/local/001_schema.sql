@@ -2416,6 +2416,8 @@ CREATE TABLE public.custom_order_item_movements (
     custom_order_id bigint,
     custom_order_line_id bigint,
     custom_order_line_return_id bigint,
+    sale_id integer,
+    sale_item_id integer,
     sync_uuid uuid DEFAULT gen_random_uuid() NOT NULL
 );
 
@@ -2447,6 +2449,9 @@ CREATE TABLE public.custom_order_item_variants (
     custom_variant_id bigint NOT NULL,
     custom_item_id bigint NOT NULL,
     variant_name text NOT NULL,
+    size text,
+    color text,
+    brand_id integer,
     barcode text,
     image_url text,
     fixed_price numeric(12,2),
@@ -2486,6 +2491,8 @@ ALTER SEQUENCE public.custom_order_item_variants_custom_variant_id_seq OWNED BY 
 CREATE TABLE public.custom_order_items (
     custom_item_id bigint NOT NULL,
     item_name text NOT NULL,
+    size text,
+    color text,
     barcode text,
     description text,
     image_url text,
@@ -2505,6 +2512,7 @@ CREATE TABLE public.custom_order_items (
     sold_quantity numeric(12,2) DEFAULT 0 NOT NULL,
     reorder_level numeric(12,2) DEFAULT 0 NOT NULL,
     minimum_deposit_percent numeric(7,4) DEFAULT 0 NOT NULL,
+    sell_in_pos boolean DEFAULT false NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -2722,6 +2730,8 @@ CREATE TABLE public.custom_order_lines (
     custom_order_id bigint NOT NULL,
     custom_item_id bigint,
     item_name text NOT NULL,
+    item_size text,
+    item_color text,
     pricing_type text NOT NULL,
     unit_price numeric(12,2) NOT NULL,
     line_total numeric(12,2) NOT NULL,
@@ -5407,7 +5417,14 @@ ALTER SEQUENCE public.sale_audit_log_sale_audit_id_seq OWNED BY public.sale_audi
 CREATE TABLE public.sale_items (
     sale_item_id integer NOT NULL,
     sale_id integer NOT NULL,
-    product_id integer NOT NULL,
+    product_id integer,
+    catalog_source text DEFAULT 'PRODUCT'::text NOT NULL,
+    custom_item_id bigint,
+    custom_variant_id bigint,
+    sku_snapshot text,
+    brand_snapshot text,
+    size_snapshot text,
+    color_snapshot text,
     item_name text,
     is_misc_item boolean DEFAULT false NOT NULL,
     quantity integer DEFAULT 1 NOT NULL,
@@ -5421,7 +5438,8 @@ CREATE TABLE public.sale_items (
     product_type text DEFAULT 'INVENTORY'::text NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     sync_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
-    CONSTRAINT sale_items_product_type_check CHECK ((product_type = ANY (ARRAY['INVENTORY'::text, 'SERVICE'::text, 'NON_INVENTORY'::text])))
+    CONSTRAINT sale_items_product_type_check CHECK ((product_type = ANY (ARRAY['INVENTORY'::text, 'SERVICE'::text, 'NON_INVENTORY'::text]))),
+    CONSTRAINT sale_items_catalog_source_check CHECK ((((catalog_source = 'PRODUCT'::text) AND (product_id IS NOT NULL) AND (custom_item_id IS NULL) AND (custom_variant_id IS NULL)) OR ((catalog_source = 'CUSTOM_ITEM'::text) AND (product_id IS NULL) AND (custom_item_id IS NOT NULL) AND (custom_variant_id IS NULL)) OR ((catalog_source = 'CUSTOM_VARIANT'::text) AND (product_id IS NULL) AND (custom_item_id IS NOT NULL) AND (custom_variant_id IS NOT NULL))))
 );
 
 
@@ -5453,7 +5471,9 @@ CREATE TABLE public.sale_return_items (
     return_item_id bigint NOT NULL,
     return_id bigint NOT NULL,
     sale_item_id integer NOT NULL,
-    product_id integer NOT NULL,
+    product_id integer,
+    custom_item_id bigint,
+    custom_variant_id bigint,
     quantity integer NOT NULL,
     unit_price numeric(12,2) DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -7184,14 +7204,6 @@ ALTER TABLE ONLY public.custom_order_item_variants
 
 
 --
--- Name: custom_order_item_variants custom_order_item_variants_item_name_uidx; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.custom_order_item_variants
-    ADD CONSTRAINT custom_order_item_variants_item_name_uidx UNIQUE (custom_item_id, variant_name);
-
-
---
 -- Name: custom_order_item_variants custom_order_item_variants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8739,6 +8751,11 @@ CREATE UNIQUE INDEX custom_order_item_variants_barcode_uidx ON public.custom_ord
 --
 
 CREATE INDEX custom_order_item_variants_item_idx ON public.custom_order_item_variants USING btree (custom_item_id, is_active, variant_name);
+CREATE INDEX custom_order_items_pos_idx ON public.custom_order_items USING btree (sell_in_pos, is_active, product_type);
+CREATE INDEX sale_items_custom_item_sale_idx ON public.sale_items USING btree (custom_item_id, sale_id) WHERE custom_item_id IS NOT NULL;
+CREATE INDEX sale_items_custom_variant_sale_idx ON public.sale_items USING btree (custom_variant_id, sale_id) WHERE custom_variant_id IS NOT NULL;
+
+CREATE INDEX custom_order_item_variants_brand_idx ON public.custom_order_item_variants USING btree (brand_id);
 
 
 --
@@ -11410,6 +11427,9 @@ ALTER TABLE ONLY public.custom_order_item_movements
 ALTER TABLE ONLY public.custom_order_item_variants
     ADD CONSTRAINT custom_order_item_variants_custom_item_id_fkey FOREIGN KEY (custom_item_id) REFERENCES public.custom_order_items(custom_item_id) ON DELETE CASCADE;
 
+ALTER TABLE ONLY public.custom_order_item_variants
+    ADD CONSTRAINT custom_order_item_variants_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.item_brands(brand_id);
+
 
 --
 -- Name: custom_order_items custom_order_items_brand_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -13002,6 +13022,18 @@ ALTER TABLE ONLY public.sale_items
 ALTER TABLE ONLY public.sale_items
     ADD CONSTRAINT sale_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(product_id);
 
+ALTER TABLE ONLY public.sale_items
+    ADD CONSTRAINT sale_items_custom_item_id_fkey FOREIGN KEY (custom_item_id) REFERENCES public.custom_order_items(custom_item_id);
+
+ALTER TABLE ONLY public.sale_items
+    ADD CONSTRAINT sale_items_custom_variant_id_fkey FOREIGN KEY (custom_variant_id) REFERENCES public.custom_order_item_variants(custom_variant_id);
+
+ALTER TABLE ONLY public.sale_return_items
+    ADD CONSTRAINT sale_return_items_custom_item_id_fkey FOREIGN KEY (custom_item_id) REFERENCES public.custom_order_items(custom_item_id);
+
+ALTER TABLE ONLY public.sale_return_items
+    ADD CONSTRAINT sale_return_items_custom_variant_id_fkey FOREIGN KEY (custom_variant_id) REFERENCES public.custom_order_item_variants(custom_variant_id);
+
 
 --
 -- Name: sale_items sale_items_sale_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -14489,3 +14521,5 @@ WHERE p.product_id=source.product_id AND source.group_id IS NOT NULL
   AND lower(opt.key)='flavor' AND p.flavor='';
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_receipt_visibility jsonb;
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_item_type_ids)='array');
+ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_size_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_size_item_type_ids)='array');
+ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_photo_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_photo_item_type_ids)='array');

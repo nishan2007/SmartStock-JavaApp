@@ -27,8 +27,12 @@ public final class SmartStockUpdater {
             System.exit(2);
         }
         try {
+            Path manifest = Path.of(args[0]);
+            if (Files.exists(manifest.resolveSibling("updater.cancelled"))) return;
+            Files.writeString(manifest.resolveSibling("updater.started"), Long.toString(ProcessHandle.current().pid()));
             log("Updater started.");
             Thread.sleep(1800);
+            if (Files.exists(manifest.resolveSibling("updater.cancelled"))) return;
             apply(Path.of(args[0]));
             log("Updater completed.");
         } catch (Exception ex) {

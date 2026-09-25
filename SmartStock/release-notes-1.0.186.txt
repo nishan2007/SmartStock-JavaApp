@@ -1,0 +1,8 @@
+SmartStock 1.0.186
+
+Two-step cash drawer handover.
+
+- The outgoing cashier counts and confirms the drawer before the next cashier takes over.
+- Keep the outgoing denomination and float entries for the incoming cashier to check and adjust.
+- The incoming cashier confirms takeover to resume the same drawer session.
+- Pause cash operations while awaiting takeover; enforce cashier roles and matching cash totals on the server.

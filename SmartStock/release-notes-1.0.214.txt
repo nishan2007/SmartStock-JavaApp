@@ -1,0 +1,6 @@
+SmartStock 1.0.214
+
+Fix Photo from Phone connectivity.
+
+- Keep the phone photo page and upload API on the same secure origin.
+- Avoid a second mobile-browser certificate trust barrier that prevented target loading and photo uploads.

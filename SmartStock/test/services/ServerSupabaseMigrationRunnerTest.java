@@ -51,7 +51,11 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(23, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(25, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260909120000_employment_portal.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(

@@ -69,6 +69,10 @@ public class MakeASale extends JFrame {
     private static final String HOLD_CART_PERMISSION = "MAKE_SALE";
     private static final String RESUME_HOLD_PERMISSION = "MAKE_SALE";
     private static final int SEARCH_CONTROL_HEIGHT = 28;
+    private static final Color[] ITEM_TYPE_BUTTON_ACCENTS = {
+            DeckersPalette.ORANGE, DeckersPalette.PURPLE, DeckersPalette.LIME,
+            DeckersPalette.MAGENTA, DeckersPalette.YELLOW, DeckersPalette.CORAL
+    };
 
     private JTextField searchField;
     private JTable cartTable;
@@ -298,7 +302,7 @@ public class MakeASale extends JFrame {
 
 	       // Cart table
 	       cartModel = new DefaultTableModel(
-	               new Object[]{"ID", "Name", "Size", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type", "Department ID", "Misc"},
+	               new Object[]{"ID", "Name", "Size / Color / Flavor", "Description", "SKU", "Price", "Qty", "Item Disc %", "Line Total", "Original Price", "Product Type", "Department ID", "Misc"},
 	               0
 	       ) {
 	           @Override
@@ -890,42 +894,48 @@ public class MakeASale extends JFrame {
                 .filter(product -> product.itemTypeId() != null)
                 .collect(java.util.stream.Collectors.groupingBy(LanApiClient.CatalogProduct::itemTypeId));
         JPanel buttons = new JPanel();
-        buttons.setOpaque(false);
+        buttons.setOpaque(true);
+        buttons.setBackground(DeckersPalette.sectionFill(DeckersPalette.ORANGE));
         buttons.setLayout(new BoxLayout(buttons, BoxLayout.Y_AXIS));
+        int buttonIndex = 0;
         for (Integer id : data.settings().selectedItemTypeIds()) {
             var option = options.get(id); var matching = products.get(id);
             if (option == null || matching == null || matching.isEmpty()) continue;
-            JButton button = createLauncherItemTypeButton(option.name(), matching.size());
-            button.addActionListener(e -> showConfiguredItemTypeProducts(option, matching));
+            JButton button = createLauncherItemTypeButton(option.name(), matching.size(), buttonIndex++);
+            boolean separateBySize = data.settings().separateBySizeItemTypeIds().contains(id);
+            boolean showPhotos = data.settings().showPhotosItemTypeIds().contains(id);
+            button.addActionListener(e -> showConfiguredItemTypeProducts(option, matching, separateBySize, showPhotos));
             buttons.add(button); buttons.add(Box.createVerticalStrut(8));
         }
         itemTypeLauncher.removeAll();
         if (buttons.getComponentCount() == 0) {
             itemTypeLauncher.setVisible(false);
         } else {
-            JLabel title = new JLabel("Item Types", SwingConstants.CENTER);
-            title.setFont(new Font("SansSerif", Font.BOLD, 16));
-            title.setBorder(BorderFactory.createEmptyBorder(2, 2, 8, 2));
             JScrollPane scroll = new JScrollPane(buttons);
-            scroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.YELLOW)));
+            scroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.ORANGE, 2));
             scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
             scroll.getVerticalScrollBar().setUnitIncrement(24);
-            itemTypeLauncher.add(title, BorderLayout.NORTH); itemTypeLauncher.add(scroll, BorderLayout.CENTER);
+            scroll.getViewport().setBackground(DeckersPalette.sectionFill(DeckersPalette.ORANGE));
+            itemTypeLauncher.add(scroll, BorderLayout.CENTER);
             itemTypeLauncher.setVisible(true);
         }
         itemTypeLauncher.getParent().revalidate(); itemTypeLauncher.getParent().repaint();
     }
 
-    private JButton createLauncherItemTypeButton(String name, int count) {
+    private JButton createLauncherItemTypeButton(String name, int count, int index) {
         JButton button = createQuickPickTypeButton(name, count);
+        Color accent = ITEM_TYPE_BUTTON_ACCENTS[Math.floorMod(index, ITEM_TYPE_BUTTON_ACCENTS.length)];
+        button.setBackground(DeckersPalette.tilePressed(accent));
+        button.setBorder(new OutsideRoundedBorder(accent, 4, 14, new Insets(5, 12, 5, 12)));
         button.setAlignmentX(Component.CENTER_ALIGNMENT);
-        button.setMaximumSize(new Dimension(210, 88));
-        button.setPreferredSize(new Dimension(210, 88));
+        button.setMaximumSize(new Dimension(210, 52));
+        button.setPreferredSize(new Dimension(210, 52));
         return button;
     }
 
     private void showConfiguredItemTypeProducts(CompanyCustomizationManager.ItemTypeOption option,
-                                                java.util.List<LanApiClient.CatalogProduct> products) {
+                                                java.util.List<LanApiClient.CatalogProduct> products,
+                                                boolean separateBySize,boolean showPhotos) {
         JDialog dialog = new JDialog(this, option.name(), true);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         dialog.setMinimumSize(new Dimension(560, 420)); dialog.setSize(820, 620); dialog.setLocationRelativeTo(this);
@@ -933,11 +943,232 @@ public class MakeASale extends JFrame {
         content.setBackground(DeckersPalette.background()); content.setBorder(BorderFactory.createEmptyBorder(16,16,16,16));
         JLabel heading = new JLabel(option.toString()); heading.setFont(new Font("SansSerif",Font.BOLD,22));
         heading.setForeground(DeckersPalette.text()); content.add(heading,BorderLayout.NORTH);
-        JPanel grid=createQuickPickGrid(); products.forEach(product -> grid.add(createServiceQuickPickButton(product)));
-        content.add(createQuickPickScrollPane(grid),BorderLayout.CENTER);
+        JPanel center=new JPanel(new BorderLayout());center.setOpaque(false);content.add(center,BorderLayout.CENTER);
+        QuickPickPhotoPreview photoPreview=showPhotos?new QuickPickPhotoPreview(dialog):null;
+        if(separateBySize) showConfiguredItemTypeSizes(center,heading,option,products,showPhotos,photoPreview);
+        else showConfiguredItemTypeSizeProducts(center,heading,option,products,null,showPhotos,photoPreview);
         JButton done=createActionUtilityButton("Done"); done.addActionListener(e->dialog.dispose());
         JPanel footer=new JPanel(new FlowLayout(FlowLayout.RIGHT,0,0));footer.setOpaque(false);footer.add(done);content.add(footer,BorderLayout.SOUTH);
         dialog.setContentPane(content); dialog.setVisible(true);
+    }
+
+    private void showConfiguredItemTypeSizes(JPanel center,JLabel heading,
+                                             CompanyCustomizationManager.ItemTypeOption option,
+                                             java.util.List<LanApiClient.CatalogProduct> products,
+                                             boolean showPhotos,QuickPickPhotoPreview photoPreview) {
+        heading.setText(option.toString() + " — Choose Size");
+        center.removeAll();
+        java.util.Map<String,java.util.List<LanApiClient.CatalogProduct>> sizes=products.stream()
+                .collect(java.util.stream.Collectors.groupingBy(product -> quickPickSizeName(product.size()),
+                        () -> new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER),
+                        java.util.stream.Collectors.toList()));
+        JPanel grid=createQuickPickGrid();
+        sizes.forEach((size,matching) -> {
+            JButton button=createQuickPickTypeButton(size,matching.size());
+            button.addActionListener(e -> showConfiguredItemTypeSizeProducts(center,heading,option,products,size,showPhotos,photoPreview));
+            grid.add(button);
+        });
+        center.add(createQuickPickScrollPane(grid),BorderLayout.CENTER);
+        center.revalidate();center.repaint();
+    }
+
+    private void showConfiguredItemTypeSizeProducts(JPanel center,JLabel heading,
+                                                    CompanyCustomizationManager.ItemTypeOption option,
+                                                    java.util.List<LanApiClient.CatalogProduct> products,String selectedSize,
+                                                    boolean showPhotos,QuickPickPhotoPreview photoPreview) {
+        heading.setText(selectedSize==null?option.toString():option.toString()+" — "+selectedSize);
+        center.removeAll();
+        JPanel grid=createQuickPickGrid();
+        java.util.List<LanApiClient.CatalogProduct> matching=products.stream().filter(product -> selectedSize==null
+                || selectedSize.equalsIgnoreCase(quickPickSizeName(product.size())))
+                .toList();
+        if(showPhotos) addPhotoQuickPickCards(grid,center,heading,option,matching,products,selectedSize,photoPreview);
+        else matching.forEach(product -> grid.add(createServiceQuickPickButton(product)));
+        if(selectedSize!=null) {
+            JButton back=createActionUtilityButton("Back to Sizes");
+            back.addActionListener(e -> showConfiguredItemTypeSizes(center,heading,option,products,showPhotos,photoPreview));
+            JPanel navigation=new JPanel(new FlowLayout(FlowLayout.LEFT,0,0));navigation.setOpaque(false);
+            navigation.setBorder(BorderFactory.createEmptyBorder(0,0,10,0));navigation.add(back);
+            center.add(navigation,BorderLayout.NORTH);
+        }
+        center.add(createQuickPickScrollPane(grid),BorderLayout.CENTER);
+        center.revalidate();center.repaint();
+    }
+
+    static String quickPickSizeName(String size) {
+        return size==null||size.isBlank()?"No Size":size.trim();
+    }
+
+    private void addPhotoQuickPickCards(JPanel grid,JPanel center,JLabel heading,
+                                        CompanyCustomizationManager.ItemTypeOption option,
+                                        java.util.List<LanApiClient.CatalogProduct> matching,
+                                        java.util.List<LanApiClient.CatalogProduct> allProducts,
+                                        String selectedSize,QuickPickPhotoPreview preview) {
+        java.util.Map<String,java.util.List<LanApiClient.CatalogProduct>> groups=new java.util.LinkedHashMap<>();
+        for(var product:matching) {
+            groups.computeIfAbsent(quickPickPhotoGroupKey(product),ignored->new java.util.ArrayList<>()).add(product);
+        }
+        for(var members:groups.values()) {
+            var first=members.get(0);
+            if(members.size()>1) {
+                String groupName=first.variant()==null?first.name():first.variant().groupName();
+                JButton card=createPhotoQuickPickCard(first.imageUrl(),groupName,
+                        members.size()+" variants · Choose variant",preview);
+                card.addActionListener(e -> showPhotoQuickPickVariants(center,heading,option,members,
+                        allProducts,selectedSize,preview));
+                grid.add(card);
+            } else {
+                grid.add(createPhotoQuickPickProductCard(first,preview));
+            }
+        }
+    }
+
+    private void showPhotoQuickPickVariants(JPanel center,JLabel heading,
+                                            CompanyCustomizationManager.ItemTypeOption option,
+                                            java.util.List<LanApiClient.CatalogProduct> members,
+                                            java.util.List<LanApiClient.CatalogProduct> allProducts,
+                                            String selectedSize,QuickPickPhotoPreview preview) {
+        String groupName=members.get(0).variant()==null?members.get(0).name():members.get(0).variant().groupName();
+        heading.setText(groupName+" — Choose Variant");
+        center.removeAll();
+        JButton back=createActionUtilityButton("Back to Items");
+        back.addActionListener(e -> showConfiguredItemTypeSizeProducts(center,heading,option,allProducts,selectedSize,true,preview));
+        JPanel navigation=new JPanel(new FlowLayout(FlowLayout.LEFT,0,0));navigation.setOpaque(false);
+        navigation.setBorder(BorderFactory.createEmptyBorder(0,0,10,0));navigation.add(back);
+        center.add(navigation,BorderLayout.NORTH);
+        JPanel grid=createQuickPickGrid();
+        members.forEach(product -> grid.add(createPhotoQuickPickProductCard(product,preview)));
+        center.add(createQuickPickScrollPane(grid),BorderLayout.CENTER);
+        center.revalidate();center.repaint();
+    }
+
+    private JButton createPhotoQuickPickProductCard(LanApiClient.CatalogProduct product,QuickPickPhotoPreview preview) {
+        String variantLabel=quickPickVariantLabel(product);
+        String name=(variantLabel.isBlank()?product.name():variantLabel+" · "+product.name());
+        String subtitle=utils.CurrencyFormatter.format(product.price())+" · Add to cart";
+        JButton card=createPhotoQuickPickCard(product.imageUrl(),name,subtitle,preview);
+        card.addActionListener(e -> {
+            card.setEnabled(false);
+            addCatalogProductToCart(product,1);
+            card.setText(photoQuickPickText(name,"Added"));
+            javax.swing.Timer timer=new javax.swing.Timer(550,ignored -> {
+                card.setText(photoQuickPickText(name,subtitle));card.setEnabled(true);
+            });
+            timer.setRepeats(false);timer.start();
+        });
+        return card;
+    }
+
+    static String quickPickPhotoGroupKey(LanApiClient.CatalogProduct product) {
+        String groupId=product.variant()==null?null:product.variant().groupId();
+        return groupId==null||groupId.isBlank()?"item:"+product.productId():"group:"+groupId;
+    }
+
+    static String quickPickVariantLabel(LanApiClient.CatalogProduct product) {
+        if(product.variant()!=null&&product.variant().optionNames()!=null&&product.variant().options()!=null) {
+            String label=product.variant().label();
+            if(label!=null&&!label.isBlank())return label.trim();
+        }
+        return product.color()==null?"":product.color().trim();
+    }
+
+    private JButton createPhotoQuickPickCard(String imageUrl,String name,String detail,QuickPickPhotoPreview preview) {
+        JButton button=new RoundedFillButton(photoQuickPickText(name,detail));
+        button.setFont(new Font("SansSerif",Font.BOLD,15));
+        button.setForeground(DeckersPalette.text());
+        button.setBackground(DeckersPalette.tileFill(DeckersPalette.LIME));
+        button.setOpaque(false);button.setContentAreaFilled(false);button.setFocusPainted(false);
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        button.setBorder(new OutsideRoundedBorder(DeckersPalette.sectionBorder(DeckersPalette.LIME),4,14,new Insets(12,8,12,8)));
+        button.setHorizontalTextPosition(SwingConstants.CENTER);
+        button.setVerticalTextPosition(SwingConstants.BOTTOM);
+        button.setPreferredSize(new Dimension(220,210));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setToolTipText(imageUrl==null||imageUrl.isBlank()?"No product photo — check the name and color":"Hover to enlarge the photo");
+        if(imageUrl!=null&&!imageUrl.isBlank()) {
+            new SwingWorker<ImageIcon,Void>() {
+                @Override protected ImageIcon doInBackground() { return quickPickImage(imageUrl,170,125); }
+                @Override protected void done() {
+                    try {
+                        ImageIcon icon=get();
+                        if(icon==null)button.setText(photoQuickPickText(name,detail+" · Photo unavailable"));
+                        else button.setIcon(icon);
+                    } catch(Exception ignored) { button.setText(photoQuickPickText(name,detail+" · Photo unavailable")); }
+                }
+            }.execute();
+            if(preview!=null)preview.attach(button,imageUrl,name);
+        } else button.setText(photoQuickPickText(name,detail+" · No photo"));
+        return button;
+    }
+
+    private String photoQuickPickText(String name,String detail) {
+        return "<html><center>"+escapeHtml(name)+"<br><font size='3'>"+escapeHtml(detail)+"</font></center></html>";
+    }
+
+    private static ImageIcon quickPickImage(String url,int maxWidth,int maxHeight) {
+        Image source=ImageCacheManager.loadImage(url);
+        if(source==null||source.getWidth(null)<=0||source.getHeight(null)<=0)return null;
+        double scale=Math.min((double)maxWidth/source.getWidth(null),(double)maxHeight/source.getHeight(null));
+        return new ImageIcon(source.getScaledInstance(Math.max(1,(int)Math.round(source.getWidth(null)*scale)),
+                Math.max(1,(int)Math.round(source.getHeight(null)*scale)),Image.SCALE_SMOOTH));
+    }
+
+    private static final class QuickPickPhotoPreview {
+        private final JWindow window;
+        private final JLabel image=new JLabel("",SwingConstants.CENTER);
+        private javax.swing.Timer timer;
+        private SwingWorker<ImageIcon,Void> worker;
+        private long generation;
+
+        QuickPickPhotoPreview(JDialog owner) {
+            window=new JWindow(owner);window.setFocusableWindowState(false);
+            image.setPreferredSize(new Dimension(520,520));image.setOpaque(true);
+            image.setBackground(DeckersPalette.surface());
+            image.setForeground(DeckersPalette.text());
+            image.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.LIME),2),
+                    BorderFactory.createEmptyBorder(10,10,10,10)));
+            window.setContentPane(image);
+            owner.addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override public void windowClosed(java.awt.event.WindowEvent e) { hide();window.dispose(); }
+            });
+        }
+
+        void attach(JButton button,String url,String label) {
+            button.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseEntered(java.awt.event.MouseEvent e) {
+                    hide();long expected=generation;
+                    timer=new javax.swing.Timer(250,ignored -> {
+                        if(!button.isShowing()||expected!=generation)return;
+                        Point anchor=button.getLocationOnScreen();
+                        worker=new SwingWorker<>() {
+                            @Override protected ImageIcon doInBackground() { return quickPickImage(url,500,500); }
+                            @Override protected void done() {
+                                if(expected!=generation||!button.isShowing())return;
+                                try { image.setIcon(get()); } catch(Exception ignored) { image.setIcon(null); }
+                                image.setText(image.getIcon()==null?"Photo unavailable — "+label:"");
+                                window.pack();
+                                Rectangle screen=button.getGraphicsConfiguration().getBounds();
+                                int right=anchor.x+button.getWidth()+12;
+                                int left=anchor.x-window.getWidth()-12;
+                                int x=right+window.getWidth()<=screen.x+screen.width?right
+                                        :left>=screen.x?left:Math.max(screen.x,screen.x+screen.width-window.getWidth());
+                                int y=Math.max(screen.y,Math.min(anchor.y,screen.y+screen.height-window.getHeight()));
+                                window.setLocation(Math.max(screen.x,x),y);window.setVisible(true);
+                            }
+                        };worker.execute();
+                    });timer.setRepeats(false);timer.start();
+                }
+                @Override public void mouseExited(java.awt.event.MouseEvent e) { hide(); }
+            });
+        }
+
+        private void hide() {
+            generation++;
+            if(timer!=null)timer.stop();
+            if(worker!=null)worker.cancel(true);
+            window.setVisible(false);
+        }
     }
 
     private record ItemTypeLauncherData(CompanyCustomizationManager.ItemTypeQuickPickSettings settings,
@@ -1603,7 +1834,7 @@ public class MakeASale extends JFrame {
 
         int idWidth = fitColumnWidth(cartTable, CART_COL_ID, 45);
         int nameWidth = fitColumnWidth(cartTable, CART_COL_NAME, 120);
-        int sizeWidth = fitColumnWidth(cartTable, CART_COL_SIZE, 70);
+        int sizeWidth = fitColumnWidth(cartTable, CART_COL_SIZE, 130);
         int skuWidth = fitColumnWidth(cartTable, CART_COL_SKU, 100);
         int priceWidth = fitColumnWidth(cartTable, CART_COL_PRICE, 75);
         int qtyWidth = fitColumnWidth(cartTable, CART_COL_QTY, 55);
@@ -1618,8 +1849,8 @@ public class MakeASale extends JFrame {
         columnModel.getColumn(CART_COL_NAME).setMaxWidth(200);
         columnModel.getColumn(CART_COL_NAME).setPreferredWidth(nameWidth);
 
-        columnModel.getColumn(CART_COL_SIZE).setMinWidth(60);
-        columnModel.getColumn(CART_COL_SIZE).setMaxWidth(130);
+        columnModel.getColumn(CART_COL_SIZE).setMinWidth(120);
+        columnModel.getColumn(CART_COL_SIZE).setMaxWidth(240);
         columnModel.getColumn(CART_COL_SIZE).setPreferredWidth(sizeWidth);
 
         columnModel.getColumn(CART_COL_DESCRIPTION).setMinWidth(220);
@@ -1812,6 +2043,14 @@ public class MakeASale extends JFrame {
                 product.quantityOnHand(), product.brandName(), product.imageUrl(), product.color(), product.flavor()};
     }
 
+    static String searchItemAttributes(Object size, Object color, Object flavor) {
+        return java.util.stream.Stream.of(size, color, flavor)
+                .filter(java.util.Objects::nonNull)
+                .map(value -> value.toString().trim())
+                .filter(value -> !value.isEmpty())
+                .collect(java.util.stream.Collectors.joining(" / "));
+    }
+
 
     private void showSearchResultsPopup(java.util.List<Object[]> rows, String searchText) {
         if (searchPopup == null) {
@@ -1901,7 +2140,7 @@ public class MakeASale extends JFrame {
 
         setSearchResultColumnWidth(0, 0, 0, 0);
         setSearchResultColumnWidth(1, 50, Integer.MAX_VALUE, 140);
-        setSearchResultColumnWidth(2, 30, Integer.MAX_VALUE, 110);
+        setSearchResultColumnWidth(2, 30, Integer.MAX_VALUE, 150);
         setSearchResultColumnWidth(3, 50, Integer.MAX_VALUE, 220);
         setSearchResultColumnWidth(4, 40, Integer.MAX_VALUE, 80);
         setSearchResultColumnWidth(5, 50, Integer.MAX_VALUE, 100);
@@ -1910,8 +2149,20 @@ public class MakeASale extends JFrame {
         setSearchResultColumnWidth(8, 40, Integer.MAX_VALUE, 70);
         setSearchResultColumnWidth(9, 60, Integer.MAX_VALUE, 140);
         setSearchResultColumnWidth(10, 0, 0, 0);
-        setSearchResultColumnWidth(11, 55, Integer.MAX_VALUE, 100);
-        searchResultsTable.moveColumn(searchResultsTable.convertColumnIndexToView(11),searchResultsTable.convertColumnIndexToView(2)+1);
+        setSearchResultColumnWidth(11, 0, 0, 0);
+        setSearchResultColumnWidth(12, 0, 0, 0);
+
+        int attributesViewColumn = searchResultsTable.convertColumnIndexToView(2);
+        TableCellRenderer attributesRenderer = searchResultsTable.getDefaultRenderer(Object.class);
+        searchResultsTable.getColumnModel().getColumn(attributesViewColumn).setCellRenderer(
+                (table, value, selected, focus, row, column) -> {
+                    int modelRow = table.convertRowIndexToModel(row);
+                    String attributes = searchItemAttributes(value,
+                            table.getModel().getValueAt(modelRow, 11),
+                            table.getModel().getValueAt(modelRow, 12));
+                    return attributesRenderer.getTableCellRendererComponent(
+                            table, attributes, selected, focus, row, column);
+                });
 
         int priceViewColumn = searchResultsTable.convertColumnIndexToView(5);
         searchResultsTable.getColumnModel().getColumn(priceViewColumn).setCellRenderer(
@@ -2001,7 +2252,8 @@ public class MakeASale extends JFrame {
     }
 
     private void addCatalogProductToCart(LanApiClient.CatalogProduct product, int quantity) {
-        addToCart(product.productId(), product.variant()==null||product.name().endsWith(product.variant().label())?product.name():product.name()+" — "+product.variant().label(), product.size(), product.description(),
+        addToCart(product.productId(), product.variant()==null||product.name().endsWith(product.variant().label())?product.name():product.name()+" — "+product.variant().label(),
+                searchItemAttributes(product.size(), product.color(), product.flavor()), product.description(),
                 product.sku(), product.price().doubleValue(), quantity,
                 normalizeProductType(product.productType()), product.categoryId());
     }
@@ -2032,10 +2284,12 @@ public class MakeASale extends JFrame {
         int selectedRow = searchResultsTable.convertRowIndexToModel(searchResultsTable.getSelectedRow());
 
         int productId = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 0)).intValue();
-        if(productId<=0)return;
+        if(productId==0)return;
         String name = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 1)).trim();
         name=variantRows.displayName(productId,name);
         String size = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 2));
+        String color = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 11));
+        String flavor = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 12));
         String description = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 3));
         String sku = String.valueOf(searchResultsTable.getModel().getValueAt(selectedRow, 4));
         double price = ((Number) searchResultsTable.getModel().getValueAt(selectedRow, 5)).doubleValue();
@@ -2055,7 +2309,7 @@ public class MakeASale extends JFrame {
             return;
         }
 
-        addToCart(productId, name, size, description, sku, price, qty, productType, departmentId);
+        addToCart(productId, name, searchItemAttributes(size, color, flavor), description, sku, price, qty, productType, departmentId);
         resetProductSearchAfterAdd();
     }
 
@@ -2314,7 +2568,7 @@ public class MakeASale extends JFrame {
             return;
         }
         int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
-        if (productId <= 0) {
+        if (productId == 0) {
             return;
         }
         if (isMiscRow(row)) { pendingPriceOverrideApprovals.remove(productId); return; }
@@ -3432,7 +3686,8 @@ public class MakeASale extends JFrame {
                 BigDecimal gross = price.multiply(BigDecimal.valueOf(item.quantity()));
                 BigDecimal lineTotal = gross.subtract(gross.multiply(discount)
                         .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)).max(BigDecimal.ZERO);
-                cartModel.addRow(new Object[]{item.productId(), item.productName(), item.size(), item.description(), item.sku(),
+                cartModel.addRow(new Object[]{item.productId(), item.productName(),
+                        searchItemAttributes(item.size(), item.color(), item.flavor()), item.description(), item.sku(),
                         price, item.quantity(), discount, lineTotal, catalogPrice,
                         normalizeProductType(item.productType()), item.categoryId(),item.miscItem()});
             }

@@ -1,0 +1,6 @@
+SmartStock 1.0.203
+
+Select and delete unused photos in Company Preferences.
+
+- Select All Unused selects unreferenced photos in Image Storage.
+- Permanently Delete Selected confirms the count, checks references again on the server, and reports any photos that could not be deleted.

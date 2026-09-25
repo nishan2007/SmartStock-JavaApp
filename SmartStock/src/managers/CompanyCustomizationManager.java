@@ -108,15 +108,28 @@ public final class CompanyCustomizationManager extends ServerCompanyCustomizatio
             return GSON.fromJson(LanApiClient.companyCustomizationRead("ITEM_TYPE_QUICK_PICK", null).get("settings"), ItemTypeQuickPickSettings.class);
         } catch (Exception ex) { throw unavailable(ex); }
     }
-    public static void saveItemTypeQuickPickSettings(List<Integer> itemTypeIds) throws IOException, SQLException {
-        save("ITEM_TYPE_QUICK_PICK", itemTypeIds == null ? List.of() : List.copyOf(itemTypeIds));
+    public static void saveItemTypeQuickPickSettings(List<Integer> itemTypeIds,
+                                                      List<Integer> separateBySizeItemTypeIds,
+                                                      List<Integer> showPhotosItemTypeIds) throws IOException, SQLException {
+        save("ITEM_TYPE_QUICK_PICK", new ItemTypeQuickPickSelection(
+                itemTypeIds == null ? List.of() : List.copyOf(itemTypeIds),
+                separateBySizeItemTypeIds == null ? List.of() : List.copyOf(separateBySizeItemTypeIds),
+                showPhotosItemTypeIds == null ? List.of() : List.copyOf(showPhotosItemTypeIds)));
     }
+    public record ItemTypeQuickPickSelection(List<Integer> selectedItemTypeIds,
+                                             List<Integer> separateBySizeItemTypeIds,
+                                             List<Integer> showPhotosItemTypeIds) { }
     public record ItemTypeOption(int itemTypeId, String name, String departmentName) {
         @Override public String toString() { return name + (departmentName == null || departmentName.isBlank() ? "" : " — " + departmentName); }
     }
-    public record ItemTypeQuickPickSettings(List<Integer> selectedItemTypeIds, List<ItemTypeOption> availableItemTypes) {
+    public record ItemTypeQuickPickSettings(List<Integer> selectedItemTypeIds,
+                                            List<Integer> separateBySizeItemTypeIds,
+                                            List<Integer> showPhotosItemTypeIds,
+                                            List<ItemTypeOption> availableItemTypes) {
         public ItemTypeQuickPickSettings {
             selectedItemTypeIds = selectedItemTypeIds == null ? List.of() : List.copyOf(selectedItemTypeIds);
+            separateBySizeItemTypeIds = separateBySizeItemTypeIds == null ? List.of() : List.copyOf(separateBySizeItemTypeIds);
+            showPhotosItemTypeIds = showPhotosItemTypeIds == null ? List.of() : List.copyOf(showPhotosItemTypeIds);
             availableItemTypes = availableItemTypes == null ? List.of() : List.copyOf(availableItemTypes);
         }
     }

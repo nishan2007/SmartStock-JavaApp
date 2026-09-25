@@ -1,0 +1,8 @@
+SmartStock 1.0.194
+
+Record the actual amount paid for employee payroll.
+
+- Add an editable Amount Paid field when marking an employee payroll period as paid.
+- Allow whole-GYD cash amounts rounded to available bill denominations.
+- Record the entered amount in payroll payment history and the balance sheet.
+- Keep payroll periods partially paid when the entered amount is below the remaining amount due.

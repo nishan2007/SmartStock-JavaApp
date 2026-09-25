@@ -1,0 +1,7 @@
+SmartStock 1.0.182
+
+Improve the visibility and spacing of the item-type launcher beside the sale cart.
+
+- Remove the Item Types heading so buttons use the full available height.
+- Match launcher button height to the standard Quick Pick buttons.
+- Apply the shared Deckers color palette with stronger theme-aware fills and borders.

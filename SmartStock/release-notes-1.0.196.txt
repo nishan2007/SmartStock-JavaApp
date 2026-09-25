@@ -1,0 +1,7 @@
+SmartStock 1.0.196
+
+Make product variants easier to identify in active carts.
+
+- Show available size, color, and flavor values in one shared receiving-cart column.
+- Show the same combined product details in the Make a Sale cart.
+- Preserve the product details when adding from search, quick picks, barcode lookup, or a held cart.

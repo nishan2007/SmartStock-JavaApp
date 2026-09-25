@@ -72,6 +72,10 @@ public final class CashDrawerService {
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     Long sessionId = nullableLong(rs, "cash_drawer_session_id");
+                    if(sessionId!=null) {
+                        CashDrawerSession locked=getSessionForUpdate(conn,sessionId);
+                        if(locked==null || !locked.isOpen() || CashDrawerHandoverService.pending(conn,sessionId)!=null) sessionId=null;
+                    }
                     return new CashDrawerContext(rs.getLong("cash_drawer_id"), rs.getString("drawer_name"), sessionId);
                 }
             }
@@ -460,6 +464,12 @@ public final class CashDrawerService {
 
         BigDecimal expectedCash = calculateExpectedCash(conn, sessionId);
         BigDecimal cleanCountedCash = defaultZero(countedCash);
+        CashDrawerHandover waiting=CashDrawerHandoverService.pending(conn,sessionId);
+        if(waiting==null)throw new SQLException("The current cashier must initiate handover first.");
+        if(userId==null)throw new SQLException("A signed-in incoming cashier is required.");
+        CashDrawerHandoverService.validateCashier(session.currentCashierUserId(),userId,true);
+        if(cleanCountedCash.compareTo(expectedCash)!=0 || cleanCountedCash.compareTo(waiting.countedCash())!=0)
+            throw new SQLException("The incoming cashier's count must match the outgoing count and expected cash.");
         BigDecimal variance = cleanCountedCash.subtract(expectedCash);
         String sql = """
                 INSERT INTO cash_drawer_handovers (
@@ -535,6 +545,8 @@ public final class CashDrawerService {
         BigDecimal expectedCash = calculateExpectedCash(conn, sessionId);
         BigDecimal cleanCountedCash = defaultZero(countedCash);
         BigDecimal openingCash = defaultZero(session.openingCash());
+        if(CashDrawerHandoverService.pending(conn,sessionId)!=null)
+            throw new SQLException("Accept the pending handover before closing the drawer.");
         BigDecimal cashToRemove = cleanCountedCash.subtract(openingCash);
         BigDecimal variance = cleanCountedCash.subtract(expectedCash);
         String closingReport = buildClosingReport(conn, session, expectedCash, cleanCountedCash, cashToRemove, variance);

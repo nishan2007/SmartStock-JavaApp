@@ -1,0 +1,9 @@
+SmartStock 1.0.216
+
+Improve the custom item Sizes / Variants editor.
+
+- Open the editor at a larger size adapted to the current monitor.
+- Add a Full Screen button with Restore support.
+- Start with a wider variant table so columns and editing controls remain visible.
+- Keep the editor open after saving or deactivating, refresh the list in place, and clear the form for the next variant.
+- Add a Mobile Item Web App flow that searches custom items with variants enabled and adds variants to the selected item.

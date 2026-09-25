@@ -1,6 +1,7 @@
 package services;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.Headers;
@@ -241,6 +242,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/mobile-item-web/start", exchange -> handle(exchange, this::mobileItemWebStart));
         server.createContext("/v1/mobile-item-web/stop", exchange -> handle(exchange, this::mobileItemWebStop));
         server.createContext("/v1/mobile-item-web/activation", exchange -> handle(exchange, this::mobileItemWebActivation));
+        server.createContext("/v1/mobile-item-web/photo-handoff", exchange -> handle(exchange, this::mobileItemPhotoHandoff));
+        server.createContext("/v1/mobile-item-web/photo-handoff/status", exchange -> handle(exchange, this::mobileItemPhotoHandoffStatus));
         server.createContext("/v1/scheduler-web/status", exchange -> handle(exchange, this::schedulerWebStatus));
         server.createContext("/v1/scheduler-web/start", exchange -> handle(exchange, this::schedulerWebStart));
         server.createContext("/v1/scheduler-web/stop", exchange -> handle(exchange, this::schedulerWebStop));
@@ -500,11 +503,6 @@ public final class LanApiServer implements AutoCloseable {
             reference = ServerImageAssetService.storeUpload(connection, category, bucket, path, contentType,
                     path.substring(path.lastIndexOf('/') + 1),
                     productImage ? "PUBLIC" : "AUTHENTICATED", bytes);
-            try {
-                ServerImageAssetService.synchronize(connection);
-            } catch (Exception ignored) {
-                // Offline-first: the sync worker will retry without blocking the save.
-            }
         }
         return ApiResult.ok(Map.of("url", reference, "reference", reference));
     }
@@ -1552,9 +1550,39 @@ public final class LanApiServer implements AutoCloseable {
                     }
                 }
             }
+            appendPosCustomCatalog(connection, rows, searchText, productType);
             ProductVariantService.annotate(connection,rows);
             return ApiResult.ok(Map.of("products", rows));
         }
+    }
+
+    private static void appendPosCustomCatalog(Connection c,List<Map<String,Object>> rows,String search,String type)throws SQLException{
+        if(type!=null&&!"INVENTORY".equals(type))return;
+        try(PreparedStatement check=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='custom_order_items' AND column_name='sell_in_pos')");ResultSet rs=check.executeQuery()){
+            if(!rs.next()||!rs.getBoolean(1))return;
+        }
+        String q="%"+(search==null?"":search.trim().toLowerCase())+"%";
+        try(PreparedStatement ps=c.prepareStatement("""
+            SELECT ci.custom_item_id,NULL::bigint,ci.item_name,ci.size,ci.color,ci.description,ci.sku,ci.fixed_price,
+                   ci.category_id,ci.quantity_on_hand,COALESCE(br.name,''),ci.image_url,ci.item_type_id,COALESCE(it.name,'')
+            FROM custom_order_items ci LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_types it ON it.item_type_id=ci.item_type_id
+            WHERE ci.sell_in_pos AND ci.is_active AND ci.product_type='INVENTORY' AND NOT ci.has_variants AND ci.fixed_price IS NOT NULL
+              AND LOWER(CONCAT_WS(' ',ci.item_name,ci.size,ci.color,ci.sku,ci.barcode,br.name)) LIKE ?
+            UNION ALL
+            SELECT ci.custom_item_id,v.custom_variant_id,ci.item_name||' — '||v.variant_name,
+                   COALESCE(NULLIF(v.size,''),ci.size),COALESCE(NULLIF(v.color,''),ci.color),ci.description,v.sku,
+                   COALESCE(v.fixed_price,ci.fixed_price),ci.category_id,v.quantity_on_hand,COALESCE(vb.name,br.name,''),
+                   COALESCE(NULLIF(v.image_url,''),ci.image_url),ci.item_type_id,COALESCE(it.name,'')
+            FROM custom_order_item_variants v JOIN custom_order_items ci ON ci.custom_item_id=v.custom_item_id
+            LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_brands vb ON vb.brand_id=v.brand_id LEFT JOIN item_types it ON it.item_type_id=ci.item_type_id
+            WHERE ci.sell_in_pos AND ci.is_active AND v.is_active AND ci.product_type='INVENTORY' AND COALESCE(v.fixed_price,ci.fixed_price) IS NOT NULL
+              AND LOWER(CONCAT_WS(' ',ci.item_name,v.variant_name,COALESCE(v.size,ci.size),COALESCE(v.color,ci.color),v.sku,v.barcode,COALESCE(vb.name,br.name))) LIKE ?
+            ORDER BY 3 LIMIT 250
+            """)){ps.setString(1,q);ps.setString(2,q);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+                long item=rs.getLong(1),variant=rs.getLong(2);boolean hasVariant=!rs.wasNull();
+                Map<String,Object> row=new LinkedHashMap<>();row.put("productId",hasVariant?-1_000_000_000-(int)variant:-(int)item);
+                row.put("name",rs.getString(3));row.put("size",rs.getString(4));row.put("color",rs.getString(5));row.put("flavor","");row.put("description",rs.getString(6));row.put("sku",rs.getString(7));row.put("price",rs.getBigDecimal(8));row.put("productType","INVENTORY");row.put("categoryId",rs.getObject(9));row.put("quantityOnHand",rs.getInt(10));row.put("brandName",rs.getString(11));row.put("imageUrl",rs.getString(12));row.put("itemTypeId",rs.getObject(13));row.put("itemTypeName",rs.getString(14));row.put("searchableText",String.join(" ",row.values().stream().map(String::valueOf).toList()));rows.add(row);
+            }}}
     }
 
     static String normalizeCatalogProductTypeFilter(String value) throws Exception {
@@ -1599,6 +1627,7 @@ public final class LanApiServer implements AutoCloseable {
             if (rows.isEmpty()) {
                 rows = exactSkuProducts(connection, locationId, normalized);
             }
+            appendPosCustomCatalog(connection,rows,rawIdentifier,"INVENTORY");
             ProductVariantService.annotate(connection,rows);
             String status = rows.isEmpty() ? "NOT_FOUND" : rows.size() == 1 ? "MATCH" : "AMBIGUOUS";
             return Map.of(
@@ -2249,7 +2278,7 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult reprintCashDrawer(RequestContext x)throws Exception{return cashDrawerRead(x,(c,d,s,u)->LanCashDrawerService.reprint(c,x.body(),d.deviceId(),s.userId(),s.locationId()));}
     private ApiResult cashDrawerAdminState(RequestContext x)throws Exception{return cashDrawerRead(x,(c,d,s,u)->LanCashDrawerService.adminState(c,x.body(),s.userId()));}
     private ApiResult openCashDrawer(RequestContext x)throws Exception{return cashDrawerMutation(x,"cash.drawer.open.v1",(c,d,s,u)->LanCashDrawerService.open(c,d.deviceId(),s.userId(),displayName(u),s.locationId()));}
-    private ApiResult handoverCashDrawer(RequestContext x)throws Exception{return cashDrawerMutation(x,"cash.drawer.handover.v1",(c,d,s,u)->LanCashDrawerService.handover(c,x.body(),s.userId(),displayName(u),d.deviceId(),LanCashDrawerService.deviceName(c,d.deviceId())));}
+    private ApiResult handoverCashDrawer(RequestContext x)throws Exception{return cashDrawerMutation(x,"cash.drawer.handover.v1",(c,d,s,u)->LanCashDrawerService.handover(c,x.body(),s.userId(),displayName(u),d.deviceId(),LanCashDrawerService.deviceName(c,d.deviceId()),s.locationId()));}
     private ApiResult closeCashDrawer(RequestContext x)throws Exception{return cashDrawerMutation(x,"cash.drawer.close.v1",(c,d,s,u)->LanCashDrawerService.close(c,x.body(),s.userId(),displayName(u),d.deviceId(),LanCashDrawerService.deviceName(c,d.deviceId())));}
     private ApiResult reviseCashDrawer(RequestContext x)throws Exception{return cashDrawerMutation(x,"cash.drawer.revise.v1",(c,d,s,u)->LanCashDrawerService.revise(c,x.body(),s.userId(),displayName(u),d.deviceId(),LanCashDrawerService.deviceName(c,d.deviceId())));}
     private ApiResult loadCashDrawerDraft(RequestContext x)throws Exception{return cashDrawerRead(x,(c,d,s,u)->CashDrawerCountHistoryService.latest(c,requiredLong(x.body(),"sessionId"),s.locationId(),d.deviceId(),s.userId()));}
@@ -2486,7 +2515,7 @@ public final class LanApiServer implements AutoCloseable {
                     line.printCharge(),line.printLineCount(),originalTotal,effectiveRate,
                     effectiveReduction,discountBy,discountName,customerRate!=null&&customerRate.compareTo(manualRate)>0?"Automatic customer discount":line.lineDiscountReason(),line.minimumDepositPercent(),
                     line.originalBasePrice(),line.priceOverridePrice(),line.priceOverrideReason(),priceBy,priceName,
-                    line.printAddons()==null?List.of():line.printAddons(),null,null));
+                    line.printAddons()==null?List.of():line.printAddons(),null,null,line.itemSize(),line.itemColor()));
         }
 
         total=utils.CurrencyFormatter.normalize(total);
@@ -2558,7 +2587,7 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult timeClockPunch(RequestContext x)throws Exception{return timeClockCoreMutation(x,"time-clock.punch.v1",(c,d,s,u)->{String action=required(x.body(),"action",30).toUpperCase(java.util.Locale.ROOT);bindTimeClock(s,u);try{switch(action){case "CLOCK_IN"->{services.ManagerApprovalService.ApprovalResult approval=null;boolean needs=ServerTimeClockManager.requiresMultipleSessionOverride(c),self=ServerTimeClockManager.currentUserCanApproveMultipleSessionOverride(c);if(needs&&!self){String reason=required(x.body(),"approvalReason",2000);LanSalesService.Approval trusted=consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),ServerTimeClockManager.MULTIPLE_SESSION_OVERRIDE_PERMISSION,"Time Clock Multiple Session Override",reason);approval=new services.ManagerApprovalService.ApprovalResult(trusted.approverUserId(),trusted.approverName(),trusted.reason(),null);}ServerTimeClockManager.clockIn(c,approval);}case "LUNCH_START"->ServerTimeClockManager.lunchStart(c);case "LUNCH_END"->ServerTimeClockManager.lunchEnd(c);case "BREAK_START"->ServerTimeClockManager.breakStart(c);case "BREAK_END"->ServerTimeClockManager.breakEnd(c);case "CLOCK_OUT"->ServerTimeClockManager.clockOut(c);default->throw new ApiException(400,"VALIDATION_ERROR","The time-clock action is invalid.",false);}return Map.of("recorded",true);}catch(ServerTimeClockManager.TimeClockException e){throw new ApiException(409,"TIME_CLOCK_REJECTED",e.getMessage(),false);}finally{ServerTimeClockManager.clearRequest();}});}
     private ApiResult payrollDashboard(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"PAYROLL_DASHBOARD");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindTimeClock(s,u);try{return ApiResult.ok(Map.of("dashboard",ServerTimeClockManager.loadPayrollDashboard(c)));}finally{ServerTimeClockManager.clearRequest();}}}
     private ApiResult payrollBonus(RequestContext x)throws Exception{return timeClockCoreMutation(x,"payroll.bonus.v1",(c,d,s,u)->{requireAnyPermission(c,s.userId(),"PAYROLL_DASHBOARD");ServerTimeClockManager.PayrollSummary[] requested=GSON.fromJson(x.body().get("summaries"),ServerTimeClockManager.PayrollSummary[].class);if(requested==null||requested.length==0)throw new ApiException(400,"VALIDATION_ERROR","Select at least one payroll row.",false);java.math.BigDecimal amount=x.body().has("amount")?x.body().get("amount").getAsBigDecimal():null;String reason=optional(x.body(),"reason",2000);bindTimeClock(s,u);try{ServerTimeClockManager.PayrollDashboard dashboard=ServerTimeClockManager.loadPayrollDashboard(c);List<ServerTimeClockManager.PayrollSummary> trusted=new ArrayList<>();for(ServerTimeClockManager.PayrollSummary wanted:requested){ServerTimeClockManager.PayrollSummary found=findPayroll(dashboard,wanted);if(found==null)throw new ApiException(409,"PAYROLL_CHANGED","Payroll changed; refresh and try again.",true);trusted.add(found);}ServerTimeClockManager.addPayrollBonuses(c,trusted,amount,reason);return Map.of("created",trusted.size());}finally{ServerTimeClockManager.clearRequest();}});}
-    private ApiResult payrollPay(RequestContext x)throws Exception{return timeClockCoreMutation(x,"payroll.pay.v1",(c,d,s,u)->{requireAnyPermission(c,s.userId(),"PAYROLL_DASHBOARD");ServerTimeClockManager.PayrollSummary wanted=GSON.fromJson(x.body().get("summary"),ServerTimeClockManager.PayrollSummary.class);if(wanted==null)throw new ApiException(400,"VALIDATION_ERROR","Payroll row is required.",false);String method=required(x.body(),"paymentMethod",20),reference=optional(x.body(),"paymentReference",500);bindTimeClock(s,u);try{ServerTimeClockManager.PayrollSummary trusted=findPayroll(ServerTimeClockManager.loadPayrollDashboard(c),wanted);if(trusted==null)throw new ApiException(409,"PAYROLL_CHANGED","Payroll changed; refresh and try again.",true);ServerTimeClockManager.markPayrollPaid(c,trusted,method,reference);return Map.of("paid",true);}finally{ServerTimeClockManager.clearRequest();}});}
+    private ApiResult payrollPay(RequestContext x)throws Exception{return timeClockCoreMutation(x,"payroll.pay.v1",(c,d,s,u)->{requireAnyPermission(c,s.userId(),"PAYROLL_DASHBOARD");ServerTimeClockManager.PayrollSummary wanted=GSON.fromJson(x.body().get("summary"),ServerTimeClockManager.PayrollSummary.class);if(wanted==null)throw new ApiException(400,"VALIDATION_ERROR","Payroll row is required.",false);if(!x.body().has("amountPaid")||x.body().get("amountPaid").isJsonNull())throw new ApiException(400,"VALIDATION_ERROR","Amount paid is required.",false);java.math.BigDecimal amountPaid=x.body().get("amountPaid").getAsBigDecimal();String method=required(x.body(),"paymentMethod",20),reference=optional(x.body(),"paymentReference",500);bindTimeClock(s,u);try{ServerTimeClockManager.PayrollSummary trusted=findPayroll(ServerTimeClockManager.loadPayrollDashboard(c),wanted);if(trusted==null)throw new ApiException(409,"PAYROLL_CHANGED","Payroll changed; refresh and try again.",true);ServerTimeClockManager.markPayrollPaid(c,trusted,amountPaid,method,reference);return Map.of("paid",true,"amountPaid",utils.CurrencyFormatter.normalize(amountPaid));}finally{ServerTimeClockManager.clearRequest();}});}
     private ApiResult timeClockCoreMutation(RequestContext x,String operation,TimeClockCoreMutation action)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required for this time-clock or payroll change."),hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());Map<String,Object>result=action.run(c,d,s,u);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(ApiException e){c.rollback();throw e;}catch(SQLException e){c.rollback();throw new ApiException(409,"TIME_CLOCK_CHANGE_REJECTED","The change could not be completed.",false);}catch(Exception e){c.rollback();throw e;}finally{ServerTimeClockManager.clearRequest();c.setAutoCommit(true);}}}
     private static ServerTimeClockManager.PayrollSummary findPayroll(ServerTimeClockManager.PayrollDashboard d,ServerTimeClockManager.PayrollSummary w){if(d==null||d.summaries()==null||w==null)return null;for(ServerTimeClockManager.PayrollSummary p:d.summaries())if(p.userId()==w.userId()&&java.util.Objects.equals(p.payPeriodStart(),w.payPeriodStart())&&java.util.Objects.equals(p.payPeriodEnd(),w.payPeriodEnd()))return p;return null;}
     private static void bindTimeClock(SessionPrincipal s,AuthenticatedUser u){ServerTimeClockManager.bindRequest(s.userId(),s.locationId(),u.locationName(),u.locationTimezone(),displayName(u));}
@@ -2744,7 +2773,7 @@ public final class LanApiServer implements AutoCloseable {
         return local+"+smartstock-"+identity+"-"+hash+"@"+domain;
     }
     private static String urlPath(String value){return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
-    private ApiResult quotationRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);try{String a=required(x.body(),"action",40);Map<String,Object>r=new LinkedHashMap<>();switch(a){case"LIST_QUOTES"->r.put("rows",ServerQuotationInvoiceViewService.listQuotations());case"LIST_INVOICES"->r.put("rows",ServerQuotationInvoiceViewService.listInvoices());case"LIST_DELIVERIES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliveries());case"LIST_AUDIT"->r.put("rows",ServerQuotationInvoiceViewService.listAudit());case"SEARCH_CUSTOMERS"->r.put("rows",ServerQuotationInvoiceViewService.searchCustomers(optional(x.body(),"search",500)));case"QUOTE_EDIT"->r.put("quotation",ServerQuotationInvoiceViewService.loadQuotationForEdit(requiredLong(x.body(),"quotationId")));case"SEARCH_PRODUCTS"->r.put("rows",ServerQuotationInvoiceViewService.searchProducts(optional(x.body(),"search",500)));case"DELIVERABLE_LINES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliverableLines(requiredLong(x.body(),"invoiceId")));case"INVOICE_FINANCIALS"->r.put("financials",ServerQuotationInvoiceViewService.loadInvoiceFinancials(requiredLong(x.body(),"invoiceId")));default->throw new ApiException(400,"VALIDATION_ERROR","The quotation query is invalid.",false);}return ApiResult.ok(r);}finally{ServerRequestIdentity.clear();}}}
+    private ApiResult quotationRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,u);try{String a=required(x.body(),"action",40);Map<String,Object>r=new LinkedHashMap<>();switch(a){case"LIST_QUOTES"->r.put("rows",ServerQuotationInvoiceViewService.listQuotations());case"LIST_INVOICES"->r.put("rows",ServerQuotationInvoiceViewService.listInvoices());case"LIST_DELIVERIES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliveries());case"LIST_PAYMENTS"->r.put("rows",ServerQuotationInvoiceViewService.listPayments());case"LIST_AUDIT"->r.put("rows",ServerQuotationInvoiceViewService.listAudit());case"SEARCH_CUSTOMERS"->r.put("rows",ServerQuotationInvoiceViewService.searchCustomers(optional(x.body(),"search",500)));case"QUOTE_EDIT"->r.put("quotation",ServerQuotationInvoiceViewService.loadQuotationForEdit(requiredLong(x.body(),"quotationId")));case"SEARCH_PRODUCTS"->r.put("rows",ServerQuotationInvoiceViewService.searchProducts(optional(x.body(),"search",500)));case"DELIVERABLE_LINES"->r.put("rows",ServerQuotationInvoiceViewService.listDeliverableLines(requiredLong(x.body(),"invoiceId")));case"INVOICE_FINANCIALS"->r.put("financials",ServerQuotationInvoiceViewService.loadInvoiceFinancials(requiredLong(x.body(),"invoiceId")));default->throw new ApiException(400,"VALIDATION_ERROR","The quotation query is invalid.",false);}return ApiResult.ok(r);}finally{ServerRequestIdentity.clear();}}}
     private ApiResult quotationMutation(RequestContext x)throws Exception{
         requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
         String a=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this quotation or invoice change."),op="quotations."+a.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
@@ -2960,20 +2989,27 @@ public final class LanApiServer implements AutoCloseable {
                     case "PRICE_TAGS" -> ServerCompanyCustomizationRepository.loadPriceTagTemplateSettings();
                     case "ITEM_TYPE_QUICK_PICK" -> {
                         List<Integer> selected = new ArrayList<>();
-                        try (PreparedStatement ps = connection.prepareStatement("SELECT COALESCE(sale_quick_pick_item_type_ids, '[]'::jsonb)::text FROM company_customization WHERE location_id=?")) {
+                        List<Integer> separateBySize = new ArrayList<>();
+                        List<Integer> showPhotos = new ArrayList<>();
+                        try (PreparedStatement ps = connection.prepareStatement("SELECT COALESCE(sale_quick_pick_item_type_ids, '[]'::jsonb)::text,COALESCE(sale_quick_pick_size_item_type_ids, '[]'::jsonb)::text,COALESCE(sale_quick_pick_photo_item_type_ids, '[]'::jsonb)::text FROM company_customization WHERE location_id=?")) {
                             ps.setInt(1, locationId);
                             try (ResultSet rs = ps.executeQuery()) {
                                 if (rs.next()) {
                                     Integer[] ids = GSON.fromJson(rs.getString(1), Integer[].class);
                                     if (ids != null) for (Integer id : ids) if (id != null && id > 0) selected.add(id);
+                                    Integer[] sizeIds = GSON.fromJson(rs.getString(2), Integer[].class);
+                                    if (sizeIds != null) for (Integer id : sizeIds) if (id != null && id > 0) separateBySize.add(id);
+                                    Integer[] photoIds = GSON.fromJson(rs.getString(3), Integer[].class);
+                                    if (photoIds != null) for (Integer id : photoIds) if (id != null && id > 0) showPhotos.add(id);
                                 }
                             }
                         }
                         List<Map<String,Object>> available = new ArrayList<>();
-                        try (PreparedStatement ps = connection.prepareStatement("SELECT it.item_type_id,it.name,c.name AS category_name FROM item_types it JOIN categories c ON c.category_id=it.category_id WHERE EXISTS(SELECT 1 FROM products p WHERE p.item_type_id=it.item_type_id AND p.is_active=TRUE) ORDER BY c.name,it.name,it.item_type_id"); ResultSet rs = ps.executeQuery()) {
+                        try (PreparedStatement ps = connection.prepareStatement("SELECT it.item_type_id,it.name,c.name AS category_name FROM item_types it JOIN categories c ON c.category_id=it.category_id ORDER BY c.name,it.name,it.item_type_id"); ResultSet rs = ps.executeQuery()) {
                             while (rs.next()) available.add(Map.of("itemTypeId",rs.getInt(1),"name",rs.getString(2),"departmentName",rs.getString(3)));
                         }
-                        yield Map.of("selectedItemTypeIds", selected, "availableItemTypes", available);
+                        yield Map.of("selectedItemTypeIds", selected, "separateBySizeItemTypeIds", separateBySize,
+                                "showPhotosItemTypeIds", showPhotos, "availableItemTypes", available);
                     }
                     case "ACCOUNT_SIGNATURE_RETENTION" -> {try(PreparedStatement p=connection.prepareStatement("SELECT COALESCE(account_signature_retention_years,3) FROM company_customization WHERE location_id=?")){p.setInt(1,locationId);try(ResultSet r=p.executeQuery()){yield r.next()?r.getInt(1):3;}}}
                     case "CHANGE_BASKET_TARGET" -> ServerCompanyCustomizationRepository.loadChangeBasketTargetAmount(locationId);
@@ -3049,18 +3085,29 @@ public final class LanApiServer implements AutoCloseable {
                             ServerCompanyCustomizationRepository.savePriceTagTemplateSettings(values == null ? List.of() : List.of(values));
                         }
                         case "ITEM_TYPE_QUICK_PICK" -> {
-                            Integer[] requested = GSON.fromJson(x.body().get("settings"), Integer[].class);
+                            JsonElement settingsJson=x.body().get("settings");
+                            if(settingsJson==null||!settingsJson.isJsonObject())throw new ApiException(400,"VALIDATION_ERROR","Quick-pick settings are required.",false);
+                            JsonObject settingsObject=settingsJson.getAsJsonObject();
+                            Integer[] requested = GSON.fromJson(settingsObject.get("selectedItemTypeIds"), Integer[].class);
+                            Integer[] requestedSizes = GSON.fromJson(settingsObject.get("separateBySizeItemTypeIds"), Integer[].class);
+                            Integer[] requestedPhotos = GSON.fromJson(settingsObject.get("showPhotosItemTypeIds"), Integer[].class);
                             List<Integer> ids = requested == null ? List.of() : java.util.Arrays.asList(requested);
+                            List<Integer> sizeIds = requestedSizes == null ? List.of() : java.util.Arrays.asList(requestedSizes);
+                            List<Integer> photoIds = requestedPhotos == null ? List.of() : java.util.Arrays.asList(requestedPhotos);
                             if (ids.stream().anyMatch(id -> id == null || id <= 0)) throw new ApiException(400,"VALIDATION_ERROR","Quick-pick item-type IDs must be positive numbers.",false);
                             if (ids.size() != new java.util.LinkedHashSet<>(ids).size()) throw new ApiException(400,"VALIDATION_ERROR","Quick-pick item types cannot contain duplicates.",false);
+                            if (sizeIds.stream().anyMatch(id -> id == null || !ids.contains(id)) || sizeIds.size()!=new java.util.LinkedHashSet<>(sizeIds).size())
+                                throw new ApiException(400,"VALIDATION_ERROR","Size groups must refer to selected quick-pick item types without duplicates.",false);
+                            if (photoIds.stream().anyMatch(id -> id == null || !ids.contains(id)) || photoIds.size()!=new java.util.LinkedHashSet<>(photoIds).size())
+                                throw new ApiException(400,"VALIDATION_ERROR","Photo layouts must refer to selected quick-pick item types without duplicates.",false);
                             if (!ids.isEmpty()) {
                                 try (PreparedStatement ps=connection.prepareStatement("SELECT COUNT(*) FROM item_types WHERE item_type_id = ANY (?)")) {
                                     ps.setArray(1, connection.createArrayOf("integer", ids.toArray()));
                                     try(ResultSet rs=ps.executeQuery()){rs.next();if(rs.getInt(1)!=ids.size())throw new ApiException(400,"VALIDATION_ERROR","One or more quick-pick item types no longer exist.",false);}
                                 }
                             }
-                            try(PreparedStatement ps=connection.prepareStatement("INSERT INTO company_customization(location_id,sale_quick_pick_item_type_ids,updated_at) VALUES(?,?::jsonb,NOW()) ON CONFLICT(location_id) DO UPDATE SET sale_quick_pick_item_type_ids=EXCLUDED.sale_quick_pick_item_type_ids,updated_at=NOW()")) {
-                                ps.setInt(1,locationId);ps.setString(2,GSON.toJson(ids));ps.executeUpdate();
+                            try(PreparedStatement ps=connection.prepareStatement("INSERT INTO company_customization(location_id,sale_quick_pick_item_type_ids,sale_quick_pick_size_item_type_ids,sale_quick_pick_photo_item_type_ids,updated_at) VALUES(?,?::jsonb,?::jsonb,?::jsonb,NOW()) ON CONFLICT(location_id) DO UPDATE SET sale_quick_pick_item_type_ids=EXCLUDED.sale_quick_pick_item_type_ids,sale_quick_pick_size_item_type_ids=EXCLUDED.sale_quick_pick_size_item_type_ids,sale_quick_pick_photo_item_type_ids=EXCLUDED.sale_quick_pick_photo_item_type_ids,updated_at=NOW()")) {
+                                ps.setInt(1,locationId);ps.setString(2,GSON.toJson(ids));ps.setString(3,GSON.toJson(sizeIds));ps.setString(4,GSON.toJson(photoIds));ps.executeUpdate();
                             }
                         }
                         case "ACCOUNT_SIGNATURE_RETENTION" -> {int years=x.body().get("settings").getAsInt();if(years<1||years>25)throw new ApiException(400,"VALIDATION_ERROR","Signature retention must be between 1 and 25 years.",false);try(PreparedStatement p=connection.prepareStatement("INSERT INTO company_customization(location_id,account_signature_retention_years,updated_at) VALUES(?,?,NOW()) ON CONFLICT(location_id) DO UPDATE SET account_signature_retention_years=EXCLUDED.account_signature_retention_years,updated_at=NOW()")){p.setInt(1,locationId);p.setInt(2,years);p.executeUpdate();}}
@@ -3506,6 +3553,26 @@ public final class LanApiServer implements AutoCloseable {
         requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());
         SessionPrincipal s=authenticateSession(context.exchange(),d,true);
         try(Connection c=DB.getConnection()){requireMobileQrAccess(c,s,d,context.exchange());if(mobileItemWebServer==null)throw new ApiException(409,"MOBILE_WEB_STOPPED","Ask a device manager at the server to start the mobile item web app first.",false);auditSecurity(c,"MOBILE_ITEM_WEB_QR_ISSUED",d.deviceId(),s.userId(),"Issued a one-time mobile item activation from an authorized register");return ApiResult.ok(createMobileActivation(c,s.userId()));}
+    }
+
+    private ApiResult mobileItemPhotoHandoff(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
+            MobileItemWebServer web=mobileItemWebServer;if(web==null)throw new ApiException(409,"MOBILE_WEB_STOPPED","Start the Mobile Item Web App before sending a photo request to a phone.",false);
+            String targetType=required(context.body(),"targetType",20);long targetId=requiredLong(context.body(),"targetId");Map<String,Object> result=web.issuePhotoHandoff(targetType,targetId,s.userId());
+            auditSecurity(c,"CUSTOM_ITEM_PHONE_PHOTO_QR_ISSUED",d.deviceId(),s.userId(),"Issued phone photo QR for "+targetType+" ID "+targetId);return ApiResult.ok(result);
+        }
+    }
+
+    private ApiResult mobileItemPhotoHandoffStatus(RequestContext context)throws Exception{
+        requireMethod(context.exchange(),"POST");DevicePrincipal d=authenticateDevice(context.exchange());SessionPrincipal s=authenticateSession(context.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
+            MobileItemWebServer web=mobileItemWebServer;if(web==null)throw new ApiException(409,"MOBILE_WEB_STOPPED","The Mobile Item Web App is not running.",false);
+            UUID handoffId;try{handoffId=UUID.fromString(required(context.body(),"handoffId",80));}catch(IllegalArgumentException e){throw new ApiException(400,"VALIDATION_ERROR","A valid photo request ID is required.",false);}
+            return ApiResult.ok(web.photoHandoffStatus(handoffId,s.userId()));
+        }
     }
 
     private void requireMobileQrAccess(Connection c,SessionPrincipal s,DevicePrincipal d,HttpExchange exchange)throws Exception{

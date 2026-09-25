@@ -45,6 +45,24 @@ class EffectiveDatedPayRateTest {
     }
 
     @Test
+    void limitOnlyEmployeeChangesCanAffectTheCurrentPayrollPeriod() throws Exception {
+        String settings = Files.readString(Path.of("src/services/EmployeePayrollSettingsService.java"));
+        String employeeAdmin = Files.readString(Path.of("src/services/LanEmployeeAdminService.java"));
+
+        assertTrue(employeeAdmin.contains("saveChangedSetting"));
+        assertTrue(settings.contains("type != view.current().periodType()"));
+        assertTrue(settings.contains("saveCurrentPeriodLimit"));
+        assertTrue(settings.contains("DELETE FROM employee_payroll_settings WHERE setting_id = ?"));
+        assertTrue(settings.contains("periodFor(current.periodType(), current.workHourLimit(), today).start()"));
+        assertTrue(settings.contains("ON CONFLICT (user_id, effective_from) DO UPDATE SET"));
+        assertTrue(settings.contains("saveCurrentPeriodLimit(conn, userId, view.current().periodType(), limit, today)"));
+        assertTrue(settings.contains("effective_from >= ? AND effective_from <= ? AND period_type=?"));
+        String employeeUi = Files.readString(Path.of("src/ui/screens/EmployeeManagement.java"));
+        assertTrue(employeeUi.contains("originalWorkHourLimit = view.current().workHourLimit()"));
+        assertTrue(employeeUi.contains("SessionDataCache.invalidate(\"payroll:\")"));
+    }
+
+    @Test
     void serverStartupRunsPayRateMigrationBeforeSchemaValidation() throws Exception {
         String server = Files.readString(Path.of("src/services/LanApiServer.java"));
         String installer = Files.readString(Path.of("src/services/LanApiSchemaInstaller.java"));

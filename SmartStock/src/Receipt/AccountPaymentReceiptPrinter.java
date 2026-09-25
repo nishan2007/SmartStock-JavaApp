@@ -98,37 +98,22 @@ public class AccountPaymentReceiptPrinter {
         int lineHeight = g2.getFontMetrics().getHeight();
         int x = (int) pageFormat.getImageableX();
         int y = (int) pageFormat.getImageableY() + lineHeight;
-        int logoSpace = pageIndex == 0 ? drawLetterLogo(g2, pageFormat, logo) : 0;
+        int logoSpace = letterLogoSpace(logo, 16);
+        if (pageIndex == 0) drawLetterLogo(g2, pageFormat, logo);
         int barcodeSpace = ReceiptBarcodeRenderer.hasScannableText(barcodeText) ? 96 : 0;
-        y += logoSpace;
-        int standardLinesPerPage = Math.max((int) pageFormat.getImageableHeight() / lineHeight, 1);
-        int lastPageLines = Math.max(((int) pageFormat.getImageableHeight() - barcodeSpace) / lineHeight, 1);
-        int firstPageLines = Math.max(((int) pageFormat.getImageableHeight() - logoSpace) / lineHeight, 1);
-        int firstPageCapacity = lines.length <= firstPageLines ? Math.max(((int) pageFormat.getImageableHeight() - logoSpace - barcodeSpace) / lineHeight, 1) : firstPageLines;
-        int firstPageCount = Math.min(lines.length, firstPageCapacity);
-        int remainingLines = Math.max(lines.length - firstPageCount, 0);
-        int pagesAfterFirst = remainingLines == 0 ? 0 : (int) Math.ceil(remainingLines / (double) lastPageLines);
-        int totalPages = 1 + pagesAfterFirst;
-
-        if (pageIndex >= totalPages || pageIndex < 0 || standardLinesPerPage < 1) {
+        if (pageIndex == 0) y += logoSpace;
+        LetterReceiptPagination.PageSlice slice = LetterReceiptPagination.slice(
+                lines.length, (int) pageFormat.getImageableHeight(), lineHeight,
+                logoSpace, barcodeSpace, pageIndex);
+        if (slice == null) {
             return Printable.NO_SUCH_PAGE;
         }
-
-        int linesPerPage;
-        int startLine;
-        if (pageIndex == 0) {
-            linesPerPage = totalPages == 1 ? firstPageCapacity : firstPageCount;
-            startLine = 0;
-        } else {
-            linesPerPage = lastPageLines;
-            startLine = firstPageCount + ((pageIndex - 1) * lastPageLines);
-        }
-        int endLine = Math.min(startLine + linesPerPage, lines.length);
-        for (int i = startLine; i < endLine; i++) {
+        int endLine = slice.startLine() + slice.lineCount();
+        for (int i = slice.startLine(); i < endLine; i++) {
             g2.drawString(lines[i], x, y);
             y += lineHeight;
         }
-        if (pageIndex == totalPages - 1) {
+        if (slice.lastPage()) {
             drawLetterBarcode(g2, pageFormat, barcodeText, y + 10);
         }
         return Printable.PAGE_EXISTS;
@@ -148,6 +133,13 @@ public class AccountPaymentReceiptPrinter {
         int y = (int) pageFormat.getImageableY();
         graphics.drawImage(logo, x, y, width, height, null);
         return height + 16;
+    }
+
+    private static int letterLogoSpace(BufferedImage logo, int bottomGap) {
+        if (logo == null) return 0;
+        double scale = Math.min(220.0 / logo.getWidth(), 90.0 / logo.getHeight());
+        scale = Math.min(scale, 1.0);
+        return Math.max((int) Math.round(logo.getHeight() * scale), 1) + bottomGap;
     }
 
     private static void drawLetterBarcode(Graphics2D graphics, PageFormat pageFormat, String barcodeText, int y) {

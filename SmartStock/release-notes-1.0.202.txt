@@ -1,0 +1,5 @@
+SmartStock 1.0.202
+
+Fix quotation creation.
+
+- Correct the quotation database insert so new quotations can be saved.

@@ -24,17 +24,19 @@ final class LanCashDrawerService {
         CashDrawerSession session=CashDrawerService.getActiveSessionForDevice(c,locationId,deviceId.toString());
         Map<String,Object>m=map("drawerId",drawer.cashDrawerId(),"drawerName",drawer.drawerName(),"session",session,
                 "expectedCash",session==null?BigDecimal.ZERO:CashDrawerService.calculateExpectedCash(c,session.sessionId()),
-                "floatMix",session==null?Map.of():CashDrawerService.getDrawerFloatMix(c,session.cashDrawerId()));return m;
+                "floatMix",session==null?Map.of():CashDrawerService.getDrawerFloatMix(c,session.cashDrawerId()),
+                "pendingHandover",session==null?null:CashDrawerHandoverService.pending(c,session.sessionId()));return m;
     }
     static Map<String,Object> open(Connection c,UUID deviceId,int userId,String userName,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");return map("session",CashDrawerService.openSessionForDevice(c,locationId,deviceId.toString(),deviceName(c,deviceId),userId,userName,null));
     }
-    static Map<String,Object> handover(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
+    static Map<String,Object> handover(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
-        CashDrawerHandover result=CashDrawerService.recordHandover(c,id,count,text(body,"notes"),userId,userName);CashDrawerCountHistoryService.appendLifecycle(c,id,"HANDOVER",body,userId,userName,deviceId,deviceName,text(body,"notes"));return map("handover",result);
+        return map("handover",CashDrawerHandoverService.confirm(c,body,userId,userName,deviceId,deviceName,locationId));
     }
     static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
+        if(CashDrawerHandoverService.pending(c,id)!=null)throw new SQLException("Accept the pending handover before closing the drawer.");
         CashDrawerSession result=CashDrawerService.closeSession(c,id,count,text(body,"notes"),userId,userName);
         CashDrawerCountHistoryService.appendLifecycle(c,id,"CLOSE",body,userId,userName,deviceId,deviceName,text(body,"notes"));
         return map("session",result,"handlers",CashDrawerService.listCashHandlers(c,id),

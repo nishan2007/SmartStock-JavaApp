@@ -139,7 +139,7 @@ public class AppMenuBar {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
-        boolean canCustomOrderItems = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
+        boolean canCustomOrderItems = PermissionManager.canManageCustomItems();
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canMaintenanceManagement = PermissionManager.hasPermission("MAINTENANCE_MANAGEMENT")
@@ -378,7 +378,7 @@ public class AppMenuBar {
 
         customOrderItemsItem.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                if (!PermissionManager.requirePermission("MANUAL_ADJUSTMENT", parent, "Custom Order Items")) {
+                if (!PermissionManager.requireCustomItemPermission(parent)) {
                     return;
                 }
                 if (WindowHelper.focusIfAlreadyOpen(CustomOrderItems.class)) {

@@ -19,6 +19,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CustomOrderLabelPrinterTest {
     @Test
+    void recognizesCt221bDriverQueueNames() {
+        assertTrue(CustomOrderLabelPrinter.isCt221b("Label Printer (CT 221B)"));
+        assertTrue(CustomOrderLabelPrinter.isCt221b("CHITENG-ct221b"));
+        org.junit.jupiter.api.Assertions.assertFalse(CustomOrderLabelPrinter.isCt221b("Receipt Printer"));
+        org.junit.jupiter.api.Assertions.assertFalse(CustomOrderLabelPrinter.isCt221b(null));
+    }
+
+    @Test
+    void ct221bUsesDriverStockAndLimitsPrintableWidth() throws Exception {
+        double mm = 72.0 / 25.4;
+        java.awt.print.Paper paper = new java.awt.print.Paper();
+        paper.setSize(50 * mm, 30 * mm);
+        paper.setImageableArea(0, 0, 50 * mm, 30 * mm);
+        java.awt.print.PageFormat driver = new java.awt.print.PageFormat();
+        driver.setPaper(paper);
+        java.awt.print.PageFormat label = CustomOrderLabelPrinter.createCt221bPageFormat(driver);
+        assertEquals(50 * mm, label.getWidth(), 0.001);
+        assertEquals(30 * mm, label.getHeight(), 0.001);
+        assertEquals(48 * mm, label.getImageableWidth(), 0.001);
+        assertEquals(28 * mm, label.getImageableHeight(), 0.001);
+        assertEquals(50 * mm, driver.getImageableWidth(), 0.001);
+    }
+
+    @Test
+    void ct221bRejectsLetterDefaultAndEmptyPrintableArea() {
+        assertThrows(javax.print.PrintException.class,
+                () -> CustomOrderLabelPrinter.createCt221bPageFormat(new java.awt.print.PageFormat()));
+        java.awt.print.Paper paper = new java.awt.print.Paper();
+        paper.setSize(50 * 72.0 / 25.4, 30 * 72.0 / 25.4);
+        paper.setImageableArea(0, 0, 0, 0);
+        java.awt.print.PageFormat driver = new java.awt.print.PageFormat();
+        driver.setPaper(paper);
+        assertThrows(javax.print.PrintException.class,
+                () -> CustomOrderLabelPrinter.createCt221bPageFormat(driver));
+    }
+
+    @Test
     void rendersTwoByOneLabelAndEncodesExactOrderNumber() throws Exception {
         CustomOrderSlipData data = sample("CO-2026-00421", "A Customer With A Long Name That Must Fit Safely", LocalDate.of(2026, 8, 14));
 

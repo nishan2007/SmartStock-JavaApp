@@ -209,7 +209,8 @@ final class LanHeldCartService {
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT hci.product_id,hci.product_name,COALESCE(p.size,''),hci.description,hci.sku,
                        hci.unit_price,hci.quantity,COALESCE(hci.discount_percent,0),
-                       COALESCE(hci.product_type,'INVENTORY'),p.category_id,COALESCE(p.price,0),hci.is_misc_item
+                       COALESCE(hci.product_type,'INVENTORY'),p.category_id,COALESCE(p.price,0),hci.is_misc_item,
+                       COALESCE(p.color,''),COALESCE(p.flavor,'')
                 FROM held_cart_items hci JOIN products p ON p.product_id=hci.product_id
                 WHERE hci.held_cart_id=? ORDER BY hci.held_cart_item_id
                 """)) {
@@ -224,6 +225,7 @@ final class LanHeldCartService {
                     item.put("productType", rs.getString(9)); item.put("categoryId", rs.getObject(10));
                     item.put("catalogPrice", rs.getBigDecimal(11));
                     item.put("miscItem",rs.getBoolean(12));
+                    item.put("color",rs.getString(13)); item.put("flavor",rs.getString(14));
                     items.add(item);
                     BigDecimal line = money(rs.getBigDecimal(6).multiply(BigDecimal.valueOf(rs.getInt(7))));
                     total = total.add(line.subtract(line.multiply(rs.getBigDecimal(8))

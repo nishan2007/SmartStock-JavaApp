@@ -1,0 +1,9 @@
+SmartStock 1.0.199
+
+Add size and color identifiers for custom items and variants.
+
+- Enter optional size and color values in the desktop and mobile custom-item forms.
+- Override either value on a variant, with independent fallback to the parent item.
+- Search custom inventory by item or variant size and color.
+- Show the effective identifiers in ordering, inventory, labels, slips, quotations, and invoices.
+- Preserve size and color snapshots on new custom-order and quotation lines.

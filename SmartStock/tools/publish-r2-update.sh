@@ -102,7 +102,8 @@ LOCAL_SIZE="$(file_size "$ARTIFACT_PATH")"
 OBJECT_KEY="$PLATFORM/$VERSION/$LOCAL_SHA256/$ARTIFACT_NAME"
 OBJECT_PATH="$R2_BUCKET/$OBJECT_KEY"
 VERIFY_FILE="$(mktemp "${TMPDIR:-/tmp}/smartstock-r2-verify.XXXXXX")"
-trap 'rm -f "$VERIFY_FILE"' EXIT
+PAYLOAD_FILE="$(mktemp "${TMPDIR:-/tmp}/smartstock-release-payload.XXXXXX")"
+trap 'rm -f "$VERIFY_FILE" "$PAYLOAD_FILE"' EXIT
 
 echo "Uploading $ARTIFACT_NAME to R2 as $OBJECT_KEY..."
 (
@@ -157,6 +158,8 @@ PAYLOAD="$(jq -n \
     published: true,
     published_at: $published_at
   }')"
+printf '%s' "$PAYLOAD" >"$PAYLOAD_FILE"
+jq -e . "$PAYLOAD_FILE" >/dev/null
 
 CURL_HEADERS=(
   -H "apikey: $SUPABASE_SERVER_KEY"
@@ -169,15 +172,16 @@ if [[ "$SUPABASE_SERVER_KEY" != sb_secret_* ]]; then
 fi
 
 echo "Publishing the verified release in Supabase..."
-RESPONSE="$(curl -fsS -X POST \
+RESPONSE="$(curl -sS -X POST \
   "${CURL_HEADERS[@]}" \
-  --data "$PAYLOAD" \
+  --data-binary "@$PAYLOAD_FILE" \
   "${SUPABASE_URL%/}/rest/v1/app_releases")"
 
 PUBLISHED_PATH="$(jq -r 'if type == "array" and length == 1 then .[0].artifact_path else empty end' <<<"$RESPONSE")"
 PUBLISHED_SHA256="$(jq -r 'if type == "array" and length == 1 then .[0].sha256 else empty end' <<<"$RESPONSE")"
 if [[ "$PUBLISHED_PATH" != "$OBJECT_KEY" || "$PUBLISHED_SHA256" != "$LOCAL_SHA256" ]]; then
   echo "Supabase did not return the expected release row." >&2
+  jq -c '{code,message,details,hint}' <<<"$RESPONSE" >&2 2>/dev/null || true
   exit 1
 fi
 

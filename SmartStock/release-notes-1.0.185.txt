@@ -1,0 +1,7 @@
+SmartStock 1.0.185
+
+Apply employee work-hour limit changes to current payroll.
+
+- Recalculate the current payroll when an employee's work-hour limit changes without changing the pay-period type.
+- Keep actual pay-period type changes scheduled for the next payroll boundary.
+- Promote previously pending limit-only changes into the current period when the employee record is saved again.

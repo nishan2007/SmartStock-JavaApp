@@ -212,6 +212,82 @@ public final class EmployeePayrollSettingsService {
                 SessionManager.getCurrentUserId(), SessionManager.getCurrentUserDisplayName());
     }
 
+    public static PayrollSetting saveChangedSetting(Connection conn, int userId, PeriodType type,
+                                                    BigDecimal limit, LocalDate today,
+                                                    String compensationType,
+                                                    boolean payrollSettingChanged) throws SQLException {
+        SettingView view = loadCurrentAndPending(conn, userId, today, compensationType);
+        if (view.pending() != null && type == view.current().periodType()
+                && view.pending().periodType() == view.current().periodType()) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM employee_payroll_settings WHERE setting_id = ?")) {
+                ps.setObject(1, view.pending().settingId());
+                ps.executeUpdate();
+            }
+            return saveCurrentPeriodLimit(conn, userId, type, limit, today);
+        }
+        if (!payrollSettingChanged) return view.pending() == null ? view.current() : view.pending();
+        // An hour-limit edit belongs to the current period even when a period-type
+        // change is scheduled. Keep the type change separate from the live limit.
+        PayrollSetting updated = saveCurrentPeriodLimit(conn, userId, view.current().periodType(), limit, today);
+        if (type != view.current().periodType()) {
+            return saveNextSetting(conn, userId, type, limit, today);
+        }
+        if (view.pending() != null) {
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM employee_payroll_settings WHERE setting_id = ?")) {
+                ps.setObject(1, view.pending().settingId());ps.executeUpdate();
+            }
+        }
+        return updated;
+    }
+
+    private static PayrollSetting saveCurrentPeriodLimit(Connection conn, int userId, PeriodType type,
+                                                         BigDecimal limit, LocalDate today) throws SQLException {
+        BigDecimal normalized = normalizeLimit(limit, type);
+        PayrollSetting current = settingFor(conn, userId, today, "HOURLY");
+        LocalDate effectiveFrom = periodFor(current.periodType(), current.workHourLimit(), today).start();
+        PayRate currentRate = payRateFor(conn, userId, effectiveFrom);
+        // Later pay-rate snapshots must not override the corrected hour limit.
+        // Update only this period's limit; preserve each snapshot's pay rate.
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE employee_payroll_settings SET work_hour_limit=?, updated_at=CURRENT_TIMESTAMP
+                WHERE user_id=? AND effective_from >= ? AND effective_from <= ? AND period_type=?
+                """)) {
+            ps.setBigDecimal(1,normalized);ps.setInt(2,userId);ps.setDate(3,Date.valueOf(effectiveFrom));
+            ps.setDate(4,Date.valueOf(today));ps.setString(5,current.periodType().name());ps.executeUpdate();
+        }
+        UUID settingId = UUID.randomUUID();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO employee_payroll_settings (
+                    setting_id, user_id, period_type, work_hour_limit, effective_from,
+                    compensation_type, pay_rate, created_by_user_id, created_by_name
+                ) VALUES (?, ?, ?, ?, ?, ?::compensation_type_enum, ?, ?, ?)
+                ON CONFLICT (user_id, effective_from) DO UPDATE SET
+                    period_type = EXCLUDED.period_type,
+                    work_hour_limit = EXCLUDED.work_hour_limit,
+                    created_by_user_id = EXCLUDED.created_by_user_id,
+                    created_by_name = EXCLUDED.created_by_name,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING setting_id
+                """)) {
+            ps.setObject(1, settingId);
+            ps.setInt(2, userId);
+            ps.setString(3, type.name());
+            ps.setBigDecimal(4, normalized);
+            ps.setDate(5, Date.valueOf(effectiveFrom));
+            ps.setString(6, currentRate.compensationType());
+            ps.setBigDecimal(7, currentRate.rate());
+            if (SessionManager.getCurrentUserId() == null) ps.setNull(8, Types.INTEGER);
+            else ps.setInt(8, SessionManager.getCurrentUserId());
+            ps.setString(9, SessionManager.getCurrentUserDisplayName());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) settingId = rs.getObject(1, UUID.class);
+            }
+        }
+        return new PayrollSetting(settingId, userId, type, normalized, effectiveFrom,
+                SessionManager.getCurrentUserId(), SessionManager.getCurrentUserDisplayName());
+    }
+
     public static void ensureDefaultForEmployee(Connection conn, int userId) throws SQLException {
         ensureSchema(conn);
         try (PreparedStatement ps = conn.prepareStatement("""
@@ -256,6 +332,16 @@ public final class EmployeePayrollSettingsService {
         updatePayRate(conn, userId, DEFAULT_EFFECTIVE_FROM, compensationType, rate);
     }
 
+    public static boolean currentPeriodRateNeedsRepair(Connection conn, int userId, LocalDate today,
+                                                       String previousCompensationType,
+                                                       String compensationType, BigDecimal rate) throws SQLException {
+        PayrollSetting current = settingFor(conn, userId, today, previousCompensationType);
+        LocalDate start = periodFor(current.periodType(), current.workHourLimit(), today).start();
+        PayRate atStart = payRateFor(conn, userId, start);
+        return !atStart.compensationType().equalsIgnoreCase(normalizeCompensationType(compensationType))
+                || atStart.rate().compareTo(normalizeRate(rate)) != 0;
+    }
+
     public static void saveCurrentPeriodPayRate(Connection conn, int userId, LocalDate today,
                                                 String previousCompensationType,
                                                 String compensationType, BigDecimal rate) throws SQLException {
@@ -286,25 +372,45 @@ public final class EmployeePayrollSettingsService {
             ps.setString(9, SessionManager.getCurrentUserDisplayName());
             ps.executeUpdate();
         }
-        // Keep the corrected current-period earnings after the period closes.
-        // Earlier periods are outside this update's date range.
-        if (isHourly(compensationType)) {
-            try (PreparedStatement ps = conn.prepareStatement("""
-                    UPDATE employee_time_clock tc
-                    SET total_earned = ROUND(tc.total_hours_worked * COALESCE((
-                        SELECT eps.pay_rate FROM employee_payroll_settings eps
-                        WHERE eps.user_id=tc.user_id AND eps.effective_from<=tc.work_date
-                        ORDER BY eps.effective_from DESC,eps.updated_at DESC LIMIT 1
-                    ), ?), 2)
-                    WHERE tc.user_id=? AND tc.work_date>=? AND tc.work_date<=?
-                      AND tc.clock_out IS NOT NULL AND tc.total_hours_worked IS NOT NULL
-                    """)) {
-                ps.setBigDecimal(1, normalizeRate(rate));
-                ps.setInt(2, userId);
-                ps.setDate(3, Date.valueOf(effectiveFrom));
-                ps.setDate(4, Date.valueOf(periodFor(current.periodType(), current.workHourLimit(), today).end()));
-                ps.executeUpdate();
-            }
+        // A later settings snapshot (including a pending period change) must carry
+        // the new rate too, or it would silently restore the old rate mid-period.
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE employee_payroll_settings
+                SET compensation_type = ?::compensation_type_enum, pay_rate = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND effective_from > ?
+                """)) {
+            ps.setString(1, normalizeCompensationType(compensationType));
+            ps.setBigDecimal(2, normalizeRate(rate));
+            ps.setInt(3, userId);
+            ps.setDate(4, Date.valueOf(effectiveFrom));
+            ps.executeUpdate();
+        }
+        // Completed records are a payroll snapshot used after this period closes.
+        // Rebuild only this period, preserving every earlier period's earnings.
+        try (PreparedStatement ps = conn.prepareStatement("""
+                WITH completed AS (
+                    SELECT tc.clock_id, tc.total_hours_worked,
+                           ROW_NUMBER() OVER (PARTITION BY tc.work_date
+                               ORDER BY tc.clock_in, tc.clock_id) AS daily_rank
+                    FROM employee_time_clock tc
+                    WHERE tc.user_id = ? AND tc.work_date >= ? AND tc.work_date <= ?
+                      AND tc.clock_out IS NOT NULL AND tc.total_hours_worked > 0
+                )
+                UPDATE employee_time_clock tc
+                SET total_earned = CASE ?
+                    WHEN 'SALARY' THEN NULL
+                    WHEN 'DAILY' THEN CASE WHEN completed.daily_rank = 1 THEN ? ELSE NULL END
+                    ELSE ROUND(completed.total_hours_worked * ?, 2)
+                END, updated_at = CURRENT_TIMESTAMP
+                FROM completed WHERE tc.clock_id = completed.clock_id
+                """)) {
+            ps.setInt(1, userId);
+            ps.setDate(2, Date.valueOf(effectiveFrom));
+            ps.setDate(3, Date.valueOf(periodFor(current.periodType(), current.workHourLimit(), today).end()));
+            ps.setString(4, normalizeCompensationType(compensationType));
+            ps.setBigDecimal(5, normalizeRate(rate));
+            ps.setBigDecimal(6, normalizeRate(rate));
+            ps.executeUpdate();
         }
     }
 

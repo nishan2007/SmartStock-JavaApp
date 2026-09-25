@@ -1,0 +1,7 @@
+SmartStock 1.0.205
+
+Improve Inventory category editing and item-type Quick Pick.
+
+- Change an item's Category directly in Inventory List while keeping its Item Type name associated with the new category.
+- Optionally separate a configured Quick Pick item type by size.
+- Optionally show photo cards with a large hover preview and open existing Inventory variant groups before choosing the exact item to sell.

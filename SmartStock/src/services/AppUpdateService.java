@@ -153,7 +153,7 @@ public final class AppUpdateService {
                             JOptionPane.OK_CANCEL_OPTION,
                             JOptionPane.INFORMATION_MESSAGE);
                     if (choice == JOptionPane.OK_OPTION) {
-                        launchUpdaterAndExit(manifest);
+                        launchUpdaterAsync(parent, manifest);
                     }
                 } catch (Exception ex) {
                     JOptionPane.showMessageDialog(parent,
@@ -320,7 +320,24 @@ public final class AppUpdateService {
         }
     }
 
+    private static void launchUpdaterAsync(Component parent, Path manifest) {
+        JDialog progress = createProgressDialog(parent, "Waiting for Windows administrator approval and updater startup...");
+        new SwingWorker<Void, Void>() {
+            protected Void doInBackground() throws Exception { launchUpdaterAndExit(manifest); return null; }
+            protected void done() {
+                progress.dispose();
+                try { get(); } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(parent, "SmartStock stayed open because the updater did not start.\n"
+                            + rootMessage(ex), "SmartStock Updates", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
+        progress.setVisible(true);
+    }
+
     private static void launchUpdaterAndExit(Path manifestPath) throws IOException {
+        Files.deleteIfExists(manifestPath.resolveSibling("updater.started"));
+        Files.deleteIfExists(manifestPath.resolveSibling("updater.cancelled"));
         Path runner = manifestPath.getParent().resolve("smartstock-updater-runner.jar");
         Path appBundle = findContainingMacAppBundle(currentAppJar());
         Path nativeUpdater = appBundle == null ? null
@@ -343,13 +360,13 @@ public final class AppUpdateService {
             process = new ProcessBuilder(java.toString(), "-cp", runner.toString(),
                     "app.SmartStockUpdater", manifestPath.toString());
         }
-        Process launched = process.directory(manifestPath.getParent().toFile()).start();
+        Process launched = process.directory(manifestPath.getParent().toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(manifestPath.resolveSibling("updater-launch.log").toFile()))
+                .start();
         if (detectPlatform().equals("windows")) {
             try {
-                if (launched.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-                        && launched.exitValue() != 0) {
-                    throw new IOException("Windows administrator approval was cancelled or rejected.");
-                }
+                awaitUpdaterStartup(launched, manifestPath, 180_000);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
                 throw new IOException("The updater launch was interrupted.", ex);
@@ -358,15 +375,30 @@ public final class AppUpdateService {
         System.exit(0);
     }
 
+    static void awaitUpdaterStartup(Process launched, Path manifest, long timeoutMillis) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        try {
+            while (!Files.isRegularFile(manifest.resolveSibling("updater.started"))) {
+                if (!launched.isAlive()) throw new IOException("Windows administrator approval was cancelled, or the updater could not start. See updater-launch.log.");
+                if (System.nanoTime() >= deadline) throw new IOException("Timed out waiting for updater startup. Approve the Windows prompt and try again.");
+                Thread.sleep(100);
+            }
+        } catch (IOException | InterruptedException ex) {
+            Files.writeString(manifest.resolveSibling("updater.cancelled"), "cancelled");
+            launched.destroy();
+            throw ex;
+        }
+    }
+
     static List<String> buildWindowsElevatedUpdaterCommand(
             Path java, Path runner, Path manifestPath) {
         Path workingDirectory = manifestPath.toAbsolutePath().normalize().getParent();
-        String command = "$p=Start-Process -FilePath '" + quotePowerShell(java.toString())
+        String command = "$ErrorActionPreference='Stop'; $p=Start-Process -FilePath '" + quotePowerShell(java.toString())
                 + "' -Verb RunAs -WindowStyle Hidden -WorkingDirectory '"
                 + quotePowerShell(workingDirectory.toString())
-                + "' -ArgumentList @('-cp','" + quotePowerShell(runner.toString())
-                + "','app.SmartStockUpdater','" + quotePowerShell(manifestPath.toString())
-                + "') -Wait -PassThru; if ($null -eq $p) { exit 1 }; exit $p.ExitCode";
+                + "' -ArgumentList '-cp \"" + quotePowerShell(runner.toString())
+                + "\" app.SmartStockUpdater \"" + quotePowerShell(manifestPath.toString())
+                + "\"' -Wait -PassThru; if ($null -eq $p) { exit 1 }; exit $p.ExitCode";
         return List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", command);
     }

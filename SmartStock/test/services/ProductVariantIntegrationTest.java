@@ -137,6 +137,24 @@ class ProductVariantIntegrationTest {
     private static String flavor(Connection c,int id)throws SQLException{try(var ps=c.prepareStatement("SELECT flavor FROM products WHERE product_id=?")){ps.setInt(1,id);try(var rs=ps.executeQuery()){assertTrue(rs.next());return rs.getString(1);}}}
     private static void verifyItemDetailEdits(Connection c,UUID device,int user,int location,int product)throws Exception {
         editDetail(c,device,user,location,product,"ITEM_TYPE","BOTTLE","Marker");
+        String originalCategory;
+        try(var ps=c.prepareStatement("SELECT name FROM categories WHERE category_id=1");var rs=ps.executeQuery()){
+            assertTrue(rs.next());originalCategory=rs.getString(1);
+        }
+        String newCategory="Variant reclass "+UUID.randomUUID();
+        int newCategoryId;
+        try(var ps=c.prepareStatement("INSERT INTO categories(name) VALUES (?) RETURNING category_id")){
+            ps.setString(1,newCategory);try(var rs=ps.executeQuery()){assertTrue(rs.next());newCategoryId=rs.getInt(1);}
+        }
+        editDetail(c,device,user,location,product,"CATEGORY",originalCategory,newCategory);
+        try(var ps=c.prepareStatement("SELECT cat.name,it.name,it.category_id FROM products p JOIN categories cat ON cat.category_id=p.category_id JOIN item_types it ON it.item_type_id=p.item_type_id WHERE p.product_id=?")){
+            ps.setInt(1,product);try(var rs=ps.executeQuery()){
+                assertTrue(rs.next());assertEquals(newCategory,rs.getString(1));assertEquals("MARKER",rs.getString(2));
+                assertEquals(newCategoryId,rs.getInt(3));
+            }
+        }
+        assertThrows(LanProductAdminService.RuleViolation.class,()->editDetail(c,device,user,location,product,"CATEGORY",originalCategory,"Missing"));
+        editDetail(c,device,user,location,product,"CATEGORY",newCategory,originalCategory);
         editDetail(c,device,user,location,product,"BRAND","TEST BRAND","Sharpie");
         editDetail(c,device,user,location,product,"STORAGE_SHELF","","Back room");
         editDetail(c,device,user,location,product,"SHELF","A1","H");

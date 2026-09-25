@@ -234,7 +234,7 @@ public class PayrollDashboard extends JFrame {
         markPaidButton.addActionListener(e -> markSelectedPayrollPaid());
         reviewsButton.addActionListener(e -> showAutomaticReviews());
         correctSessionButton.addActionListener(e -> correctSelectedSession());
-        refreshButton.addActionListener(e -> loadPayroll());
+        refreshButton.addActionListener(e -> { SessionDataCache.invalidate("payroll:"); loadPayroll(); });
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
@@ -714,10 +714,19 @@ public class PayrollDashboard extends JFrame {
         }
 
         JComboBox<String> paymentMethodBox = new JComboBox<>(new String[]{"Cash in Hand", "Bank Account"});
+        BigDecimal cashAmountDue = cashPaymentAmountDue(summary.totalPay(), summary.paidAmount());
+        BigDecimal bankAmountDue = summary.totalPay().subtract(summary.paidAmount()).max(BigDecimal.ZERO);
+        JTextField amountPaidField = new JTextField(cashAmountDue.toPlainString(), 14);
         JTextField bankReferenceField = new JTextField(22);
         bankReferenceField.setEnabled(false);
-        paymentMethodBox.addActionListener(e -> bankReferenceField.setEnabled(paymentMethodBox.getSelectedIndex() == 1));
+        paymentMethodBox.addActionListener(e -> {
+            boolean bank = paymentMethodBox.getSelectedIndex() == 1;
+            bankReferenceField.setEnabled(bank);
+            amountPaidField.setText((bank ? bankAmountDue : cashAmountDue).toPlainString());
+        });
         JPanel paymentPanel = new JPanel(new GridLayout(0, 1, 4, 4));
+        paymentPanel.add(new JLabel("Amount actually paid (cash defaults to nearest GYD 20):"));
+        paymentPanel.add(amountPaidField);
         paymentPanel.add(new JLabel("Payment method:"));
         paymentPanel.add(paymentMethodBox);
         paymentPanel.add(new JLabel("Bank reference (required for Bank Account):"));
@@ -730,6 +739,13 @@ public class PayrollDashboard extends JFrame {
         }
 
         boolean bankPayment = paymentMethodBox.getSelectedIndex() == 1;
+        BigDecimal amountPaid;
+        try {
+            amountPaid = parsePaymentAmount(amountPaidField.getText());
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Payroll", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         String bankReference = bankReferenceField.getText().trim();
         if (bankPayment && bankReference.isBlank()) {
             JOptionPane.showMessageDialog(this, "Enter the bank transaction reference.", "Payroll", JOptionPane.WARNING_MESSAGE);
@@ -737,14 +753,38 @@ public class PayrollDashboard extends JFrame {
         }
 
         try {
-            TimeClockManager.markPayrollPaid(summary, bankPayment ? "BANK" : "CASH", bankReference);
+            TimeClockManager.markPayrollPaid(summary, amountPaid, bankPayment ? "BANK" : "CASH", bankReference);
+            SessionDataCache.invalidate("payroll:");
             loadPayroll();
             JOptionPane.showMessageDialog(this,
-                    "Payroll marked as paid through " + (bankPayment ? "Bank Account." : "Cash in Hand."),
+                    CURRENCY_FORMAT.format(amountPaid) + " recorded as paid through "
+                            + (bankPayment ? "Bank Account." : "Cash in Hand."),
                     "Payroll", JOptionPane.INFORMATION_MESSAGE);
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Failed to mark payroll as paid: " + ex.getMessage(), "Database Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    static BigDecimal parsePaymentAmount(String value) {
+        try {
+            BigDecimal amount = new BigDecimal(value == null ? "" : value.replace("$", "").replace(",", "").trim());
+            if (amount.stripTrailingZeros().scale() > 0) {
+                throw new IllegalArgumentException("Enter the amount paid in whole GYD.");
+            }
+            amount = CurrencyFormatter.normalize(amount);
+            if (amount.signum() <= 0 || amount.compareTo(new BigDecimal("9999999999")) > 0) {
+                throw new IllegalArgumentException("Enter an amount paid greater than zero and below GYD 10 billion.");
+            }
+            return amount;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Enter a valid amount paid in whole GYD.", ex);
+        }
+    }
+
+    static BigDecimal cashPaymentAmountDue(BigDecimal totalPay, BigDecimal paidAmount) {
+        return CurrencyFormatter.roundToNearestTwenty(totalPay)
+                .subtract(paidAmount == null ? BigDecimal.ZERO : paidAmount)
+                .max(BigDecimal.ZERO);
     }
 
     private void generateCurrentPayroll() {

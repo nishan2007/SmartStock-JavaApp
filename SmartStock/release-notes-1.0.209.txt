@@ -1,0 +1,7 @@
+SmartStock 1.0.209
+
+Fix accepting issued quotations and converting them into invoices.
+
+- Preserve the quotation customer-discount snapshot when creating the invoice.
+- Restore the acceptance workflow before payment, account charging, delivery, and printing.
+- Add regression coverage for the invoice conversion database contract.

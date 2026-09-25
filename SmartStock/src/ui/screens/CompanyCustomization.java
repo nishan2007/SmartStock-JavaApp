@@ -285,8 +285,11 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox priceTagShowDescriptionBox = new JCheckBox("Show description");
     private final JComboBox<String> priceTagTemplateSlotBox = new JComboBox<>(new String[]{"Template 1", "Template 2", "Template 3", "Template 4", "Template 5"});
     private final JTextField priceTagTemplateNameField = new JTextField(16);
-    private final JSpinner priceTagWidthSpinner = new JSpinner(new SpinnerNumberModel(2.25d, .75d, 6d, .25d));
+    private final JSpinner priceTagWidthSpinner = new JSpinner(new SpinnerNumberModel(2.25d, .5d, 6d, .25d));
     private final JSpinner priceTagHeightSpinner = new JSpinner(new SpinnerNumberModel(1.25d, .5d, 4d, .25d));
+    private final JSpinner priceTagLabelsAcrossSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 2, 1));
+    private final JSpinner priceTagColumnGapSpinner = new JSpinner(new SpinnerNumberModel(0d, 0d, 1d, .01d));
+    private final JSpinner priceTagRowGapSpinner = new JSpinner(new SpinnerNumberModel(0d, 0d, 1d, .01d));
     private final JLabel priceTagPreviewLabel = new JLabel();
     private List<CompanyCustomizationManager.PriceTagTemplateSettings> priceTagTemplates = new ArrayList<>();
     private int activePriceTagTemplateSlot = 0;
@@ -301,6 +304,13 @@ public class CompanyCustomization extends JFrame {
     private final DefaultListModel<CompanyCustomizationManager.ItemTypeOption> selectedQuickPickTypesModel = new DefaultListModel<>();
     private final JList<CompanyCustomizationManager.ItemTypeOption> availableQuickPickTypesList = new JList<>(availableQuickPickTypesModel);
     private final JList<CompanyCustomizationManager.ItemTypeOption> selectedQuickPickTypesList = new JList<>(selectedQuickPickTypesModel);
+    private final JCheckBox separateQuickPickBySizeBox = new JCheckBox("Separate selected item type by size");
+    private final JCheckBox showQuickPickPhotosBox = new JCheckBox("Show photo cards and existing variant groups");
+    private final Set<Integer> quickPickSizeItemTypeIds = new HashSet<>();
+    private final Set<Integer> quickPickPhotoItemTypeIds = new HashSet<>();
+    private boolean updatingQuickPickSizeBox;
+    private final JTextField itemTypeQuickPickSearchField = new JTextField();
+    private final List<CompanyCustomizationManager.ItemTypeOption> allQuickPickTypeOptions = new ArrayList<>();
     private CompanyBackupScheduler.BackupScheduleSettings loadedBackupSettings;
     private final String initialPreferenceSection;
 
@@ -829,9 +839,54 @@ public class CompanyCustomization extends JFrame {
     private JPanel buildSaleItemTypeButtonsScreen() {
         availableQuickPickTypesList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         selectedQuickPickTypesList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        selectedQuickPickTypesList.setCellRenderer((list, value, index, selected, focused) -> {
+            JLabel label = (JLabel) new DefaultListCellRenderer().getListCellRendererComponent(list, value, index, selected, focused);
+            if (value != null) {
+                String detail = (quickPickSizeItemTypeIds.contains(value.itemTypeId()) ? " · sizes" : "")
+                        + (quickPickPhotoItemTypeIds.contains(value.itemTypeId()) ? " · photos" : "");
+                label.setText(value + detail);
+            }
+            return label;
+        });
+        selectedQuickPickTypesList.addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) return;
+            var option = selectedQuickPickTypesList.getSelectedValue();
+            updatingQuickPickSizeBox = true;
+            try {
+                separateQuickPickBySizeBox.setEnabled(option != null);
+                separateQuickPickBySizeBox.setSelected(option != null && quickPickSizeItemTypeIds.contains(option.itemTypeId()));
+                showQuickPickPhotosBox.setEnabled(option != null);
+                showQuickPickPhotosBox.setSelected(option != null && quickPickPhotoItemTypeIds.contains(option.itemTypeId()));
+            } finally { updatingQuickPickSizeBox = false; }
+        });
+        separateQuickPickBySizeBox.setEnabled(false);
+        showQuickPickPhotosBox.setEnabled(false);
+        separateQuickPickBySizeBox.addActionListener(e -> {
+            if (updatingQuickPickSizeBox) return;
+            var option = selectedQuickPickTypesList.getSelectedValue();
+            if (option == null) return;
+            if (separateQuickPickBySizeBox.isSelected()) quickPickSizeItemTypeIds.add(option.itemTypeId());
+            else quickPickSizeItemTypeIds.remove(option.itemTypeId());
+            selectedQuickPickTypesList.repaint();
+        });
+        showQuickPickPhotosBox.addActionListener(e -> {
+            if (updatingQuickPickSizeBox) return;
+            var option = selectedQuickPickTypesList.getSelectedValue();
+            if (option == null) return;
+            if (showQuickPickPhotosBox.isSelected()) quickPickPhotoItemTypeIds.add(option.itemTypeId());
+            else quickPickPhotoItemTypeIds.remove(option.itemTypeId());
+            selectedQuickPickTypesList.repaint();
+        });
         JPanel lists = new JPanel(new GridLayout(1, 2, 14, 0));
         lists.setOpaque(false);
-        lists.add(labeledList("Available item types", availableQuickPickTypesList));
+        JPanel availablePanel = new JPanel(new BorderLayout(0, 6)); availablePanel.setOpaque(false);
+        availablePanel.add(new JLabel("Available item types"), BorderLayout.NORTH);
+        itemTypeQuickPickSearchField.putClientProperty("JTextField.placeholderText", "Search item types or departments");
+        JPanel searchableList = new JPanel(new BorderLayout(0, 6)); searchableList.setOpaque(false);
+        searchableList.add(itemTypeQuickPickSearchField, BorderLayout.NORTH);
+        searchableList.add(new JScrollPane(availableQuickPickTypesList), BorderLayout.CENTER);
+        availablePanel.add(searchableList, BorderLayout.CENTER);
+        lists.add(availablePanel);
         lists.add(labeledList("Buttons shown beside cart", selectedQuickPickTypesList));
 
         JButton add = new JButton("Add →");
@@ -840,22 +895,34 @@ public class CompanyCustomization extends JFrame {
         JButton down = new JButton("Move Down");
         add.addActionListener(e -> {
             for (var option : availableQuickPickTypesList.getSelectedValuesList()) {
-                availableQuickPickTypesModel.removeElement(option);
                 selectedQuickPickTypesModel.addElement(option);
             }
+            refreshAvailableQuickPickTypes();
+            if (!selectedQuickPickTypesModel.isEmpty()) selectedQuickPickTypesList.setSelectedIndex(selectedQuickPickTypesModel.size()-1);
         });
         remove.addActionListener(e -> {
             var option = selectedQuickPickTypesList.getSelectedValue();
             if (option == null) return;
             selectedQuickPickTypesModel.removeElement(option);
-            availableQuickPickTypesModel.addElement(option);
+            quickPickSizeItemTypeIds.remove(option.itemTypeId());
+            quickPickPhotoItemTypeIds.remove(option.itemTypeId());
+            refreshAvailableQuickPickTypes();
         });
         up.addActionListener(e -> moveSelectedQuickPickType(-1));
         down.addActionListener(e -> moveSelectedQuickPickType(1));
+        itemTypeQuickPickSearchField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { refreshAvailableQuickPickTypes(); }
+            public void removeUpdate(DocumentEvent e) { refreshAvailableQuickPickTypes(); }
+            public void changedUpdate(DocumentEvent e) { refreshAvailableQuickPickTypes(); }
+        });
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
         actions.setOpaque(false); actions.add(add); actions.add(remove); actions.add(up); actions.add(down);
+        JPanel bottom = new JPanel(new BorderLayout(0, 8)); bottom.setOpaque(false);
+        JPanel options = new JPanel(new GridLayout(0,1,0,4)); options.setOpaque(false);
+        options.add(separateQuickPickBySizeBox); options.add(showQuickPickPhotosBox);
+        bottom.add(options, BorderLayout.NORTH); bottom.add(actions, BorderLayout.SOUTH);
         JPanel panel = new JPanel(new BorderLayout(0, 12));
-        panel.setOpaque(false); panel.add(lists, BorderLayout.CENTER); panel.add(actions, BorderLayout.SOUTH);
+        panel.setOpaque(false); panel.add(lists, BorderLayout.CENTER); panel.add(bottom, BorderLayout.SOUTH);
         return panel;
     }
 
@@ -874,13 +941,27 @@ public class CompanyCustomization extends JFrame {
     }
 
     private void loadItemTypeQuickPickFields(CompanyCustomizationManager.ItemTypeQuickPickSettings settings) {
-        availableQuickPickTypesModel.clear(); selectedQuickPickTypesModel.clear();
+        availableQuickPickTypesModel.clear(); selectedQuickPickTypesModel.clear(); allQuickPickTypeOptions.clear();
+        quickPickSizeItemTypeIds.clear();quickPickSizeItemTypeIds.addAll(settings.separateBySizeItemTypeIds());
+        quickPickPhotoItemTypeIds.clear();quickPickPhotoItemTypeIds.addAll(settings.showPhotosItemTypeIds());
         Map<Integer,CompanyCustomizationManager.ItemTypeOption> byId = new LinkedHashMap<>();
-        for (var option : settings.availableItemTypes()) byId.put(option.itemTypeId(), option);
+        for (var option : settings.availableItemTypes()) { byId.put(option.itemTypeId(), option); allQuickPickTypeOptions.add(option); }
         for (Integer id : settings.selectedItemTypeIds()) {
             var option = byId.remove(id); if (option != null) selectedQuickPickTypesModel.addElement(option);
         }
-        byId.values().forEach(availableQuickPickTypesModel::addElement);
+        refreshAvailableQuickPickTypes();
+        selectedQuickPickTypesList.repaint();
+    }
+
+    private void refreshAvailableQuickPickTypes() {
+        String query=itemTypeQuickPickSearchField.getText().trim().toLowerCase(java.util.Locale.ROOT);
+        Set<Integer> selected=new HashSet<>();
+        for(int i=0;i<selectedQuickPickTypesModel.size();i++)selected.add(selectedQuickPickTypesModel.get(i).itemTypeId());
+        availableQuickPickTypesModel.clear();
+        for(var option:allQuickPickTypeOptions) {
+            String text=(option.name()+" "+option.departmentName()).toLowerCase(java.util.Locale.ROOT);
+            if(!selected.contains(option.itemTypeId())&&(query.isEmpty()||text.contains(query)))availableQuickPickTypesModel.addElement(option);
+        }
     }
 
     private List<Integer> selectedItemTypeQuickPickIds() {
@@ -989,16 +1070,43 @@ public class CompanyCustomization extends JFrame {
         JPanel slot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); slot.add(new JLabel("Template:")); slot.add(priceTagTemplateSlotBox); slot.add(new JLabel("Name:")); slot.add(priceTagTemplateNameField); controls.add(slot); controls.add(Box.createVerticalStrut(8));
         controls.add(priceTagShowCompanyBox); controls.add(priceTagShowNameBox); controls.add(priceTagShowPriceBox); controls.add(priceTagShowSkuBox); controls.add(priceTagShowBarcodeBox); controls.add(priceTagShowSizeBox); controls.add(priceTagShowDescriptionBox); controls.add(Box.createVerticalStrut(10));
         JPanel sizes = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); sizes.add(new JLabel("Sticker size (inches):")); sizes.add(priceTagWidthSpinner); sizes.add(new JLabel("wide ×")); sizes.add(priceTagHeightSpinner); sizes.add(new JLabel("high")); controls.add(sizes);
+        JPanel orientation = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JButton portrait = new JButton("Portrait"), landscape = new JButton("Landscape");
+        orientation.add(new JLabel("Label orientation:")); orientation.add(portrait); orientation.add(landscape); controls.add(orientation);
+        portrait.addActionListener(e -> orientPriceTag(true)); landscape.addActionListener(e -> orientPriceTag(false));
+        JPanel stock = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        stock.add(new JLabel("Labels across:")); stock.add(priceTagLabelsAcrossSpinner);
+        stock.add(new JLabel("Gap between labels (inches):")); stock.add(priceTagColumnGapSpinner); controls.add(stock);
+        JPanel rowGap = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        rowGap.add(new JLabel("Gap between rows (inches):")); rowGap.add(priceTagRowGapSpinner); controls.add(rowGap);
+        controls.add(new JLabel("For two 0.5 × 1 inch labels, set width 0.5, height 1, and labels across 2."));
         JButton preview = new JButton("Refresh preview"); JButton editLayout = new JButton("Open Template Editor"); JButton save = new JButton("Save template"); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 10)); buttons.add(preview); buttons.add(editLayout); buttons.add(save); controls.add(buttons);
         priceTagTemplateSlotBox.addActionListener(e -> { savePriceTagFieldsToSlot(); activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); loadPriceTagTemplateFields(); });
         preview.addActionListener(e -> refreshPriceTagPreview()); editLayout.addActionListener(e -> openPriceTagTemplateEditor()); save.addActionListener(e -> { try { savePriceTagFieldsToSlot(); CompanyCustomizationManager.savePriceTagTemplateSettings(priceTagTemplates); refreshPriceTagPreview(); JOptionPane.showMessageDialog(this, "All five price tag templates saved."); } catch (Exception ex) { JOptionPane.showMessageDialog(this, ex.getMessage(), "Price Tags", JOptionPane.ERROR_MESSAGE); } });
         panel.add(controls, BorderLayout.WEST); priceTagPreviewLabel.setHorizontalAlignment(SwingConstants.CENTER); panel.add(new JScrollPane(priceTagPreviewLabel), BorderLayout.CENTER); loadPriceTagTemplateFields(); return panel;
     }
 
-    private CompanyCustomizationManager.PriceTagTemplateSettings priceTagSettingsFromFields() { String layout = priceTagTemplates.size() == 5 ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout); }
+    private CompanyCustomizationManager.PriceTagTemplateSettings priceTagSettingsFromFields() {
+        try { priceTagWidthSpinner.commitEdit(); priceTagHeightSpinner.commitEdit(); priceTagLabelsAcrossSpinner.commitEdit(); priceTagColumnGapSpinner.commitEdit(); priceTagRowGapSpinner.commitEdit(); }
+        catch (java.text.ParseException ex) { throw new IllegalArgumentException("Enter valid label dimensions and gaps."); }
+        String layout = priceTagTemplates.size() == 5 ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout, ((Number) priceTagLabelsAcrossSpinner.getValue()).intValue(), ((Number) priceTagColumnGapSpinner.getValue()).doubleValue(), ((Number) priceTagRowGapSpinner.getValue()).doubleValue()); }
     private void savePriceTagFieldsToSlot() { if (priceTagTemplates.size() == 5) priceTagTemplates.set(activePriceTagTemplateSlot, priceTagSettingsFromFields()); }
-    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); refreshPriceTagPreview(); }
-    private void refreshPriceTagPreview() { priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "A sample product description", "SKU-10025", "SKU-10025", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); }
+    private void orientPriceTag(boolean portrait) {
+        var s = priceTagSettingsFromFields();
+        priceTagWidthSpinner.setValue(portrait ? Math.min(s.widthInches(),s.heightInches()) : Math.max(s.widthInches(),s.heightInches()));
+        priceTagHeightSpinner.setValue(portrait ? Math.max(s.widthInches(),s.heightInches()) : Math.min(s.widthInches(),s.heightInches()));
+        refreshPriceTagPreview();
+    }
+
+    private List<Integer> selectedItemTypeQuickPickSizeIds() {
+        return selectedItemTypeQuickPickIds().stream().filter(quickPickSizeItemTypeIds::contains).toList();
+    }
+
+    private List<Integer> selectedItemTypeQuickPickPhotoIds() {
+        return selectedItemTypeQuickPickIds().stream().filter(quickPickPhotoItemTypeIds::contains).toList();
+    }
+    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); priceTagLabelsAcrossSpinner.setValue(s.labelsAcross()); priceTagColumnGapSpinner.setValue(s.columnGapInches()); priceTagRowGapSpinner.setValue(s.rowGapInches()); refreshPriceTagPreview(); }
+    private void refreshPriceTagPreview() { try { priceTagPreviewLabel.setText(""); priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.renderStockPreview(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "A sample product description", "061-0001", "061-0001", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); } catch (IllegalArgumentException ex) {priceTagPreviewLabel.setIcon(null);priceTagPreviewLabel.setText(ex.getMessage());} }
     private void openPriceTagTemplateEditor() {
         savePriceTagFieldsToSlot(); int slot = priceTagTemplateSlotBox.getSelectedIndex();
         JDialog dialog = new JDialog(this, "Price Tag Template Editor — " + priceTagTemplates.get(slot).name(), Dialog.ModalityType.APPLICATION_MODAL);
@@ -1008,13 +1116,8 @@ public class CompanyCustomization extends JFrame {
         reset.addActionListener(e -> canvas.reset()); done.addActionListener(e -> { try { priceTagTemplates.set(slot, canvas.settings()); CompanyCustomizationManager.savePriceTagTemplateSettings(priceTagTemplates); refreshPriceTagPreview(); dialog.dispose(); } catch (Exception ex) { JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Price Tags", JOptionPane.ERROR_MESSAGE); } });
         dialog.pack(); dialog.setLocationRelativeTo(this); dialog.setVisible(true);
     }
-    private static final class PriceTagLayoutCanvas extends JPanel {
-        private final CompanyCustomizationManager.PriceTagTemplateSettings settings; private final LinkedHashMap<String,Rectangle> rects; private String selected="name"; private Point press; private boolean resize;
-        PriceTagLayoutCanvas(CompanyCustomizationManager.PriceTagTemplateSettings s){settings=s;rects=PriceTagPrintService.layoutRects(s.layoutData());rects.entrySet().removeIf(e->!visible(e.getKey()));setPreferredSize(new Dimension(1040,560));setBackground(new Color(242,244,248));addMouseListener(new java.awt.event.MouseAdapter(){public void mousePressed(java.awt.event.MouseEvent e){press=e.getPoint();selected=hit(e.getPoint());Rectangle r=rects.get(selected);resize=e.getX()>r.x+r.width-16&&e.getY()>r.y+r.height-16;repaint();}});addMouseMotionListener(new java.awt.event.MouseMotionAdapter(){public void mouseDragged(java.awt.event.MouseEvent e){Rectangle r=rects.get(selected);int dx=e.getX()-press.x,dy=e.getY()-press.y;if(resize){r.width=Math.max(35,r.width+dx);r.height=Math.max(25,r.height+dy);}else{r.x=Math.max(0,Math.min(1000-r.width,r.x+dx));r.y=Math.max(0,Math.min(500-r.height,r.y+dy));}press=e.getPoint();repaint();}});}
-        private boolean visible(String id){return switch(id){case "company"->settings.showCompany();case "name"->settings.showName();case "price"->settings.showPrice();case "sku"->settings.showSku();case "barcode"->settings.showBarcode();case "size"->settings.showSize();case "description"->settings.showDescription();default->true;};}
-        private String hit(Point p){for(var e:rects.entrySet())if(visible(e.getKey())&&e.getValue().contains(p))return e.getKey();return selected;} void reset(){rects.clear();rects.putAll(PriceTagPrintService.defaultLayout());repaint();}
-        CompanyCustomizationManager.PriceTagTemplateSettings settings(){return new CompanyCustomizationManager.PriceTagTemplateSettings(settings.name(),settings.showCompany(),settings.showName(),settings.showPrice(),settings.showSku(),settings.showBarcode(),settings.showSize(),settings.showDescription(),settings.widthInches(),settings.heightInches(),PriceTagPrintService.encodeLayout(rects));}
-        protected void paintComponent(Graphics g){super.paintComponent(g);Graphics2D g2=(Graphics2D)g;g2.setColor(Color.WHITE);g2.fillRect(0,0,1000,500);g2.setColor(new Color(235,238,244));for(int x=0;x<1000;x+=50)g2.drawLine(x,0,x,500);for(int y=0;y<500;y+=50)g2.drawLine(0,y,1000,y);g2.setColor(new Color(30,41,59));g2.setStroke(new BasicStroke(4));g2.drawRect(1,1,998,498);g2.setFont(new Font("SansSerif",Font.BOLD,14));g2.drawString(String.format("Printable label boundary — %.2f × %.2f in",settings.widthInches(),settings.heightInches()),16,22);for(var e:rects.entrySet()){Rectangle r=e.getValue();boolean on=e.getKey().equals(selected);g2.setColor(on?new Color(255,112,0,55):new Color(0,85,145,35));g2.fill(r);g2.setColor(on?new Color(255,112,0):new Color(0,85,145));g2.setStroke(new BasicStroke(on?3:2));g2.draw(r);g2.setColor(Color.BLACK);String sample=switch(e.getKey()){case "company"->"[ Company Logo ]";case "name"->"Sample Inventory Item";case "size"->"Large";case "description"->"A sample product description";case "price"->"$2,500";case "sku"->"SKU: 10025";default->"||| || ||| || |||| ||| ||";};g2.setFont(new Font("SansSerif",e.getKey().equals("price")?Font.BOLD:Font.PLAIN,Math.max(12,Math.min(32,r.height/2))));g2.drawString(sample,r.x+8,r.y+Math.min(r.height-8,g2.getFontMetrics().getAscent()+8));if(on)g2.fillRect(r.x+r.width-12,r.y+r.height-12,12,12);}g2.setColor(Color.DARK_GRAY);g2.drawString("Click an element; drag it to move. Drag its bottom-right handle to resize.",15,525);}
+    private static final class PriceTagLayoutCanvas extends ui.components.PriceTagLayoutEditor {
+        PriceTagLayoutCanvas(CompanyCustomizationManager.PriceTagTemplateSettings s) { super(s); }
     }
 
     private JPanel buildBackupSchedulerScreen() {
@@ -2789,7 +2892,9 @@ public class CompanyCustomization extends JFrame {
                     null);
             loadingStatePanel.loading(true,Instant.now());
             var quickPickIds=selectedItemTypeQuickPickIds();
-            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);CompanyCustomizationManager.saveBadgeSecuritySettings(badgeSecurity);CompanyCustomizationManager.saveSchedulerLinkEmailSettings(schedulerEmail);CompanyCustomizationManager.saveItemTypeQuickPickSettings(quickPickIds);CompanyCustomizationManager.saveAccountSignatureRetentionYears((Integer)accountSignatureRetentionYearsSpinner.getValue());TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
+            var quickPickSizeIds=selectedItemTypeQuickPickSizeIds();
+            var quickPickPhotoIds=selectedItemTypeQuickPickPhotoIds();
+            UiTaskRunner.submit(this,"company-preferences.save",()->{CompanyCustomizationManager.saveReceiptSettings(receipt);if(sale!=null)CompanyCustomizationManager.saveSaleSafetySettings(sale);if(custom!=null)CompanyCustomizationManager.saveCustomOrderSettings(custom);CompanyCustomizationManager.saveCustomOrderSlipSettings(slip);CompanyCustomizationManager.saveQuotationInvoicePrintSettings(print);CompanyCustomizationManager.saveBadgeTemplateSettings(badge);CompanyCustomizationManager.saveBadgeSecuritySettings(badgeSecurity);CompanyCustomizationManager.saveSchedulerLinkEmailSettings(schedulerEmail);CompanyCustomizationManager.saveItemTypeQuickPickSettings(quickPickIds,quickPickSizeIds,quickPickPhotoIds);CompanyCustomizationManager.saveAccountSignatureRetentionYears((Integer)accountSignatureRetentionYearsSpinner.getValue());TimeClockAutoCloseService.saveSettings(clock);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("company-preferences.");loadSettings();JOptionPane.showMessageDialog(this,"Company preferences saved.");},ex->loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings));
         } catch (Exception ex) {
             loadingStatePanel.failed(ex.getMessage(),true,this::saveSettings);
         }

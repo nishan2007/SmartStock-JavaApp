@@ -70,6 +70,8 @@ public class HardwareSettingsPanel extends JPanel {
         };
         configuredPrinterTable = new JTable(configuredPrinterModel);
         configuredPrinterTable.setRowHeight(28);
+        configuredPrinterTable.setToolTipText("CT221B: set the driver paper size to the loaded label roll, "
+                + "then select Set Order Label Default and Save. Keep CT221B in the printer name.");
         configuredPrinterTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         configuredPrinterTable.getColumnModel().getColumn(4).setCellEditor(new DefaultCellEditor(new JComboBox<>(HardwareSettingsManager.PrintFormat.values())));
         contentPanel.add(wrapPanel("POS Printers", new JScrollPane(configuredPrinterTable)));

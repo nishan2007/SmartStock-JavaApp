@@ -101,6 +101,9 @@ public final class ProductSearchHelper {
                 UPPER(CONCAT_WS(' ',
                     %1$s,
                     COALESCE(%2$s.variant_name, ''),
+                    COALESCE(%2$s.size, ''),
+                    COALESCE(%2$s.color, ''),
+                    COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id = %2$s.brand_id), ''),
                     COALESCE(%2$s.sku, ''),
                     COALESCE(%2$s.barcode, ''),
                     COALESCE((SELECT STRING_AGG(coivb.barcode, ' ')
@@ -117,6 +120,8 @@ public final class ProductSearchHelper {
                 UPPER(CONCAT_WS(' ',
                     CAST(%1$s.custom_item_id AS TEXT),
                     COALESCE(%1$s.item_name, ''),
+                    COALESCE(%1$s.size, ''),
+                    COALESCE(%1$s.color, ''),
                     COALESCE(%1$s.description, ''),
                     COALESCE(%1$s.sku, ''),
                     COALESCE(%1$s.barcode, ''),

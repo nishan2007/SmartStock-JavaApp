@@ -237,7 +237,7 @@ public final class ProductImageHelper {
                 0.78f,
                 MAX_ORIGINAL_IMAGE_BYTES,
                 MAX_PRODUCT_UPLOAD_BYTES,
-                false
+                true
         )) {
             ProductImageNaming safeNaming = naming == null ? ProductImageNaming.empty() : naming;
             String filename = StorageObjectNameBuilder.productImageFilename(

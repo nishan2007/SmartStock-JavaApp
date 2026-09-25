@@ -98,6 +98,35 @@ public final class ServerQuotationInvoiceViewService {
         }
     }
 
+    public static List<PaymentSummary> listPayments() throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            QuotationInvoiceSchemaInstaller.ensureSchema(conn);
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT t.transaction_id, t.customer_id, i.invoice_number,
+                           COALESCE(i.customer_name, ca.name, '') AS customer_name,
+                           ABS(t.amount) AS payment_amount,
+                           COALESCE(t.payment_method, '') AS payment_method,
+                           COALESCE(t.payment_reference, '') AS payment_reference,
+                           COALESCE(t.user_name, '') AS taken_by, t.created_at
+                    FROM customer_account_transactions t
+                    JOIN invoices i ON i.invoice_id = t.invoice_id
+                    LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
+                    WHERE t.transaction_type = 'PAYMENT'
+                    ORDER BY t.created_at DESC, t.transaction_id DESC
+                    LIMIT 500
+                    """); ResultSet rs = ps.executeQuery()) {
+                List<PaymentSummary> rows = new ArrayList<>();
+                while (rs.next()) rows.add(new PaymentSummary(
+                        rs.getLong("transaction_id"), rs.getInt("customer_id"),
+                        rs.getString("invoice_number"), rs.getString("customer_name"),
+                        rs.getBigDecimal("payment_amount"), rs.getString("payment_method"),
+                        rs.getString("payment_reference"), rs.getString("taken_by"),
+                        rs.getString("created_at")));
+                return rows;
+            }
+        }
+    }
+
     public static List<AuditEntry> listAudit() throws SQLException {
         try (Connection conn = DB.getConnection()) {
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
@@ -344,7 +373,9 @@ public final class ServerQuotationInvoiceViewService {
                            COALESCE(ca.current_balance, 0) AS customer_balance,
                            COALESCE(ca.credit_limit, 0) AS credit_limit,
                            GREATEST(COALESCE(ca.credit_limit, 0) - COALESCE(ca.current_balance, 0), 0) AS available_credit,
-                           i.customer_id,COALESCE(ca.name,''),COALESCE(ca.require_charge_authorization,FALSE)
+                           i.customer_id,
+                           COALESCE(ca.name, '') AS customer_name,
+                           COALESCE(ca.require_charge_authorization, FALSE) AS require_charge_authorization
                     FROM invoices i
                     LEFT JOIN customer_accounts ca ON ca.customer_id = i.customer_id
                     WHERE i.invoice_id = ?
@@ -362,7 +393,8 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getBigDecimal("balance_due"),
                             rs.getBigDecimal("customer_balance"),
                             rs.getBigDecimal("credit_limit"),
-                            rs.getBigDecimal("available_credit"),rs.getInt("customer_id"),rs.getString("name"),rs.getBoolean("require_charge_authorization")
+                            rs.getBigDecimal("available_credit"), rs.getInt("customer_id"),
+                            rs.getString("customer_name"), rs.getBoolean("require_charge_authorization")
                     );
                 }
             }
@@ -390,6 +422,11 @@ public final class ServerQuotationInvoiceViewService {
 
     public record DeliverySummary(long deliveryEventId, String deliveryNumber, String invoiceNumber,
                                   String customerName, String deliveryMethod, BigDecimal balanceDue, String createdAt) {
+    }
+
+    public record PaymentSummary(long transactionId, int customerId, String invoiceNumber,
+                                 String customerName, BigDecimal amount, String paymentMethod,
+                                 String paymentReference, String takenBy, String createdAt) {
     }
 
     public record InvoiceFinancials(long invoiceId, String invoiceNumber, BigDecimal totalAmount,

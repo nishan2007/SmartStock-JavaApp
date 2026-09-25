@@ -74,6 +74,20 @@ public class PermissionManager {
                 || hasPermission("MANAGE_INVOICES");
     }
 
+    public static boolean canManageCustomItems() {
+        return hasPermission("MANAGE_CUSTOM_ORDER_ITEMS")
+                || hasPermission("CUSTOM_ORDER_ITEMS")
+                || hasPermission("MANAGE_CUSTOM_ORDERS");
+    }
+
+    public static boolean requireCustomItemPermission(java.awt.Component parent) {
+        if (canManageCustomItems()) return true;
+        JOptionPane.showMessageDialog(parent,
+                "You do not have permission to add or edit custom items.",
+                "Access Denied", JOptionPane.WARNING_MESSAGE);
+        return false;
+    }
+
     public static boolean canAccessScreen(String screenName) {
         return switch (screenName) {
             case "MainMenu" -> hasPermission("MAKE_SALE")
@@ -85,6 +99,7 @@ public class PermissionManager {
                     || hasPermission("VIEW_INVENTORY")
                     || hasPermission("CUSTOMER_ACCOUNTS")
                     || hasPermission("MANUAL_ADJUSTMENT")
+                    || canManageCustomItems()
                     || hasPermission("CREATE_CUSTOM_ORDER")
                     || hasPermission("MANAGE_CUSTOM_ORDERS")
                     || hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
@@ -119,7 +134,7 @@ public class PermissionManager {
             case "EnterInventory" -> hasPermission("RECEIVING_INVENTORY");
             case "ReceivingHistory" -> hasPermission("VIEW_RECEIVING_HISTORY");
             case "StoreTransfer" -> hasPermission("STORE_TRANSFER");
-            case "CustomOrderItems" -> hasPermission("MANUAL_ADJUSTMENT");
+            case "CustomOrderItems" -> canManageCustomItems();
             case "DepartmentList" -> hasPermission("DEPARTMENT_MANAGEMENT");
             case "VendorList" -> hasPermission("VENDOR_MANAGEMENT");
             case "ViewSales" -> hasPermission("VIEW_SALES");

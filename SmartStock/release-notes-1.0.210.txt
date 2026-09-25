@@ -1,0 +1,8 @@
+SmartStock 1.0.210
+
+Improve the workflow after accepting a quotation.
+
+- Require confirmation before placing an unpaid invoice balance on the customer account.
+- Leave the invoice open without an error when payment or account charging is skipped.
+- Restore readable delivery-dialog headers and buttons in the active theme.
+- Improve delivery columns and correct the Invoiced heading.

@@ -1,0 +1,7 @@
+SmartStock 1.0.200
+
+Add brand identifiers to custom item variants and correct current-period payroll rates.
+
+- Enter an optional brand for each custom item variant, with the parent item's brand used when blank.
+- Search and display the effective variant brand in custom inventory workflows.
+- Apply employee pay-rate changes to completed records throughout the current pay period while preserving earlier periods.

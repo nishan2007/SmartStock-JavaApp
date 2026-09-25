@@ -1,0 +1,10 @@
+SmartStock 1.0.189
+
+Correct price-tag layout and printing.
+
+- Add portrait and landscape label orientation controls.
+- Show the label template editor at the actual sticker aspect ratio.
+- Add saved element rotation in 90-degree steps.
+- Keep printed labels at their requested physical size instead of stretching them to the driver page.
+- Reject oversized barcodes instead of cropping them.
+- Preserve separate labels and blank gaps for two-across stock.

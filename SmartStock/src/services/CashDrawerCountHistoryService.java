@@ -26,6 +26,13 @@ final class CashDrawerCountHistoryService {
         long sessionId=longValue(body,"sessionId");
         requireSessionAccess(c,sessionId,locationId,deviceId,true);
         lockSession(c,sessionId);
+        if(CashDrawerHandoverService.pending(c,sessionId)!=null) {
+            try(PreparedStatement p=c.prepareStatement("SELECT current_cashier_user_id FROM cash_drawer_sessions WHERE cash_drawer_session_id=?")) {
+                p.setLong(1,sessionId);try(ResultSet r=p.executeQuery()) {
+                    if(r.next() && r.getInt(1)==userId)throw new SQLException("Your outgoing count is confirmed. The next cashier must check and accept it.");
+                }
+            }
+        }
         int actual=latestRevision(c,sessionId),expected=intValue(body,"expectedRevision",0);
         if(actual!=expected)throw new Conflict(actual,latestRow(c,sessionId));
         String type=text(body,"eventType","COUNT_EDIT").toUpperCase(Locale.ROOT);

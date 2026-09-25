@@ -1,0 +1,7 @@
+SmartStock 1.0.206
+
+Allow returns for miscellaneous sale items.
+
+- Load miscellaneous items and their saved descriptions when searching a receipt for a return.
+- Validate and refund miscellaneous lines without adding them to inventory.
+- Support miscellaneous lines in cross-store returns while preventing them from being restocked.

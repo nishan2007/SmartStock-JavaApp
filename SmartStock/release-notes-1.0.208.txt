@@ -1,0 +1,7 @@
+SmartStock 1.0.208
+
+Fix Make a Sale catalog search after the custom-item POS update.
+
+- Keep regular product search available while optional custom-sale schema is being installed.
+- Install the custom-item normal-sales migration during schema-contract startup.
+- Restore typed search and the product dropdown for upgraded store databases.

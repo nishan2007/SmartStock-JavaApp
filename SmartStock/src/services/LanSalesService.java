@@ -207,7 +207,7 @@ final class LanSalesService {
             throw new SQLException("A card, cheque, or MMG reference is required.");
         }
         for (CheckoutLine line : request.lines()) {
-            if (line.productId() <= 0 || line.quantity() <= 0 || line.quantity() > 100_000) {
+            if (line.productId() == 0 || line.quantity() <= 0 || line.quantity() > 100_000) {
                 throw new SQLException("Each cart line requires a valid product and quantity.");
             }
         }
@@ -274,13 +274,31 @@ final class LanSalesService {
                         throw new RuleViolation(409,"PRODUCT_ARCHIVED",
                                 "A cart product was archived. Remove it before checkout.",false);
                     CatalogLine line = new CatalogLine(rs.getInt(1), rs.getString(2), money(rs.getBigDecimal(3)),
-                            rs.getString(4), percent(rs.getBigDecimal(5)),sku);
+                            rs.getString(4), percent(rs.getBigDecimal(5)),sku,null,null,"", "", "");
                     catalogs.put(line.productId(), line);
                 }
             }
         }
-        if (catalogs.size() != productIds.size()) throw new SQLException("A cart product no longer exists.");
+        lockCustomCatalogLines(connection,productIds,catalogs);
+        if (catalogs.size() != productIds.size()) throw new SQLException("A cart product no longer exists or is not enabled for normal sales.");
         return catalogs;
+    }
+
+    private static void lockCustomCatalogLines(Connection c,List<Integer> ids,Map<Integer,CatalogLine> out)throws SQLException{
+        for(int virtualId:ids){if(virtualId>=0)continue;boolean variant=virtualId<=-1_000_000_000;long id=variant?-(long)virtualId-1_000_000_000L:-(long)virtualId;
+            String sql=variant?"""
+                SELECT ci.custom_item_id,v.custom_variant_id,ci.item_name||' — '||v.variant_name,COALESCE(v.fixed_price,ci.fixed_price),v.sku,
+                       COALESCE(vb.name,br.name,''),COALESCE(NULLIF(v.size,''),ci.size,''),COALESCE(NULLIF(v.color,''),ci.color,'')
+                FROM custom_order_item_variants v JOIN custom_order_items ci ON ci.custom_item_id=v.custom_item_id
+                LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_brands vb ON vb.brand_id=v.brand_id
+                WHERE v.custom_variant_id=? AND ci.sell_in_pos AND ci.is_active AND v.is_active AND ci.product_type='INVENTORY' FOR UPDATE OF ci,v
+                """:"""
+                SELECT ci.custom_item_id,NULL::bigint,ci.item_name,ci.fixed_price,ci.sku,COALESCE(br.name,''),COALESCE(ci.size,''),COALESCE(ci.color,'')
+                FROM custom_order_items ci LEFT JOIN item_brands br ON br.brand_id=ci.brand_id
+                WHERE ci.custom_item_id=? AND ci.sell_in_pos AND ci.is_active AND NOT ci.has_variants AND ci.product_type='INVENTORY' FOR UPDATE OF ci
+                """;
+            try(PreparedStatement ps=c.prepareStatement(sql)){ps.setLong(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())out.put(virtualId,new CatalogLine(virtualId,rs.getString(3),money(rs.getBigDecimal(4)),"INVENTORY",BigDecimal.ZERO,rs.getString(5),rs.getLong(1),variant?rs.getLong(2):null,rs.getString(6),rs.getString(7),rs.getString(8)));}}
+        }
     }
 
     private static int insertSale(Connection c, CheckoutRequest r, UUID deviceId, int userId, String userName,
@@ -328,7 +346,7 @@ final class LanSalesService {
                 WITH inserted AS (
                   INSERT INTO sale_items (sale_id,product_id,item_name,is_misc_item,quantity,unit_price,original_unit_price,
                     discount_percent,discount_amount,price_override_reason,price_override_by_user_id,
-                    price_override_by_name,product_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    price_override_by_name,product_type,catalog_source,custom_item_id,custom_variant_id,sku_snapshot,brand_snapshot,size_snapshot,color_snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                   RETURNING sale_item_id,product_id
                 )
                 INSERT INTO sale_audit_log (sale_id,sale_item_id,customer_id,product_id,location_id,
@@ -336,7 +354,7 @@ final class LanSalesService {
                 SELECT ?,sale_item_id,?,product_id,?,'SALE_ITEM_ADDED','SALE_ITEM',?,?,?,?,? FROM inserted
                 RETURNING sale_item_id
                 """)) {
-            ps.setInt(1, saleId); ps.setInt(2, line.catalog().productId()); ps.setString(3,line.displayName());
+            ps.setInt(1, saleId); if(line.catalog().customItemId()==null)ps.setInt(2,line.catalog().productId());else ps.setNull(2,Types.INTEGER); ps.setString(3,line.displayName());
             ps.setBoolean(4,line.miscItem()); ps.setInt(5, line.quantity());
             ps.setBigDecimal(6, charged); ps.setBigDecimal(7, line.miscItem()?line.enteredPrice():line.catalog().catalogPrice());
             ps.setBigDecimal(8, line.discountPercent()); ps.setBigDecimal(9, line.lineDiscountAmount());
@@ -344,11 +362,12 @@ final class LanSalesService {
             setInt(ps, 11, line.priceApproval() == null ? null : line.priceApproval().approverUserId());
             ps.setString(12, line.priceApproval() == null ? null : line.priceApproval().approverName());
             ps.setString(13, line.catalog().productType());
-            ps.setInt(14, saleId); setInt(ps,15,customerId); ps.setInt(16,locationId);
-            ps.setBigDecimal(17,lineAmount);
-            ps.setString(18,"product=" + line.displayName() + "; product_type="
+            ps.setString(14,line.catalog().customItemId()==null?"PRODUCT":line.catalog().customVariantId()==null?"CUSTOM_ITEM":"CUSTOM_VARIANT");setLong(ps,15,line.catalog().customItemId());setLong(ps,16,line.catalog().customVariantId());ps.setString(17,line.catalog().sku());ps.setString(18,line.catalog().brand());ps.setString(19,line.catalog().size());ps.setString(20,line.catalog().color());
+            ps.setInt(21, saleId); setInt(ps,22,customerId); ps.setInt(23,locationId);
+            ps.setBigDecimal(24,lineAmount);
+            ps.setString(25,"product=" + line.displayName() + "; product_type="
                     + line.catalog().productType() + "; misc_item=" + line.miscItem());
-            ps.setInt(19,userId); ps.setString(20,userName); ps.setString(21,deviceId.toString());
+            ps.setInt(26,userId); ps.setString(27,userName); ps.setString(28,deviceId.toString());
             try (ResultSet keys = ps.executeQuery()) {
                 if (!keys.next()) throw new SQLException("Failed to create and audit sale item.");
                 return keys.getInt(1);
@@ -358,6 +377,7 @@ final class LanSalesService {
 
     private static void applyInventory(Connection c, int saleId, int saleItemId, ValidatedLine line,
                                        int locationId, int userId, String userName, UUID deviceId) throws SQLException {
+        if(line.catalog().customItemId()!=null){applyCustomInventory(c,saleId,saleItemId,line,locationId,userId,userName,deviceId);return;}
         try (PreparedStatement statement = c.prepareStatement("""
                 WITH adjusted AS (
                   INSERT INTO inventory (product_id,location_id,quantity_on_hand,reorder_level)
@@ -383,6 +403,13 @@ final class LanSalesService {
             statement.setInt(11, userId);
             statement.executeUpdate();
         }
+    }
+
+    private static void applyCustomInventory(Connection c,int saleId,int saleItemId,ValidatedLine line,int locationId,int userId,String userName,UUID deviceId)throws SQLException{
+        String table=line.catalog().customVariantId()==null?"custom_order_items":"custom_order_item_variants";String key=line.catalog().customVariantId()==null?"custom_item_id":"custom_variant_id";long id=line.catalog().customVariantId()==null?line.catalog().customItemId():line.catalog().customVariantId();
+        try(PreparedStatement ps=c.prepareStatement("UPDATE "+table+" SET quantity_on_hand=quantity_on_hand-?,sold_quantity=COALESCE(sold_quantity,0)+?,updated_at=CURRENT_TIMESTAMP WHERE "+key+"=?")){ps.setInt(1,line.quantity());ps.setInt(2,line.quantity());ps.setLong(3,id);if(ps.executeUpdate()!=1)throw new SQLException("Custom item inventory could not be updated.");}
+        if(line.catalog().customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("UPDATE custom_order_items i SET quantity_on_hand=(SELECT COALESCE(SUM(quantity_on_hand),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id AND is_active),sold_quantity=(SELECT COALESCE(SUM(sold_quantity),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id),updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?")){ps.setLong(1,line.catalog().customItemId());ps.executeUpdate();}
+        try(PreparedStatement ps=c.prepareStatement("INSERT INTO custom_order_item_movements(custom_item_id,custom_variant_id,location_id,change_qty,reason,note,user_name,user_id,device_id,sale_id,sale_item_id) VALUES(?,?,?,?,'SALE',?,?,?,?,?,?)")){ps.setLong(1,line.catalog().customItemId());setLong(ps,2,line.catalog().customVariantId());ps.setInt(3,locationId);ps.setInt(4,-line.quantity());ps.setString(5,"sale_id="+saleId);ps.setString(6,userName);ps.setInt(7,userId);ps.setString(8,deviceId.toString());ps.setInt(9,saleId);ps.setInt(10,saleItemId);ps.executeUpdate();}
     }
 
     private static void chargeCustomerAccount(Connection c, int customerId, BigDecimal amount, int userId,
@@ -501,7 +528,7 @@ final class LanSalesService {
     record Approval(int approverUserId,String approverName,String reason) { }
     private record SaleConfig(boolean vatEnabled,boolean departmentVat,BigDecimal fixedVatRate,
                               BigDecimal discountLimit,boolean roundToNearestTwenty) { }
-    private record CatalogLine(int productId,String name,BigDecimal catalogPrice,String productType,BigDecimal departmentVatRate,String sku) { }
+    private record CatalogLine(int productId,String name,BigDecimal catalogPrice,String productType,BigDecimal departmentVatRate,String sku,Long customItemId,Long customVariantId,String brand,String size,String color) { }
     private record ValidatedLine(CatalogLine catalog,int quantity,BigDecimal enteredPrice,BigDecimal discountPercent,
                                  BigDecimal lineDiscountAmount,Approval priceApproval,Approval discountApproval,
                                  String miscItemName,boolean miscItem) {

@@ -1,0 +1,6 @@
+SmartStock 1.0.215
+
+Fix desktop image selection and saving.
+
+- Adaptively reduce desktop-selected image dimensions when quality compression alone cannot meet the upload limit.
+- Return immediately after the local-first image save instead of blocking on the entire pending cloud-image synchronization backlog.

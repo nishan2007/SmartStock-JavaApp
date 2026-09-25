@@ -132,7 +132,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 6,
                 "Commercial Filter Set",
                 money("42.00"),
-                money("521.14")
+                BigDecimal.ZERO,
+                money("504.00")
         ));
         return renderPagedDocument(receiptSettings, "", printSettings, printSettings.deliveryTitle(), "DEL-MAIN-POS1-000041", "06/07/2026",
                 new String[][]{{"Delivery #", "DEL-MAIN-POS1-000041"}, {"Invoice #", "INV-MAIN-POS1-000088"}, {"Method", "LOCAL_DELIVERY"}, {"Delivered At", "06/07/2026"}},
@@ -183,7 +184,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                         includeDelivery ? 6 : null,
                         "Commercial Filter Set",
                         money("42.00"),
-                        money("521.14")
+                        BigDecimal.ZERO,
+                        money("504.00")
                 ),
                 new DocumentLine(
                         2,
@@ -191,7 +193,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                         includeDelivery ? 2 : null,
                         "Installation Kit",
                         money("95.00"),
-                        money("207.86")
+                        BigDecimal.ZERO,
+                        money("190.00")
                 )
         );
     }
@@ -231,7 +234,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static List<DocumentLine> quotationLines(Connection conn, long quotationId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT item_name || CASE WHEN COALESCE(line_notes,'')='' THEN '' ELSE E'\n' || line_notes END AS item_name, quantity, 0 AS delivered_now, quantity AS remaining, unit_price, line_total
+                SELECT item_name || CASE WHEN COALESCE(line_notes,'')='' THEN '' ELSE E'\n' || line_notes END AS item_name, quantity, 0 AS delivered_now, quantity AS remaining, unit_price, discount_percent, line_total
                 FROM quotation_lines
                 WHERE quotation_id = ?
                 ORDER BY sort_order, quotation_line_id
@@ -244,7 +247,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     private static List<DocumentLine> invoiceLines(Connection conn, long invoiceId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT item_name || CASE WHEN COALESCE(line_notes,'')='' THEN '' ELSE E'\n' || line_notes END AS item_name, quantity_invoiced AS quantity, quantity_delivered AS delivered_now,
-                       quantity_invoiced - quantity_delivered AS remaining, unit_price, line_total
+                       quantity_invoiced - quantity_delivered AS remaining, unit_price, discount_percent, line_total
                 FROM invoice_lines
                 WHERE invoice_id = ?
                 ORDER BY sort_order, invoice_line_id
@@ -257,7 +260,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
     private static List<DocumentLine> deliveryLines(Connection conn, long deliveryEventId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT sol.item_name, sol.quantity_invoiced AS quantity, dl.quantity_delivered AS delivered_now,
-                       dl.quantity_remaining AS remaining, sol.unit_price, sol.line_total
+                       dl.quantity_remaining AS remaining, sol.unit_price, sol.discount_percent, sol.line_total
                 FROM invoice_delivery_lines dl
                 JOIN invoice_lines sol ON sol.invoice_line_id = dl.invoice_line_id
                 WHERE dl.invoice_delivery_event_id = ?
@@ -278,6 +281,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                         includeDelivery ? rs.getInt("remaining") : null,
                         rs.getString("item_name"),
                         rs.getBigDecimal("unit_price"),
+                        rs.getBigDecimal("discount_percent"),
                         rs.getBigDecimal("line_total")
                 ));
             }
@@ -465,14 +469,16 @@ public final class ServerQuotationInvoiceDocumentBuilder {
 
     private static void appendLineTable(StringBuilder html, List<DocumentLine> lines, boolean includeDelivery, int rowsPerPage) {
         int quantityWidth = includeDelivery ? 10 : 12;
-        int unitPriceWidth = includeDelivery ? 8 : 16;
+        int unitPriceWidth = includeDelivery ? 8 : 14;
         html.append("<table class='joined'><tr><th width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%'>QTY</th>");
         if (includeDelivery) {
             html.append("<th width='10%' style='width:10%'>DLVD</th><th width='10%' style='width:10%'>DUE</th>");
         }
         html.append("<th>DESCRIPTION</th>");
         if (!includeDelivery) {
-            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px'>U/PRICE</th><th width='16%' style='width:16%'>AMOUNT</th>");
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px'>U/PRICE</th>")
+                    .append("<th width='9%' style='width:9%; font-size:8px'>DISC. %</th>")
+                    .append("<th width='16%' style='width:16%'>AMOUNT</th>");
         }
         html.append("</tr>");
         int rows = 0;
@@ -486,12 +492,13 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             html.append("<td class='description'>").append(descriptionHtml(line.description())).append("</td>");
             if (!includeDelivery) {
                 html.append("<td class='num'>").append(esc(money(line.unitPrice()))).append("</td>")
-                        .append("<td class='num'>").append(esc(money(line.amount()))).append("</td>");
+                        .append("<td class='num'>").append(esc(percentText(line.discountPercent()))).append("</td>")
+                        .append("<td class='num'>").append(esc(money(line.discountedAmount()))).append("</td>");
             }
             html.append("</tr>");
         }
         int blankRows = Math.max(rowsPerPage - rows, 0);
-        int columns = 4;
+        int columns = includeDelivery ? 4 : 5;
         for (int i = 0; i < blankRows; i++) {
             html.append("<tr class='blank'>");
             for (int c = 0; c < columns; c++) {
@@ -508,9 +515,9 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                            ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings settings,
                                            boolean showDeliveredBy, boolean receiverLabel, String receiverName,
                                            int nextPage) {
-        int columns = 4;
+        int columns = includeDelivery ? 4 : 5;
         int quantityWidth = includeDelivery ? 10 : 12;
-        int unitPriceWidth = includeDelivery ? 8 : 16;
+        int unitPriceWidth = includeDelivery ? 8 : 14;
         html.append("<table class='document-grid' cellspacing='0' cellpadding='0' border='0'>")
                 .append("<tr><td class='bill-label' width='").append(quantityWidth).append("%' style='width:").append(quantityWidth).append("%; font-size:").append(includeDelivery ? 9 : 11).append("px'>BILL TO:</td><td class='bill-name' style='border-left:2px solid #111' colspan='")
                 .append(columns - 1)
@@ -523,7 +530,9 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         }
         html.append("<th style='border-top:2px solid #111; border-left:2px solid #111'>DESCRIPTION</th>");
         if (!includeDelivery) {
-            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>U/PRICE</th><th width='16%' style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>AMOUNT</th>");
+            html.append("<th width='").append(unitPriceWidth).append("%' style='width:").append(unitPriceWidth).append("%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>U/PRICE</th>")
+                    .append("<th width='9%' style='width:9%; font-size:8px; border-top:2px solid #111; border-left:2px solid #111'>DISC. %</th>")
+                    .append("<th width='16%' style='width:16%; border-top:2px solid #111; border-left:2px solid #111'>AMOUNT</th>");
         }
         html.append("</tr>");
         int rows = 0;
@@ -537,7 +546,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             html.append("<td class='description' style='border-top:2px solid #111; border-left:2px solid #111'>").append(descriptionHtml(line.description())).append("</td>");
             if (!includeDelivery) {
                 html.append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.unitPrice()))).append("</td>")
-                        .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.amount()))).append("</td>");
+                        .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(percentText(line.discountPercent()))).append("</td>")
+                        .append("<td class='num' style='border-top:2px solid #111; border-left:2px solid #111'>").append(esc(money(line.discountedAmount()))).append("</td>");
             }
             html.append("</tr>");
         }
@@ -706,8 +716,14 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return esc(value).replace("'", "&#39;");
     }
 
+    private static String percentText(BigDecimal value) {
+        BigDecimal percent = value == null ? BigDecimal.ZERO : value;
+        return percent.stripTrailingZeros().toPlainString() + "%";
+    }
+
     private record DocumentLine(int quantity, Integer deliveredNow, Integer remaining,
-                                String description, BigDecimal unitPrice, BigDecimal amount) {
+                                String description, BigDecimal unitPrice, BigDecimal discountPercent,
+                                BigDecimal discountedAmount) {
     }
 
     private static void appendQuotationLines(StringBuilder out, Connection conn, long quotationId) throws SQLException {

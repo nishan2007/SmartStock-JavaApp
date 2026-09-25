@@ -30,7 +30,7 @@ public final class ServerCustomOrderDataService {
     public static List<CustomItemOption> listActiveItems(Connection conn) throws SQLException {
         List<CustomItemOption> options = new ArrayList<>();
         String sql = """
-                SELECT custom_item_id, item_name, sku, product_type, pricing_type, fixed_price,
+                SELECT custom_item_id, item_name, COALESCE(size,'') size, COALESCE(color,'') color, sku, product_type, pricing_type, fixed_price,
                        area_price, area_price_unit, dimension_unit, max_width, max_length,
                        COALESCE(has_variants, FALSE) AS has_variants,
                        is_active
@@ -51,6 +51,8 @@ public final class ServerCustomOrderDataService {
                 options.add(new CustomItemOption(
                         rs.getLong("custom_item_id"),
                         rs.getString("item_name"),
+                        rs.getString("size"),
+                        rs.getString("color"),
                         rs.getString("sku"),
                         rs.getString("product_type"),
                         rs.getString("pricing_type"),
@@ -76,11 +78,13 @@ public final class ServerCustomOrderDataService {
     public static List<VariantOption> listActiveVariants(Connection conn, long customItemId) throws SQLException {
         List<VariantOption> variants = new ArrayList<>();
         String sql = """
-                SELECT custom_variant_id, variant_name, sku, fixed_price
-                FROM custom_order_item_variants
-                WHERE custom_item_id = ?
-                  AND is_active = TRUE
-                ORDER BY variant_name
+                SELECT v.custom_variant_id, v.variant_name, COALESCE(v.size,'') size, COALESCE(v.color,'') color,
+                       COALESCE(NULLIF(v.size,''),i.size,'') effective_size,
+                       COALESCE(NULLIF(v.color,''),i.color,'') effective_color, v.sku, v.fixed_price
+                FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id
+                WHERE v.custom_item_id = ?
+                  AND v.is_active = TRUE
+                ORDER BY v.variant_name
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, customItemId);
@@ -89,6 +93,10 @@ public final class ServerCustomOrderDataService {
                     variants.add(new VariantOption(
                             rs.getLong("custom_variant_id"),
                             rs.getString("variant_name"),
+                            rs.getString("size"),
+                            rs.getString("color"),
+                            rs.getString("effective_size"),
+                            rs.getString("effective_color"),
                             rs.getString("sku"),
                             rs.getBigDecimal("fixed_price")
                     ));
@@ -310,9 +318,10 @@ public final class ServerCustomOrderDataService {
                     original_line_total, line_discount_percent, line_discount_amount,
                     line_discount_by_user_id, line_discount_by_name, line_discount_reason,
                     minimum_deposit_percent, original_base_price, price_override_price,
-                    price_override_reason, price_override_by_user_id, price_override_by_name
+                    price_override_reason, price_override_by_user_id, price_override_by_name,
+                    item_size, item_color
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String addonSql = """
                 INSERT INTO custom_order_line_print_addons (
@@ -469,6 +478,7 @@ public final class ServerCustomOrderDataService {
 
                 int sortOrder = 1;
                 for (OrderLineRequest line : request.lines()) {
+                    ItemAttributes attributes = resolveItemAttributes(conn, line.customItemId(), line.customVariantId(), line.itemSize(), line.itemColor());
                     setNullableLong(linePs, 2, line.customItemId());
                     linePs.setLong(1, orderId);
                     linePs.setString(3, line.itemName());
@@ -505,6 +515,8 @@ public final class ServerCustomOrderDataService {
                     linePs.setString(34, blankToNull(line.priceOverrideReason()));
                     setNullableInteger(linePs, 35, line.priceOverrideByUserId());
                     linePs.setString(36, blankToNull(line.priceOverrideByName()));
+                    linePs.setString(37, attributes.size());
+                    linePs.setString(38, attributes.color());
                     linePs.executeUpdate();
 
                     long lineId;
@@ -592,6 +604,25 @@ public final class ServerCustomOrderDataService {
             ps.setLong(index, value);
         }
     }
+
+    private static ItemAttributes resolveItemAttributes(Connection conn, Long itemId, Long variantId, String requestedSize, String requestedColor) throws SQLException {
+        String size=blankToNull(requestedSize),color=blankToNull(requestedColor);
+        if(itemId==null||(size!=null&&color!=null))return new ItemAttributes(size,color);
+        String sql="""
+                SELECT COALESCE(NULLIF(BTRIM(v.size), ''), NULLIF(BTRIM(i.size), '')),
+                       COALESCE(NULLIF(BTRIM(v.color), ''), NULLIF(BTRIM(i.color), ''))
+                FROM custom_order_items i
+                LEFT JOIN custom_order_item_variants v ON v.custom_variant_id=? AND v.custom_item_id=i.custom_item_id
+                WHERE i.custom_item_id=?
+                """;
+        try(PreparedStatement ps=conn.prepareStatement(sql)){
+            setNullableLong(ps,1,variantId);ps.setLong(2,itemId);
+            try(ResultSet rs=ps.executeQuery()){if(rs.next()){if(size==null)size=blankToNull(rs.getString(1));if(color==null)color=blankToNull(rs.getString(2));}}
+        }
+        return new ItemAttributes(size,color);
+    }
+
+    private record ItemAttributes(String size,String color){}
 
     private static void setNullableBigDecimal(PreparedStatement ps, int index, BigDecimal value) throws SQLException {
         if (value == null) {
@@ -758,13 +789,14 @@ public final class ServerCustomOrderDataService {
         return null;
     }
 
-    public record CustomItemOption(Long customItemId, String name, String sku, String productType, String pricingType,
+    public record CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
                                    BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
                                    String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
                                    BigDecimal maxLength) {
         @Override
         public String toString() {
-            String label = sku == null || sku.isBlank() ? name : name + " [" + sku + "]";
+            String label = attributeLabel(name,size,color);
+            if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
             if (hasVariants) {
                 return label + " (variants)";
             }
@@ -778,13 +810,16 @@ public final class ServerCustomOrderDataService {
         }
     }
 
-    public record VariantOption(Long variantId, String name, String sku, BigDecimal fixedPrice) {
+    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) {
         @Override
         public String toString() {
-            String label = sku == null || sku.isBlank() ? name : name + " [" + sku + "]";
+            String label = attributeLabel(name,effectiveSize,effectiveColor);
+            if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
             return fixedPrice == null ? label : label + " ($" + fixedPrice + ")";
         }
     }
+
+    private static String attributeLabel(String name,String size,String color){StringBuilder out=new StringBuilder(name==null?"":name);if(size!=null&&!size.isBlank())out.append(" / ").append(size);if(color!=null&&!color.isBlank())out.append(" / ").append(color);return out.toString();}
 
     public record LookupResult(Long customItemId, Long customVariantId) {
     }
@@ -893,7 +928,9 @@ public final class ServerCustomOrderDataService {
             String priceOverrideByName,
             List<PrintAddonRequest> printAddons,
             String lineDiscountApprovalToken,
-            String priceOverrideApprovalToken
+            String priceOverrideApprovalToken,
+            String itemSize,
+            String itemColor
     ) {
     }
 

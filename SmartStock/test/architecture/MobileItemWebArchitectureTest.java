@@ -96,4 +96,24 @@ class MobileItemWebArchitectureTest {
         assertTrue(product.contains("Cost price is required by Company Preferences."));
         assertTrue(product.contains("request.costPrice() == null ? BigDecimal.ZERO"));
     }
+
+    @Test void productEditorLoadsAndSavesColorAndFlavor()throws Exception{
+        String js=source("src/mobile-web/app.js");
+        assertTrue(js.contains("input('color','Color','text',p.color)"));
+        assertTrue(js.contains("input('flavor','Flavor','text',p.flavor)"));
+        assertTrue(js.contains("color:val(f,'color')"));
+        assertTrue(js.contains("flavor:val(f,'flavor')"));
+    }
+
+    @Test void addVariantsSelectsACustomItemWithVariantsEnabled()throws Exception{
+        String html=source("src/mobile-web/index.html");
+        String js=source("src/mobile-web/app.js");
+        assertTrue(html.contains("data-go=\"variants\""));
+        assertTrue(html.contains("Select a custom item with variants enabled"));
+        assertTrue(js.contains("item.hasVariants&&"));
+        assertTrue(js.contains("openEditor('variant',{itemId:x.itemId,parent:x})"));
+        assertTrue(js.contains("action:'SAVE_VARIANT'"));
+        assertFalse(js.contains("/products/variant-context"));
+        assertFalse(js.contains("/products/variants/save"));
+    }
 }

@@ -304,7 +304,7 @@ public class ViewInventory extends JFrame {
         if (!PermissionManager.hasPermission("EDIT_ITEM") || modelColumn < 0 || tableModel == null) return false;
         String name=tableModel.getColumnName(modelColumn);
         if ("Quantity".equals(name)) return PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
-        return List.of("Name","Size","Color","Flavor","Description","SKU","Type","Item Type","Brand","Shelf","Storage Shelf","Cost Price","Price","Reorder Level").contains(name);
+        return List.of("Name","Size","Color","Flavor","Description","SKU","Type","Category","Item Type","Brand","Shelf","Storage Shelf","Cost Price","Price","Reorder Level").contains(name);
     }
 
     private void installInlineEditing() {
@@ -339,7 +339,7 @@ public class ViewInventory extends JFrame {
         String field=switch(tableModel.getColumnName(modelColumn)){
             case"Name"->"NAME";case"Size"->"SIZE";case"Color"->"COLOR";case"Flavor"->"FLAVOR";case"Description"->"DESCRIPTION";case"SKU"->"SKU";
             case"Type"->"PRODUCT_TYPE";case"Cost Price"->"COST_PRICE";case"Price"->"PRICE";
-            case"Item Type"->"ITEM_TYPE";case"Brand"->"BRAND";case"Shelf"->"SHELF";case"Storage Shelf"->"STORAGE_SHELF";
+            case"Category"->"CATEGORY";case"Item Type"->"ITEM_TYPE";case"Brand"->"BRAND";case"Shelf"->"SHELF";case"Storage Shelf"->"STORAGE_SHELF";
             case"Quantity"->"QUANTITY";case"Reorder Level"->"REORDER_LEVEL";
             default->null;};
         if(field==null){tableModel.setValueAt(oldValue,modelRow,modelColumn);return;}
@@ -520,6 +520,9 @@ public class ViewInventory extends JFrame {
         loadingDetailFilters = true;
         try {
             allInventoryLookups = lookups;
+            JComboBox<String> categoryEditor = new JComboBox<>(lookups.departments().stream()
+                    .map(LanApiClient.NamedId::name).toArray(String[]::new));
+            inventoryTable.getColumn("Category").setCellEditor(new DefaultCellEditor(categoryEditor));
             replaceOptions(departmentFilterCombo, "All Departments",
                     lookups.departments().stream().map(LanApiClient.NamedId::name).toList());
             replaceOptions(brandFilterCombo, "All Brands", lookups.brands());

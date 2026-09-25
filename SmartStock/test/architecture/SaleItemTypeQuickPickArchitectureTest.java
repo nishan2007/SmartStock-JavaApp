@@ -17,7 +17,9 @@ class SaleItemTypeQuickPickArchitectureTest {
         assertTrue(server.contains("case \"ITEM_TYPE_QUICK_PICK\""));
         assertTrue(server.contains("WHERE location_id=?"));
         assertTrue(server.contains("Quick-pick item types cannot contain duplicates"));
+        assertTrue(server.contains("ORDER BY c.name,it.name,it.item_type_id"));
         assertTrue(preferences.contains("Sale Item-Type Buttons"));
+        assertTrue(preferences.contains("Search item types or departments"));
         assertTrue(preferences.contains("Move Up"));
         assertTrue(preferences.contains("selectedItemTypeQuickPickIds()"));
     }

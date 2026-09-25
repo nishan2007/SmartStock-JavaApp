@@ -14,6 +14,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Company Preferences administrator surface for the server image manifest. */
 public final class ImageStoragePanel extends JPanel {
@@ -27,7 +29,9 @@ public final class ImageStoragePanel extends JPanel {
     private final JLabel summary = new JLabel("Loading image storage...");
     private final JLabel preview = new JLabel("Select an image", SwingConstants.CENTER);
     private final JButton keepButton = new JButton("Keep");
-    private final JButton purgeButton = new JButton("Permanently Delete");
+    private final JButton selectUnusedButton = new JButton("Select All Unused");
+    private final JButton purgeButton = new JButton("Permanently Delete Selected");
+    private boolean busy;
     private LanApiClient.OneDriveSetup oneDriveSetup=new LanApiClient.OneDriveSetup("","","",false);
 
     public ImageStoragePanel() {
@@ -50,12 +54,11 @@ public final class ImageStoragePanel extends JPanel {
         actions.add(reconcile);
         actions.add(certificateButton);actions.add(setupOneDrive);actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
         actions.add(keepButton);
-        actions.add(purgeButton);
         heading.add(actions, BorderLayout.EAST);
         add(heading, BorderLayout.NORTH);
 
         table.setAutoCreateRowSorter(true);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         table.getColumnModel().getColumn(0).setMinWidth(0);
         table.getColumnModel().getColumn(0).setMaxWidth(0);
         table.getSelectionModel().addListSelectionListener(event -> {
@@ -66,6 +69,13 @@ public final class ImageStoragePanel extends JPanel {
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(table), preview);
         split.setResizeWeight(.78);
         add(split, BorderLayout.CENTER);
+        JPanel cleanup = new JPanel(new BorderLayout(8, 0));
+        cleanup.add(new JLabel("Unused images are checked again before deletion."), BorderLayout.WEST);
+        JPanel cleanupButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        cleanupButtons.add(selectUnusedButton);
+        cleanupButtons.add(purgeButton);
+        cleanup.add(cleanupButtons, BorderLayout.EAST);
+        add(cleanup, BorderLayout.SOUTH);
 
         refresh.addActionListener(event -> load());
         reconcile.addActionListener(event -> runAction("Reconciling images...", () -> {
@@ -87,6 +97,7 @@ public final class ImageStoragePanel extends JPanel {
                 return null;
             }, this::load);
         });
+        selectUnusedButton.addActionListener(event -> selectAllUnused());
         purgeButton.addActionListener(event -> purgeSelected());
         updateButtons();
         load();
@@ -130,6 +141,7 @@ public final class ImageStoragePanel extends JPanel {
 
     private void updateSelection() {
         updateButtons();
+        if (busy) return;
         String id = selectedId();
         if (id == null) {
             preview.setIcon(null);
@@ -164,25 +176,73 @@ public final class ImageStoragePanel extends JPanel {
     }
 
     private void purgeSelected() {
-        String id = selectedId();
-        if (id == null) return;
-        int row = table.convertRowIndexToModel(table.getSelectedRow());
-        String lifecycle = String.valueOf(model.getValueAt(row, 5));
-        if (!"UNUSED".equals(lifecycle) && !"DELETE_PENDING".equals(lifecycle)) {
-            JOptionPane.showMessageDialog(this, "Only images marked UNUSED can be permanently deleted.",
-                    "Image Storage", JOptionPane.WARNING_MESSAGE);
-            return;
+        int[] selected = table.getSelectedRows();
+        if (selected.length == 0) return;
+        List<String> ids = new ArrayList<>();
+        for (int viewRow : selected) {
+            int row = table.convertRowIndexToModel(viewRow);
+            if (!deletable(row)) {
+                JOptionPane.showMessageDialog(this, "Select only unused, unreferenced images for deletion.",
+                        "Image Storage", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            ids.add(String.valueOf(model.getValueAt(row, 0)));
         }
-        String filename = String.valueOf(model.getValueAt(row, 2));
+        // The summary comes from the server manifest; the server checks references
+        // again before every deletion, including when a photo changed since load.
+        String label = ids.size() == 1
+                ? "this image"
+                : ids.size() + " selected unused images";
         int answer = JOptionPane.showConfirmDialog(this,
-                "Permanently delete \"" + filename + "\" from the server and its assigned cloud provider?\n\n"
-                        + "SmartStock will check all references again before deletion.",
-                "Permanently Delete Image", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                "Permanently delete " + label + " from the server and assigned cloud providers?\n\n"
+                        + "SmartStock will check each image's references again before deletion.",
+                "Permanently Delete Images", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (answer != JOptionPane.YES_OPTION) return;
-        runAction("Deleting image...", () -> {
-            LanApiClient.purgeImageAsset(id);
-            return null;
-        }, this::load);
+        setBusy(true, "Deleting " + ids.size() + " selected image(s)...");
+        new SwingWorker<Integer, Void>() {
+            private final List<String> failures = new ArrayList<>();
+            @Override protected Integer doInBackground() {
+                int deleted = 0;
+                for (String id : ids) {
+                    try { LanApiClient.purgeImageAsset(id); deleted++; }
+                    catch (Exception ex) { failures.add(id + ": " + ex.getMessage()); }
+                }
+                return deleted;
+            }
+            @Override protected void done() {
+                try {
+                    int deleted = get();
+                    JOptionPane.showMessageDialog(ImageStoragePanel.this,
+                            deleted + " image(s) deleted." + (failures.isEmpty() ? "" :
+                                    "\n" + failures.size() + " could not be deleted. The server kept any referenced images.\n"
+                                            + String.join("\n", failures.subList(0, Math.min(3, failures.size())))),
+                            "Image Storage", failures.isEmpty() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
+                } catch (Exception ex) { showError(ex); }
+                load();
+            }
+        }.execute();
+    }
+
+    private void selectAllUnused() {
+        ListSelectionModel selection = table.getSelectionModel();
+        selection.setValueIsAdjusting(true);
+        try {
+            table.clearSelection();
+            for (int viewRow = 0; viewRow < table.getRowCount(); viewRow++) {
+                int modelRow = table.convertRowIndexToModel(viewRow);
+                if ("UNUSED".equals(model.getValueAt(modelRow, 5)) && deletable(modelRow)) {
+                    table.addRowSelectionInterval(viewRow, viewRow);
+                }
+            }
+        } finally { selection.setValueIsAdjusting(false); }
+        if (table.getSelectedRowCount() == 0) JOptionPane.showMessageDialog(this,
+                "No unused, unreferenced images are available to select.", "Image Storage", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private boolean deletable(int modelRow) {
+        String lifecycle = String.valueOf(model.getValueAt(modelRow, 5));
+        int references = ((Number) model.getValueAt(modelRow, 4)).intValue();
+        return references == 0 && ("UNUSED".equals(lifecycle) || "DELETE_PENDING".equals(lifecycle));
     }
 
     private void setupOneDrive(){
@@ -255,11 +315,16 @@ public final class ImageStoragePanel extends JPanel {
     }
 
     private void updateButtons() {
-        int row = table.getSelectedRow();
-        boolean selected = row >= 0;
-        String status = selected ? String.valueOf(model.getValueAt(table.convertRowIndexToModel(row), 5)) : "";
-        keepButton.setEnabled(selected && ("UNUSED".equals(status) || "DELETE_PENDING".equals(status)));
-        purgeButton.setEnabled(selected && ("UNUSED".equals(status) || "DELETE_PENDING".equals(status)));
+        int[] rows = table.getSelectedRows();
+        boolean deletableSelection = rows.length > 0;
+        for (int row : rows) deletableSelection &= deletable(table.convertRowIndexToModel(row));
+        boolean anyUnused = false;
+        for (int row = 0; row < model.getRowCount(); row++) {
+            if ("UNUSED".equals(model.getValueAt(row, 5)) && deletable(row)) { anyUnused = true; break; }
+        }
+        keepButton.setEnabled(!busy && rows.length == 1 && deletableSelection);
+        selectUnusedButton.setEnabled(!busy && anyUnused);
+        purgeButton.setEnabled(!busy && deletableSelection);
     }
 
     private String selectedId() {
@@ -268,6 +333,7 @@ public final class ImageStoragePanel extends JPanel {
     }
 
     private void setBusy(boolean busy, String text) {
+        this.busy = busy;
         table.setEnabled(!busy);
         if (text != null) summary.setText(text);
         updateButtons();

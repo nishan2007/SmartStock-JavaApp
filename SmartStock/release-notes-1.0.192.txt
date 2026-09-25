@@ -1,0 +1,8 @@
+SmartStock 1.0.192
+
+Add native CT221B registration-hole sensing.
+
+- Print CT221B price-tag rows through native TSPL instead of generic Windows raster pages.
+- Select transmissive gap/notch media for label rolls with registration holes.
+- Calibrate the gap sensor from the configured label length and row gap before printing.
+- Keep other label-printer models on their existing Windows-driver path.

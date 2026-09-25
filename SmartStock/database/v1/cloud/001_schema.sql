@@ -4984,3 +4984,18 @@ DO $$ BEGIN
  END IF;
 END $$;
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_item_type_ids)='array');
+ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_size_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_size_item_type_ids)='array');
+ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_photo_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_photo_item_type_ids)='array');
+ALTER TABLE public.custom_order_items ADD COLUMN IF NOT EXISTS sell_in_pos boolean NOT NULL DEFAULT false;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS catalog_source text NOT NULL DEFAULT 'PRODUCT';
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS custom_item_id bigint;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS custom_variant_id bigint;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS sku_snapshot text;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS brand_snapshot text;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS size_snapshot text;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS color_snapshot text;
+ALTER TABLE public.sale_return_items ALTER COLUMN product_id DROP NOT NULL;
+ALTER TABLE public.sale_return_items ADD COLUMN IF NOT EXISTS custom_item_id bigint;
+ALTER TABLE public.sale_return_items ADD COLUMN IF NOT EXISTS custom_variant_id bigint;
+ALTER TABLE public.custom_order_item_movements ADD COLUMN IF NOT EXISTS sale_id integer;
+ALTER TABLE public.custom_order_item_movements ADD COLUMN IF NOT EXISTS sale_item_id integer;

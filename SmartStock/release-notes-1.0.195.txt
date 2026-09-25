@@ -1,0 +1,8 @@
+SmartStock 1.0.195
+
+Improve inventory receiving for case-based stock and product variants.
+
+- Enter the quantity contained in each case and the number of cases received.
+- Default the case count to one and calculate the total units to add automatically.
+- Search receiving inventory by product color and flavor.
+- Show Color and Flavor in receiving search results to distinguish similar products.

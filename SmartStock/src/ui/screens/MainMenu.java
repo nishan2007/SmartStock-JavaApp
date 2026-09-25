@@ -1175,7 +1175,7 @@ public class MainMenu extends JFrame {
         boolean canEnterInventory = PermissionManager.hasPermission("RECEIVING_INVENTORY");
         boolean canReceivingHistory = PermissionManager.hasPermission("VIEW_RECEIVING_HISTORY");
         boolean canStoreTransfer = PermissionManager.hasPermission("STORE_TRANSFER");
-        boolean canCustomOrderItems = PermissionManager.hasPermission("MANUAL_ADJUSTMENT");
+        boolean canCustomOrderItems = PermissionManager.canManageCustomItems();
         boolean canDepartmentManagement = PermissionManager.hasPermission("DEPARTMENT_MANAGEMENT");
         boolean canVendorManagement = PermissionManager.hasPermission("VENDOR_MANAGEMENT");
         boolean canViewSales = PermissionManager.hasPermission("VIEW_SALES");
@@ -1362,7 +1362,7 @@ public class MainMenu extends JFrame {
             NavigationManager.openStoreTransfer(this);
         });
         customOrderItemsButton.addActionListener(e -> {
-            if (!PermissionManager.requirePermission("MANUAL_ADJUSTMENT", this, "Custom Order Items")) {
+            if (!PermissionManager.requireCustomItemPermission(this)) {
                 return;
             }
             NavigationManager.openCustomOrderItems(this);

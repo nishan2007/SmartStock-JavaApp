@@ -1,0 +1,6 @@
+SmartStock 1.0.212
+
+Fix invoice payment processing.
+
+- Correct invoice financial loading so the payment dialog can retrieve the customer and balance details.
+- Prevent the generic server error that appeared before an invoice payment could be recorded.

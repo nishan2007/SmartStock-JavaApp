@@ -17,6 +17,7 @@ public final class QuotationInvoiceViewService {
     public static List<QuotationSummary> listQuotations() throws SQLException { return list("LIST_QUOTES", "rows", new TypeToken<List<QuotationSummary>>(){}.getType()); }
     public static List<InvoiceSummary> listInvoices() throws SQLException { return list("LIST_INVOICES", "rows", new TypeToken<List<InvoiceSummary>>(){}.getType()); }
     public static List<DeliverySummary> listDeliveries() throws SQLException { return list("LIST_DELIVERIES", "rows", new TypeToken<List<DeliverySummary>>(){}.getType()); }
+    public static List<PaymentSummary> listPayments() throws SQLException { return list("LIST_PAYMENTS", "rows", new TypeToken<List<PaymentSummary>>(){}.getType()); }
     public static List<AuditEntry> listAudit() throws SQLException { return list("LIST_AUDIT", "rows", new TypeToken<List<AuditEntry>>(){}.getType()); }
     public static List<CustomerOption> listCustomers() throws SQLException { return searchCustomers(""); }
     public static List<CustomerOption> searchCustomers(String text) throws SQLException { JsonObject b=new JsonObject();b.addProperty("search",text);return list("SEARCH_CUSTOMERS",b,"rows",new TypeToken<List<CustomerOption>>(){}.getType()); }
@@ -36,6 +37,7 @@ public final class QuotationInvoiceViewService {
     public record QuotationEditLine(Integer productId,String itemName,String sku,int quantity,BigDecimal unitPrice,BigDecimal originalUnitPrice,BigDecimal discountPercent,String deliveryMethod,String notes,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName,QuotationInvoiceService.CustomLineInput custom){}
     public record InvoiceSummary(long invoiceId,String invoiceNumber,String customerName,String status,String paymentStatus,BigDecimal balanceDue,String quotationNumber){}
     public record DeliverySummary(long deliveryEventId,String deliveryNumber,String invoiceNumber,String customerName,String deliveryMethod,BigDecimal balanceDue,String createdAt){}
+    public record PaymentSummary(long transactionId,int customerId,String invoiceNumber,String customerName,BigDecimal amount,String paymentMethod,String paymentReference,String takenBy,String createdAt){}
     public record InvoiceFinancials(long invoiceId,String invoiceNumber,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal balanceDue,BigDecimal customerBalance,BigDecimal creditLimit,BigDecimal availableCredit,int customerId,String customerName,boolean requireChargeAuthorization){}
     public record AuditEntry(String createdAt,String document,String actionType,String fieldName,String oldValue,String newValue,String userName,String reason){}
     public record CustomerOption(int customerId,String accountNumber,String name,boolean business,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent){public CustomerOption(int customerId,String accountNumber,String name,boolean business){this(customerId,accountNumber,name,business,false,BigDecimal.ZERO);}@Override public String toString(){return(business?"[Business] ":"")+name+(accountNumber==null||accountNumber.isBlank()?"":" ("+accountNumber+")");}}

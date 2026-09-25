@@ -1,0 +1,11 @@
+SmartStock 1.0.207
+
+Improve custom-item cataloging, sales, and price-tag workflows.
+
+- Add optional size and color identifiers to custom items and variants.
+- Add brand support for custom items and variants, including variant inheritance.
+- Allow photos to be handed off from the desktop form and uploaded from a phone.
+- Add an opt-in “Sell in normal POS” setting for each custom item.
+- Sell enabled blank shirts, cups, and their variants through the normal checkout flow without creating a print order.
+- Preserve custom item identity on receipts and returns and update the correct custom inventory record.
+- Support custom parent items and variants in price-tag printing.

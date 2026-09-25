@@ -77,6 +77,7 @@ public class BalanceDraw extends JFrame {
     private final JButton backButton = new JButton("Main Menu");
 
     private CashDrawerSession activeSession;
+    private CashDrawerHandover pendingHandover;
     private BigDecimal expectedCash = BigDecimal.ZERO;
     private BigDecimal expectedFloatCash = BigDecimal.ZERO;
     private BigDecimal currentFloatTotal = BigDecimal.ZERO;
@@ -99,7 +100,8 @@ public class BalanceDraw extends JFrame {
         denominationModel = new DefaultTableModel(new Object[]{"$$", "QTY", "FLOAT", "CIH"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 1 && activeSession != null && row < DENOMINATIONS.length;
+                return column == 1 && activeSession != null && row < DENOMINATIONS.length
+                        && (pendingHandover==null || !java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId()));
             }
 
             @Override
@@ -257,7 +259,8 @@ public class BalanceDraw extends JFrame {
     }
 
     private void applyState(LanApiClient.CashDrawerRegisterState state) {
-            activeSession=state.session();drawerLabel.setText(state.drawerName()==null?"Unassigned":state.drawerName());
+            activeSession=state.session();pendingHandover=state.pendingHandover();drawerLabel.setText(state.drawerName()==null?"Unassigned":state.drawerName());
+            handoverButton.setText(pendingHandover==null?"Confirm Handover":"Confirm Handover / Resume Draw");
             if (state.drawerId()==null) {
                 statusLabel.setText("This register is not assigned to an active cash drawer.");
                 mainCashierLabel.setText("-");
@@ -301,9 +304,20 @@ public class BalanceDraw extends JFrame {
             clearQtyButton.setEnabled(true);
             handoverButton.setEnabled(true);
             closeButton.setEnabled(true);
+            if(pendingHandover!=null) {
+                statusLabel.setText("Awaiting takeover. The next cashier must recount and confirm to resume the draw.");
+                handoverButton.setEnabled(!java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId()));
+                boolean incoming=!java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId());
+                calculateFloatButton.setEnabled(incoming);
+                clearQtyButton.setEnabled(incoming);
+                closeButton.setEnabled(false);
+                clearQuantityDraft(activeSession.sessionId());
+            } else {
+                handoverButton.setEnabled(java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId()));
+            }
             editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
-            restoreQuantityDraft(activeSession.sessionId());
+            if(pendingHandover==null)restoreQuantityDraft(activeSession.sessionId());
             restoreServerDraft(activeSession.sessionId());
     }
 
@@ -340,9 +354,11 @@ public class BalanceDraw extends JFrame {
         }
         int confirm = JOptionPane.showConfirmDialog(
                 this,
-                "Confirm handover from " + displayName(activeSession.currentCashierName())
-                        + " to " + displayName(SessionManager.getCurrentUserDisplayName())
-                        + " with " + CURRENCY.format(countedCash) + " in the draw?",
+                pendingHandover==null
+                        ? "Confirm your outgoing count of " + CURRENCY.format(countedCash) + "?\nThe draw will await the next cashier's recount and acceptance."
+                        : "Accept the draw from " + displayName(activeSession.currentCashierName())
+                          + " as " + displayName(SessionManager.getCurrentUserDisplayName())
+                          + " with " + CURRENCY.format(countedCash) + " and resume the draw?",
                 "Confirm Handover",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE
@@ -350,12 +366,16 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+countedCash);
-        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,quantitySnapshot(),floatSnapshot(),currentFloatTotal,currentCihTotal,key),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+        boolean accepting=pendingHandover!=null;
+        long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+accepting+"|"+countedCash);
+        var quantities=quantitySnapshot();var floats=floatSnapshot();var floatTotal=currentFloatTotal;var cih=currentCihTotal;
+        draftTimer.stop();draftDirty=false;
+        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,quantities,floats,floatTotal,cih,key,accepting),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             clearQuantityDraft(sessionId);
             JOptionPane.showMessageDialog(
                     this,
-                    "Handover confirmed.\nFrom: " + displayName(handover.fromUserName())
+                    handover.toUserName()==null ? "Outgoing count confirmed. The next cashier must sign in, recount, and confirm to resume the draw."
+                    : "Draw resumed.\nFrom: " + displayName(handover.fromUserName())
                             + "\nTo: " + displayName(handover.toUserName())
                             + "\nCounted: " + CURRENCY.format(handover.countedCash())
             );
@@ -706,7 +726,15 @@ public class BalanceDraw extends JFrame {
     }
 
     private void restoreServerDraft(long sessionId){
-        UiTaskRunner.submit(this,"cash-drawer.draft-load",()->LanApiClient.loadCashDrawerDraft(sessionId),draft->{if(activeSession==null||activeSession.sessionId()!=sessionId)return;if(draft==null){draftRevision=0;draftStatusLabel.setText("No saved draft");return;}draftRevision=draft.revisionNo();updatingTable=true;for(int row=0;row<DENOMINATIONS.length;row++){Integer value=draft.denominationCounts()==null?null:draft.denominationCounts().get(String.valueOf(DENOMINATIONS[row]));denominationModel.setValueAt(value==null?null:Math.max(value,0),row,1);}currentFloatCounts=new HashMap<>();if(draft.floatCounts()!=null)draft.floatCounts().forEach((k,v)->{try{currentFloatCounts.put(Integer.parseInt(k),Math.max(v==null?0:v,0));}catch(Exception ignored){}});floatCalculated=currentFloatCounts.values().stream().anyMatch(v->v!=null&&v>0);updatingTable=false;recalculateDenominations();draftStatusLabel.setText("Draft restored");},ex->draftStatusLabel.setText("Server draft unavailable — local copy kept"));
+        UiTaskRunner.submit(this,"cash-drawer.draft-load",()->LanApiClient.loadCashDrawerDraft(sessionId),draft->{
+            if(activeSession==null||activeSession.sessionId()!=sessionId)return;
+            if(draft==null){draftRevision=0;draftStatusLabel.setText("No saved draft");return;}
+            draftRevision=draft.revisionNo();
+            updatingTable=true;
+            for(int row=0;row<DENOMINATIONS.length;row++){Integer value=draft.denominationCounts()==null?null:draft.denominationCounts().get(String.valueOf(DENOMINATIONS[row]));denominationModel.setValueAt(value==null?null:Math.max(value,0),row,1);}
+            currentFloatCounts=new HashMap<>();if(draft.floatCounts()!=null)draft.floatCounts().forEach((k,v)->{try{currentFloatCounts.put(Integer.parseInt(k),Math.max(v==null?0:v,0));}catch(Exception ignored){}});
+            floatCalculated=currentFloatCounts.values().stream().anyMatch(v->v!=null&&v>0);updatingTable=false;recalculateDenominations();draftStatusLabel.setText(pendingHandover==null?"Draft restored":"Handover count restored — check before accepting");
+        },ex->draftStatusLabel.setText("Server draft unavailable — local copy kept"));
     }
 
     private void restoreQuantityDraft(long sessionId) {

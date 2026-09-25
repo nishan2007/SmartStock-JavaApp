@@ -1,0 +1,7 @@
+SmartStock 1.0.193
+
+Correct price formatting on compact labels.
+
+- Print whole price-tag amounts without thousands separators or decimal digits.
+- Keep the local currency symbol while rendering values such as 18000 as $18000.
+- Leave receipt, accounting, and reporting formats unchanged.

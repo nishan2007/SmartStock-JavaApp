@@ -1637,6 +1637,7 @@ public class EmployeeManagement extends JFrame {
         },result->{
             employeePhotoField.setText(result.photoUrl());employeeIdCardDocumentField.setText(result.documentUrl());refreshEmployeePhotoPreview();
             SessionDataCache.invalidate("employee-admin:");
+            SessionDataCache.invalidate("payroll:");
             JOptionPane.showMessageDialog(this, "Employee updated successfully.");
             clearFields();
             loadEmployees();
@@ -1924,16 +1925,16 @@ public class EmployeeManagement extends JFrame {
             EmployeePayrollSettingsService.PayrollSetting displayed = view.pending() == null
                     ? view.current() : view.pending();
             payrollPeriodBox.setSelectedItem(displayed.periodType());
-            workHourLimitField.setText(displayed.workHourLimit().stripTrailingZeros().toPlainString());
+            workHourLimitField.setText(view.current().workHourLimit().stripTrailingZeros().toPlainString());
             originalPayrollPeriodType = displayed.periodType();
-            originalWorkHourLimit = displayed.workHourLimit();
+            originalWorkHourLimit = view.current().workHourLimit();
             if ("SALARY".equalsIgnoreCase(compensationType)) {
                 payrollSettingsStatusLabel.setText(displayed.periodType().label()
                         + "; salary is paid in full once per period and overtime does not apply.");
             } else if (!EmployeePayrollSettingsService.isHourly(compensationType)) {
                 payrollSettingsStatusLabel.setText("Semi-monthly; overtime does not apply to this pay type.");
             } else if (view.pending() == null) {
-                payrollSettingsStatusLabel.setText("Current since " + view.current().effectiveFrom());
+                payrollSettingsStatusLabel.setText("Hour-limit edits apply to the current pay period (since " + view.current().effectiveFrom() + ").");
             } else {
                 payrollSettingsStatusLabel.setText("Current: " + view.current().periodType().label()
                         + " / " + view.current().workHourLimit().stripTrailingZeros().toPlainString()

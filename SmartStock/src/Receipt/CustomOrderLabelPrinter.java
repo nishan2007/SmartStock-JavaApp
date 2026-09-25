@@ -87,7 +87,7 @@ public final class CustomOrderLabelPrinter {
                 && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
             printToReceiptService(data, count, service);
         } else {
-            printToService(data, count, service);
+            printToService(data, count, service, isCt221b(printer.systemName()) || isCt221b(printer.displayName()));
         }
     }
 
@@ -145,12 +145,21 @@ public final class CustomOrderLabelPrinter {
     }
 
     static void printToService(CustomOrderSlipData data, int count, PrintService service) throws PrintException {
+        printToService(data, count, service, isCt221b(service.getName()));
+    }
+
+    public static boolean isCt221b(String name) {
+        return name != null && name.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "").contains("CT221B");
+    }
+
+    private static void printToService(CustomOrderSlipData data, int count, PrintService service, boolean ct221b) throws PrintException {
+        parseLabelCount(String.valueOf(count));
         BufferedImage label = render(data);
         PrinterJob job = PrinterJob.getPrinterJob();
         job.setJobName("SmartStock Order Labels " + data.orderNumber());
         try {
             job.setPrintService(service);
-            PageFormat format = createPageFormat(job);
+            PageFormat format = ct221b ? createCt221bPageFormat(job.defaultPage()) : createPageFormat(job);
             job.setPrintable((graphics, pageFormat, pageIndex) -> printPage(graphics, pageFormat, pageIndex, label, count), format);
             job.print();
         } catch (PrinterException ex) {
@@ -186,7 +195,13 @@ public final class CustomOrderLabelPrinter {
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.translate(format.getImageableX(), format.getImageableY());
-            g.drawImage(label, 0, 0, (int) format.getImageableWidth(), (int) format.getImageableHeight(), null);
+            double scale = Math.min(format.getImageableWidth() / label.getWidth(),
+                    format.getImageableHeight() / label.getHeight());
+            int width = Math.max(1, (int) Math.floor(label.getWidth() * scale));
+            int height = Math.max(1, (int) Math.floor(label.getHeight() * scale));
+            int x = (int) ((format.getImageableWidth() - width) / 2);
+            int y = (int) ((format.getImageableHeight() - height) / 2);
+            g.drawImage(label, x, y, width, height, null);
         } finally {
             g.dispose();
         }
@@ -202,6 +217,32 @@ public final class CustomOrderLabelPrinter {
         paper.setImageableArea(margin, margin, width - margin * 2, height - margin * 2);
         PageFormat format = job.defaultPage();
         format.setOrientation(PageFormat.PORTRAIT);
+        format.setPaper(paper);
+        return format;
+    }
+
+    /** Keep the loaded stock dimensions from the CT221B driver's printing preferences. */
+    static PageFormat createCt221bPageFormat(PageFormat driverFormat) throws PrintException {
+        PageFormat format = (PageFormat) driverFormat.clone();
+        format.setOrientation(PageFormat.PORTRAIT);
+        Paper paper = format.getPaper();
+        double mm = 72.0 / 25.4;
+        if (!Double.isFinite(paper.getWidth()) || !Double.isFinite(paper.getHeight())
+                || paper.getWidth() < 25 * mm || paper.getWidth() > 54.5 * mm || paper.getHeight() <= 0) {
+            throw new PrintException("Set the CT221B label paper size in the printer driver's Printing Preferences "
+                    + "to match the loaded roll (25–54 mm wide), then try again.");
+        }
+        double width = Math.min(48 * mm, paper.getWidth() - 2 * mm);
+        double left = Math.max((paper.getWidth() - width) / 2, paper.getImageableX());
+        double top = Math.max(mm, paper.getImageableY());
+        double right = Math.min((paper.getWidth() + width) / 2,
+                paper.getImageableX() + paper.getImageableWidth());
+        double bottom = Math.min(paper.getHeight() - mm,
+                paper.getImageableY() + paper.getImageableHeight());
+        if (!Double.isFinite(left + top + right + bottom) || right <= left || bottom <= top) {
+            throw new PrintException("The CT221B driver reports no printable label area. Check its paper size and margins.");
+        }
+        paper.setImageableArea(left, top, right - left, bottom - top);
         format.setPaper(paper);
         return format;
     }

@@ -1,0 +1,8 @@
+SmartStock 1.0.198
+
+Add phone photo handoff for custom items and variants.
+
+- Enter and save custom-item details on the computer, then display a QR code for the photo.
+- Take or choose the item photo on a phone connected to the store network.
+- Attach the uploaded photo directly to the selected custom item or variant.
+- Protect each upload with a single-use link that expires after ten minutes.

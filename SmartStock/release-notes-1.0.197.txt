@@ -1,0 +1,7 @@
+SmartStock 1.0.197
+
+Fix multi-page Letter-size bill printing.
+
+- Keep every receipt line when a bill continues onto a second or later page.
+- Account for the first-page company logo consistently during pagination.
+- Reserve barcode space on the final page without cutting off item details.

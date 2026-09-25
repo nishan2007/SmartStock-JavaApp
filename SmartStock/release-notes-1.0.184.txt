@@ -1,0 +1,7 @@
+SmartStock 1.0.184
+
+Add inventory product details to the Mobile Item Web App.
+
+- Add Color and Flavor fields when creating inventory products from a phone or tablet.
+- Load existing Color and Flavor values when editing an inventory product.
+- Save both fields through the authenticated local-first mobile API.

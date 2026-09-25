@@ -1,0 +1,8 @@
+SmartStock 1.0.191
+
+Improve compact price-tag printing.
+
+- Support 1/2 by 1 inch CT221B label stock at the printer's native 203 DPI.
+- Automatically rotate Code 128 barcodes to use the label's longer axis when needed.
+- Prevent valid mixed letter-and-number SKUs such as 10FR-0001 from being rejected by redundant barcode margins.
+- Preserve exact physical label dimensions when printing through larger Windows driver pages.

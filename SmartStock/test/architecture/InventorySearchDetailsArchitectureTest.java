@@ -14,11 +14,13 @@ class InventorySearchDetailsArchitectureTest {
 
         assertTrue(edit.contains("TableImageHoverPreview.install(this, table, 15"));
         assertTrue(edit.contains("int[] hiddenColumns = {0, 5, 6, 10, 11, 13, 15, 18, 19}"));
-        for(String heading:new String[]{"Item Type", "Brand", "Price", "Image URL"})
+        for(String heading:new String[]{"Item Type", "Brand", "Price", "Color", "Flavor", "Image URL"})
             assertTrue(receiving.contains("\""+heading+"\""));
-        assertTrue(receiving.contains("TableImageHoverPreview.install(this, searchResultsTable, 9"));
+        assertTrue(receiving.contains("TableImageHoverPreview.install(this, searchResultsTable, 11"));
         assertTrue(service.contains("COALESCE(it.name,'') item_type_name"));
         assertTrue(service.contains("COALESCE(ib.name,'') brand_name"));
-        assertTrue(client.contains("String itemTypeName,String brandName,BigDecimal price,String imageUrl"));
+        assertTrue(service.contains("COALESCE(p.color,'') color"));
+        assertTrue(service.contains("COALESCE(p.flavor,'') flavor"));
+        assertTrue(client.contains("String itemTypeName,String brandName,BigDecimal price,String color,String flavor,String imageUrl"));
     }
 }

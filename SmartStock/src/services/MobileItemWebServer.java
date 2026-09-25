@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Opt-in, store-LAN-only mobile item UI and its separately bound API. */
 public final class MobileItemWebServer implements AutoCloseable {
@@ -51,6 +52,8 @@ public final class MobileItemWebServer implements AutoCloseable {
     private final ExecutorService executor;
     private final LanApiServer owner;
     private final String host;
+    private final Map<String,PhotoHandoff> photoHandoffsByToken=new ConcurrentHashMap<>();
+    private final Map<UUID,PhotoHandoff> photoHandoffsById=new ConcurrentHashMap<>();
 
     private MobileItemWebServer(HttpsServer ui, HttpsServer api, ExecutorService executor,
                                 LanApiServer owner, String host) {
@@ -78,7 +81,7 @@ public final class MobileItemWebServer implements AutoCloseable {
         try {
             requireLan(x); String path=x.getRequestURI().getPath();
             if(path.startsWith("/api/v1/")){api(x);return;}
-            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";default->null;};
+            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";case "/photo.html"->"mobile-web/photo.html";case "/photo.js"->"mobile-web/photo.js";default->null;};
             if(resource==null){sendText(x,404,"text/plain; charset=utf-8","Not found");return;}
             try(InputStream in=MobileItemWebServer.class.getClassLoader().getResourceAsStream(resource)){
                 if(in==null){sendText(x,404,"text/plain; charset=utf-8","Web asset missing");return;}
@@ -118,6 +121,8 @@ public final class MobileItemWebServer implements AutoCloseable {
                 case "/barcodes/scan"->barcodeScan(requireSession(x,true),body);
                 case "/images/upload"->imageUpload(x,requireSession(x,true),body);
                 case "/images/fetch"->imageFetch(requireSession(x,false),body);
+                case "/photo/target"->photoTarget(body);
+                case "/photo/upload"->photoUpload(body);
                 default->throw new WebError(404,"NOT_FOUND","Web API route not found.");
             };
             sendJson(x,200,Map.of("ok",true,"data",result==null?Map.of():result));
@@ -204,6 +209,60 @@ public final class MobileItemWebServer implements AutoCloseable {
     private Object imageUpload(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");byte[] bytes=Base64.getDecoder().decode(text(b,"bytesBase64",16*1024*1024));if(bytes.length>2*1024*1024)throw new WebError(413,"IMAGE_TOO_LARGE","The optimized image must be 2 MB or smaller.");bytes=optimizeJpeg(bytes);String requested=optional(b,"category").toUpperCase(java.util.Locale.ROOT),category=switch(requested){case"CUSTOM_ITEM","CUSTOM_VARIANT"->requested;default->"PRODUCT";};String name=StorageObjectNameBuilder.productImageFilename("image.jpg",Long.toString(System.currentTimeMillis()),optional(b,"productName"),optional(b,"brand"),optional(b,"type"),optional(b,"size"),optional(b,"variant"));try(Connection c=DB.getConnection()){String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);return Map.of("reference",ref,"cloudStatus","PENDING");}}
     private Object imageFetch(Session s,JsonObject b)throws Exception{ServerImageAssetService.AssetBytes a=ServerImageAssetService.load(text(b,"reference",1000));return Map.of("contentType",a.contentType(),"bytesBase64",Base64.getEncoder().encodeToString(a.bytes()));}
 
+    public Map<String,Object> issuePhotoHandoff(String targetType,long targetId,int userId)throws Exception{
+        String type=normalizePhotoTarget(targetType);PhotoTarget target=loadPhotoTarget(type,targetId);
+        String token=LanSecurity.randomToken();UUID id=UUID.randomUUID();Instant expires=Instant.now().plus(Duration.ofMinutes(10));
+        PhotoHandoff handoff=new PhotoHandoff(id,LanSecurity.sha256(token),type,targetId,target.name(),target.productName(),target.brand(),target.itemType(),target.variant(),userId,expires);
+        purgePhotoHandoffs();photoHandoffsByToken.put(handoff.tokenHash,handoff);photoHandoffsById.put(id,handoff);
+        return Map.of("handoffId",id.toString(),"url",url()+"photo.html?token="+java.net.URLEncoder.encode(token,StandardCharsets.UTF_8),"expiresAt",expires.toString(),"targetName",target.name());
+    }
+
+    public Map<String,Object> photoHandoffStatus(UUID id,int userId)throws Exception{
+        purgePhotoHandoffs();PhotoHandoff h=photoHandoffsById.get(id);
+        if(h==null||h.createdBy!=userId)throw new WebError(404,"PHOTO_HANDOFF_NOT_FOUND","This phone photo request is no longer available.");
+        Map<String,Object> out=new LinkedHashMap<>();out.put("handoffId",h.id.toString());out.put("targetName",h.targetName);out.put("expiresAt",h.expiresAt.toString());out.put("uploaded",h.usedAt!=null);out.put("expired",h.expiresAt.isBefore(Instant.now()));out.put("reference",h.reference==null?"":h.reference);return out;
+    }
+
+    private Object photoTarget(JsonObject b)throws Exception{
+        PhotoHandoff h=requirePhotoHandoff(text(b,"token",300));
+        return Map.of("targetName",h.targetName,"targetType",h.targetType,"expiresAt",h.expiresAt.toString());
+    }
+
+    private Object photoUpload(JsonObject b)throws Exception{
+        PhotoHandoff h=requirePhotoHandoff(text(b,"token",300));byte[] bytes;
+        try{bytes=Base64.getDecoder().decode(text(b,"bytesBase64",16*1024*1024));}catch(IllegalArgumentException e){throw new WebError(400,"IMAGE_INVALID","Choose a valid photo.");}
+        if(bytes.length>2*1024*1024)throw new WebError(413,"IMAGE_TOO_LARGE","The optimized image must be 2 MB or smaller.");bytes=optimizeJpeg(bytes);
+        synchronized(h){
+            if(h.usedAt!=null)throw new WebError(409,"PHOTO_HANDOFF_USED","A photo was already uploaded with this link.");
+            if(!h.expiresAt.isAfter(Instant.now()))throw new WebError(410,"PHOTO_HANDOFF_EXPIRED","This photo link has expired. Create a new one on the computer.");
+            String category="variant".equals(h.targetType)?"CUSTOM_VARIANT":"CUSTOM_ITEM";
+            String name=StorageObjectNameBuilder.productImageFilename("image.jpg",Long.toString(System.currentTimeMillis()),h.productName,h.brand,h.itemType,"",h.variant);
+            try(Connection c=DB.getConnection()){
+                c.setAutoCommit(false);try{
+                    String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);
+                    String sql="variant".equals(h.targetType)?"UPDATE custom_order_item_variants SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE custom_variant_id=?":"UPDATE custom_order_items SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?";
+                    try(PreparedStatement p=c.prepareStatement(sql)){p.setString(1,ref);p.setLong(2,h.targetId);if(p.executeUpdate()!=1)throw new WebError(404,"PHOTO_TARGET_NOT_FOUND","The saved custom item could not be found.");}
+                    audit(c,"CUSTOM_ITEM_PHONE_PHOTO_UPLOADED",h.createdBy,"Uploaded phone photo for "+h.targetType+" ID "+h.targetId);c.commit();h.reference=ref;h.usedAt=Instant.now();return Map.of("uploaded",true,"reference",ref);
+                }catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}
+            }
+        }
+    }
+
+    private PhotoHandoff requirePhotoHandoff(String token)throws WebError{
+        purgePhotoHandoffs();PhotoHandoff h=photoHandoffsByToken.get(LanSecurity.sha256(token));
+        if(h==null)throw new WebError(404,"PHOTO_HANDOFF_INVALID","This photo link is invalid or no longer available.");
+        if(h.usedAt!=null)throw new WebError(409,"PHOTO_HANDOFF_USED","A photo was already uploaded with this link.");
+        if(!h.expiresAt.isAfter(Instant.now()))throw new WebError(410,"PHOTO_HANDOFF_EXPIRED","This photo link has expired. Create a new one on the computer.");return h;
+    }
+
+    private PhotoTarget loadPhotoTarget(String type,long id)throws Exception{
+        String sql="variant".equals(type)?"SELECT i.item_name||' - '||v.variant_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(i.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(i.color,''))) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE v.custom_variant_id=? AND i.is_active=TRUE AND v.is_active=TRUE":"SELECT i.item_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',NULLIF(i.size,''),NULLIF(i.color,'')) FROM custom_order_items i LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE i.custom_item_id=? AND i.is_active=TRUE";
+        try(Connection c=DB.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setLong(1,id);try(ResultSet r=p.executeQuery()){if(!r.next())throw new WebError(404,"PHOTO_TARGET_NOT_FOUND","Select a saved, active custom item or variant.");return new PhotoTarget(r.getString(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5));}}
+    }
+
+    private static String normalizePhotoTarget(String value)throws WebError{String v=value==null?"":value.trim().toLowerCase(java.util.Locale.ROOT);if(!"item".equals(v)&&!"variant".equals(v))throw new WebError(400,"PHOTO_TARGET_INVALID","Choose a custom item or variant.");return v;}
+    private void purgePhotoHandoffs(){Instant cutoff=Instant.now().minus(Duration.ofHours(1));photoHandoffsById.values().removeIf(h->{boolean remove=h.expiresAt.isBefore(cutoff);if(remove)photoHandoffsByToken.remove(h.tokenHash,h);return remove;});}
+
     private Object idempotent(HttpExchange x,Session s,JsonObject b,String op,Work work)throws Exception{String key=x.getRequestHeaders().getFirst("Idempotency-Key");if(key==null||key.isBlank()||key.length()>160)throw new WebError(400,"IDEMPOTENCY_REQUIRED","A valid idempotency key is required.");String hash=LanSecurity.sha256(GSON.toJson(b));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{try(PreparedStatement lock=c.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?,0))")){lock.setString(1,s.browserId+":"+key);lock.execute();}try(PreparedStatement p=c.prepareStatement("SELECT operation_key,request_hash,response_json::text FROM mobile_item_web_idempotency WHERE browser_id=? AND idempotency_key=?")){p.setObject(1,s.browserId);p.setString(2,key);try(ResultSet r=p.executeQuery()){if(r.next()){if(!op.equals(r.getString(1))||!hash.equals(r.getString(2)))throw new WebError(409,"IDEMPOTENCY_CONFLICT","That save key was already used for different data.");Object prior=GSON.fromJson(r.getString(3),Object.class);c.commit();return prior;}}}Object value=work.run(c);try(PreparedStatement p=c.prepareStatement("INSERT INTO mobile_item_web_idempotency(browser_id,idempotency_key,operation_key,request_hash,response_json) VALUES(?,?,?,?,?::jsonb)")){p.setObject(1,s.browserId);p.setString(2,key);p.setString(3,op);p.setString(4,hash);p.setString(5,GSON.toJson(value));p.executeUpdate();}c.commit();return value;}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
 
     private Browser requireBrowser(HttpExchange x)throws Exception{String token=cookie(x,"ss_browser");if(token==null)throw new WebError(401,"ACTIVATION_REQUIRED","Scan a current SmartStock activation QR code.");try(Connection c=DB.getConnection();PreparedStatement p=c.prepareStatement("""
@@ -253,6 +312,8 @@ public final class MobileItemWebServer implements AutoCloseable {
     public void close(){ui.stop(1);api.stop(1);executor.shutdownNow();}
     private record Browser(UUID id){}
     private record Session(UUID id,UUID browserId,int userId,int locationId){}
+    private record PhotoTarget(String name,String productName,String brand,String itemType,String variant){}
+    private static final class PhotoHandoff{final UUID id;final String tokenHash,targetType;final long targetId;final String targetName,productName,brand,itemType,variant;final int createdBy;final Instant expiresAt;volatile Instant usedAt;volatile String reference;PhotoHandoff(UUID id,String tokenHash,String targetType,long targetId,String targetName,String productName,String brand,String itemType,String variant,int createdBy,Instant expiresAt){this.id=id;this.tokenHash=tokenHash;this.targetType=targetType;this.targetId=targetId;this.targetName=targetName;this.productName=productName;this.brand=brand;this.itemType=itemType;this.variant=variant;this.createdBy=createdBy;this.expiresAt=expiresAt;}}
     private interface Work{Object run(Connection connection)throws Exception;}
     private static final class WebError extends Exception{final int status;final String code;WebError(int status,String code,String message){super(message);this.status=status;this.code=code;}}
 }

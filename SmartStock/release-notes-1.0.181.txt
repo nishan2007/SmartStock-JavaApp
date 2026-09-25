@@ -1,0 +1,7 @@
+SmartStock 1.0.181
+
+Improve setup of the configurable item-type buttons beside the sale cart.
+
+- Show every configured item type in Company Preferences, including types that do not currently contain an active product.
+- Add live searching by item-type name or department so large catalogs are easier to configure.
+- Preserve the selected button order and keep selected types out of the available list.

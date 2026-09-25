@@ -1,0 +1,7 @@
+SmartStock 1.0.213
+
+Fix custom item variant and photo handling.
+
+- Allow multiple custom item variants to share a display name when size, color, brand, or another option distinguishes them.
+- Upgrade existing store databases automatically by removing the outdated one-name-per-item restriction.
+- Give image uploads more time to finish and keep a failed photo upload from returning the register to the Welcome screen.

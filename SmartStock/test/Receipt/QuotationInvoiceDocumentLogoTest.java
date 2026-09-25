@@ -31,6 +31,18 @@ class QuotationInvoiceDocumentLogoTest {
         assertTrue(quotation.contains(
                 ".logo img { width: 100%; height: auto; max-height: 96px; max-width: 390px; }"),
                 "Quotation logos must grow to fill the available header width without changing aspect ratio");
+        int unitPrice = quotation.indexOf("U/PRICE");
+        int discount = quotation.indexOf("DISC. %");
+        int amount = quotation.indexOf("AMOUNT");
+        assertTrue(unitPrice >= 0 && unitPrice < discount && discount < amount,
+                "Quotation lines must show unit price, discount percent, and final amount in order");
+        assertTrue(!quotation.contains("ORIG. AMT") && !quotation.contains("DISC. AMT"),
+                "Quotation lines must use a single final amount column");
+        assertTrue(quotation.contains(">0%</td>"),
+                "Quotation lines must render the applied discount as a percentage");
+        String delivery = QuotationInvoiceDocumentBuilder.buildSampleDelivery(receipt, print);
+        assertTrue(!delivery.contains("DISC. %"),
+                "Delivery bills must retain their delivery-focused columns");
     }
 
     @Test
@@ -44,4 +56,5 @@ class QuotationInvoiceDocumentLogoTest {
         assertTrue(invoice.contains("data-barcode-value='INV-MAIN-POS1-000088'"));
         assertTrue(!quote.contains("<img"), "Document barcodes must survive the print renderer's image filtering");
     }
+
 }

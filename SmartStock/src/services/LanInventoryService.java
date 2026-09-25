@@ -59,12 +59,14 @@ final class LanInventoryService {
         String query = text(search, 300);
         if (query.isBlank()) return List.of();
         String sql = """
-                SELECT item_type,item_id,name,description,code,quantity_on_hand,item_type_name,brand_name,price,image_url FROM (
+                SELECT item_type,item_id,name,description,code,quantity_on_hand,item_type_name,brand_name,price,color,flavor,image_url,size FROM (
                   SELECT 'Product' item_type,p.product_id item_id,
                     p.name||CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END name,
                     COALESCE(p.description,'') description,COALESCE(p.sku,'') code,
                     COALESCE(i.quantity_on_hand,0) quantity_on_hand,COALESCE(it.name,'') item_type_name,
-                    COALESCE(ib.name,'') brand_name,COALESCE(p.price,0) price,COALESCE(p.image_url,'') image_url
+                    COALESCE(ib.name,'') brand_name,COALESCE(p.price,0) price,
+                    COALESCE(p.color,'') color,COALESCE(p.flavor,'') flavor,COALESCE(p.image_url,'') image_url,
+                    COALESCE(p.size,'') size
                   FROM products p LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
                   LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
                   LEFT JOIN item_brands ib ON ib.brand_id=p.brand_id
@@ -73,17 +75,17 @@ final class LanInventoryService {
                   SELECT 'Custom Item',coi.custom_item_id,coi.item_name,COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
                     COALESCE(coi.quantity_on_hand,0),COALESCE(it.name,''),COALESCE(ib.name,''),
-                    COALESCE(coi.fixed_price,coi.area_price,0),COALESCE(coi.image_url,'')
+                    COALESCE(coi.fixed_price,coi.area_price,0),'' color,'' flavor,COALESCE(coi.image_url,''),'' size
                   FROM custom_order_items coi LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id
                   LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id WHERE coi.is_active=TRUE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY'
                     AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
-                  SELECT 'Custom Variant',coiv.custom_variant_id,coi.item_name||' - '||coiv.variant_name,
+                  SELECT 'Custom Variant',coiv.custom_variant_id,CONCAT_WS(' - ',coi.item_name,coiv.variant_name,NULLIF(COALESCE(NULLIF(BTRIM(coiv.size),''),NULLIF(BTRIM(coi.size),'')),''),NULLIF(COALESCE(NULLIF(BTRIM(coiv.color),''),NULLIF(BTRIM(coi.color),'')),'')),
                     COALESCE(coi.description,''),COALESCE(NULLIF(coiv.sku,''),NULLIF(coiv.barcode,''),
                     'CUSTOM-'||coi.custom_item_id||'-'||coiv.custom_variant_id),COALESCE(coiv.quantity_on_hand,0),
                     COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(coiv.fixed_price,coi.fixed_price,coi.area_price,0),
-                    COALESCE(NULLIF(coiv.image_url,''),coi.image_url,'')
+                    '' color,'' flavor,COALESCE(NULLIF(coiv.image_url,''),coi.image_url,''),'' size
                   FROM custom_order_item_variants coiv JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
                   LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id
                   WHERE coi.is_active=TRUE AND coiv.is_active=TRUE
@@ -103,7 +105,8 @@ final class LanInventoryService {
                         "itemType", rs.getString(1), "itemId", rs.getInt(2), "name", rs.getString(3),
                         "description", rs.getString(4), "code", rs.getString(5), "quantityOnHand", rs.getInt(6),
                         "itemTypeName",rs.getString(7),"brandName",rs.getString(8),"price",rs.getBigDecimal(9),
-                        "imageUrl",rs.getString(10)));
+                        "color",rs.getString(10),"flavor",rs.getString(11),"imageUrl",rs.getString(12),
+                        "size",rs.getString(13)));
             }
         }
         return rows;

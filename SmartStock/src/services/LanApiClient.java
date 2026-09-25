@@ -63,6 +63,7 @@ public final class LanApiClient {
     private static final String API_PORT_SECRET = EnvironmentProfile.active().secretKey("lan-api-server-port");
     private static final String TRANSFER_STATE_SECRET = EnvironmentProfile.active().secretKey("register-transfer-state");
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration IMAGE_UPLOAD_TIMEOUT = Duration.ofSeconds(90);
     private static final Object TRANSPORT_LOCK = new Object();
     private static volatile URI cachedBaseUri;
     private static volatile String cachedFingerprint;
@@ -768,6 +769,8 @@ public final class LanApiClient {
     public static MobileItemWebStatus startMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/start",new JsonObject(),true,true),MobileItemWebStatus.class);}
     public static MobileItemWebStatus stopMobileItemWeb()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/stop",new JsonObject(),true,true),MobileItemWebStatus.class);}
     public static MobileItemWebStatus renewMobileItemWebActivation()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/activation",new JsonObject(),true,true),MobileItemWebStatus.class);}
+    public static MobileItemPhotoHandoff createMobileItemPhotoHandoff(String targetType,long targetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("targetType",targetType);r.addProperty("targetId",targetId);return GSON.fromJson(post("/v1/mobile-item-web/photo-handoff",r,true,true),MobileItemPhotoHandoff.class);}
+    public static MobileItemPhotoHandoffStatus mobileItemPhotoHandoffStatus(String handoffId)throws Exception{JsonObject r=new JsonObject();r.addProperty("handoffId",handoffId);return GSON.fromJson(post("/v1/mobile-item-web/photo-handoff/status",r,true,true),MobileItemPhotoHandoffStatus.class);}
     public static SchedulerWebStatus schedulerWebStatus()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/status",new JsonObject(),true,true),SchedulerWebStatus.class);}
     public static SchedulerWebStatus startSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/start",new JsonObject(),true,true),SchedulerWebStatus.class);}
     public static SchedulerWebStatus stopSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/stop",new JsonObject(),true,true),SchedulerWebStatus.class);}
@@ -848,7 +851,11 @@ public final class LanApiClient {
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);
         return GSON.fromJson(post("/v1/cash/drawer/handover",r,true,true,Map.of("Idempotency-Key",key)).get("handover"),CashDrawerHandover.class);}
     public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key)throws Exception{
+        return handoverCashDrawer(sessionId,count,notes,denominations,floats,floatTotal,cashInHand,key,false);
+    }
+    public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key,boolean acceptTakeover)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);
+        r.addProperty("acceptTakeover",acceptTakeover);
         return GSON.fromJson(post("/v1/cash/drawer/handover",r,true,true,Map.of("Idempotency-Key",key)).get("handover"),CashDrawerHandover.class);}
     public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);
@@ -954,7 +961,7 @@ public final class LanApiClient {
     public static void timeClockPunch(String action,String approvalToken,String approvalReason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(approvalToken!=null)r.addProperty("approvalToken",approvalToken);if(approvalReason!=null)r.addProperty("approvalReason",approvalReason);post("/v1/time-clock/punch",r,true,true,Map.of("Idempotency-Key",key));}
     public static managers.TimeClockManager.PayrollDashboard loadPayrollDashboard()throws Exception{return GSON.fromJson(post("/v1/payroll/dashboard",new JsonObject(),true,true).get("dashboard"),managers.TimeClockManager.PayrollDashboard.class);}
     public static void addPayrollBonuses(List<managers.TimeClockManager.PayrollSummary> summaries,BigDecimal amount,String reason,String key)throws Exception{JsonObject r=new JsonObject();r.add("summaries",GSON.toJsonTree(summaries));r.addProperty("amount",amount);r.addProperty("reason",reason);post("/v1/payroll/bonus",r,true,true,Map.of("Idempotency-Key",key));}
-    public static void markPayrollPaid(managers.TimeClockManager.PayrollSummary summary,String method,String reference,String key)throws Exception{JsonObject r=new JsonObject();r.add("summary",GSON.toJsonTree(summary));r.addProperty("paymentMethod",method);if(reference!=null)r.addProperty("paymentReference",reference);post("/v1/payroll/pay",r,true,true,Map.of("Idempotency-Key",key));}
+    public static void markPayrollPaid(managers.TimeClockManager.PayrollSummary summary,BigDecimal amountPaid,String method,String reference,String key)throws Exception{JsonObject r=new JsonObject();r.add("summary",GSON.toJsonTree(summary));r.addProperty("amountPaid",amountPaid);r.addProperty("paymentMethod",method);if(reference!=null)r.addProperty("paymentReference",reference);post("/v1/payroll/pay",r,true,true,Map.of("Idempotency-Key",key));}
     public static BadgePrintService.EmployeeBadgeData loadEmployeeBadgeData(int userId)throws Exception{JsonObject r=new JsonObject();r.addProperty("userId",userId);return GSON.fromJson(post("/v1/employees/badge-data",r,true,true).get("employee"),BadgePrintService.EmployeeBadgeData.class);}
     public static void incrementEmployeeBadgePrintCount(int userId,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("userId",userId);post("/v1/employees/badge-printed",r,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject employeeWallet(String action,int userId)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);r.addProperty("userId",userId);return post("/v1/employees/wallet",r,true,true);}
@@ -1277,8 +1284,9 @@ public final class LanApiClient {
         RemoteAdminPolicy.requireClientOperationAllowed(path);
         BlockingCallGuard.check("LAN " + path);
         long started = System.nanoTime();
+        boolean imageUpload = "/v1/cloud/storage/upload".equals(path);
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
-                .timeout(TIMEOUT)
+                .timeout(imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8));
@@ -1305,6 +1313,10 @@ public final class LanApiClient {
         } catch (Exception ex) {
             PerformanceDiagnostics.record("lan", path, started, false, -1);
             if (isConnectionFailure(ex)) {
+                if (imageUpload) {
+                    throw new LanApiException("IMAGE_UPLOAD_UNAVAILABLE",
+                            "The image upload did not finish. Check the server connection and try the photo again.", true);
+                }
                 reportConnectionLoss();
                 throw new LanApiException("SERVER_UNREACHABLE",
                         "Connection to the SmartStock server was lost. Return to the welcome screen and wait for it to reconnect.",
@@ -1646,7 +1658,8 @@ public final class LanApiClient {
     public record HeldCartItem(int productId, String productName, String size, String description, String sku,
                                BigDecimal unitPrice, BigDecimal catalogPrice,
                                int quantity, BigDecimal discountPercent,
-                               String productType, Integer categoryId, boolean miscItem) { }
+                               String productType, Integer categoryId, boolean miscItem,
+                               String color, String flavor) { }
     public record SalesHistoryRow(String transactionType, int saleId, Long returnId, String receiptNumber,String returnReceiptNumber,
                                   long createdAtEpochMillis, String cashierName, String storeName, int itemCount,
                                   String paymentMethod, String paymentStatus, BigDecimal amountPaid,
@@ -1678,7 +1691,8 @@ public final class LanApiClient {
                                    List<String> brands,List<String> shelves) { }
     public record NamedId(int id,String name) { }
     public record LookupItem(String itemType,int itemId,String name,String description,String code,int quantityOnHand,
-                             String itemTypeName,String brandName,BigDecimal price,String imageUrl) { }
+                             String itemTypeName,String brandName,BigDecimal price,String color,String flavor,String imageUrl,
+                             String size) { }
     public record ReceivingBarcodeRequest(String itemType,int itemId,String barcode) { }
     public record ReceivingBarcodeResult(String itemType,int itemId,String barcode,String destination) { }
     public record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,
@@ -1823,7 +1837,7 @@ public final class LanApiClient {
     public record AccountPaymentAllocation(String targetLabel,BigDecimal appliedAmount,BigDecimal chargeTotal,
                                            BigDecimal chargePaid,String paymentStatus,long chargeDateEpochMillis) { }
     public record ChangeBasketState(String storeName,BigDecimal targetAmount) { }
-    public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix) { }
+    public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix,CashDrawerHandover pendingHandover) { }
     public record CashDrawerCloseResult(CashDrawerSession session,List<String>handlers,BigDecimal returnedAmount) { }
     public record CashDrawerReprint(CashDrawerSession session,List<String> handlers,BigDecimal returnedAmount,
                                     BigDecimal floatCash,BigDecimal cashInHand,Map<String,Integer> denominationCounts,
@@ -1923,6 +1937,8 @@ public final class LanApiClient {
         }
     }
     public record MobileItemWebStatus(boolean enabled,boolean running,boolean uiRunning,boolean apiRunning,int uiPort,int apiPort,String url,String activationUrl,String activationExpiresAt){}
+    public record MobileItemPhotoHandoff(String handoffId,String url,String expiresAt,String targetName){}
+    public record MobileItemPhotoHandoffStatus(String handoffId,String targetName,String expiresAt,boolean uploaded,boolean expired,String reference){}
     public record SchedulerWebStatus(boolean enabled,boolean running,int port,String url,String changedAt){}
     public record RefundLine(int saleItemId,int quantity,String disposition,Integer destinationLocationId,String dispositionReason) {
         public RefundLine(int saleItemId,int quantity){this(saleItemId,quantity,null,null,null);}

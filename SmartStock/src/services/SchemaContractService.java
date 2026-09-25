@@ -52,6 +52,7 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260824170000_backfill_missing_payroll_baselines.sql",
             "database/migrations/v1_after/20260826120000_configurable_twenty_dollar_rounding.sql"
             ,"database/migrations/v1_after/20260826180000_misc_sale_items.sql"
+            ,"database/migrations/v1_after/20260921120000_custom_items_in_pos.sql"
             ,"database/migrations/v1_after/20260827130000_customer_type_receipt_printing.sql"
             ,"database/migrations/v1_after/20260827150000_customer_card_templates.sql"
             ,"database/migrations/v1_after/20260827160000_share_card_and_badge_templates.sql"
@@ -76,6 +77,11 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260911010000_sale_receipt_visibility.sql"
             ,"database/migrations/v1_after/20260911120000_inventory_item_flavor.sql"
             ,"database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"
+            ,"database/migrations/v1_after/20260918120000_custom_item_size_color.sql"
+            ,"database/migrations/v1_after/20260919120000_custom_variant_brand.sql"
+            ,"database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"
+            ,"database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"
+            ,"database/migrations/v1_after/20260924120000_allow_same_name_custom_variants.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -98,6 +104,8 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260908120000_employee_registration.sql"
             ,"database/migrations/v1_after/20260909120000_employment_portal.sql"
             ,"database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"
+            ,"database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"
+            ,"database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -462,11 +470,17 @@ public final class SchemaContractService {
         ensureInventoryItemFlavorUpgrade(connection);
         ensureSaleReceiptVisibilityUpgrade(connection);
         ensureSaleQuickPickItemTypesUpgrade(connection);
+        ensureCustomItemSizeColorUpgrade(connection);
+        ensureCustomVariantBrandUpgrade(connection);
+        ensureSameNameCustomVariantsUpgrade(connection);
+        ensureCustomItemsInPosUpgrade(connection);
         ensureCustomerChargeAuthorizationUpgrade(connection);
         ensureAutomaticCustomerDiscountUpgrade(connection);
         ensureEmployeeRegistrationUpgrade(connection);
         ensureEmploymentPortalUpgrade(connection);
         ensureBuiltinPermissionsUpgrade(connection);
+        ensureCustomItemPermissionNameUpgrade(connection);
+        ensureSaleQuickPickSizesUpgrade(connection);
         ensureProductArchivingUpgrade(connection);
         ensureMiscSaleItemsUpgrade(connection);
         ensureCustomerTypeReceiptPrintingUpgrade(connection);
@@ -623,6 +637,91 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Sale quick-pick preferences could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureSaleQuickPickSizesUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||(columnExists(connection,"public","company_customization","sale_quick_pick_size_item_type_ids")
+                &&columnExists(connection,"public","company_customization","sale_quick_pick_photo_item_type_ids")))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT catalog_fingerprint_sha256 FROM smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+            ps.setInt(1,BASELINE_VERSION);try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next()||!catalogFingerprint(connection,List.of("public"),false).equals(rs.getString(1)))
+                    throw new SQLException("The local schema has drifted; automatic sale quick-pick size installation is blocked.","55000");
+            }
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Sale quick-pick size preferences could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomItemSizeColorUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||(columnExists(connection,"public","custom_order_items","size")
+                &&columnExists(connection,"public","custom_order_items","color")
+                &&columnExists(connection,"public","custom_order_item_variants","size")
+                &&columnExists(connection,"public","custom_order_item_variants","color")
+                &&columnExists(connection,"public","custom_order_lines","item_size")
+                &&columnExists(connection,"public","custom_order_lines","item_color")))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260918120000_custom_item_size_color.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom item size and color support could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomVariantBrandUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","smartstock_schema_metadata")
+                ||columnExists(connection,"public","custom_order_item_variants","brand_id"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260919120000_custom_variant_brand.sql"));
+            try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom variant brand support could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureSameNameCustomVariantsUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","custom_order_item_variants"))return;
+        try(PreparedStatement ps=connection.prepareStatement("SELECT 1 FROM pg_constraint WHERE conrelid='public.custom_order_item_variants'::regclass AND conname='custom_order_item_variants_item_name_uidx'");ResultSet rs=ps.executeQuery()){
+            if(!rs.next())return;
+        }
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260924120000_allow_same_name_custom_variants.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Same-name custom variants could not be enabled.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomItemsInPosUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","custom_order_items")||!tableExists(connection,"public","sale_items"))return;
+        boolean ready=columnExists(connection,"public","custom_order_items","sell_in_pos")
+                &&columnExists(connection,"public","sale_items","catalog_source")
+                &&columnExists(connection,"public","sale_items","custom_item_id")
+                &&columnExists(connection,"public","sale_items","custom_variant_id")
+                &&columnExists(connection,"public","sale_return_items","custom_item_id")
+                &&columnExists(connection,"public","custom_order_item_movements","sale_item_id");
+        if(ready)return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260921120000_custom_items_in_pos.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom items in normal sales could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     public static void ensureCustomerChargeAuthorizationUpgrade(Connection connection)throws SQLException{
@@ -843,6 +942,39 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("The scheduler web schema could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    private static void ensureCustomItemPermissionNameUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "smartstock_schema_metadata")
+                || !tableExists(connection, "public", "permissions")) return;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT 1 FROM public.permissions
+                WHERE permission_key='MANAGE_CUSTOM_ORDER_ITEMS'
+                  AND permission_name='Add/Edit Custom Items'
+                """)) {
+            try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return; }
+        }
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"));
+            try (PreparedStatement ps = connection.prepareStatement("""
+                    UPDATE public.smartstock_schema_metadata
+                    SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
+                    WHERE schema_scope='LOCAL' AND baseline_version=?
+                    """)) {
+                ps.setString(1, resourceFingerprint(localContractResources()));
+                ps.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                ps.setInt(3, BASELINE_VERSION);
+                ps.executeUpdate();
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            if (ex instanceof SQLException sql) throw sql;
+            throw new SQLException("Custom item permission label could not be updated.", ex);
+        } finally { connection.setAutoCommit(auto); }
     }
 
     /** Repairs the incomplete v1 permission seed and advances existing local metadata. */

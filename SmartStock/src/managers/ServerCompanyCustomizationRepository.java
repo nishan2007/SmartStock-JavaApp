@@ -461,8 +461,8 @@ public class ServerCompanyCustomizationRepository {
     private static PriceTagTemplateSettings legacyPriceTagTemplate(boolean company, boolean sku, boolean barcode, double width, double height) { return new PriceTagTemplateSettings("Standard", company, true, true, sku, barcode, true, true, width, height, ""); }
     private static List<PriceTagTemplateSettings> defaultPriceTagTemplates() { return new ArrayList<>(List.of(new PriceTagTemplateSettings("Standard", true,true,true,true,true,true,true,2.25,1.25,""),new PriceTagTemplateSettings("Small", true,true,true,true,true,true,true,1.5,.75,""),new PriceTagTemplateSettings("Large", true,true,true,true,true,true,true,3,2,""),new PriceTagTemplateSettings("Wide", true,true,true,true,true,true,true,4,1,""),new PriceTagTemplateSettings("Square", true,true,true,true,true,true,true,2,2,""))); }
     private static List<PriceTagTemplateSettings> completePriceTagTemplates(List<PriceTagTemplateSettings> templates) { List<PriceTagTemplateSettings> result=defaultPriceTagTemplates(); if(templates!=null)for(int i=0;i<Math.min(5,templates.size());i++)if(templates.get(i)!=null)result.set(i,templates.get(i)); return result; }
-    private static String encodePriceTagTemplates(List<PriceTagTemplateSettings> templates) { StringBuilder out=new StringBuilder(); for(PriceTagTemplateSettings s:completePriceTagTemplates(templates)){if(!out.isEmpty())out.append(';');out.append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.name().getBytes(StandardCharsets.UTF_8))).append('|').append(s.showCompany()).append('|').append(s.showName()).append('|').append(s.showPrice()).append('|').append(s.showSku()).append('|').append(s.showBarcode()).append('|').append(s.showSize()).append('|').append(s.showDescription()).append('|').append(s.widthInches()).append('|').append(s.heightInches()).append('|').append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.layoutData().getBytes(StandardCharsets.UTF_8)));}return out.toString(); }
-    private static List<PriceTagTemplateSettings> decodePriceTagTemplates(String value, PriceTagTemplateSettings legacy) { if(value==null||value.isBlank()){List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();d.set(0,legacy);return d;} List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();String[] rows=value.split(";");for(int i=0;i<Math.min(5,rows.length);i++){try{String[] p=rows[i].split("\\|");boolean newest=p.length>=11, modern=p.length>=9;String layout=newest?new String(Base64.getUrlDecoder().decode(p[10]),StandardCharsets.UTF_8):(modern?new String(Base64.getUrlDecoder().decode(p[8]),StandardCharsets.UTF_8):(p.length>6?new String(Base64.getUrlDecoder().decode(p[6]),StandardCharsets.UTF_8):""));d.set(i,new PriceTagTemplateSettings(new String(Base64.getUrlDecoder().decode(p[0]),StandardCharsets.UTF_8),Boolean.parseBoolean(p[1]),newest?Boolean.parseBoolean(p[2]):true,newest?Boolean.parseBoolean(p[3]):true,Boolean.parseBoolean(p[newest?4:2]),Boolean.parseBoolean(p[newest?5:3]),modern?Boolean.parseBoolean(p[newest?6:4]):true,modern?Boolean.parseBoolean(p[newest?7:5]):true,Double.parseDouble(p[newest?8:(modern?6:4)]),Double.parseDouble(p[newest?9:(modern?7:5)]),layout));}catch(Exception ignored){}}return d; }
+    private static String encodePriceTagTemplates(List<PriceTagTemplateSettings> templates) { StringBuilder out=new StringBuilder(); for(PriceTagTemplateSettings s:completePriceTagTemplates(templates)){if(!out.isEmpty())out.append(';');out.append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.name().getBytes(StandardCharsets.UTF_8))).append('|').append(s.showCompany()).append('|').append(s.showName()).append('|').append(s.showPrice()).append('|').append(s.showSku()).append('|').append(s.showBarcode()).append('|').append(s.showSize()).append('|').append(s.showDescription()).append('|').append(s.widthInches()).append('|').append(s.heightInches()).append('|').append(Base64.getUrlEncoder().withoutPadding().encodeToString(s.layoutData().getBytes(StandardCharsets.UTF_8))).append('|').append(s.labelsAcross()).append('|').append(s.columnGapInches()).append('|').append(s.rowGapInches());}return out.toString(); }
+    private static List<PriceTagTemplateSettings> decodePriceTagTemplates(String value, PriceTagTemplateSettings legacy) { if(value==null||value.isBlank()){List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();d.set(0,legacy);return d;} List<PriceTagTemplateSettings> d=defaultPriceTagTemplates();String[] rows=value.split(";");for(int i=0;i<Math.min(5,rows.length);i++){try{String[] p=rows[i].split("\\|");boolean newest=p.length>=11, modern=p.length>=9;String layout=newest?new String(Base64.getUrlDecoder().decode(p[10]),StandardCharsets.UTF_8):(modern?new String(Base64.getUrlDecoder().decode(p[8]),StandardCharsets.UTF_8):(p.length>6?new String(Base64.getUrlDecoder().decode(p[6]),StandardCharsets.UTF_8):""));d.set(i,new PriceTagTemplateSettings(new String(Base64.getUrlDecoder().decode(p[0]),StandardCharsets.UTF_8),Boolean.parseBoolean(p[1]),newest?Boolean.parseBoolean(p[2]):true,newest?Boolean.parseBoolean(p[3]):true,Boolean.parseBoolean(p[newest?4:2]),Boolean.parseBoolean(p[newest?5:3]),modern?Boolean.parseBoolean(p[newest?6:4]):true,modern?Boolean.parseBoolean(p[newest?7:5]):true,Double.parseDouble(p[newest?8:(modern?6:4)]),Double.parseDouble(p[newest?9:(modern?7:5)]),layout,p.length>=13?Integer.parseInt(p[11]):1,p.length>=13?Double.parseDouble(p[12]):0,p.length>=14?Double.parseDouble(p[13]):0));}catch(Exception ignored){}}return d; }
 
     /** Pure LAN-client decoder for server-supplied price-tag settings. */
     public static List<PriceTagTemplateSettings> decodePriceTagTemplatesForLan(
@@ -2030,13 +2030,30 @@ public class ServerCompanyCustomizationRepository {
     }
 
     public record PriceTagTemplateSettings(String name, boolean showCompany, boolean showName, boolean showPrice, boolean showSku, boolean showBarcode, boolean showSize, boolean showDescription,
-                                           double widthInches, double heightInches, String layoutData) {
+                                           double widthInches, double heightInches, String layoutData, int labelsAcross, double columnGapInches, double rowGapInches) {
+        public PriceTagTemplateSettings(String name, boolean showCompany, boolean showName, boolean showPrice,
+                boolean showSku, boolean showBarcode, boolean showSize, boolean showDescription,
+                double widthInches, double heightInches, String layoutData, int labelsAcross, double columnGapInches) {
+            this(name, showCompany, showName, showPrice, showSku, showBarcode, showSize, showDescription,
+                    widthInches, heightInches, layoutData, labelsAcross, columnGapInches, 0);
+        }
+        public PriceTagTemplateSettings(String name, boolean showCompany, boolean showName, boolean showPrice,
+                boolean showSku, boolean showBarcode, boolean showSize, boolean showDescription,
+                double widthInches, double heightInches, String layoutData) {
+            this(name, showCompany, showName, showPrice, showSku, showBarcode, showSize, showDescription,
+                    widthInches, heightInches, layoutData, 1, 0);
+        }
+        public double rowWidthInches() { return widthInches * labelsAcross + columnGapInches * (labelsAcross - 1); }
+        public double rowPitchInches() { return heightInches + rowGapInches; }
         public PriceTagTemplateSettings {
             name = Objects.requireNonNullElse(name, "Template").trim();
             if (name.isBlank()) name = "Template";
             layoutData = Objects.requireNonNullElse(layoutData, "");
-            widthInches = Math.max(.75, Math.min(6, widthInches <= 0 ? 2.25 : widthInches));
+            widthInches = Math.max(.5, Math.min(6, !Double.isFinite(widthInches) || widthInches <= 0 ? 2.25 : widthInches));
             heightInches = Math.max(.5, Math.min(4, heightInches <= 0 ? 1.25 : heightInches));
+            labelsAcross = Math.max(1, Math.min(2, labelsAcross));
+            columnGapInches = Double.isFinite(columnGapInches) ? Math.max(0, Math.min(1, columnGapInches)) : 0;
+            rowGapInches = Double.isFinite(rowGapInches) ? Math.max(0, Math.min(1, rowGapInches)) : 0;
         }
     }
 

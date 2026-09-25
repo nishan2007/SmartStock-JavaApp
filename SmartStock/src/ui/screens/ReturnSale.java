@@ -502,11 +502,14 @@ public class ReturnSale extends JFrame {
             itemModel.setRowCount(0);
             if (details.items() != null) {
                 for (LanApiClient.ReturnSaleLine item : details.items()) {
+                    String productType = normalizeProductType(item.productType());
+                    boolean canRestock = "INVENTORY".equals(productType);
                     itemModel.addRow(new Object[]{item.saleItemId(), item.productId(), safe(item.sku()),
                             safe(item.productName()), item.soldQuantity(), item.returnedQuantity(),
                             item.availableQuantity(), zero(item.unitPrice()),
-                            normalizeProductType(item.productType()),0,
-                            details.sourceLocationId()==null?"":"RESTOCK",defaultDestination(),""});
+                            productType,0,
+                            details.sourceLocationId()==null?"":canRestock?"RESTOCK":"DISCARD",
+                            canRestock?defaultDestination():"",canRestock?"":"Non-inventory item"});
                 }
             }
             updatingModel = false;

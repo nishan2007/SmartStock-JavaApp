@@ -21,13 +21,20 @@ class MiscSaleItemArchitectureTest {
         assertTrue(sales.contains("SMARTSTOCK-MISC"));
     }
 
-    @Test void miscNamesPersistAndReturnsExcludeThem() throws Exception {
+    @Test void miscNamesPersistAndReturnsIncludeThemAsNonInventory() throws Exception {
         String migration=read("database/migrations/v1_after/20260826180000_misc_sale_items.sql");
         String refund=read("src/services/LanRefundService.java");
+        String crossStoreSales=read("src/services/CrossStoreSalesService.java");
+        String crossStoreRefund=read("src/services/CrossStoreRefundService.java");
         String receipt=read("src/services/LanDocumentDataService.java");
         assertTrue(migration.contains("item_name text"));
         assertTrue(migration.contains("is_misc_item boolean"));
-        assertTrue(refund.contains("NOT si.is_misc_item"));
+        assertTrue(refund.contains("THEN COALESCE(NULLIF(BTRIM(si.item_name), ''), 'Misc Item')"));
+        assertFalse(refund.contains("NOT si.is_misc_item"));
+        assertFalse(crossStoreSales.contains("NOT i.is_misc_item"));
+        assertFalse(crossStoreRefund.contains("NOT si.is_misc_item"));
+        assertFalse(crossStoreRefund.contains("NOT i.is_misc_item"));
+        assertTrue(crossStoreRefund.contains("Non-inventory and miscellaneous items cannot be restocked."));
         assertTrue(receipt.contains("si.item_name"));
     }
 

@@ -1,0 +1,6 @@
+SmartStock 1.0.211
+
+Improve quotation and invoice pricing clarity.
+
+- Show the applied discount percentage after the unit price on quotation and invoice printouts.
+- Keep a single Amount column showing the final discounted line amount.

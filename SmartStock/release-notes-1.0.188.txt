@@ -1,0 +1,11 @@
+SmartStock 1.0.188
+
+Label printer and price-tag stock settings.
+
+- Add CT221B custom order label printing through its installed system driver.
+- Allow 0.5-inch-wide by 1-inch-high price-tag stickers.
+- Save two-across layouts and horizontal gaps with each price-tag template.
+- Save vertical row gaps with each template and apply the requested feed pitch when printing.
+- Preview complete price-tag rows and leave the last position blank for odd quantities.
+
+Physical printer alignment and gap feeding depend on the installed driver and loaded media.

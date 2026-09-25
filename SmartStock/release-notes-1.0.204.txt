@@ -1,0 +1,7 @@
+SmartStock 1.0.204
+
+Settle payroll cash payments at the nearest GYD 20.
+
+- Cash payroll payments that meet the rounded pay total no longer show a small additional balance due.
+- The cash payment field suggests the amount needed to reach the rounded total. Bank payments continue to use the exact pay amount.
+- Payroll refreshes after a payment so the updated status appears immediately.
