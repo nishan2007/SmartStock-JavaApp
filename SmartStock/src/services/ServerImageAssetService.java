@@ -385,6 +385,27 @@ public final class ServerImageAssetService {
                 }
             }
         }
+        for (ReferenceSource source : List.of(
+                new ReferenceSource("products","product_id","additional_image_urls","PRODUCT"),
+                new ReferenceSource("custom_order_items","custom_item_id","additional_image_urls","CUSTOM_ITEM"),
+                new ReferenceSource("custom_order_item_variants","custom_variant_id","additional_image_urls","CUSTOM_VARIANT"))) {
+            if (!hasColumns(conn,source.table(),source.key(),source.column())) continue;
+            String sql="SELECT "+quote(source.key())+"::text, jsonb_array_elements_text("+quote(source.column())+") FROM "+quote(source.table());
+            try(PreparedStatement ps=conn.prepareStatement(sql);ResultSet rs=ps.executeQuery()){
+                java.util.Map<String,Integer> positions=new java.util.HashMap<>();
+                while(rs.next()){
+                    String value=rs.getString(2),sourceKey=rs.getString(1);
+                    UUID id=ImageAssetReference.isAssetReference(value)
+                            ?ImageAssetReference.assetId(value):registerLegacy(conn,source.category(),value);
+                    if(id==null)continue;
+                    int position=positions.merge(sourceKey,1,Integer::sum)-1;
+                    String column=source.column()+":"+position;
+                    upsertReference(conn,id,source.table(),sourceKey,column);
+                    markReferenceSeen(conn,source.table(),sourceKey,column);
+                    active++;
+                }
+            }
+        }
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     UPDATE image_asset_references r SET active=FALSE
@@ -756,7 +777,7 @@ public final class ServerImageAssetService {
         try(PreparedStatement ps=conn.prepareStatement(sql)){ps.setObject(1,row.id());try(ResultSet rs=ps.executeQuery()){
             if(!rs.next())return fallbackProductImagePath(row);
             String original=rs.getString(6);java.sql.Timestamp created=rs.getTimestamp(7);
-            java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original==null?"":original);
+            java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13}(?:-[a-z0-9]{8})?)(?:-|\\.)").matcher(original==null?"":original);
             String token=matcher.find()?matcher.group(1):Long.toString(created==null?System.currentTimeMillis():created.toInstant().toEpochMilli());
             return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,
                     rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5));
@@ -765,7 +786,7 @@ public final class ServerImageAssetService {
 
     private static String fallbackProductImagePath(AssetRow row){
         String original=filename(row.objectPath());
-        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original);
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13}(?:-[a-z0-9]{8})?)(?:-|\\.)").matcher(original);
         String token=matcher.find()?matcher.group(1):Long.toString(System.currentTimeMillis());
         return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,"","","","","");
     }

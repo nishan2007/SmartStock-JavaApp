@@ -1,0 +1,3 @@
+SmartStock 1.0.219
+
+Items, custom items, and custom variants can now keep a primary photo and up to 20 additional photos. Add, remove, reorder, and choose the primary photo in the item editor. Item Details can browse all saved product photos. A phone photo for a custom item or variant now fills an empty primary slot or adds to its gallery.

@@ -1708,7 +1708,7 @@ public final class LanApiClient {
                                    String department,String itemType,String brand,String shelf,String storageShelf,
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,
                                    int reorderLevel,String createdBy,VariantInfo variant,String color,String flavor) { }
-    public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities) { }
+    public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities,List<String> imageUrls) { }
     public record CrossStoreInventoryResult(List<CrossStoreStoreOption> stores,List<CrossStoreInventoryItem> items) { }
     public record CrossStoreStoreOption(int locationId,String name,String status,long refreshedAtEpochMillis) { }
     public record CrossStoreInventoryItem(int locationId,String storeName,int productId,String sku,String barcode,
@@ -1751,16 +1751,17 @@ public final class LanApiClient {
                                   BigDecimal costPrice,BigDecimal price,String productType,int quantity,int reorderLevel,
                                   Integer categoryId,String categoryName,Integer vendorId,String vendorName,String imageUrl,
                                   String itemTypeName,String brandName,String shelfName,String storageShelfName,
-                                  List<String> additionalBarcodes,boolean active,VariantInfo variant,String color,String flavor) { }
-    public record PriceTagCatalogItem(String itemType,String name,String size,String description,String code,
-                                      BigDecimal price,long itemId) { }
+                                  List<String> additionalBarcodes,boolean active,VariantInfo variant,String color,String flavor,
+                                  List<String> additionalImageUrls) { }
+    public record PriceTagCatalogItem(String itemType,String name,String variantName,String size,String color,String brand,String description,String code,
+                                      BigDecimal price,BigDecimal quantity,long itemId) { }
     public record PriceTagSettings(String encodedTemplates,boolean showCompany,boolean showSku,boolean showBarcode,
                                    double widthInches,double heightInches) { }
     public record ProductSaveRequest(Integer productId,String name,String size,String sku,String barcode,String description,
                                      BigDecimal costPrice,BigDecimal price,String productType,Integer categoryId,Integer vendorId,
                                      String imageUrl,String itemTypeName,String brandName,String shelfName,String storageShelfName,
                                      List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
-                                     boolean adjustQuantity,String color,String flavor) { }
+                                     boolean adjustQuantity,String color,String flavor,List<String> additionalImageUrls) { }
     public record SavedProduct(int productId,String sku,int quantity) { }
     public record ProductLifecycleResult(int productId,String name,boolean active) { }
     public record NonRoundedPriceItem(int productId,String sku,String name,String size,

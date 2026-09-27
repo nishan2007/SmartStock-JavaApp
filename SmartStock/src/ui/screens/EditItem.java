@@ -546,6 +546,7 @@ public class EditItem extends JFrame {
             barcodesArea.setText(String.join("\n",
                     product.additionalBarcodes() == null ? List.of() : product.additionalBarcodes()));
             imageSelector.setImageUrl(product.imageUrl());
+            imageSelector.setAdditionalImageUrls(product.additionalImageUrls());
             setFormEnabled(true);
             archiveButton.setText(selectedProductActive?"Archive Product...":"Restore Product...");
             updateInventoryFieldsForType();
@@ -722,7 +723,8 @@ public class EditItem extends JFrame {
                     brandName, shelfName,
                     storageShelfName, List.copyOf(extraBarcodes),
                     quantity, reorderLevel, selectedOriginalQuantity,
-                    inventoryItem && canManualAdjustment, colorField.getText().trim(), flavorField.getText().trim()
+                    inventoryItem && canManualAdjustment, colorField.getText().trim(), flavorField.getText().trim(),
+                    imageSelector.getAdditionalImageUrls()
             );
             String fingerprint = draft.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
@@ -730,7 +732,7 @@ public class EditItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;Integer productId=selectedProductId;Integer originalQuantity=selectedOriginalQuantity;int requestedQuantity=quantity,requestedReorderLevel=reorderLevel;boolean adjust=inventoryItem&&canManualAdjustment;
-            UiTaskRunner.submit(this,"items.update",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust,draft.color(),draft.flavor());return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.update",()->{var naming=new ProductImageHelper.ProductImageNaming(name,brandName,itemTypeName,size,"");String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,naming);List<String> extras=ProductImageHelper.uploadAdditionalImages(draft.additionalImageUrls(),naming,"PRODUCT");LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(productId,name,size,sku,barcode,description,BigDecimal.valueOf(costPrice),BigDecimal.valueOf(price),productType,categoryId,vendorId,uploaded,itemTypeName,brandName,shelfName,storageShelfName,List.copyOf(extraBarcodes),requestedQuantity,requestedReorderLevel,originalQuantity,adjust,draft.color(),draft.flavor(),extras);return new ProductSaveOutcome(LanApiClient.updateProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());selectedOriginalQuantity=outcome.saved().quantity();JOptionPane.showMessageDialog(this,"Item updated successfully.");clearSelection();},ex->JOptionPane.showMessageDialog(this,"Failed to update item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update item: " + ex.getMessage());
         }
@@ -792,6 +794,7 @@ public class EditItem extends JFrame {
         itemDetailsSelector.clearSelection();
         vendorSelector.clearSelection();
         imageSelector.setImageUrl("");
+        imageSelector.setAdditionalImageUrls(List.of());
         searchField.setText("");
         selectionStatusLabel.setText("No product selected.");
         setFormEnabled(false);

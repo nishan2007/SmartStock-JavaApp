@@ -41,6 +41,10 @@ public final class StorageObjectNameBuilder {
         return base+"-"+unique+"."+extension(extensionSource,"jpg");
     }
 
+    public static String newProductImageToken() {
+        return System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+    }
+
     private static String fallback(String value, String fallback) {
         return slug(value).isBlank() ? fallback : value;
     }

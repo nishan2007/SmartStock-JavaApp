@@ -530,7 +530,8 @@ public class NewItem extends JFrame {
                     categoryId, vendorId, imageInput, itemTypeName,
                     brandName, shelfName,
                     storageShelfName, List.copyOf(extraBarcodes),
-                    quantity, 0, null, true, colorField.getText().trim(), flavorField.getText().trim()
+                    quantity, 0, null, true, colorField.getText().trim(), flavorField.getText().trim(),
+                    imageSelector.getAdditionalImageUrls()
             );
             String fingerprint = draft.toString();
             if (!fingerprint.equals(pendingSaveFingerprint) || pendingSaveKey == null) {
@@ -538,7 +539,7 @@ public class NewItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;
-            UiTaskRunner.submit(this,"items.create",()->{String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),""));LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity(),draft.color(),draft.flavor());return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.create",()->{var naming=new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),"");String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,naming);List<String> extras=ProductImageHelper.uploadAdditionalImages(draft.additionalImageUrls(),naming,"PRODUCT");LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity(),draft.color(),draft.flavor(),extras);return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }
@@ -593,6 +594,7 @@ public class NewItem extends JFrame {
         vendorSelector.clearSelection();
         quantityField.setText("0");
         imageSelector.setImageUrl("");
+        imageSelector.setAdditionalImageUrls(List.of());
         nameField.requestFocusInWindow();
     }
 

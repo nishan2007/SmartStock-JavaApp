@@ -82,6 +82,7 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"
             ,"database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"
             ,"database/migrations/v1_after/20260924120000_allow_same_name_custom_variants.sql"
+            ,"database/migrations/v1_after/20260926120000_catalog_photo_galleries.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -474,6 +475,7 @@ public final class SchemaContractService {
         ensureCustomVariantBrandUpgrade(connection);
         ensureSameNameCustomVariantsUpgrade(connection);
         ensureCustomItemsInPosUpgrade(connection);
+        ensureCatalogPhotoGalleriesUpgrade(connection);
         ensureCustomerChargeAuthorizationUpgrade(connection);
         ensureAutomaticCustomerDiscountUpgrade(connection);
         ensureEmployeeRegistrationUpgrade(connection);
@@ -703,6 +705,21 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Same-name custom variants could not be enabled.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCatalogPhotoGalleriesUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","products")||!tableExists(connection,"public","custom_order_items"))return;
+        if(columnExists(connection,"public","products","additional_image_urls")
+                &&columnExists(connection,"public","custom_order_items","additional_image_urls")
+                &&columnExists(connection,"public","custom_order_item_variants","additional_image_urls"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260926120000_catalog_photo_galleries.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Catalog photo galleries could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
     public static void ensureCustomItemsInPosUpgrade(Connection connection)throws SQLException{

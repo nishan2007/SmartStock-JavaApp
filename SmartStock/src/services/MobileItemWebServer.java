@@ -206,7 +206,7 @@ public final class MobileItemWebServer implements AutoCloseable {
         if(result==null||result.getText()==null||result.getText().isBlank())throw new WebError(422,"BARCODE_NOT_FOUND","No barcode was found. Move closer, keep the label sharp, and try again.");
         return Map.of("barcode",result.getText().trim(),"format",result.getBarcodeFormat().name());
     }
-    private Object imageUpload(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");byte[] bytes=Base64.getDecoder().decode(text(b,"bytesBase64",16*1024*1024));if(bytes.length>2*1024*1024)throw new WebError(413,"IMAGE_TOO_LARGE","The optimized image must be 2 MB or smaller.");bytes=optimizeJpeg(bytes);String requested=optional(b,"category").toUpperCase(java.util.Locale.ROOT),category=switch(requested){case"CUSTOM_ITEM","CUSTOM_VARIANT"->requested;default->"PRODUCT";};String name=StorageObjectNameBuilder.productImageFilename("image.jpg",Long.toString(System.currentTimeMillis()),optional(b,"productName"),optional(b,"brand"),optional(b,"type"),optional(b,"size"),optional(b,"variant"));try(Connection c=DB.getConnection()){String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);return Map.of("reference",ref,"cloudStatus","PENDING");}}
+    private Object imageUpload(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");byte[] bytes=Base64.getDecoder().decode(text(b,"bytesBase64",16*1024*1024));if(bytes.length>2*1024*1024)throw new WebError(413,"IMAGE_TOO_LARGE","The optimized image must be 2 MB or smaller.");bytes=optimizeJpeg(bytes);String requested=optional(b,"category").toUpperCase(java.util.Locale.ROOT),category=switch(requested){case"CUSTOM_ITEM","CUSTOM_VARIANT"->requested;default->"PRODUCT";};String name=StorageObjectNameBuilder.productImageFilename("image.jpg",StorageObjectNameBuilder.newProductImageToken(),optional(b,"productName"),optional(b,"brand"),optional(b,"type"),optional(b,"size"),optional(b,"variant"));try(Connection c=DB.getConnection()){String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);return Map.of("reference",ref,"cloudStatus","PENDING");}}
     private Object imageFetch(Session s,JsonObject b)throws Exception{ServerImageAssetService.AssetBytes a=ServerImageAssetService.load(text(b,"reference",1000));return Map.of("contentType",a.contentType(),"bytesBase64",Base64.getEncoder().encodeToString(a.bytes()));}
 
     public Map<String,Object> issuePhotoHandoff(String targetType,long targetId,int userId)throws Exception{
@@ -236,12 +236,32 @@ public final class MobileItemWebServer implements AutoCloseable {
             if(h.usedAt!=null)throw new WebError(409,"PHOTO_HANDOFF_USED","A photo was already uploaded with this link.");
             if(!h.expiresAt.isAfter(Instant.now()))throw new WebError(410,"PHOTO_HANDOFF_EXPIRED","This photo link has expired. Create a new one on the computer.");
             String category="variant".equals(h.targetType)?"CUSTOM_VARIANT":"CUSTOM_ITEM";
-            String name=StorageObjectNameBuilder.productImageFilename("image.jpg",Long.toString(System.currentTimeMillis()),h.productName,h.brand,h.itemType,"",h.variant);
+            String name=StorageObjectNameBuilder.productImageFilename("image.jpg",StorageObjectNameBuilder.newProductImageToken(),h.productName,h.brand,h.itemType,"",h.variant);
             try(Connection c=DB.getConnection()){
                 c.setAutoCommit(false);try{
-                    String ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);
-                    String sql="variant".equals(h.targetType)?"UPDATE custom_order_item_variants SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE custom_variant_id=?":"UPDATE custom_order_items SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?";
-                    try(PreparedStatement p=c.prepareStatement(sql)){p.setString(1,ref);p.setLong(2,h.targetId);if(p.executeUpdate()!=1)throw new WebError(404,"PHOTO_TARGET_NOT_FOUND","The saved custom item could not be found.");}
+                    ServerImageAssetService.ensureSchema(c);
+                    String table="variant".equals(h.targetType)?"custom_order_item_variants":"custom_order_items";
+                    String key="variant".equals(h.targetType)?"custom_variant_id":"custom_item_id";
+                    String ref;
+                    try(PreparedStatement p=c.prepareStatement("SELECT image_url,additional_image_urls::text FROM "+table+" WHERE "+key+"=? FOR UPDATE")){
+                        p.setLong(1,h.targetId);
+                        try(ResultSet row=p.executeQuery()){
+                            if(!row.next())throw new WebError(404,"PHOTO_TARGET_NOT_FOUND","The saved custom item could not be found.");
+                            String primary=row.getString(1);
+                            List<String> photos=new ArrayList<>(CatalogPhotoGalleryService.parse(row.getString(2)));
+                            if(primary!=null&&!primary.isBlank()&&photos.size()>=20)
+                                throw new WebError(409,"PHOTO_LIMIT","This item already has 20 additional photos.");
+                            ref=ServerImageAssetService.storeUpload(c,category,"Product Images","products/"+name,"image/jpeg",name,"PUBLIC",bytes);
+                            if(primary==null||primary.isBlank()){
+                                try(PreparedStatement update=c.prepareStatement("UPDATE "+table+" SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE "+key+"=?")){
+                                    update.setString(1,ref);update.setLong(2,h.targetId);update.executeUpdate();
+                                }
+                            }else{
+                                photos.add(ref);
+                                CatalogPhotoGalleryService.save(c,table,key,h.targetId,primary,photos);
+                            }
+                        }
+                    }
                     audit(c,"CUSTOM_ITEM_PHONE_PHOTO_UPLOADED",h.createdBy,"Uploaded phone photo for "+h.targetType+" ID "+h.targetId);c.commit();h.reference=ref;h.usedAt=Instant.now();return Map.of("uploaded",true,"reference",ref);
                 }catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}
             }

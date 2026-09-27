@@ -18,8 +18,11 @@ public final class ImageCacheWarmupService {
         collectUrls(conn, urls, "company_info", "company_logo_url");
         collectUrls(conn, urls, "company_customization", "badge_template_logo_url");
         collectUrls(conn, urls, "products", "image_url");
+        collectGalleryUrls(conn,urls,"products");
         collectUrls(conn, urls, "custom_order_items", "image_url");
+        collectGalleryUrls(conn,urls,"custom_order_items");
         collectUrls(conn, urls, "custom_order_item_variants", "image_url");
+        collectGalleryUrls(conn,urls,"custom_order_item_variants");
         collectUrls(conn, urls, "users", "employee_photo_url");
         collectUrls(conn, urls, "customer_accounts", "customer_photo_url");
 
@@ -30,6 +33,18 @@ public final class ImageCacheWarmupService {
             }
         }
         return loaded;
+    }
+
+    private static void collectGalleryUrls(Connection conn,Set<String> urls,String tableName)throws SQLException{
+        if(!hasColumn(conn,tableName,"additional_image_urls"))return;
+        String sql="SELECT DISTINCT photo.image_url FROM "+quote(tableName)
+                +" CROSS JOIN LATERAL jsonb_array_elements_text(additional_image_urls) AS photo(image_url)";
+        try(PreparedStatement ps=conn.prepareStatement(sql);ResultSet rs=ps.executeQuery()){
+            while(rs.next()){
+                String value=rs.getString(1);
+                if(ImageCacheManager.isRemoteImageUrl(value))urls.add(value.trim());
+            }
+        }
     }
 
     private static void collectUrls(Connection conn, Set<String> urls, String tableName, String columnName) throws SQLException {
